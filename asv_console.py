@@ -2846,7 +2846,8 @@ _ENV_UA = {"User-Agent": "asv-console/1.0 (+sim environmental data)"}
 # --- physics constants (moderate, capped - the boat still holds the line in
 #     normal conditions and only struggles in genuinely rough seas) ---------- #
 RHO_AIR = 1.225                # kg/m^3
-RHO_WATER = 1000.0             # kg/m^3 (fresh water - Great Lakes)
+RHO_WATER = 1000.0             # kg/m^3 - the FALLBACK since 2026-10-09: the sim reads DENSITY.rho(), the water's
+                               # own density at her position; this only until a reading exists
 G_ACCEL = 9.81
 # Above-water windage silhouette + hull drag come from the active vessel's `hull`
 # block (loa/beam/above_water_h/draft/wind_cd/hull_cd); BOAT_*, WIND_A_*, HULL_A_LAT
@@ -3115,6 +3116,14 @@ def fetch_environment(lat, lon):
         sea = {"hs_m": hs, "tp_s": tp, "dir_from_deg": wind["dir_from_deg"],
                "derived": True, "stations": []}
         derived = True
+    # THE BUOYS' WATER TEMPERATURE (WTMP), for the water density (2026-10-09): blended like the sea state, over the
+    # nearest ENV_K buoys reporting it. WaterDensity uses it where no CO-OPS station near the boat reports one.
+    tset = [(d, sid, r) for d, sid, r in obs if r.get("WTMP") is not None][:ENV_K]
+    water_temp = None
+    if tset:
+        wts = _idw_weights(tset)
+        water_temp = {"c": round(sum(w * r["WTMP"] for w, (d, sid, r) in zip(wts, tset)), 2),
+                      "stations": [{"id": sid, "dist_km": round(d, 1)} for d, sid, _ in tset]}
     if not wind and not sea:
         return {"ok": False, "source": "none",
                 "note": "buoys reachable but reporting no wind/wave right now"}
@@ -3133,7 +3142,8 @@ def fetch_environment(lat, lon):
     return {"ok": True, "source": src, "note": note, "wind": wind, "sea": sea,
             "obs_t": (min(times) if times else None),
             "station": (used[0][1] if used else None),
-            "stations": [{"id": sid, "dist_km": round(d, 1)} for d, sid, _ in used]}
+            "stations": [{"id": sid, "dist_km": round(d, 1)} for d, sid, _ in used],
+            "water_temp": water_temp}
 
 
 class EnvMonitor:
@@ -3244,6 +3254,12 @@ class EnvMonitor:
                 "age_s": (None if man or not base.get("ok") else _age_s(base.get("obs_t") or fetched)),
                 "monitor_error": err}
 
+    def water_temp(self):
+        """The buoys' blended water temperature from the last reading, {c, stations} or None (for WaterDensity)."""
+        with self._lock:
+            wt = (self._last or {}).get("water_temp")
+        return dict(wt) if wt else None
+
     def snapshot(self):
         eff = dict(self._effective())
         # Same rule as the water monitor's `page`: the buoy's own NDBC page, built from the
@@ -3290,6 +3306,202 @@ class EnvMonitor:
 
 
 ENV = EnvMonitor()
+
+
+# --------------------------------------------------------------------------- #
+#  The water's DENSITY at the boat (sim only)                                 #
+# --------------------------------------------------------------------------- #
+# Andy, 2026-10-09: "Water density is set to fresh water (1000 kg/m3) at every port, salt water included. Estimate
+# or find realtime sources or models for water density based on time and position" - asked how far to go, he chose
+# MEASURED + ESTIMATE. What exists, measured that day: NOAA CO-OPS stations that report SALINITY (and its specific
+# gravity) every 6 min - Seavey Island 2.6 km from New Castle (29.02 PSU), Lewes 3.7 km from Lewes (28.14) - and
+# water TEMPERATURE at nearly every port; the weather buoys' WTMP besides. So: salinity from a CO-OPS station within
+# DENSITY_SAL_REACH_KM (an estuary changes in kilometers: Seavey's 29.0 against the model's 32.5 at the river mouth
+# 2.6 km off), 0 inside the Great Lakes, else DENSITY_OCEAN_PSU - said to be an ESTIMATE; temperature from the
+# nearest station, else the buoys, else DENSITY_DEFAULT_C; the density by UNESCO EOS-80 at the surface.
+# WHAT IT MOVES, so nobody over-reads it: the sim's hull drag and wave drift. The wave drift's density cancels in
+# the leeway; the wind's does not, so between fresh (1000) and Gulf of Maine water (1024) the WIND-driven drift is
+# 1.2% smaller. Sim only, like the wind: a real hull is drifted by real water.
+DENSITY_SAL_REACH_KM = 25.0       # a salinity station farther than this is other water
+DENSITY_TEMP_REACH_KM = 50.0      # temperature varies more slowly than salinity across a harbor
+DENSITY_STALE_S = 3 * 3600        # a station reading older than this is not used
+DENSITY_OCEAN_PSU = 35.0          # the open-ocean estimate where no station measures salinity
+DENSITY_DEFAULT_C = 15.0          # the estimate where nothing nearby reports a water temperature
+PHYSOCEAN_STATIONS_URL = ("https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/"
+                          "stations.json?type=physocean")
+PHYSOCEAN_CACHE = os.path.join(CHART_DIR, "coops_physocean.json")
+PHYSOCEAN_MAX_AGE_S = 7 * 86400
+_physocean = None
+_physocean_lock = threading.Lock()
+
+
+def rho_eos80(S, T):
+    """Seawater density (kg/m^3) at the surface from practical salinity S (PSU) and temperature T (deg C): UNESCO
+    EOS-80 (1981), pressure 0. Its published check values: (0, 5) 999.96675, (35, 5) 1027.67547, (35, 25) 1023.34306."""
+    rw = (999.842594 + 6.793952e-2 * T - 9.095290e-3 * T ** 2 + 1.001685e-4 * T ** 3
+          - 1.120083e-6 * T ** 4 + 6.536332e-9 * T ** 5)
+    A = 8.24493e-1 - 4.0899e-3 * T + 7.6438e-5 * T ** 2 - 8.2467e-7 * T ** 3 + 5.3875e-9 * T ** 4
+    B = -5.72466e-3 + 1.0227e-4 * T - 1.6546e-6 * T ** 2
+    return rw + A * S + B * S ** 1.5 + 4.8314e-4 * S ** 2
+
+
+def _load_physocean_stations(timeout=30.0):
+    """CO-OPS physical-oceanography stations (id/name/lat/lng), cached a week. A failed fetch keeps a stale cache
+    rather than none, and is not remembered - the next pass asks again."""
+    global _physocean
+    with _physocean_lock:
+        if _physocean is not None and time.time() - _physocean[0] < PHYSOCEAN_MAX_AGE_S:
+            return _physocean[1]
+    cached = None
+    try:
+        with open(PHYSOCEAN_CACHE, "r", encoding="utf-8") as f:
+            cached = json.load(f)
+    except (OSError, ValueError):
+        cached = None
+    if isinstance(cached, dict) and time.time() - float(cached.get("fetched") or 0) < PHYSOCEAN_MAX_AGE_S:
+        stations = cached.get("stations") or []
+    else:
+        try:
+            req = urllib.request.Request(PHYSOCEAN_STATIONS_URL, headers={"User-Agent": "ASV-Console/1.0"})
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                raw = json.loads(r.read())
+            stations = [{"id": s["id"], "name": s.get("name"), "lat": float(s["lat"]), "lng": float(s["lng"])}
+                        for s in raw.get("stations", []) if s.get("lat") and s.get("lng")]
+            if stations:
+                _cache_json(PHYSOCEAN_CACHE, {"fetched": time.time(), "stations": stations})
+        except (OSError, ValueError, KeyError, TypeError, http.client.HTTPException):
+            stations = (cached or {}).get("stations") or [] if isinstance(cached, dict) else []
+    if stations:
+        with _physocean_lock:
+            _physocean = (time.time(), stations)
+    return stations
+
+
+def _coops_physocean_latest(station_id, product, timeout=15.0):
+    """CO-OPS's latest row of `product` (salinity -> {t, s, g} | water_temperature -> {t, v}) at a station, or None.
+    Never raises."""
+    params = {"product": product, "application": COOPS_APP, "station": station_id, "date": "latest",
+              "time_zone": "gmt", "units": "metric", "format": "json"}
+    try:
+        req = urllib.request.Request(COOPS_DATA_URL + "?" + urllib.parse.urlencode(params),
+                                     headers={"User-Agent": "ASV-Console/1.0"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            d = json.loads(r.read())
+    except (OSError, ValueError, http.client.HTTPException):
+        return None
+    rows = (d.get("data") if isinstance(d, dict) else None) or []
+    return rows[-1] if rows else None
+
+
+def fetch_density(lat, lon, buoy_temp=None):
+    """The water's density at (lat, lon): {ok, rho, salinity, temp, estimated, obs_t, note}. Never raises.
+    `buoy_temp` is the weather buoys' blended WTMP ({c, stations}), used where no station reports a temperature."""
+    now_t = time.time()
+    stations = _load_physocean_stations()
+    near = sorted(((_haversine_km(lat, lon, s["lat"], s["lng"]), s) for s in stations), key=lambda t: t[0])
+
+    def first(product, key, reach):
+        """The nearest station within `reach` whose latest `product` row is fresh and readable."""
+        for d, s in [(d, s) for d, s in near if d <= reach][:3]:
+            row = _coops_physocean_latest(s["id"], product)
+            t = _coops_epoch((row or {}).get("t"))
+            try:
+                v = float((row or {}).get(key))
+            except (TypeError, ValueError):
+                continue
+            if t is None or now_t - t > DENSITY_STALE_S or not math.isfinite(v):
+                continue
+            return {"source": "measured", "station": s["id"], "name": s.get("name"), "dist_km": round(d, 1),
+                    "obs_t": t, "value": v}
+        return None
+
+    lake = _lake_of(lat, lon)
+    if lake:
+        sal = {"psu": 0.0, "source": "fresh", "note": "Lake %s - fresh water" % lake.capitalize()}
+    else:
+        hit = first("salinity", "s", DENSITY_SAL_REACH_KM)
+        if hit:
+            sal = dict(hit, psu=round(min(max(hit.pop("value"), 0.0), 42.0), 2))
+        else:
+            sal = {"psu": DENSITY_OCEAN_PSU, "source": "estimate",
+                   "note": "no CO-OPS salinity station within %d km - open ocean assumed" % int(DENSITY_SAL_REACH_KM)}
+    hit = first("water_temperature", "v", DENSITY_TEMP_REACH_KM)
+    if hit:
+        temp = dict(hit, c=round(min(max(hit.pop("value"), -2.0), 40.0), 2))
+    elif buoy_temp and buoy_temp.get("c") is not None:
+        temp = {"c": round(min(max(float(buoy_temp["c"]), -2.0), 40.0), 2), "source": "buoy",
+                "stations": buoy_temp.get("stations") or []}
+    else:
+        temp = {"c": DENSITY_DEFAULT_C, "source": "estimate",
+                "note": "no water temperature reported within %d km" % int(DENSITY_TEMP_REACH_KM)}
+    times = [x["obs_t"] for x in (sal, temp) if x.get("obs_t")]
+    estimated = sal["source"] == "estimate" or temp["source"] == "estimate"
+    return {"ok": True, "rho": round(rho_eos80(sal["psu"], temp["c"]), 2), "salinity": sal, "temp": temp,
+            "estimated": estimated, "obs_t": (min(times) if times else None),
+            "note": "UNESCO EOS-80 at the surface" + (" - partly estimated" if estimated else "")}
+
+
+class WaterDensity:
+    """SIM-ONLY water density at the boat, refreshed every 10 min, on a >5 km move or on demand - on its own
+    thread, so no tick or request ever waits on NOAA. SimVcu reads `rho()` every tick; `snapshot()` rides
+    Engine.state() as `density`. Fetches nothing while the environment is switched off (the calm run uses no
+    water density at all)."""
+
+    POLL_S = 600.0
+    REFETCH_KM = 5.0
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._pos = None
+        self._last = {"ok": False, "source": "none", "note": "waiting for a GPS fix"}
+        self._sampled_at = None
+        self._error = None
+        self._force = threading.Event()
+        self._stop = threading.Event()
+        threading.Thread(target=self._loop, daemon=True).start()
+
+    def update_position(self, lat, lon):
+        with self._lock:
+            old = self._pos
+            self._pos = (lat, lon)
+        if old is None or _haversine_km(old[0], old[1], lat, lon) > self.REFETCH_KM:
+            self._force.set()
+
+    def refresh_now(self):
+        self._force.set()
+
+    def rho(self):
+        """kg/m^3 for the physics: the reading's, or RHO_WATER until there is one."""
+        with self._lock:
+            r = self._last.get("rho") if self._last.get("ok") else None
+        return float(r) if r else RHO_WATER
+
+    def snapshot(self):
+        with self._lock:
+            out = dict(self._last)
+            at, err = self._sampled_at, self._error
+        # aged from the oldest station reading in it; a wholly estimated one from when it was worked out
+        out["age_s"] = _age_s(out.get("obs_t") or at) if out.get("ok") else None
+        out["monitor_error"] = err
+        return out
+
+    def _pass(self, pos):
+        res = fetch_density(pos[0], pos[1], ENV.water_temp())
+        with self._lock:
+            self._last = res
+            self._sampled_at = time.time()
+
+    def _loop(self):
+        while not self._stop.is_set():
+            with self._lock:
+                pos = self._pos
+            if pos and ENV.is_enabled():
+                _monitor_pass(self, "density", lambda: self._pass(pos))
+            if self._force.wait(self.POLL_S):          # cleared only when set - see WaterLevel._loop
+                self._force.clear()
+
+
+DENSITY = WaterDensity()
 
 
 # THE CURRENT'S OWN PAGE (Andy, 2026-10-09: "add web page link to top bar for the page to the water current data
@@ -4459,6 +4671,7 @@ class SimVcu(VcuLink):
         set_dir = None
         rel_w = beam = 0.0
         if env:
+            rho_w = DENSITY.rho()                            # the water's own density at her position (2026-10-09)
             vb = self.sog_kn * 0.514444                      # boat speed m/s
             hb = math.radians(self.heading)
             vbe, vbn = vb * math.sin(hb), vb * math.cos(hb)
@@ -4488,12 +4701,12 @@ class SimVcu(VcuLink):
                 rel_w = math.radians(env["wave_from_deg"] - self.heading)
                 beam = abs(math.sin(rel_w))
                 wvt = math.radians(env["wave_from_deg"] + 180.0)
-                fd = 0.5 * RHO_WATER * G_ACCEL * (hs * 0.5) ** 2 * BOAT_BEAM_M * WAVE_DRIFT_CD
+                fd = 0.5 * rho_w * G_ACCEL * (hs * 0.5) ** 2 * BOAT_BEAM_M * WAVE_DRIFT_CD
                 fe += fd * math.sin(wvt)
                 fn += fd * math.cos(wvt)
             fmag = math.hypot(fe, fn)
             if fmag > 0.01:                                  # terminal leeway from quadratic hull drag
-                vdr = min(LEEWAY_CAP_MS, math.sqrt(fmag / (0.5 * RHO_WATER * HULL_CD * HULL_A_LAT)))
+                vdr = min(LEEWAY_CAP_MS, math.sqrt(fmag / (0.5 * rho_w * HULL_CD * HULL_A_LAT)))
                 drift_e, drift_n = vdr * fe / fmag, vdr * fn / fmag
         # THE MOTION - weathervane yaw, wave yaw, pitch and roll - only while deployed. A
         # boat lying stopped at a berth reports the set above and does none of this.
@@ -5932,6 +6145,7 @@ class Engine:
                         # can push it around. Not fed in real mode (real boat, real wx).
                         if self._mode == "sim":
                             ENV.update_position(telem["lat_deg"], telem["lon_deg"])
+                            DENSITY.update_position(telem["lat_deg"], telem["lon_deg"])   # the water's (2026-10-09)
                         # The CURRENT is fed in BOTH modes, unlike the wind: a real hull
                         # sits in real water, and what NOAA forecasts the tide is doing
                         # under it is exactly as useful there as in the sim (more so).
@@ -6133,6 +6347,9 @@ class Engine:
             "water": WATER.snapshot(),
             "env": ENV.snapshot() if self._mode == "sim" else {"ok": False, "source": "off",
                      "enabled": False, "note": "environmental sim (sim mode only)"},
+            # The water's density at the boat (2026-10-09) - sim only, like the wind it scales.
+            "density": DENSITY.snapshot() if self._mode == "sim" else {"ok": False, "source": "off",
+                                                                         "note": "sim only"},
             # Real water, both modes - see CurrentsMonitor. Not gated on `sim`.
             "current": CURRENTS.snapshot(),
             # What the console keeps on disk and the room left - measured on its own thread, never here (review #24).

@@ -83,6 +83,12 @@ sea from the wind**; offline it goes calm.
   mean). Until 2026-10-09 every gust was the default. The effect is **moderate and capped**: the
   boat still holds the line in normal conditions and only struggles in genuinely
   rough seas.
+- The **water's density** is the water's own (since 2026-10-09; it was fresh water,
+  1000 kg/m³, at every port): salinity from a NOAA CO-OPS station within 25 km - or 0
+  in the Great Lakes, else an estimated 35 PSU - and temperature from the nearest
+  station or weather buoy, by the UNESCO EOS-80 equation. It sets the hull's drag and
+  the wave drift; between fresh and salt water the wind-driven drift differs by about
+  1%. The card's **Density** row says which parts were measured.
 - The line follower rejects the disturbance like a real autopilot: **crab
   feedforward** (it measures its own drift — COG vs heading — and points the bow
   upwind by the drift triangle) plus a slow **cross-track integral trim**. So the

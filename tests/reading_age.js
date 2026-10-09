@@ -71,7 +71,7 @@ console.log("Every reading on the card says how old it is:");
 
 const el = () => ({ textContent: "", title: "", value: "", placeholder: "", style: {} });
 const els = {};
-for (const id of ["#v_water", "#sp_water_note", "#sp_water", "#v_wind", "#v_sea", "#v_set", "#v_current"]) els[id] = el();
+for (const id of ["#v_water", "#sp_water_note", "#sp_water", "#v_wind", "#v_sea", "#v_set", "#v_current", "#v_rho"]) els[id] = el();
 const world = { $: (s) => els[s], waterTrust, WATER_STALE_S, document: { activeElement: null },
                 fmtDist: (m) => Math.round(m / 1000) + " km" };
 // eslint-disable-next-line no-eval
@@ -83,8 +83,8 @@ function setTip(el, text){ if(el) el.title = text; }
 const page = eval("(function(){ \"use strict\"; const $ = world.$, waterTrust = world.waterTrust, WATER_STALE_S = world.WATER_STALE_S,"
   + " document = world.document, fmtDist = world.fmtDist; let roseEnv = null, roseCur = null, roseSet = null;\n"   // (roseSet: the rose's SET arrow, 2026-10-08)
   + decl("^const CURRENT_AGE_SHOW_S = [^;]*;") + "\n"
-  + ["fmtAge", "monitorErrTxt", "dirTxt", "updateWaterUI", "updateEnvUI", "currentBasisTxt", "updateCurrentUI"].map(grab).join("\n")
-  + "\nreturn { fmtAge, updateWaterUI, updateEnvUI, updateCurrentUI, CURRENT_AGE_SHOW_S, roseSet: () => roseSet }; })()");
+  + ["fmtAge", "monitorErrTxt", "dirTxt", "updateWaterUI", "updateEnvUI", "currentBasisTxt", "updateCurrentUI", "updateDensityUI"].map(grab).join("\n")
+  + "\nreturn { fmtAge, updateWaterUI, updateEnvUI, updateCurrentUI, updateDensityUI, CURRENT_AGE_SHOW_S, roseSet: () => roseSet }; })()");
 
 const station = (extra) => Object.assign({ ok: true, offset_m: 0.19, datum: "MLLW", method: "idw3", data_kind: "observed",
   name: "Eastport", source: "station", stations: [{ name: "Eastport", dist_km: 1.2, offset_m: 0.19 }], monitor_error: null }, extra);
@@ -151,6 +151,24 @@ check("6. the wind row says how old the buoy reports are, and both weather toolt
             && /Observed 50\u00a0min ago/.test(wind.sea) && windManual === "4.8 kn @ 310°" && windOff === "-- (sim only)"
             && /The last update failed: KeyError: 'WSPD'/.test(windErr),
       () => "row '" + wind.row + "'; manual '" + windManual + "'; off '" + windOff + "'");
+// 6d. THE WATER'S DENSITY (2026-10-09): measured, estimated, and off
+page.updateDensityUI({ ok: true, rho: 1021.71, estimated: false, age_s: 12 * 60, obs_t: 1,
+  salinity: { psu: 29.02, source: "measured", name: "Seavey Island", dist_km: 2.6 },
+  temp: { c: 13.3, source: "measured", name: "Seavey Island", dist_km: 2.6 } });
+const rhoMeas = { row: els["#v_rho"].textContent, tip: els["#v_rho"].title, col: els["#v_rho"].style.color };
+page.updateDensityUI({ ok: true, rho: 1022.17, estimated: true, age_s: null,
+  salinity: { psu: 35, source: "estimate", note: "no CO-OPS salinity station within 25 km - open ocean assumed" },
+  temp: { c: 28.7, source: "buoy" } });
+const rhoEst = { row: els["#v_rho"].textContent, tip: els["#v_rho"].title, col: els["#v_rho"].style.color };
+page.updateDensityUI({ ok: false, source: "off", note: "sim only" });
+const rhoOff = els["#v_rho"].textContent;
+check("6d. the density row reads the water's density and its age, names where its salinity and temperature were "
+      + "measured, marks an estimate with ~ and the warning color and says which half is estimated, and reads sim only off",
+      () => rhoMeas.row === "1021.7 kg/m\u00b3 \u00b7 12" + NB + "min" && /salinity 29\.02 PSU measured at Seavey Island/.test(rhoMeas.tip)
+            && /temperature 13\.3 \u00b0C measured at Seavey Island/.test(rhoMeas.tip) && rhoMeas.col === ""
+            && rhoEst.row === "1022.2 kg/m\u00b3 ~" && /salinity 35 PSU ESTIMATED/.test(rhoEst.tip)
+            && /from the weather buoys/.test(rhoEst.tip) && /warn/.test(rhoEst.col) && rhoOff === "-- (sim only)",
+      () => "measured '" + rhoMeas.row + "'; estimated '" + rhoEst.row + "' (" + rhoEst.col + "); off '" + rhoOff + "'");
 // 6g. THE BUOYS' GUST (2026-10-09): on the row as "G", and the tooltip says what it is - or that none was reported
 check("6g. a measured gust reads on the wind row (4.8 G6.4 kn) and the tooltip names it as the buoys' peak gust; "
       + "with none reported the row has no G and the tooltip says the sim's own default size is in use",

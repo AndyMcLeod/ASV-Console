@@ -820,6 +820,7 @@
            energy gauge in onState. -->
       <div class="vrow"><span class="vk">Wind</span><span class="vv" id="v_wind" title="Ambient wind pushing the sim boat (nearest NOAA buoy, IDW). Sim only.">--</span></div>
       <div class="vrow"><span class="vk">Sea</span><span class="vv" id="v_sea" title="Sea state (sig. wave height / period / direction) pushing the sim boat. Sim only.">--</span></div>
+      <div class="vrow"><span class="vk">Density</span><span class="vv" id="v_rho" title="Water density at the boat, used by the sim boat's hull drag and wave drift. Sim only.">--</span></div>
       <div class="vrow"><span class="vk">Set / crab</span><span class="vv" id="v_set" title="Environmental set (leeway) the boat is fighting, and the crab angle (heading minus course made good).">--</span></div>
       <div class="vrow"><span class="vk">Current</span><span class="vv" id="v_current" title="Surface current FORECAST at the vessel's own position, from a NOAA Operational Forecast System (dbofs by default). Set is where the water GOES, degrees true. This is a model prediction for real water — not a measurement, and not the same thing as the Set/crab row above, which is the leeway the boat is actually fighting.">--</span></div>
       <div class="vrow"><span class="vk">Water lvl</span><span class="vv" id="v_water" title="Live water level above chart datum, added to charted depths">--</span></div>
@@ -17052,6 +17053,7 @@ function onState(s){
 
   // environmental simulator (SIM ONLY): wind + sea state pushing the boat
   updateEnvUI(s.env || {}, st);
+  updateDensityUI(s.density);                    // the water's density, sim only (2026-10-09)
   updateCurrentUI(s.current);                    // real water, both modes (not sim-gated)
 
   applySupervisor(s.supervisor);                 // which tab is in charge (review #14) - before the controls are set
@@ -17431,6 +17433,37 @@ function updateEnvUI(env, st){
   const vs=$("#v_sea");
   if(vs) setTip(vs, "Sea state (sig. wave height / period / direction) pushing the sim boat. "
     + "Sim only." + ageTip + monitorErrTxt(env));
+}
+// THE WATER'S DENSITY at the boat (2026-10-09; Andy: "Water density is set to fresh water (1000 kg/m3) at every port,
+// salt water included. Estimate or find realtime sources..."). Salinity from a NOAA CO-OPS station within 25 km, 0 in
+// the Great Lakes, else 35 PSU estimated; temperature from the nearest station, else the weather buoys; UNESCO EOS-80.
+// "~" and the warning color when either half is an estimate, and the tooltip says which.
+function updateDensityUI(d){
+  const el = $("#v_rho"); if(!el) return;
+  d = d || {};
+  if(d.source === "off"){
+    el.textContent = "-- (sim only)"; el.style.color = "var(--ink-faint)";
+    setTip(el, "Water density used by the sim boat's hull drag and wave drift. Sim only."); return;
+  }
+  if(!d.ok || typeof d.rho !== "number"){
+    el.textContent = d.note ? "-- (" + d.note + ")" : "--"; el.style.color = "var(--ink-faint)";
+    setTip(el, "Water density at the boat. " + (d.note || "No reading yet.") + " Until there is one the sim uses fresh water, 1000 kg/m³." + monitorErrTxt(d)); return;
+  }
+  const s = d.salinity || {}, t = d.temp || {};
+  const at = (x) => (x.name || x.station) + " (" + fmtDist((x.dist_km || 0) * 1000, 1) + " off)";
+  el.textContent = d.rho.toFixed(1) + " kg/m³" + (d.estimated ? " ~" : "")
+                 + (typeof d.age_s === "number" ? " · " + fmtAge(d.age_s) : "");
+  el.style.color = d.estimated ? "var(--warn, #e8d9a0)" : "";
+  const salTxt = s.source === "measured" ? "salinity " + s.psu.toFixed(2) + " PSU measured at " + at(s)
+    : s.source === "fresh" ? "salinity 0 (" + (s.note || "fresh water") + ")"
+    : "salinity " + s.psu + " PSU ESTIMATED (" + (s.note || "nothing measured nearby") + ")";
+  const tTxt = t.source === "measured" ? "temperature " + t.c.toFixed(1) + " °C measured at " + at(t)
+    : t.source === "buoy" ? "temperature " + t.c.toFixed(1) + " °C from the weather buoys"
+    : "temperature " + t.c + " °C ESTIMATED (" + (t.note || "none reported nearby") + ")";
+  setTip(el, "Water density at the boat (UNESCO EOS-80, at the surface) from " + salTxt + " and " + tTxt
+    + ". The sim's hull drag and wave drift use it; between fresh and salt water it changes the wind-driven drift by about 1%."
+    + (typeof d.age_s === "number" ? "\n" + (d.obs_t ? "Measured " : "Worked out ") + fmtAge(d.age_s) + " ago." : "")
+    + monitorErrTxt(d));
 }
 // SURFACE CURRENT at the boat's own position (NOAA OFS via /api/currents, on the state).
 // A FORECAST for real water, so unlike the wind rows it is NOT sim-gated. Every way this
