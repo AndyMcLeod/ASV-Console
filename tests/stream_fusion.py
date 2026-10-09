@@ -566,6 +566,67 @@ check("19c. no implicit dbofs: --currents-ofs defaults to none, and main sets th
       and 'def __init__(self, ofs=""):' in SRC,
       "")
 
+# ── 20. NOAA'S MODEL SERVER DOWN IS SAID SO (Andy, 2026-10-09: "make the readout say NOAA's model server is down") ───
+# The vendored reader swallows a failed catalog fetch and finds no cycle, and the readout said "no cycle cached yet" all
+# through two days of 503s. One GET of the same catalog page now says why - and only a server error or no connection is
+# blamed on the server: a 404 or a 200 keeps the generic note.
+import urllib.error as _ue
+
+
+class _Resp:
+    def read(self, n=-1):
+        return b"<html>"
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+seen = []
+
+
+def _probe_with(behaviour):
+    real_ecc, real_open = C.currents.ensure_cycle_covering, C.urllib.request.urlopen
+    C.currents.ensure_cycle_covering = lambda *a, **k: (None, False)
+
+    def fake_open(req, timeout=None):
+        url = getattr(req, "full_url", str(req))
+        seen.append(url)
+        if behaviour == 503:
+            raise _ue.HTTPError(url, 503, "Service Unavailable", {}, None)
+        if behaviour == 404:
+            raise _ue.HTTPError(url, 404, "Not Found", {}, None)
+        if behaviour == "refused":
+            raise _ue.URLError("connection refused")
+        return _Resp()
+    C.urllib.request.urlopen = fake_open
+    try:
+        m = C.CurrentsMonitor.__new__(C.CurrentsMonitor)
+        m._lock, m._force = threading.Lock(), threading.Event()
+        m._ofs, m._tag, m._cur, m._last = "wcofs", None, None, {}
+        m._no_cycle_why, m._sampled_at, m._error = None, None, None
+        m._sources = SF.StreamSources(os.path.join(TMP, "mon6_%s" % behaviour), fetch=dead_fetch, start=False)
+        m._pass((33.7366, -118.2667), True)                  # Port of Los Angeles: no station in reach
+        return dict(m._last)
+    finally:
+        C.currents.ensure_cycle_covering, C.urllib.request.urlopen = real_ecc, real_open
+
+
+r503, rref, r404, r200 = _probe_with(503), _probe_with("refused"), _probe_with(404), _probe_with(200)
+check("20. with no cycle to be had the readout says why in NOAA's terms: a server error reads \"NOAA's model server is "
+      "down (HTTP 503 ...)\" and no connection that it cannot be reached; a server that answers - 404 or 200 - keeps the "
+      "generic note, never blamed for what it did not do; the probe asks the reader's own catalog page",
+      lambda: "NOAA's model server is down (HTTP 503 from opendap.co-ops.nos.noaa.gov) - WCOFS cannot be read"
+      in r503.get("note", "") and "no cycle cached yet" not in r503.get("note", "")
+      and "no NOAA current-prediction station" in r503.get("note", "")
+      and "NOAA's model server cannot be reached (URLError)" in rref.get("note", "")
+      and "no cycle cached yet" in r404.get("note", "") and "no cycle cached yet" in r200.get("note", "")
+      and seen and "/thredds/catalog/NOAA/WCOFS/MODELS/" in seen[0],
+      lambda: "503: %r | refused: %r | 404: %r | 200: %r | asked %s" % (
+          r503.get("note"), rref.get("note"), r404.get("note"), r200.get("note"), seen[:1]))
+
 shutil.rmtree(TMP, ignore_errors=True)
 print("\n%s (%d ran)" % ("%d CHECK(S) FAILED" % fails if fails else "all checks passed", ran))
 sys.stdout.flush()

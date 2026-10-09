@@ -294,7 +294,9 @@ the wind, nobody invents the tide. It is a *model prediction*, not a measurement
 different question from the **Set / crab** row above it — that is the leeway the boat is
 actually fighting, except on a vessel link that reports no set of its own, where the row carries
 this forecast and says "stream forecast" (see the last four open items, below). Every way it can fail to be a live reading is stated rather than
-dressed up as a number: no cycle cached yet, no model water at that position, or a value
+dressed up as a number: NOAA's model server down (a server error or no connection, said as
+such since 2026-10-09 - it used to read "no cycle cached yet"), no cycle cached yet, no
+model water at that position, or a value
 **projected by whole tidal cycles** because no forecast frame covers now (marked `~`,
 and refused outright past three cycles). The model fetch runs on a background thread, so
 a multi-megabyte download never sits on a request. `GET /api/currents` (`?force=1` to

@@ -3602,6 +3602,7 @@ class CurrentsMonitor:
     # ... but the READING is a forecast for NOW, recomputed from the cached cycle this often. It was taken
     # only every POLL_S, so it could be a quarter of an hour behind the tide it describes (review #13).
     SAMPLE_S = 60.0
+    PROBE_TIMEOUT_S = 10.0               # the one GET that says WHY there is no cycle (_why_no_cycle)
     REFETCH_KM = 15.0                    # a move this far re-scopes the fetch bbox
     BBOX_DEG = 0.35                      # ~39 km half-box around the boat
 
@@ -3830,7 +3831,7 @@ class CurrentsMonitor:
                 self._last = {"ok": False, "source": self._ofs, "note": note}
             return note
         if not tag:
-            return None
+            return self._why_no_cycle()
         if tag != self._tag or self._cur is None:
             try:
                 self._cur = currents.Currents(tag=tag)
@@ -3841,6 +3842,34 @@ class CurrentsMonitor:
                          self._cur.end.strftime("%H:%MZ")), file=sys.stderr)
             except Exception as e:
                 print("[currents] cycle %s unreadable: %s" % (tag, e), file=sys.stderr)
+        return None
+
+    def _why_no_cycle(self):
+        """WHY THERE IS NO CYCLE, in NOAA's terms, when the reader found none - or None to keep the generic note.
+
+        Andy, 2026-10-09: "make the readout say NOAA's model server is down". The vendored reader swallows a failed
+        catalog fetch and reports no cycles, so on 2026-10-08 and 09 - the CO-OPS THREDDS answering 503 all day - the
+        Los Angeles readout said "no cycle cached yet", as if the cache had merely not filled. One small GET of the
+        same catalog page the reader asks for says which it is. Only a SERVER error (HTTP 5xx) or no connection at all
+        is named; a server that answers - a 200, or a 404 for a day it has not posted yet - keeps the generic note,
+        because the reader looks back two days and the server has not been shown to be at fault."""
+        ofs = self._ofs
+        if not ofs:
+            return None
+        url = "%s/catalog/NOAA/%s/MODELS/%s/catalog.html" % (
+            currents.THREDDS, ofs.upper(), datetime.now(timezone.utc).strftime("%Y/%m/%d"))
+        host = urllib.parse.urlparse(currents.THREDDS).netloc
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "ASV-Console/1.0"})
+            with urllib.request.urlopen(req, timeout=self.PROBE_TIMEOUT_S) as r:
+                r.read(1)
+        except urllib.error.HTTPError as e:
+            if e.code >= 500:
+                return ("NOAA's model server is down (HTTP %d from %s) - %s cannot be read"
+                        % (e.code, host, ofs.upper()))
+            return None
+        except (OSError, http.client.HTTPException) as e:
+            return "NOAA's model server cannot be reached (%s) - %s cannot be read" % (type(e).__name__, ofs.upper())
         return None
 
     def _loop(self):
