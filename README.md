@@ -299,7 +299,14 @@ such since 2026-10-09 - it used to read "no cycle cached yet"), no cycle cached 
 model water at that position, or a value
 **projected by whole tidal cycles** because no forecast frame covers now (marked `~`,
 and refused outright past three cycles). The model fetch runs on a background thread, so
-a multi-megabyte download never sits on a request. `GET /api/currents` (`?force=1` to
+a multi-megabyte download never sits on a request. **When NOAA's model server is down the
+console reads the same files from NOAA's open-data S3 bucket** (`ofs_s3.py`, 2026-10-09) -
+still the standard library only: a small reader for exactly the HDF5 structures those
+netCDF-4 files use, range-reading only the surface rows in the box round the boat (tens of
+kilobytes a frame; a WCOFS cycle in about 15 s, LEOFS's 127 hourly frames in about 70 s),
+written into the same cache so everything downstream is unchanged. The tooltip says when a
+cycle came from there. It reads each file's own time units, which differ by model (LEOFS
+counts from 2015, SSCOFS from 2018, the rest from 2016). `GET /api/currents` (`?force=1` to
 kick a refresh) serves the same reading headlessly. The **chart's wind rose carries it
 too**: a single-headed **sea-blue arrow** riding the ring, pointing where the water goes,
 with `current N.NN kn DDD°` beneath the wind's reading - the **Current** row's reading, labeled

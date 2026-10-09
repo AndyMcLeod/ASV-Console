@@ -193,6 +193,14 @@ check("7. the current - recomputed every minute - shows its age only once it is 
       () => "fresh '" + curFresh.row + "'; old '" + curOld.row + "' " + curOld.col + "; not-ok tooltip '"
             + curErr.replace(/\n/g, " ").slice(0, 120) + "'");
 
+// 7s. A CYCLE READ FROM NOAA'S S3 COPY SAYS SO (2026-10-09, ofs_s3.py): the model server was down
+page.updateCurrentUI(cur({ via: "s3" }));
+const curS3 = els["#v_current"].title;
+page.updateCurrentUI(cur());
+const curThredds = els["#v_current"].title;
+check("7s. a reading whose cycle came from NOAA's S3 copy says so in its tooltip; one from the model server does not",
+      () => /cycle t \(read from NOAA's S3 copy - its model server was down\)/.test(curS3) && !/S3/.test(curThredds),
+      () => "s3 tooltip '" + curS3.replace(/\n/g, " ").slice(0, 200) + "'");
 // 7b. THE FUSED READING SAYS WHAT IT WAS BUILT FROM (2026-10-07, stream_fusion.py): the NOAA prediction stations with
 //     their distance and share, and the model with the gain and lag that calibrated it - while an OFS-only reading's
 //     tooltip still names the model and its cycle (7 above).

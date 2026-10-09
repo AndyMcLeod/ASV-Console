@@ -17526,7 +17526,8 @@ function currentBasisTxt(cur){
   }
   if(!parts.length || cur.tag)
     parts.push("Model " + ((m && m.label) || cur.source || "?") + ", cycle " + (cur.tag || "?")
-      + (cur.cycle_start_utc ? " covering " + cur.cycle_start_utc + " to " + cur.cycle_end_utc : ""));
+      + (cur.cycle_start_utc ? " covering " + cur.cycle_start_utc + " to " + cur.cycle_end_utc : "")
+      + (cur.via === "s3" ? " (read from NOAA's S3 copy - its model server was down)" : ""));   // ofs_s3, 2026-10-09
   if(cur.model_note) parts.push("No model in it: " + cur.model_note);
   return parts.join(". ");
 }

@@ -71,6 +71,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import currents                            # NOAA OFS surface currents (vendored - see its header)
 import stream_fusion                       # NOAA tidal current predictions + PacIOOS models, fused with the OFS
+import ofs_s3                              # the same OFS files from NOAA's S3 bucket, when its model server is down
 import roc_tracks                          # Remote Operations Center tracking + moving HOME
 
 # --------------------------------------------------------------------------- #
@@ -118,7 +119,7 @@ BOOT_ID = "%d-%d" % (os.getpid(), int(time.time() * 1000))
 # ⚠ EVERY MODULE THE CONSOLE IMPORTS FROM BESIDE ITSELF IS LISTED HERE, and the suites that start a console from a COPY
 # of the program (tests/state_dir.py, tests/build_id.py) copy THIS list - so a new module is added here or a copied
 # console dies at import (stream_fusion.py, 2026-10-07: both suites hung on a console that never came up).
-BUILD_PY = ("asv_console.py", "currents.py", "stream_fusion.py", "roc_tracks.py", "ais_service.py", "gps_sim.py")
+BUILD_PY = ("asv_console.py", "currents.py", "stream_fusion.py", "ofs_s3.py", "roc_tracks.py", "ais_service.py", "gps_sim.py")
 BUILD_RECHECK_S = 5.0                   # how often the files are looked at again (a stat of each, not a read)
 PAGE_BUILD_TOKEN = "__ASV_PAGE_BUILD__"  # replaced in asv.html with the fingerprint it was served at
 
@@ -3763,7 +3764,7 @@ class CurrentsMonitor:
                "near_station_m": f["near_station_m"], "model": f["model"], "sources": status}
         if (ofs.get("ok") and self._ofs and f["model"] is not None and f["w_stations"] < 0.995
                 and (label or "").startswith(self._ofs)):
-            for k in ("tag", "cycle_start_utc", "cycle_end_utc", "projected_h", "note"):
+            for k in ("tag", "cycle_start_utc", "cycle_end_utc", "projected_h", "note", "via"):
                 if ofs.get(k) is not None:
                     out[k] = ofs[k]
         return out
@@ -3792,6 +3793,8 @@ class CurrentsMonitor:
                "projected_h": round(shift_h, 2),
                "cycle_start_utc": cur.start.isoformat().replace("+00:00", "Z"),
                "cycle_end_utc": cur.end.isoformat().replace("+00:00", "Z")}
+        if (getattr(cur, "meta", None) or {}).get("via") == "s3":
+            out["via"] = "s3"                    # read from NOAA's S3 copy (ofs_s3, 2026-10-09)
         if abs(shift_h) > 1e-6:
             # NOT a measurement of now - say so in words, not just a number nobody reads
             out["note"] = ("projected %.1f h by tidal cycle (no forecast frame covers now)"
@@ -3831,7 +3834,23 @@ class CurrentsMonitor:
                 self._last = {"ok": False, "source": self._ofs, "note": note}
             return note
         if not tag:
-            return self._why_no_cycle()
+            why = self._why_no_cycle()
+            if not why:
+                return None
+            # NOAA'S MODEL SERVER IS DOWN, so the same files from its open-data S3 bucket (Andy, 2026-10-09: "add an S3
+            # fallback for NOAA's model server"). ofs_s3 reads them with the standard library - only the surface rows
+            # in this box, by range request - and writes currents' own cache, so the cycle loads below exactly as a
+            # THREDDS one does and the next look finds it cached. Measured that evening: a WCOFS cycle in 15 s, LEOFS's
+            # 127 hourly frames in 71 s. On the monitor's own thread, like the THREDDS fetch it stands in for.
+            try:
+                tag = ofs_s3.ensure_cycle_covering(now, now, bbox, self._ofs)
+            except Exception as e:
+                if "does not overlap" in str(e):
+                    return "%s does not cover this position" % self._ofs
+                return "%s; its S3 copy could not be read either (%s: %s)" % (why, type(e).__name__, str(e)[:80])
+            if not tag:
+                return "%s; its S3 copy holds no %s cycle covering now" % (why, self._ofs.upper())
+            print("[currents] NOAA's model server is down - %s read from its S3 copy" % tag, file=sys.stderr)
         if tag != self._tag or self._cur is None:
             try:
                 self._cur = currents.Currents(tag=tag)
