@@ -1153,10 +1153,13 @@ of the operator.
    **Charted hazards have a SIZE, not just a position.** A wreck symbol on a chart is a
    *position*: the casualty under it can be a 100 m ship, and the ENC says nothing about
    its extent or which way it lies. So wrecks, hulks, obstructions and awash rocks carry
-   an intrinsic **50 m radius** (vessel-configurable via `planning.wreck_radius_m`), and
+   an intrinsic **10 m radius** (vessel-configurable via `planning.wreck_radius_m`), and
    the buffer is added on top of that as the margin it was always meant to be. Objects
    that genuinely *are* point-sized — piles, buoys, beacons — are unaffected. A sized
    hazard draws its circle on the chart, so you can see why a route swings wide.
+   The radius was 50 m until 2026-10-09, when Andy set it to 10 m for all four kinds,
+   wrecks and hulks included. A casualty bigger than 10 m plus the buffer is therefore
+   NOT covered by the default; a vessel that wants more berth sets it in its own file.
 
    Where the chart gives a **sounding over** the hazard (`VALSOU`) that clears the floor
    in force by a metre — tide-corrected, the same as depth areas — the boat can pass over

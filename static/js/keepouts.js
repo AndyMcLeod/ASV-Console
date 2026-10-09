@@ -45,6 +45,10 @@
  *          the Rule 9 lane across the first by its own polygon, and brings a vessel
  *          close to a buoy she keeps to starboard but never to a beacon. asv_core has
  *          neither flag. Covered by tests/enc_channel.js.
+ *       8. THE ASSUMED EXTENT IS 10 m, NOT 50 (2026-10-09, Andy's call, for all four
+ *          kinds - rocks, obstructions, wrecks and hulks): DEFAULTS.wreckRadiusM, equal
+ *          to state.js's V.WRECK_RADIUS_M. asv_core still assumes 50 m. Covered by
+ *          tests/wreck_clearance.js 1b.
  *
  * The fix is covered by tests/clearance_guard.js, which runs in this repo's own
  * pre-commit hook. If it is ever wanted upstream, carry it there as its own
@@ -227,7 +231,7 @@ export const WRECK_CLEAR_MARGIN_M = 1.0;
 export const DEFAULTS = {
   minDepthM: 1.0,        // the navigability floor
   bufferM: 3,            // keep-clear margin around every keep-out
-  wreckRadiusM: 50,      // assumed extent of a hazard the chart does not size
+  wreckRadiusM: 10,      // assumed extent of a hazard the chart does not size (50 until 2026-10-09: drift 8)
   waterOffsetM: 0,       // live water level above chart datum; see depthExcluded
 };
 

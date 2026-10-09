@@ -83,7 +83,11 @@ export const V = {
   HULL_COLOR2: null,       // second livery color, filled across the aft third; null = plain
   // Intrinsic radius for a charted point hazard of UNKNOWN extent - a wreck symbol is a
   // position, not a size, and the casualty under it can be a 100 m ship.
-  WRECK_RADIUS_M: 50,
+  // ⚠ 10 m SINCE 2026-10-09, FOR ALL FOUR KINDS (Andy: "change nogo status for rocks to 10m radius from 50m
+  // radius"; asked whether rocks only, he chose all four - rocks, obstructions, wrecks and hulks). So a casualty
+  // bigger than 10 m + the buffer is NOT covered by the default: a vessel that wants more says so in its file,
+  // planning.wreck_radius_m. keepouts.js DEFAULTS.wreckRadiusM moves with it (wreck_clearance 1b holds both).
+  WRECK_RADIUS_M: 10,
 };
 
 // --- the keep-out model ----------------------------------------------------------------

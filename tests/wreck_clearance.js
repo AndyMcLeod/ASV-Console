@@ -169,6 +169,20 @@ console.log("Charted point-hazard extent — a wreck is a POSITION, not a 3 m do
         "2.5 m over it vs a 2.3 m floor + 1.0 margin");
 }
 
+// 1b. THE ASSUMED EXTENT IS 10 m, FOR ALL FOUR KINDS (Andy, 2026-10-09: "change nogo status for rocks to 10m radius
+// from 50m radius" - asked whether rocks only, he chose all four). The page's default and the keep-out module's are
+// ONE number in two files (chart.js passes the first, a caller with no options gets the second), so both are held
+// here, and each kind is asked through the page's own hazExtent.
+{
+  const { DEFAULTS } = require("../static/js/keepouts.js");
+  const kinds = [...HAZ_UNKNOWN_EXTENT].sort(), r = kinds.map((c) => hazExtent(feat(c, 0, 0)));
+  check("1b. an unsounded rock, obstruction, wreck and hulk each assume 10 m, and both defaults say 10",
+        V.WRECK_RADIUS_M === 10 && DEFAULTS.wreckRadiusM === 10 && kinds.length === 4
+        && ["Hulk_point", "Obstruction_point", "Underwater_Awash_Rock_point", "Wreck_point"].every((c) => kinds.includes(c))
+        && r.every((x) => x === 10),
+        "V " + V.WRECK_RADIUS_M + ", DEFAULTS " + DEFAULTS.wreckRadiusM + "; " + kinds.map((c, i) => c + " " + r[i]).join(", "));
+}
+
 // 4-6. THE REPORTED BUG. A leg passing close to a charted wreck must be refused. At the
 // old buffer-only radius every one of these validated CLEAR.
 {
@@ -176,9 +190,11 @@ console.log("Charted point-hazard extent — a wreck is a POSITION, not a 3 m do
   const BUF = 3;
   check("4. a point 10 m from the wreck is blocked (was clear at a 3 m buffer)",
         blocked({ e: 10, n: 0 }, K, BUF) === true);
-  check("5. a point 40 m away is still inside the berth; 80 m is outside",
-        blocked({ e: 40, n: 0 }, K, BUF) === true && blocked({ e: 80, n: 0 }, K, BUF) === false,
-        "radius = extent " + V.WRECK_RADIUS_M + " + buffer " + BUF);
+  // At the radius, not at numbers picked for one radius (40 and 80 m were written for 50 m; 10 m since 2026-10-09).
+  const IN = V.WRECK_RADIUS_M + BUF - 2, OUT = V.WRECK_RADIUS_M + BUF + 2;
+  check("5. a point 2 m inside extent + buffer is still inside the berth; 2 m outside it is clear",
+        blocked({ e: IN, n: 0 }, K, BUF) === true && blocked({ e: OUT, n: 0 }, K, BUF) === false,
+        "radius = extent " + V.WRECK_RADIUS_M + " + buffer " + BUF + ": " + IN + " m blocked, " + OUT + " m clear");
   // The headline: a straight leg threading 10 m past the wreck.
   const A = enLL(-300, 10), B = enLL(300, 10);
   check("6. A STRAIGHT LEG PASSING 10 m FROM THE WRECK IS REFUSED",
