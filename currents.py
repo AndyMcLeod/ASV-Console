@@ -89,6 +89,19 @@ ANY MODEL, NOT ONLY THE HOURLY ONES ISSUED AT 00/06/12/18 Z (2026-10-07)
     where linear lands 0.099 / 0.112. Hourly models are read exactly as
     before.
 
+EACH MODEL'S OWN TIME ORIGIN (2026-10-09)
+    The OFS family does not share one. Read off each model's newest
+    regulargrid file that day: DBOFS, GOMOFS and WCOFS count seconds since
+    2016-01-01, LEOFS since 2015-01-01 and SSCOFS since 2018-01-01. This took
+    every raw `time` as seconds since EPOCH (2016), so a LEOFS cycle was
+    cached a year late and an SSCOFS one two years early - no frame ever
+    covered now, and the reading said only that no forecast did.
+    `fetch_cycle` now reads the `time` units from the file's own attributes
+    (the DAS) and converts with `epoch_seconds`, and the file NAMES stand as
+    a second witness: a cycle whose frames land outside the hours its names
+    give is refused in words rather than cached misdated. The cache still
+    counts from EPOCH, so nothing that reads it changes.
+
 Read-only against NOAA and against this repo. Nothing here writes model.json.
 """
 import argparse
@@ -113,7 +126,7 @@ CACHE = HERE / 'ofs_cache'
 THREDDS = 'https://opendap.co-ops.nos.noaa.gov/thredds'
 MS_TO_KT = 1.9438444924406046
 FILL = -99999.0
-EPOCH = datetime(2016, 1, 1, tzinfo=timezone.utc)   # OFS `time` units, verified
+EPOCH = datetime(2016, 1, 1, tzinfo=timezone.utc)   # what the CACHE's times count from - not every model's (epoch_seconds)
 SURFACE = 0            # Depth[0] == 0.0 m, checked by verify()
 TIMEOUT = 180
 
@@ -242,6 +255,37 @@ def dap_ascii(base_url: str, projection: str) -> list:
     return vals
 
 
+# Each model's `time` counts from its OWN origin (see the header): CF units,
+# "seconds since 2015-01-01 00:00:00". Everything this module stores or compares
+# counts from EPOCH, so every raw value is converted on the way in.
+_TIME_UNITS = re.compile(r'\s*(second|minute|hour|day)s?\s+since\s+(\d{4})-(\d{1,2})-(\d{1,2})'
+                         r'(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?', re.I)
+_UNIT_S = {'second': 1.0, 'minute': 60.0, 'hour': 3600.0, 'day': 86400.0}
+# How far a cycle's frames may sit from the hours its file NAMES give before the
+# time units are called misread. Once a cycle is whole the names give its span
+# to the hour; a nowcast still being written can put the start up to a day out
+# (WCOFS's runs 24 h). Every origin misread measured is a year or more.
+NAME_TIME_SLACK = timedelta(days=1)
+
+
+def epoch_seconds(value, units):
+    """A model's raw `time` value in its own CF `units`, as seconds since
+    EPOCH. Raises RuntimeError on units it cannot read rather than guessing."""
+    m = _TIME_UNITS.match(units or '')
+    if not m:
+        raise RuntimeError(f'cannot read the time units {units!r}')
+    base = datetime(*(int(g or 0) for g in m.groups()[1:]), tzinfo=timezone.utc)
+    return value * _UNIT_S[m.group(1).lower()] + (base - EPOCH).total_seconds()
+
+
+def _time_units(das: str):
+    """The `time` variable's units out of a DAP2 DAS, or None when it has none.
+    The block is matched at the start of a line, so `ocean_time` is not it."""
+    m = re.search(r'(?ms)^\s*time\s*\{(.*?)^\s*\}', das)
+    u = re.search(r'String\s+units\s+"([^"]*)"', m.group(1)) if m else None
+    return u.group(1) if u else None
+
+
 # --------------------------------------------------------------------------- #
 #  Catalogue: which cycle is current, and which hours it carries
 # --------------------------------------------------------------------------- #
@@ -352,6 +396,14 @@ def fetch_cycle(ofs='dbofs', datestr=None, cycle=None, bbox=None,
     if not _m:
         raise RuntimeError(f'{ofs}: could not read grid dimensions from the DDS')
     ny_full, nx_full = int(_m.group(1)), int(_m.group(2))
+    # The model's own time origin, off the same file's attributes (see the
+    # header). With no units there, EPOCH as before - and the names below
+    # refuse the cycle if that was wrong.
+    try:
+        units = _time_units(_get(first + '.das').decode('utf8', 'replace'))
+    except RuntimeError:
+        units = None
+    to_epoch = (lambda v: epoch_seconds(v, units)) if units else (lambda v: v)
     corners = dap_fetch(first, f'Latitude[0:{ny_full - 1}:{ny_full - 1}][0],'
                                f'Longitude[0][0:{nx_full - 1}:{nx_full - 1}]')
     lats_all, lons_all = corners['Latitude'][0], corners['Longitude'][0]
@@ -388,7 +440,7 @@ def fetch_cycle(ofs='dbofs', datestr=None, cycle=None, bbox=None,
 
     def one(hour_file):
         got = dap_fetch(_file_url(ofs, datestr, cycle, hour_file), proj)
-        return (got['time'][0][0], got['u_eastward'][0], got['v_northward'][0])
+        return (to_epoch(got['time'][0][0]), got['u_eastward'][0], got['v_northward'][0])
 
     say(f'fetching {len(hours)} frames ...')
     with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -396,6 +448,18 @@ def fetch_cycle(ofs='dbofs', datestr=None, cycle=None, bbox=None,
 
     order = frame_order([f[0] for f in frames])
     times = [frames[i][0] for i in order]
+
+    # THE NAMES ARE A SECOND WITNESS. Each file's name says which hour it holds,
+    # so frames landing outside the hours the names give were read from the
+    # wrong origin; cached, no frame would ever cover now and nothing would say
+    # why. Refused in words instead.
+    name0, name1 = cycle_span(datestr, cycle, hours)
+    read0, read1 = EPOCH + timedelta(seconds=times[0]), EPOCH + timedelta(seconds=times[-1])
+    if read0 < name0 - NAME_TIME_SLACK or read1 > name1 + NAME_TIME_SLACK:
+        raise RuntimeError(f'{ofs} {datestr} t{cycle}: its frames read as {read0:%Y-%m-%d %H:%MZ} to '
+                           f'{read1:%Y-%m-%d %H:%MZ}, but its file names say {name0:%Y-%m-%d %H:%MZ} to '
+                           f'{name1:%Y-%m-%d %H:%MZ} - the time units were misread '
+                           f'({units or "none in the DAS, so seconds since 2016-01-01 assumed"})')
 
     blob = bytearray()
     for i in order:

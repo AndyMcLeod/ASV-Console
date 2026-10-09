@@ -306,7 +306,12 @@ netCDF-4 files use, range-reading only the surface rows in the box round the boa
 kilobytes a frame; a WCOFS cycle in about 15 s, LEOFS's 127 hourly frames in about 70 s),
 written into the same cache so everything downstream is unchanged. The tooltip says when a
 cycle came from there. It reads each file's own time units, which differ by model (LEOFS
-counts from 2015, SSCOFS from 2018, the rest from 2016). `GET /api/currents` (`?force=1` to
+counts from 2015, SSCOFS from 2018, the rest from 2016) - **and since the same evening so
+does the model-server path**: the vendored `currents.py` (fixed in `asv_core`) took every
+model as counting from 2016, so it cached Erie's model a year late and Bellingham's two
+years early and no frame ever covered now. It reads the units from each file's own
+attributes now, and a cycle whose frames land outside the hours its file names give is
+refused in words rather than cached misdated. `GET /api/currents` (`?force=1` to
 kick a refresh) serves the same reading headlessly. The **chart's wind rose carries it
 too**: a single-headed **sea-blue arrow** riding the ring, pointing where the water goes,
 with `current N.NN kn DDD°` beneath the wind's reading - the **Current** row's reading, labeled
