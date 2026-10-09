@@ -75,7 +75,12 @@ sea from the wind**; offline it goes calm.
   **yaw** at the wave period (the busy-rudder feel in a beam sea).
 - Together they produce a steady **leeway** (the boat crabs — heading ≠ course made
   good) and, because the wind is **gusty**, a slowly-varying set the autopilot keeps
-  chasing → a **natural slight wander**. The effect is **moderate and capped**: the
+  chasing → a **natural slight wander**. The gusts' **size is the buoys' own**: each
+  buoy's peak gust (NDBC `GST`) over its mean (`WSPD`) is blended like the wind, and
+  the simulated gusts top out at that factor on the mean (up to twice it). Their
+  **timing** and the slow **veer** are the sim's own, since a buoy reports only its
+  period's peak; with no gust reported the sim uses a default (a peak of 1.33x the
+  mean). Until 2026-10-09 every gust was the default. The effect is **moderate and capped**: the
   boat still holds the line in normal conditions and only struggles in genuinely
   rough seas.
 - The line follower rejects the disturbance like a real autopilot: **crab

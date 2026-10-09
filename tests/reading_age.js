@@ -143,12 +143,20 @@ page.updateEnvUI(env({ source: "off", age_s: 50 * 60 }), {});
 const windOff = els["#v_wind"].textContent;
 page.updateEnvUI(env({ monitor_error: "KeyError: 'WSPD'" }), {});
 const windErr = els["#v_wind"].title;
+page.updateEnvUI(env({ wind: { speed_kn: 4.8, dir_from_deg: 310, gust_kn: 6.4, gust_factor: 1.333 } }), {});
+const windGust = { row: els["#v_wind"].textContent, tip: els["#v_wind"].title };
 check("6. the wind row says how old the buoy reports are, and both weather tooltips name it as the oldest in the blend; "
       + "none under a manual override or with the simulator's weather off; a failed update is in the tooltip",
       () => wind.row === "4.8 kn @ 310° · 50" + NB + "min" && /Observed 50\u00a0min ago \(the oldest buoy report in the blend\)/.test(wind.tip)
             && /Observed 50\u00a0min ago/.test(wind.sea) && windManual === "4.8 kn @ 310°" && windOff === "-- (sim only)"
             && /The last update failed: KeyError: 'WSPD'/.test(windErr),
       () => "row '" + wind.row + "'; manual '" + windManual + "'; off '" + windOff + "'");
+// 6g. THE BUOYS' GUST (2026-10-09): on the row as "G", and the tooltip says what it is - or that none was reported
+check("6g. a measured gust reads on the wind row (4.8 G6.4 kn) and the tooltip names it as the buoys' peak gust; "
+      + "with none reported the row has no G and the tooltip says the sim's own default size is in use",
+      () => windGust.row === "4.8 G6.4 kn @ 310° · 50" + NB + "min" && /the buoys' own peak gust \(NDBC GST\)/.test(windGust.tip)
+            && /No gust reported: the sim's gusts use its default size/.test(wind.tip) && !/ G/.test(wind.row),
+      () => "row '" + windGust.row + "'; tip '" + windGust.tip.slice(0, 160).replace(/\n/g, " ") + "'");
 
 // 7. the current
 const cur = (extra) => Object.assign({ ok: true, source: "gomofs", tag: "t", speed_kn: 0.45, set_deg: 120, projected_h: 0,

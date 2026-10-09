@@ -17404,7 +17404,8 @@ function updateEnvUI(env, st){
   // observation in the blend. A manual override has none.
   const envAge = (!simOff && typeof env.age_s==="number") ? " · " + fmtAge(env.age_s) : "";
   $("#v_wind").textContent = simOff ? "-- (sim only)"
-    : (w && w.speed_kn!=null ? (w.speed_kn+" kn @ "+dirTxt(w.dir_from_deg)+envAge) : (env.enabled ? "calm" : "off"));
+    : (w && w.speed_kn!=null ? (w.speed_kn + (w.gust_kn!=null ? " G" + w.gust_kn : "") + " kn @ "+dirTxt(w.dir_from_deg)+envAge)
+                             : (env.enabled ? "calm" : "off"));
   $("#v_sea").textContent = simOff ? "--"
     : (sea && sea.hs_m!=null ? (sea.hs_m.toFixed(2)+" m / "+ (sea.tp_s!=null?sea.tp_s+"s":"?") +" @ "+dirTxt(sea.dir_from_deg) + (sea.derived?" ~":"")) : "--");
   // applied set + crab from the sim telemetry - or, on a link that reports no set of its own, the tidal-stream
@@ -17419,7 +17420,14 @@ function updateEnvUI(env, st){
   const vw=$("#v_wind"); if(vw) vw.style.color = (!env.enabled||simOff)?"var(--ink-faint)":"";
   const ageTip = (!simOff && typeof env.age_s==="number")
     ? "\nObserved " + fmtAge(env.age_s) + " ago (the oldest buoy report in the blend). A buoy whose last report is over 2 h old is left out while a fresher one is in reach." : "";
-  if(vw) setTip(vw, "Ambient wind pushing the sim boat (nearest NOAA buoy, IDW). Sim only." + ageTip + monitorErrTxt(env));
+  // THE GUST IS THE BUOYS' (2026-10-09): G is their peak gust, blended like the wind, and the sim's gusts top out
+  // there; with none reported the sim uses its own default size, and the row says nothing rather than invent one.
+  const gustTip = (!simOff && w && w.speed_kn!=null)
+    ? (w.gust_kn!=null
+       ? "\nG " + w.gust_kn + " kn: the gust, " + (w.gust_src==="manual" ? "set by hand" : "the buoys' own peak gust (NDBC GST), blended like the wind")
+         + ". The sim's gusts reach it, up to twice the mean; their timing and the veer are the sim's own."
+       : "\nNo gust reported: the sim's gusts use its default size, peaking at 1.33x the mean.") : "";
+  if(vw) setTip(vw, "Ambient wind pushing the sim boat (nearest NOAA buoy, IDW). Sim only." + gustTip + ageTip + monitorErrTxt(env));
   const vs=$("#v_sea");
   if(vs) setTip(vs, "Sea state (sig. wave height / period / direction) pushing the sim boat. "
     + "Sim only." + ageTip + monitorErrTxt(env));

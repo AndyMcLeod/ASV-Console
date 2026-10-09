@@ -2911,8 +2911,29 @@ LEEWAY_CAP_MS = 0.9           # cap the set (~1.75 kn) - only bites in extreme c
                               # so normal gusts still modulate the set (-> the wander)
 WAVE_YAW_DEG = 3.0            # peak oscillatory yaw (deg/s) per m Hs, beam seas
 WIND_YAW_DEG = 1.2            # steady weathervane yaw (deg/s) at full beam wind load
-GUST_SPEED_AMP = 0.22        # gust factor amplitude (fraction of mean wind)
-GUST_VEER_DEG = 12.0         # slow wind-direction veer amplitude (deg)
+GUST_SPEED_AMP = 0.22        # gust factor amplitude (fraction of mean wind) - the FALLBACK since 2026-10-09: used only
+                             # when no buoy in the blend reports a gust and the operator has set none
+GUST_VEER_DEG = 12.0         # slow wind-direction veer amplitude (deg) - still the sim's own: no buoy reports it
+GUST_SHAPE_PEAK = 1.5        # the gust shape's own peak, sin(a) + 0.5 sin(b): amplitude = (gust factor - 1) / this
+GUST_MIN_WSPD_MS = 1.0       # a buoy's GST / WSPD says nothing below this mean: near calm a puff is "factor 4"
+GUST_FACTOR_MAX = 3.0        # a buoy's GST / WSPD above this (or below 1) is a bad row, not a gust
+GUST_SIM_FACTOR_MAX = 2.0    # the symmetric shape's lull reaches calm at 2x: the sim's peak stops there
+
+
+def gust_multiplier(t, gust_factor=None):
+    """The wind's gust multiplier at sim time t (s), applied to the blended mean wind each tick.
+
+    ITS SIZE IS THE BUOYS' (Andy, 2026-10-09: "Wind gusts are made up by the simulator; the buoys' gust readings
+    are never used. Correct this"). The peak, 1 + amplitude x GUST_SHAPE_PEAK, is the measured gust factor - GST over
+    WSPD, blended (fetch_environment) - so the simulated gusts top out at the gust the buoys reported, up to twice
+    the mean (GUST_SIM_FACTOR_MAX: past that the symmetric lull would go below calm). With no gust measured, the
+    default GUST_SPEED_AMP (a peak of 1.33x). Its TIMING is still the sim's own, as is the veer: a buoy reports the
+    peak gust of its averaging period, not when the gusts came or how the direction swung."""
+    if gust_factor is None:
+        amp = GUST_SPEED_AMP
+    else:
+        amp = (min(max(gust_factor, 1.0), GUST_SIM_FACTOR_MAX) - 1.0) / GUST_SHAPE_PEAK
+    return 1.0 + amp * (math.sin(t / 17.0) + 0.5 * math.sin(t / 6.3 + 1.7))
 
 
 def _env_http_get(url, timeout=15.0):
@@ -3053,6 +3074,20 @@ def fetch_environment(lat, lon):
         frm = (math.degrees(math.atan2(u, v)) + 180.0) % 360.0
         wind = {"speed_ms": round(speed, 2), "speed_kn": round(speed * 1.9438, 1),
                 "dir_from_deg": round(frm, 0), "stations": [sid for _, sid, _ in windset]}
+        # THE BUOYS' OWN GUSTS (Andy, 2026-10-09: "Wind gusts are made up by the simulator; the buoys' gust
+        # readings are never used. Correct this"). GST - NDBC's peak 5- or 8-second gust in the period WSPD averages -
+        # was parsed with every other column and then dropped. Each buoy's gust FACTOR, GST / WSPD, is blended over the
+        # same buoys and weights as the wind (renormalized over those reporting one), and the gust is that factor on
+        # the blended mean. A buoy near calm (WSPD under 1 m/s) or with a factor below 1 or over 3 says nothing about
+        # gustiness and is left out. No buoy reporting a gust = no gust here, and the simulator falls back to its own
+        # default size (gust_multiplier) - which the card does not dress up as a reading.
+        gset = [(w, r["GST"] / r["WSPD"]) for w, (d, sid, r) in zip(ws, windset)
+                if r.get("GST") is not None and r["WSPD"] >= GUST_MIN_WSPD_MS
+                and 1.0 <= r["GST"] / r["WSPD"] <= GUST_FACTOR_MAX]
+        if gset:
+            gf = sum(w * f for w, f in gset) / sum(w for w, _ in gset)
+            wind.update({"gust_factor": round(gf, 3), "gust_ms": round(speed * gf, 2),
+                         "gust_kn": round(speed * gf * 1.9438, 1), "gust_src": "buoy"})
     # --- sea: IDW WVHT/DPD + MWD (as a direction vector) ------------------------
     seaset = [(d, sid, r) for d, sid, r in obs if r.get("WVHT") is not None][:ENV_K]
     sea = None
@@ -3141,14 +3176,14 @@ class EnvMonitor:
             return self._enabled
 
     def set_manual(self, fields):
-        """fields: dict possibly with wind_kn, wind_from, hs_m, tp_s, wave_from;
+        """fields: dict possibly with wind_kn, wind_from, gust_kn, hs_m, tp_s, wave_from;
         None/'' clears a field; {'clear': True} drops the whole override."""
         with self._lock:
             if fields.get("clear"):
                 self._manual = {}
                 return
             m = dict(self._manual)
-            for k in ("wind_kn", "wind_from", "hs_m", "tp_s", "wave_from"):
+            for k in ("wind_kn", "wind_from", "gust_kn", "hs_m", "tp_s", "wave_from"):
                 if k in fields:
                     v = fields[k]
                     if v in (None, ""):
@@ -3176,8 +3211,14 @@ class EnvMonitor:
                 if "wind_kn" in man:
                     wind["speed_kn"] = round(man["wind_kn"], 1)
                     wind["speed_ms"] = round(man["wind_kn"] / 1.9438, 2)
+                    for k in ("gust_factor", "gust_ms", "gust_kn", "gust_src"):   # the buoys' gust was the buoys' wind's
+                        wind.pop(k, None)
                 if "wind_from" in man:
                     wind["dir_from_deg"] = round(man["wind_from"], 0)
+            if "gust_kn" in man and wind and wind.get("speed_ms", 0.0) > 0.0:   # the operator's gust (2026-10-09)
+                gf = min(GUST_FACTOR_MAX, max(1.0, (man["gust_kn"] / 1.9438) / wind["speed_ms"]))
+                wind.update({"gust_factor": round(gf, 3), "gust_ms": round(wind["speed_ms"] * gf, 2),
+                             "gust_kn": round(wind["speed_ms"] * gf * 1.9438, 1), "gust_src": "manual"})
             if "hs_m" in man or "tp_s" in man or "wave_from" in man:
                 sea = sea or {"hs_m": 0.0, "tp_s": 4.0, "dir_from_deg": 0.0, "derived": False}
                 if "hs_m" in man:
@@ -3225,6 +3266,7 @@ class EnvMonitor:
         return {
             "wind_from_deg": (wind or {}).get("dir_from_deg", 0.0),
             "wind_speed_ms": ws,
+            "gust_factor": (wind or {}).get("gust_factor"),       # None = no gust measured (2026-10-09)
             "wave_from_deg": (sea or {}).get("dir_from_deg", 0.0),
             "hs_m": hs,
             "tp_s": (sea or {}).get("tp_s", 4.0),
@@ -4425,7 +4467,8 @@ class SimVcu(VcuLink):
             # the mean wind (sim-time). A CONSTANT wind gives a constant crab (flat
             # track); a gusty one makes the crab lag and the track meander - THIS is
             # what produces the natural slight wandering the line-follower chases.
-            gust = 1.0 + GUST_SPEED_AMP * (math.sin(tt / 17.0) + 0.5 * math.sin(tt / 6.3 + 1.7))
+            # Since 2026-10-09 the gusts' SIZE is the buoys' measured gust factor; their timing is still ours.
+            gust = gust_multiplier(tt, env.get("gust_factor"))
             veer = GUST_VEER_DEG * (math.sin(tt / 23.0 + 0.5) + 0.4 * math.sin(tt / 8.0))
             ws = max(0.0, env["wind_speed_ms"] * gust)
             wfrom = env["wind_from_deg"] + veer
@@ -6764,7 +6807,7 @@ class Handler(BaseHTTPRequestHandler):
                 ENV.set_enabled(bool(body.get("enabled")))
             if body.get("auto"):                    # drop the manual override -> live buoys
                 ENV.set_manual({"clear": True})
-            man = {k: body[k] for k in ("wind_kn", "wind_from", "hs_m", "tp_s", "wave_from")
+            man = {k: body[k] for k in ("wind_kn", "wind_from", "gust_kn", "hs_m", "tp_s", "wave_from")
                    if k in body}
             if man:
                 try:
