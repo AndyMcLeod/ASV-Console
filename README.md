@@ -409,7 +409,17 @@ controls window is the toolbar. **Every card on the chart window is resizable** 
 drag its bottom-right corner; the size is remembered per card, and only a size you
 actually changed is stored, so a card's default can still be improved later. If the controls window is closed the toolbar and panels
 return to the main window automatically, and a **⏏ Controls** pill appears on the top
-bar to reopen it — so the console is never left without its controls. Pass
+bar to reopen it — so the console is never left without its controls (within 6-7 s of
+the window's last word: in testing, a closing window's goodbye never arrived, so the
+chart notices it has gone). **More than two pages** (2026-10-10, Andy: closing the controls
+window left the chart without its cards, and the alert card flashed): every start of the
+console opens a chart and a controls window, and pages left open from before reconnect on
+their own. Only the **supervising** chart drives the controls window - it alone mirrors into
+it, carries out its clicks and hides its own cards; a view-only chart keeps its own, and
+TAKE OVER moves the controls window with supervision. Of two controls windows the
+**newer steps aside**: it closes itself, or, where the browser will not let it, goes silent
+and says ANOTHER CONTROLS WINDOW IS ALREADY OPEN. And the mirror is sent only when it
+changes - it used to go out four times a second regardless. Pass
 `--single-window` to skip the second window. A **third window** opens the NOAA
 CO-OPS water-levels page for the station nearest the vessel — the station is
 derived from the live GPS fix, not configured, and the depth correction behind it

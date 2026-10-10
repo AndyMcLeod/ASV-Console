@@ -1158,6 +1158,20 @@ function lsBool(key, dflt){
 const UIROLE = (new URLSearchParams(location.search).get("panel") === "controls") ? "controls" : "main";
 document.title = UIROLE === "controls" ? "ASV Controls" : "ASV Chart";        // distinct tab names
 const uiBus = ("BroadcastChannel" in window) ? new BroadcastChannel("asv_ui") : null;
+// ⚠ THE CHANNEL REACHES EVERY PAGE OF THIS CONSOLE, NOT ONE PAIR (Andy, 2026-10-10: "When closing the control browser
+// all the cards failed to come over to chart window. The Alert card is flashing with continuous updates."). Every
+// start of the console opens a chart window and a controls window, and pages left open from before reconnect on
+// their own - his session had two chart pages reporting in (the console's supervisor count). With no idea of WHO was
+// on the other end: both charts mirrored into the controls window, four times a second each, and it swapped between
+// their two alert cards (the same banners at different times) - the flashing, reproduced; every click there ran in
+// both charts; and a second controls window left open answers for the one closed, so the chart keeps its cards
+// hidden - reproduced, and the likely reason his did not come back. So each controls
+// page now says which it is and when it was opened (UI_BORN): the chart keeps a table of the ones alive, only the
+// SUPERVISING chart drives the controls window, and a newer controls page that hears an older one steps aside.
+const UI_PEER_GONE_MS = 6000;      // a controls page not heard from for this long is gone (the 6 s it always was)
+const UI_BORN = Date.now();        // when this page was opened: of two controls windows the OLDER stays
+const uiPeers = new Map();         // chart window: controls page id -> when last heard
+let uiYielded = false;             // controls window: it stepped aside for an older one
 // Every pop-out this console has. There is no Mission entry: the Mission readout is a
 // section of #vcard, so it rides across on that card's mirror.
 const UI_BRIDGED = [".controls", "#linePanel", "#boundPanel", "#searchPanel",
@@ -13913,40 +13927,48 @@ function setupUISplit(){
     // not delivered while this window is occluded, so a resize made and then switched away
     // from would rely entirely on beforeunload. mouseup is event-driven and always lands.
     window.addEventListener("mouseup", uiSaveSoon);
-    uiBus.onmessage = ev=>{ const m=ev.data; if(!m) return;
+    // Every presence message says WHICH controls page this is and when it was opened (see UI_BORN).
+    const say = t => { if(!uiYielded) uiBus.postMessage({t, from: CLIENT_ID, born: UI_BORN}); };
+    uiBus.onmessage = ev=>{ const m=ev.data; if(!m || uiYielded) return;
       if(m.t==="sync") applyUISync(m);
-      else if(m.t==="ping?") uiBus.postMessage({t:"ping"}); }; // echo main's poll (event-driven:
+      else if(m.t==="ping?") say("ping");          // echo main's poll (event-driven:
       // message delivery is NOT throttled in a background tab, unlike the timer below —
       // as a background TAB this page's setInterval slows to ~1/min and the main window
       // saw the peer "gone" for most of every minute, flapping its toolbar/panels back)
+      // ANOTHER CONTROLS PAGE, OPENED BEFORE THIS ONE: this one steps aside (uiYield).
+      else if(m.t==="ping" && m.from && m.from !== CLIENT_ID && uiOlder(m)) uiYield(); };
     // ask main to push current state; retry so boot order (main vs controls) never matters
-    [0, 400, 1200, 3000].forEach(ms=> setTimeout(()=> uiBus.postMessage({t:"hello"}), ms));
+    [0, 400, 1200, 3000].forEach(ms=> setTimeout(()=> say("hello"), ms));
     // presence: main hides its toolbar/panels only while pings arrive, and a bye
     // (or ping timeout, if we crash) puts everything back on the main window. The
     // interval still helps when this page is a visible separate window and main is not.
-    setInterval(()=> uiBus.postMessage({t:"ping"}), 2000);
-    window.addEventListener("beforeunload", ()=> uiBus.postMessage({t:"bye"}));
+    setInterval(()=> say("ping"), 2000);
+    window.addEventListener("beforeunload", ()=> say("bye"));
   } else {                                            // main = single source of truth
-    // controls-window presence: hide the toolbar/panels here only while the peer is
-    // alive. hello/ping set ui-split; bye (close) or a ping timeout (crash) clears it
-    // so the toolbar comes back — --single-window simply never gets a ping.
-    let lastPing = 0;
-    const peerSeen = ()=>{ lastPing = Date.now();
-      if(!document.body.classList.contains("ui-split")){ document.body.classList.add("ui-split"); render(); } };
-    const peerGone = ()=>{ lastPing = 0;
-      if(document.body.classList.contains("ui-split")){ document.body.classList.remove("ui-split"); render(); } };
+    // controls-window presence: hide the toolbar/panels here only while a controls page is
+    // alive AND this is the chart that drives it (uiSplitApply). hello/ping mark a page alive;
+    // its bye (close) or a ping timeout (crash) drops it, so the toolbar comes back —
+    // --single-window simply never gets a ping. A page that names no id (one loaded before
+    // 2026-10-10) is tracked as one anonymous page, as every page was before.
+    const peerSeen = id=>{ uiPeers.set(id || "anon", Date.now()); uiSplitApply(); };
+    const peerBye = id=>{ uiPeers.delete(id || "anon"); uiSplitApply(); };
     // poll the peer: the controls page echoes ping? instantly even as a throttled
     // background tab (its own 2 s ping does not survive tab throttling — ~1/min).
     setInterval(()=> uiBus.postMessage({t:"ping?"}), 2000);
     // No peerGone verdict while THIS tab is hidden: our own timers are throttled too,
     // so the 6 s window misjudges — and nobody is looking at a hidden main anyway.
+    // ASKED EVERY SECOND (2026-10-10; it was every 3 s, so a closed controls window gave the cards back 6-9 s later -
+    // measured 9 s - which reads as never). A close does not reliably deliver its bye, so this is the usual way back:
+    // 6-7 s now. The 6 s itself stays: it is what rides out this page's measured 1.5-4.1 s stalls without flapping.
     setInterval(()=>{ if(document.hidden) return;
-      if(lastPing && Date.now()-lastPing > 6000) peerGone(); }, 3000);
+      if(uiPeersPrune(Date.now())) uiSplitApply(); }, 1000);
     uiBus.onmessage = ev=>{ const m=ev.data; if(!m) return;
-      if(m.t==="hello"){ peerSeen(); pushUISync(); return; }
-      if(m.t==="ping"){ peerSeen(); return; }
-      if(m.t==="bye"){ peerGone(); return; }
-      if(m.t!=="ev") return;
+      if(m.t==="hello"){ peerSeen(m.from); pushUISync(true); return; }
+      if(m.t==="ping"){ peerSeen(m.from); return; }
+      if(m.t==="bye"){ peerBye(m.from); return; }
+      // ⚠ ONLY THE SUPERVISING CHART CARRIES OUT WHAT THE CONTROLS WINDOW SENDS. Every chart page hears it, and
+      // before 2026-10-10 every one ran it: one click on the controls window, carried out once per chart open.
+      if(m.t!=="ev" || !supervising()) return;
       const el = document.getElementById(m.id); if(!el) return;
       if(m.kind==="click"){ el.click(); }
       else if(m.kind==="val"){
@@ -13968,12 +13990,23 @@ function setupUISplit(){
     pushUISync();
   }
 }
-function pushUISync(){
+// ⚠ ONE CHART DRIVES THE CONTROLS WINDOW: the supervising one (2026-10-10). Two charts mirroring into it each sent
+// their own alert card, and the controls window showed whichever came last. And the SAME PICTURE IS NOT SENT AGAIN:
+// the page writes many readouts every frame whether or not they changed (the water note, the guard bar's words, the
+// ROC list), each write is a mutation to the observer above, and the whole mirror went out four times a second while
+// nothing had changed. `force` - a controls page that has just said hello, or a chart that has just taken over - has
+// no picture yet, and gets one.
+let uiSyncLast = "";
+function pushUISync(force){
   if(!uiBus) return;
+  if(UIROLE !== "controls" && !supervising()) return;
   const html={}, vals={};                             // outerHTML for structure; live field values separately
   for(const s of UI_BRIDGED){ const el=document.querySelector(s); if(!el) continue;
     html[s]=el.outerHTML;
     el.querySelectorAll("input,select,textarea").forEach(f=>{ if(f.id) vals[f.id]={value:f.value, checked:f.checked}; }); }
+  const key = JSON.stringify([html, vals]);
+  if(!force && key === uiSyncLast) return;
+  uiSyncLast = key;
   uiBus.postMessage({t:"sync", html, vals});
 }
 function applyUISync(m){
@@ -13989,6 +14022,48 @@ function applyUISync(m){
   if(m.vals){ for(const id in m.vals){ const f=document.getElementById(id); if(!f || f===foc) continue;
     const v=m.vals[id]; if(f.type==="checkbox"||f.type==="radio") f.checked=v.checked; else f.value=v.value; } }
   syncUICards();                                        // a hidden panel hides its whole card
+}
+// Chart window: drop every controls page not heard from for UI_PEER_GONE_MS; true when one was dropped.
+function uiPeersPrune(now){
+  let dropped = false;
+  for(const [id, t] of uiPeers) if(now - t > UI_PEER_GONE_MS){ uiPeers.delete(id); dropped = true; }
+  return dropped;
+}
+// Chart window: SPLIT - its toolbar and cards hidden here, shown in the controls window - only while a controls page is
+// alive AND this is the chart that drives it. A view-only chart (another tab supervises) keeps its own cards, as it
+// would standing alone: the controls window is the supervising chart's. Asked on every peer change and every change of
+// supervision (uiSupervisionChanged).
+function uiSplitApply(){
+  if(UIROLE === "controls") return;
+  const on = uiPeers.size > 0 && supervising();
+  if(document.body.classList.contains("ui-split") !== on){ document.body.classList.toggle("ui-split", on); render(); }
+}
+// The chart that takes supervision takes the controls window with it, and gives it a picture at once; the one that
+// loses it shows its own cards again.
+function uiSupervisionChanged(nowSupervising){
+  if(!uiBus || UIROLE === "controls") return;
+  uiSplitApply();
+  if(nowSupervising) pushUISync(true);
+}
+// Controls window: is the page that sent `m` older than this one? The older of two controls windows stays - after a
+// console restart it is the one the operator arranged; the one the restart opened is the newcomer.
+function uiOlder(m){
+  const b = +m.born;
+  return Number.isFinite(b) && (b < UI_BORN || (b === UI_BORN && String(m.from) < String(CLIENT_ID)));
+}
+// Controls window: STEP ASIDE for an older controls page. It goes silent at once - no ping, no echo, no bye, which
+// would read in the chart as the one controls window closing - and closes itself; a browser that will not let a page
+// close a window it did not open gets the window told why it has nothing to show.
+function uiYield(){
+  if(uiYielded) return;
+  uiYielded = true;
+  try{ window.close(); }catch(e){}
+  setTimeout(()=>{ try{
+    document.body.innerHTML = '<div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;'
+      + 'background:#0a141c;color:#e8b46a;font:600 15px var(--mono,Consolas,monospace);text-align:center;padding:24px;">'
+      + 'ANOTHER CONTROLS WINDOW IS ALREADY OPEN.<br><br>This one has stepped aside so the console has one. '
+      + 'Close this window.</div>';
+  }catch(e){} }, 300);
 }
 // Controls window only: wrap each panel/table in a persistent .uicard the operator can
 // drag (by the grip) and resize (native corner). The card owns position/size and is NOT
@@ -14637,6 +14712,7 @@ const SUPERVISOR_BEAT_MS = 2000, SUPERVISOR_STALE_MS = 10000;
 const SUPERVISOR_ANY = ["/api/cmd/stop", "/api/cmd/pause", "/api/cmd/estop"];   // never gated, in either direction
 const SUPERVISES = UIROLE === "main";               // the controls window never holds the post - see above
 let supHolder = null, supStale = false, supSaidViewOnly = false;
+let supWas = true;                                   // what supervising() said last (it is true until the console says)
 let supBeatMs = SUPERVISOR_BEAT_MS, supStaleMs = SUPERVISOR_STALE_MS;
 let supLastReport = 0, supLastStream = 0, supStreamOnScreen = true;
 // Nobody supervising (a console that has not been told yet, or one from before this existed) means this tab is not
@@ -14666,6 +14742,8 @@ function applySupervisor(sup){
       + "is commanded from here, except Stop, Pause and E-STOP. Press TAKE OVER in the top bar to command from this tab.");
   }
   if(supervising()) supSaidViewOnly = false;
+  // The controls window goes with supervision (2026-10-10): only the supervising chart drives it.
+  if(supervising() !== supWas){ supWas = supervising(); uiSupervisionChanged(supWas); }
 }
 async function supervisorBeat(take){
   try{

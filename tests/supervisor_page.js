@@ -109,6 +109,10 @@ function makeWorld(role) {
     decl(/^const CMD_TIMEOUT_MS = [^;]*;/m),
     decl(/^const SUPERVISES = [^;]*;/m),
     decl(/^let supHolder = [^;]*;/m),
+    // applySupervisor hands a change of supervision to the split windows (2026-10-10); their side is
+    // tests/ui_split_peers.js, so here it is a stand-in.
+    decl(/^let supWas = [^;]*;/m),
+    "const uiSupervisionChanged = () => {};",
     decl(/^let supBeatMs = [^;]*;/m),
     decl(/^let supLastReport = [^;]*;/m),
     decl(/^const VIEW_ONLY_LIVE = [^;]*;/m),
