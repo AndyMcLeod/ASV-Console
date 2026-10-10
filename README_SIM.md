@@ -189,7 +189,7 @@ Run states: `idle · running · paused · stopped · complete`.
 The energy model comes from the **active vessel** (`power.type`), and the sim
 depletes it live so you can watch the gauge band change on a long run.
 
-**Battery vessels** (`power.type: "battery"` — e.g. `zboat_1800hs`, `example_usv_4m`)
+**Battery vessels** (`power.type: "battery"` — `zboat_1800hs`)
 report a voltage that sags with load, banded from `power.battery_v`. For
 `zboat_1800hs`:
 
@@ -200,13 +200,16 @@ report a voltage that sags with load, banded from `power.battery_v`. For
 | Critical | 20.0 V | approaching loss of control |
 | Empty | 18.0 V | complete failure (steering fails first) |
 
-**Fuel vessels** (`power.type: "fuel"` — the diesel `drix08`) report **fuel % plus
-live endurance (h) and range (nm)** at the current speed instead of a voltage. The
-sim burns from `power.fuel`: `burn ≈ idle + (full − idle)·(v/vmax)^exp` L/h, with
-warn/crit reserve bands. The DriX's block (250 L, 0.8→10.4 L/h, exp 3.5) reproduces
-Exail's published endurances (~10 d @ 4 kn, ~7 d @ 7 kn, 24 h @ 14 kn; ~1,000 nm
-range). Its 24 V lithium service battery powers hotel/payload loads only and isn't
-the propulsion energy source, so it isn't modeled as the endurance limit.
+**Fuel vessels** (`power.type: "fuel"` — both DriX profiles and `ben_cworker4`) report
+**fuel % plus live endurance (h) and range (nm)** at the current speed instead of a
+voltage. The sim burns from `power.fuel`: `burn ≈ idle + (full − idle)·(v/vmax)^exp` L/h,
+with warn/crit reserve bands. The DriX's blocks are the Fuel planner's measured laws
+(250 L; 1.05→7.21 L/h, exp 2.77 with the EM2040 gondola; 1.05→5.96 L/h, exp 1.62 with the
+EM712), where they used to reproduce Exail's published endurances. Her 24 V lithium service
+battery powers hotel/payload loads only and isn't the propulsion energy source, so it isn't
+modeled as the endurance limit. BEN's block is a **placeholder** sized to her 20 h of survey
+at full throttle (5.5 kn), with 100 "liters" so the gauge reads in percent, until her tank
+size and burn are known.
 
 > **Caveat carried from the manual:** on the real boat, battery voltage is
 > telemetered to the **RC transmitter**, and it is not yet confirmed to be on the
@@ -404,7 +407,7 @@ for `drix08`) is untouched and comes back on the next start or vessel switch.
 
 ```bash
 curl -s localhost:8791/api/vessel | python -m json.tool          # active + available
-curl -s -X POST localhost:8791/api/vessel -d '{"id":"example_usv_4m"}'  # switch (must be safe/idle)
+curl -s -X POST localhost:8791/api/vessel -d '{"id":"ben_cworker4"}'  # switch (must be safe/idle)
 ```
 
 ---

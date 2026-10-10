@@ -1,0 +1,70 @@
+{
+  "id": "ben_cworker4",
+  "name": "BEN (C-Worker 4)",
+  "class": "4 m survey ASV",
+  "notes": "BEN, the Bathymetric Explorer and Navigator: an ASV Global C-Worker 4 built in 2016, the 4 m ASV this console models (Andy, 2026-10-10: 'It is to be used as the 4m ASV in your current vessel file'). A Yanmar 3YM30AE diesel through a centrifugal clutch, direct drive to a waterjet, with a Kongsberg EM2040P on a ram amidships. MEASURED off ASV Global's general arrangement ASV-396-7-000-i0001-01-C, rev C, 08/03/2016 (embedded in 'BEN Calibration and Offsets Narrative for BEN_v1.0', UNH CCOM, 2018): length, hull draft, and the side areas above and below the waterline. Andy's own figures: 5.5 kn through the water, surveying at full throttle, for 20 h. The beam is the C-Worker 4 sheet's. ESTIMATED, not measured: the front wind area, the turn rate, the loiter speed, the under-keel clearance, the buffer, the maneuvering and autopilot numbers, and the whole fuel block (see its source). Until 2026-10-10 this place was held by example_usv_4m, an illustrative hull with a battery.",
+  "hull": {
+    "loa_m": 4.21,
+    "beam_m": 1.6,
+    "above_water_h_m": 0.82,
+    "draft_m": 0.66,
+    "wind_cd": 1.0,
+    "hull_cd": 1.0,
+    "wind_area_side_m2": 3.46,
+    "wind_area_front_m2": 1.7,
+    "underwater_lateral_area_m2": 1.39,
+    "wind_source": "SIDE MEASURED OFF THE GA (2026-10-10): the drawing's 1700 mm dimension scales it at 2.562 mm/px, and it reproduces the drawing's own 404 mm and 630 mm vertical dimensions to 0.4%. The vessel's outer silhouette above the waterline - hull, deckhouse, mast, radome, antennas and camera - is 3.46 m^2 (the mast, radome, antennas and camera 0.27 of it); overall 4.21 m from the jet guard to the bow, 3.90 m on the waterline, the antenna tops 1.97 m above water. FRONT ESTIMATED, 1.7 m^2 (1.5-1.9): no front view is drawn. The hull's face, the published 1.6 m beam x 0.69 m freeboard at the forward deck less a tenth for the topsides' shape, about 0.99; the deckhouse, 0.39 m proud of that deck at an assumed 1.2 m wide, about 0.47; the superstructure about 0.27. above_water_h_m is the side area / length, used only where these areas are absent.",
+    "underwater_source": "MEASURED OFF THE SAME GA: the silhouette from the waterline to the hull bottom (the drawing's 404 mm line) - hull, skeg, and the waterjet and its guard - is 1.39 m^2. The drawing's 2016 sidescan, below the hull, is not BEN today and is left out. The EM2040P's pod adds area when the ram lowers it; it is left out too, because the smaller area gives the larger leeway.",
+    "draft_source": "0.66 m is the deepest point while SURVEYING - the EM2040P's face with the ram extended - not the hull: the 2018 offsets diagram in that UNH CCOM narrative puts it 0.659 m below the waterline extended and 0.359 m retracted (a 300 mm stroke), and says the sonar is normally run extended (Andy, 2026-10-10: 'use the 2018 offsets, 0.66 m'). The hull alone draws 0.404 m (the GA). It was 1.3 m for the day this file was written, from an August figure of 0.9 m below the hull that the offsets diagram does not bear out."
+  },
+  "propulsion": {
+    "speeds_kn": {
+      "low": 2.0,
+      "survey": 5.5,
+      "high": 5.5
+    },
+    "source": "Andy, 2026-08-26: 5.5 kn through the water is her top speed, and 'BEN surveys at full throttle usually', so survey = high = 5.5 kn (the C-Worker 4 sheet's 'up to 9 knots' is not this boat). Selectable in whole knots, 2 to 5. low 2.0 kn is ESTIMATED (WorldView's loiter figure)."
+  },
+  "maneuvering": {
+    "max_turn_rate_deg_s": 25,
+    "steering_settle_s": 2.5,
+    "approach_m": 3.0,
+    "lookahead_m": 8.0,
+    "arrival_radius_m": 5.0
+  },
+  "autopilot": {
+    "xte_ki_deg": 0.3,
+    "xte_i_max_deg": 10.0
+  },
+  "power": {
+    "type": "fuel",
+    "fuel": {
+      "capacity_l": 100,
+      "burn_lph_idle": 1.0,
+      "burn_lph_full": 5.0,
+      "burn_exp": 3.0,
+      "warn_frac": 0.25,
+      "crit_frac": 0.1,
+      "source": "PLACEHOLDER, NOT BEN'S TANK: her capacity and burn are not known. Sized to Andy's one figure - 20 h of survey at full throttle (5.5 kn) - with 100 'liters' so the gauge's liters read as percent of a full tank: full burn 5.0 an hour, so a full tank is 20 h at survey speed and 110 nm. The idle burn (1.0) and the exponent (3, power against speed) are guesses. Replace all four with BEN's tank size and her measured burn."
+    }
+  },
+  "planning": {
+    "nogo_buffer_m": 8.0,
+    "under_keel_clearance_m": 0.65,
+    "min_survey_line_m": 25,
+    "search": {
+      "expbox_step_m": 20,
+      "sector_radius_m": 60,
+      "parallel_length_m": 80,
+      "parallel_spacing_m": 15,
+      "parallel_lanes": 8
+    }
+  },
+  "spawn": {
+    "lat": 42.137083,
+    "lon": -80.087367
+  },
+  "display": {
+    "hull_color": "#4aa3df"
+  }
+}

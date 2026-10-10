@@ -539,8 +539,8 @@ try:
     _c, v = api(port, "/api/vessels")
     ids = [x.get("id") for x in v.get("vessels", [])]
     check("2. /api/vessels lists every profile on disk and names the active one",
-          lambda: {"drix08", "zboat_1800hs", "example_usv_4m"} <= set(ids)
-          and v.get("active") == "drix08",
+          lambda: {"drix08", "zboat_1800hs", "ben_cworker4"} <= set(ids)
+          and v.get("active") == "drix08_em712",          # the default since c0af6dffaf (2026-10-09)
           lambda: "active=%s ids=%s" % (v.get("active"), ids))
 
     # ---- TIDE (before any switch - position-dependent) ----------------------------- #
@@ -654,7 +654,7 @@ try:
     check("8. the switch REFUSES 409 while armed - swapping physics under a live boat "
           "is incoherent, and the active vessel is unchanged",
           lambda: c8 == 409 and "disarm" in (sw.get("error") or "")
-          and api(port, "/api/vessels")[1].get("active") == "drix08",
+          and api(port, "/api/vessels")[1].get("active") == "drix08_em712",
           lambda: "%s %s" % (c8, (sw.get("error") or "")[:44]))
     cmd(port, "/api/cmd/arm", {"on": False})
 
@@ -721,7 +721,7 @@ try:
           "acceptance pair",
           lambda: c9b == 400,
           lambda: "%s" % c9b)
-    cmd(port, "/api/vessel", {"id": "drix08"})       # leave the console as found
+    cmd(port, "/api/vessel", {"id": "drix08_em712"})  # leave the console as found (the default it booted as)
     wait_for(port, lambda s: (s["status"] or {}).get("energy_type") == "fuel")
 
     # --- OPERATING PORTS: the base and the boat are chosen separately ---------------

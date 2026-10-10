@@ -19,7 +19,7 @@
     powershell -ExecutionPolicy Bypass -File tools\make_shortcut.ps1
 
 .EXAMPLE
-    powershell -ExecutionPolicy Bypass -File tools\make_shortcut.ps1 -Name "ASV Console (4 m USV)" -Arguments "--vessel example_usv_4m"
+    powershell -ExecutionPolicy Bypass -File tools\make_shortcut.ps1 -Name "ASV Console (BEN)" -Arguments "--vessel ben_cworker4"
     Makes a SECOND shortcut beside the first, on another vessel profile.
     start_sim.bat forwards its arguments to asv_console.py, so anything that
     accepts works here: --vessel, --port 8792 for a console beside the first,

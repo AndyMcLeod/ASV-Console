@@ -414,7 +414,7 @@ console.log("A paused survey leaves a hole, and the resume has to close it:");
         () => __backLengths() === 12 && Math.abs(resumeBackM() - 12 * 7.71) < 0.01
               && /V\.VESSEL && V\.VESSEL\.hull && V\.VESSEL\.hull\.loa_m/.test(grab("resumeBackM")),
         () => "12 x 7.71 m = " + resumeBackM().toFixed(1) + " m on this hull; the 1.9 m "
-              + "launch would back up 22.8 m and the 4 m example 48.0 m. A bare 12 m would "
+              + "launch would back up 22.8 m and the 4.21 m BEN 50.5 m. A bare 12 m would "
               + "be a fifth of the overlap on the big hull and ten times too much on the small");
   const savedV = V.VESSEL; V.VESSEL = null;
   const none = resumeBackM();

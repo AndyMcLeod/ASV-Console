@@ -342,7 +342,7 @@ port whose entry names no model (`ofs`), nor while NOAA's model server is down.
 ```
 python asv_console.py --sim            # simulator, opens a browser tab
 python asv_console.py --sim --browser none --port 8791   # headless, no auto-open
-python asv_console.py --sim --vessel example_usv_4m      # start on a different vessel profile
+python asv_console.py --sim --vessel ben_cworker4        # start on a different vessel profile
 python asv_console.py --sim --single-window               # one window (no controls window)
 python asv_console.py --sim --ais-collect-km 250          # collect a wider AIS area (sparse feed coverage)
 ```
@@ -353,7 +353,7 @@ moved or cloned anywhere without editing it, and resolves the interpreter throug
 rather than a pinned path (the Microsoft Store build of Python lives under a
 version-stamped directory, so naming the executable outright breaks at the next upgrade).
 It **forwards any extra arguments** to `asv_console.py`, so one launcher also serves a
-variant shortcut — `start_sim.bat --vessel example_usv_4m`, or `--port 8792` for a second
+variant shortcut — `start_sim.bat --vessel ben_cworker4`, or `--port 8792` for a second
 console beside the first. The window it opens *is* the console: closing it stops the run.
 
 To put it on the desktop, run the script that builds it:
@@ -374,7 +374,7 @@ otherwise only fail on double-click. Re-running overwrites rather than making a 
 forwards everything through:
 
 ```
-powershell -ExecutionPolicy Bypass -File tools\make_shortcut.ps1 -Name "ASV Console (4 m USV)" -Arguments "--vessel example_usv_4m"
+powershell -ExecutionPolicy Bypass -File tools\make_shortcut.ps1 -Name "ASV Console (BEN)" -Arguments "--vessel ben_cworker4"
 ```
 
 The `.lnk` is not tracked in the repo — it is a binary holding absolute paths for one
@@ -475,7 +475,9 @@ nothing is hardcoded twice). **The default is `drix08_em712`** — the DriX H-8 
 she is fitted now, with the Kongsberg EM712 gondola. Profiles that ship: `zboat_1800hs` (a
 small ~1.9 m battery survey ASV), the Exail DriX H-8 - a 7.71 m **diesel** survey USV that
 shows fuel/endurance/range, not battery - as **`drix08_em712`** and as **`drix08`** (the same
-hull with the original EM2040 gondola), and `example_usv_4m` (a larger illustrative USV). Add your own by dropping a new complete `vessels/<id>.json`.
+hull with the original EM2040 gondola), and **`ben_cworker4`** - BEN, a 4.2 m diesel-waterjet
+ASV Global C-Worker 4 surveying with an EM2040P (2026-10-10; it replaces `example_usv_4m`, an
+illustrative hull). Add your own by dropping a new complete `vessels/<id>.json`.
 
 A hull's **windage** is its length, and its beam, times one above-water height, and its
 **underwater lateral area** (the leeway drag's) its length times its draft - unless the file
@@ -485,8 +487,8 @@ dimensioned starboard view (in the DriX training notes; the method and ranges ar
 file's `hull.wind_source` and `hull.underwater_source`), the wind sees **6.5 m^2 side-on**
 (with the H-8's radar dome and stern pole) and **1.8 m^2 end-on**, and the water **4.2 m^2**
 below the design waterline: its 2.0 m draft is a gondola on a slender drop keel, where
-length x draft said 15.4 m^2 - so every DriX leeway ran about 1.9 times too slow. The other
-profiles give none and are unchanged.
+length x draft said 15.4 m^2 - so every DriX leeway ran about 1.9 times too slow. BEN gives
+all three too (below); the small-class profile gives none and is unchanged.
 
 **The DriX's gondola is sized round the sonar in it**, and it sets more than the payload
 (2026-10-09). The original **EM2040** gondola (`drix08`; iXblue drawing 920C12-1-DWG-002) is
@@ -501,23 +503,38 @@ The EM712's coast and slow-down are **estimated** from the EM2040's measured one
 mass over drag) until EM712 logs can measure them; each file's `*.source` fields say where
 every number came from.
 
+**BEN** (`ben_cworker4`, 2026-10-10) is the Bathymetric Explorer and Navigator, an ASV Global
+C-Worker 4 built in 2016: a Yanmar 3YM30AE diesel through a centrifugal clutch, direct drive to
+a waterjet, with a Kongsberg EM2040P on a ram amidships. Measured off ASV Global's general
+arrangement (ASV-396-7-000-i0001-01-C, rev C), she is **4.21 m** overall and 3.90 m on the
+waterline, the wind sees **3.46 m^2** side-on and the water **1.39 m^2** below the waterline;
+the 1.7 m^2 end-on is estimated, since no front view is drawn. Her top speed is **5.5 kn**
+through the water and she surveys at it (Andy's own figure), so she is selectable at 2-5 kn.
+Her **0.66 m draft is the sonar's, not the hull's** (0.404 m): to survey, the ram lowers the
+EM2040P's face to 0.66 m below the waterline (UNH CCOM's 2018 offsets: 0.36 m retracted, a 300 mm
+stroke), and the depth floor is judged at the deepest point - 0.66 + 0.65 = 1.31 m.
+Her fuel block is a **placeholder** sized to her 20 h of survey at full throttle, with 100
+"liters" so the gauge reads in percent, until her tank size and burn are known; the file's
+`notes` and `*.source` fields name every estimate.
+
 **Speed is selected in whole knots** (2026-10-09, every hull). The three role speeds - the
 survey card's Survey, Turn and Transit kn, and the command bar's Transit kn - offer the hull's
 whole knots, from its low speed rounded up to its high speed rounded down: 4-10 kn on the DriX
-with the EM712 gondola, 4-11 with the EM2040, 2-9 on the example 4 m and 2-6 on the small-class
+with the EM712 gondola, 4-11 with the EM2040, 2-5 on BEN and 2-6 on the small-class
 hull. The speed picked is **commanded through the water**: the current and the wind act on it,
 so the speed over the ground is the commanded speed plus the set - 7 kn into a 1 kn head current
 makes good about 6. The hull's named low / survey / high stay as the **console's own** speeds -
 the guard's LOW, the escape's HIGH, the slowest speed a hold makes way at - and are on no
 selector, so advice to slow down names the slowest whole knot instead. A plan saved before this
-reads back at the nearest whole knot (only the example 4 m hull's 4.5 kn survey speed, the
-small-class hull's 1.5 kn low and the EM2040's 11.5 kn high move), and a vessel switch brings
+reads back at the nearest whole knot (only BEN's 5.5 kn survey and high speeds, held to her
+top whole knot of 5, the small-class hull's 1.5 kn low and the EM2040's 11.5 kn high move), and a vessel switch brings
 each speed inside the new hull's range.
 
 Selecting a vessel also changes the **nogo model**: the minimum navigable depth is
 that vessel's `draft + under-keel clearance`, so the deep-draft DriX (2.9 m floor with the
 EM2040 gondola, 3.15 m with the EM712)
-avoids shallow water the shallow-draft `zboat_1800hs` (1.0 m) can cross.
+avoids shallow water that BEN (1.31 m, surveying) and the shallow-draft `zboat_1800hs` (1.0 m)
+can cross.
 
 Pick the active vessel with `--vessel <id>`, or switch live from the **vessel
 selector** in the top bar (allowed only when disarmed and stopped — swapping
@@ -1485,7 +1502,7 @@ of the operator.
    skip. Whatever is dropped is named in the Punch Out readout with the count and the
    threshold: coverage is never removed silently. **Surveys only** — transits, search
    patterns and hand-drawn lines are never filtered. Shipped values: the 7.7 m DriX
-   **80 m**, the 4 m example USV **25 m**, the 1.3 m Z-Boat **0**.
+   **80 m**, the 4.2 m BEN **25 m**, the 1.9 m Z-Boat **0**.
 
    **Lead-in and lead-out (the run is longer than the coverage).** The first stretch of
    a survey line is not usable data: coming out of the reversal the steering is still

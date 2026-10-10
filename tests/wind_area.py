@@ -73,26 +73,30 @@ def raw(vid):
         return json.load(f)
 
 
-# 1. THE SHIPPED FILES. The DriX's measured areas are what the wind sees; the hulls that give none keep length and
-#    beam times their one height - computed here from their own files, not by the rule under test.
+# 1. THE SHIPPED FILES. The DriX's and BEN's measured areas are what the wind sees; the hull that gives none keeps
+#    length and beam times its one height - computed here from its own file, not by the rule under test.
+#    BEN's are off ASV Global's GA (2026-10-10, vessels/ben_cworker4.json hull.wind_source): 3.46 m^2 side, 1.7 front
+#    (estimated - no front view), 1.39 underwater, where 4.21 x 0.82 and 4.21 x 0.66 would have said 3.45 and 2.78.
 got = {}
-for vid in ("drix08", "example_usv_4m", "zboat_1800hs"):
+for vid in ("drix08", "ben_cworker4", "zboat_1800hs"):
     A.apply_vessel(A.load_vessel(vid))
     got[vid] = (A.WIND_A_SIDE, A.WIND_A_FRONT, A.HULL_A_LAT)
 want = {}
-for vid in ("example_usv_4m", "zboat_1800hs"):
+for vid in ("zboat_1800hs",):
     h = raw(vid)["hull"]
     want[vid] = (h["loa_m"] * h["above_water_h_m"], h["beam_m"] * h["above_water_h_m"], h["loa_m"] * h["draft_m"])
-dh = raw("drix08")["hull"]
-check("1. the DriX's measured areas are the sim's (wind 6.5 m^2 side, 1.8 front; water 4.2 m^2 - not 7.71 or 0.824 "
-      "times one height, nor 7.71 x 2.0 = 15.4); the hulls that give none keep the old rules, unchanged",
+dh, bh = raw("drix08")["hull"], raw("ben_cworker4")["hull"]
+check("1. the DriX's and BEN's measured areas are the sim's (DriX wind 6.5 m^2 side, 1.8 front, water 4.2 - not "
+      "7.71 x 2.0 = 15.4; BEN 3.46 / 1.7 / 1.39 - not 4.21 x 0.66 = 2.78); the hull that gives none keeps the old rules",
       lambda: got["drix08"] == (6.5, 1.8, 4.2)
       == (dh["wind_area_side_m2"], dh["wind_area_front_m2"], dh["underwater_lateral_area_m2"])
+      and got["ben_cworker4"] == (3.46, 1.7, 1.39)
+      == (bh["wind_area_side_m2"], bh["wind_area_front_m2"], bh["underwater_lateral_area_m2"])
       and all(abs(got[k][i] - want[k][i]) < 1e-12 for k in want for i in (0, 1, 2))
-      and not any(key in raw(v)["hull"] for v in ("example_usv_4m", "zboat_1800hs")
+      and not any(key in raw("zboat_1800hs")["hull"]
                   for key in ("wind_area_side_m2", "wind_area_front_m2", "underwater_lateral_area_m2")),
-      lambda: "drix %s; example %s (want %s); small %s (want %s)" % (
-          got["drix08"], got["example_usv_4m"], want["example_usv_4m"], got["zboat_1800hs"], want["zboat_1800hs"]))
+      lambda: "drix %s; ben %s; small %s (want %s)" % (
+          got["drix08"], got["ben_cworker4"], got["zboat_1800hs"], want["zboat_1800hs"]))
 
 
 # 2. THE FILE IS CHECKED. An area that is not a positive number is refused in words, naming the field; one area alone

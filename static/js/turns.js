@@ -375,11 +375,13 @@ export function turnFlyable(E, F, pts, hE, ref, ko, buf, fly){
  * MEASURED SEPARATION, 450 reversal geometries (5 headings x 6 lateral offsets x 5
  * along-track offsets) x 3 vessel profiles, worst JOIN demand of either end:
  *
- *            zboat_1800hs (60 deg/s)   drix08 (20 deg/s)   example_usv_4m (25 deg/s)
+ *            zboat_1800hs (60 deg/s)   drix08 (20 deg/s)   example_usv_4m* (25 deg/s)
  *   eased              3 deg/s                 0 deg/s              1 deg/s
  *   arc outboard      11                       7                    9
  *   racetrack         22                       7                    9
  *   arc INBOARD      101  (all 150 over)     212  (all 50 over)   140  (all 100 over)
+ *   (* the illustrative 4 m profile, retired 2026-10-10 for ben_cworker4 - the same 25 deg/s,
+ *      but other speeds - so its column is a record of that hull, not of BEN)
  *
  * Every legitimate shape asks at most 22 of a 60 deg/s hull - a 2.7x margin on the
  * tightest vessel - and every inboard semicircle exceeds the hull outright. Zero of the

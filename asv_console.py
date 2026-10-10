@@ -1104,7 +1104,8 @@ SPEED_ROLES = ("transit", "turn", "survey")
 
 def speed_step_key(kn):
     """The operator's whole-knot speed nearest `kn` knots, inside the hull's range, as its SPEED_KN key ("7"), or
-    None on a hull with no steps. Halves round up: the example 4 m hull's 4.5 kn survey speed becomes 5."""
+    None on a hull with no steps. Halves round up (4.5 kn becomes 5), then the range holds it: BEN's 5.5 kn survey
+    speed rounds to 6 and is held to her top whole knot, 5."""
     if not SPEED_STEPS_KN or kn is None:
         return None
     return str(min(max(int(math.floor(float(kn) + 0.5)), SPEED_STEPS_KN[0]), SPEED_STEPS_KN[-1]))
@@ -1138,8 +1139,8 @@ def _norm_speeds(raw, fallback="survey"):
     A role holding anything else is moved to the whole knot nearest it: a named speed from a plan saved before
     2026-10-09 (Low / Survey / High were the choices then), another hull's knot after a vessel switch ("10" on a boat
     whose top is 6 becomes "6"). A role with nothing usable takes the legacy single `speed`, so all three start where
-    the one used to be. Three named speeds are not whole knots and move: the example 4 m hull's survey 4.5 -> 5, the
-    small-class hull's low 1.5 -> 2 (its slowest whole knot) and the EM2040's high 11.5 -> 11 (its top one).
+    the one used to be. The named speeds that are not whole knots move: BEN's survey and high 5.5 -> 5 (her top whole
+    knot), the small-class hull's low 1.5 -> 2 (its slowest) and the EM2040's high 11.5 -> 11 (its top one).
     A hull with no steps (a test that installs a bare SPEED_KN) keeps the named keys, as before.
     """
     out = {}

@@ -91,7 +91,7 @@ def use(vid):
 # 1-2. THE RANGE, PER HULL. Written out here from each file's own low and high - not computed by the rule under test.
 WANT = {"drix08_em712": list(range(4, 11)),      # low 4.0, high 10.0
         "drix08": list(range(4, 12)),            # low 4.0, high 11.5 -> 11
-        "example_usv_4m": list(range(2, 10)),    # low 2.0, high 9.0
+        "ben_cworker4": list(range(2, 6)),       # low 2.0, high 5.5 -> 5
         "zboat_1800hs": list(range(2, 7))}       # low 1.5 -> 2, high 6.0
 got = {}
 for vid in WANT:
@@ -99,7 +99,7 @@ for vid in WANT:
     got[vid] = (list(A.SPEED_STEPS_KN), {k: A.SPEED_KN[k] for k in A.SPEED_KN},
                 copy.deepcopy(A.VESSEL["propulsion"].get("speed_steps_kn")))
 check("1. each hull offers its whole knots, low rounded up to high rounded down (DriX EM712 4-10, EM2040 4-11, "
-      "example 4 m 2-9, small-class 2-6), each a SPEED_KN key worth its knots, and the named three unchanged",
+      "BEN 2-5, small-class 2-6), each a SPEED_KN key worth its knots, and the named three unchanged",
       lambda: all(got[v][0] == WANT[v]
                   and all(got[v][1][str(n)] == float(n) for n in WANT[v])
                   and all(got[v][1][k] == float(raw(v)["propulsion"]["speeds_kn"][k]) for k in ("low", "survey", "high"))
@@ -117,8 +117,11 @@ em712 = (A._norm_speeds({"transit": "9", "turn": "4", "survey": "8"}),
          A._norm_speeds({"transit": "high", "turn": "low", "survey": "survey"}),
          A._norm_speeds({"transit": "12", "turn": 6, "survey": "warp"}, "low"),
          A._norm_speeds(None))
-use("example_usv_4m")
-example = A._norm_speeds({"transit": "survey", "turn": "low", "survey": "high"})
+use("ben_cworker4")
+ben = A._norm_speeds({"transit": "survey", "turn": "low", "survey": "high"})
+# HALVES ROUND UP, asked inside BEN's range where no clamp can hide the rounding: 3.5 and 4.5 kn (bare numbers, which
+# is what another hull's knots are to her). Her 5.5 above and the small-class 1.5 below land on a range end either way.
+ben_half = A._norm_speeds({"transit": 3.5, "turn": 2.4, "survey": 4.5})
 use("zboat_1800hs")
 small = A._norm_speeds({"transit": "10", "turn": "low", "survey": "survey"})
 use("drix08")
@@ -126,13 +129,14 @@ em2040 = A._norm_speeds({"transit": "high", "turn": "11", "survey": "7"})
 check("3. ACCEPTANCE: a whole knot the hull has is kept as it is (9 / 4 / 8 on the EM712)",
       lambda: em712[0] == {"transit": "9", "turn": "4", "survey": "8"}, lambda: str(em712[0]))
 check("3b. a plan saved with NAMED speeds comes back at the nearest whole knot - on the EM712 the same speeds "
-      "(10 / 4 / 7); the three that are not whole knots move: example 4 m survey 4.5 -> 5, small-class low "
-      "1.5 -> 2, EM2040 high 11.5 -> 11",
+      "(10 / 4 / 7); the ones that are not whole knots move: BEN's survey and high 5.5 -> 5 (her top), small-class "
+      "low 1.5 -> 2, EM2040 high 11.5 -> 11; and halves round UP inside a range (BEN 3.5 -> 4, 4.5 -> 5, 2.4 -> 2)",
       lambda: em712[1] == {"transit": "10", "turn": "4", "survey": "7"}
-      and example == {"transit": "5", "turn": "2", "survey": "9"}
+      and ben == {"transit": "5", "turn": "2", "survey": "5"}
+      and ben_half == {"transit": "4", "turn": "2", "survey": "5"}
       and small["turn"] == "2" and small["survey"] == "3"
       and em2040 == {"transit": "11", "turn": "11", "survey": "7"},
-      lambda: "em712 %s; example %s; small %s; em2040 %s" % (em712[1], example, small, em2040))
+      lambda: "em712 %s; ben %s, halves %s; small %s; em2040 %s" % (em712[1], ben, ben_half, small, em2040))
 check("3c. another hull's knot is clamped into this one's range (\"10\" on the small-class hull, top 6 -> 6), a bare "
       "number is a knot (6 -> \"6\"), above the top is the top (\"12\" -> \"10\"), and nothing usable takes the "
       "fallback's knot (\"warp\" with the legacy `low` -> 4) or the survey speed's",
