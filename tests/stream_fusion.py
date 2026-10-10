@@ -19,6 +19,9 @@ What this suite holds, all OFFLINE (every fetch is injected; caches go to a temp
   * a model window is bilinear over WATER nodes only, and an all-land cell is None;
   * the calibration recovers a known gain and lag, and refuses a fit that is not one;
   * the fusion blends by distance, applies the calibration, and says what it was built from;
+  * (2026-10-09) a model the stations within reach REJECT, with none fitting it, is left out wherever a station reads -
+    and the reading says why - while past the stations' reach it still fills in (GOMOFS at New Castle: about a tenth
+    of the predicted strength at the 7 stations where it has water, no gain the calibration accepts, none accepted);
   * the station cache works OFFLINE once filled, and a failed refresh keeps what it has;
   * the console's monitor: with no other layer its reading IS the OFS reading, unchanged; with stations it is the
     fusion; `field_at` varies with position and never raises; and the simulator is set by the stream at HER OWN
@@ -208,6 +211,30 @@ check("8b. at a position the calibration is the stations' within reach, weighted
       lambda: abs(ga[0] - 2.0) < 0.01 and abs(gm[0] - 1.5) < 1e-6 and abs(gm[1] - 300) < 1e-6 and gfar == (1.0, 0, 0),
       lambda: "at a %s; mid %s; far %s" % (ga, gm, gfar))
 
+# ── 8c. THE STATIONS THAT REJECT THE MODEL (2026-10-09) ─────────────────────────────────────
+# One model, three stations: the station's own tide at S, noise at N, no water at D.
+stN = sine_table("N", 43.15, -70.80, 45.0, 225.0, 2.0)
+stD = sine_table("D", 43.20, -70.80, 45.0, 225.0, 2.0)
+
+
+def model_mixed(lat, lon, t):
+    if lat < 43.12:
+        return model_weak_late(lat, lon, t)
+    if lat < 43.17:
+        return (0.3 * math.sin(t / 777.0), 0.3 * math.cos(t / 913.0))
+    return None
+
+
+rej = {}
+acc = SF.calibrate_all(model_mixed, [st, stN, stD], T0 + 3 * 3600, T0 + 30 * 3600, rejected=rej)
+check("8c. calibrate_all also names the stations that REJECT the model - it has water there and was fitted, and the fit "
+      "is not a fit - with their r and where they are; a station where the model has no water is neither; the "
+      "accepted ones are exactly as before",
+      lambda: set(acc) == {"S"} and set(rej) == {"N"} and rej["N"]["r"] < SF.CAL_MIN_R and rej["N"]["lat"] == 43.15
+      and acc["S"]["gain"] == cal["gain"] and acc["S"]["lag_s"] == cal["lag_s"]
+      and SF.calibrate_all(model_mixed, [st, stN, stD], T0 + 3 * 3600, T0 + 30 * 3600) == acc,
+      lambda: "accepted %s; rejected %s" % (sorted(acc), rej))
+
 # ── 9. THE FUSION ───────────────────────────────────────────────────────────────────────
 S1 = table("S1", 43.10, -70.80, 90.0, 270.0, [T0, T0 + 7200], [2.0, 2.0])       # 2 kn east at the station
 
@@ -237,6 +264,33 @@ def model_rec(lat, lon, t):
     seen.append(t)
     return (0.0, 1.0 * KN)
 
+
+# ── 9c. A MODEL THE STATIONS HERE REJECT IS LEFT OUT WHERE THEY CAN READ (Andy, 2026-10-09: "do option 1") ─────────
+LON_1K = -70.80 + 1000 / (111320 * math.cos(math.radians(43.1)))
+REJ = {"S1": {"lat": 43.10, "lon": -70.80, "r": 0.12, "gain": 4.0, "n": 50, "name": "S1"}}
+r_on = SF.fuse(43.10, -70.80, T0 + 60, [S1], model_north, {}, "testofs", rejected=REJ)
+r_1k = SF.fuse(43.10, LON_1K, T0 + 60, [S1], model_north, {}, "testofs", rejected=REJ)
+r_far = SF.fuse(43.20, -70.80, T0 + 60, [S1], model_north, {}, "testofs", rejected=REJ)     # 11 km: past the stations
+r_acc = SF.fuse(43.10, LON_1K, T0 + 60, [S1], model_north, {"A": {"lat": 43.10, "lon": -70.79, "gain": 1.0, "lag_s": 0}},
+                "testofs", rejected=REJ)
+r_out = SF.fuse(43.10, LON_1K, T0 + 60, [S1], model_north, {}, "testofs", rejected={"X": dict(REJ["S1"], lat=43.40)})
+r_gain = SF.fuse(43.10, LON_1K, T0 + 60, [S1], model_north, {}, "testofs", rejected={"S1": dict(REJ["S1"], r=0.9)})
+check("9c. where a station within reach REJECTS the model and none fits it, the station reading stands alone - on the "
+      "station and 1 km off it, 2 kn east, the model's weight 0 - and says why; past the stations' reach the model still "
+      "fills in; a station that FITS it within reach, or a rejection out of reach, blends exactly as before",
+      lambda: r_on["model"] is None and r_on["w_stations"] == 1.0 and abs(r_on["speed_kn"] - 2.0) < 1e-6
+      and r_1k["model"] is None and r_1k["w_stations"] == 1.0 and abs(r_1k["set_deg"] - 90) < 1e-6
+      and r_1k["source"] == "NOAA predictions"
+      and r_1k["model_left_out"] == ("testofs left out here - the 1 NOAA station within 15 km where it has water "
+                                     "rejects its fit (best r 0.12, 0.6 needed)")
+      and "no fit with a gain of 0.4 to 2.5" in r_gain["model_left_out"]
+      and r_far["model"] is not None and abs(r_far["set_deg"]) < 1e-6 and r_far["model_left_out"] is None
+      and r_acc["model"] is not None and abs(r_acc["w_stations"] - w1) < 0.01 and r_acc["model_left_out"] is None
+      and abs(r_out["u"] - f_1k["u"]) < 1e-12 and abs(r_out["v"] - f_1k["v"]) < 1e-12 and r_out["model_left_out"] is None
+      and f_1k["model_left_out"] is None,
+      lambda: "on %s; 1 km %r w %s; far %s; fitted %s; out of reach w %s; gain case %r" % (
+          r_on["source"], r_1k["model_left_out"], r_1k["w_stations"], r_far["source"], r_acc["source"],
+          r_out["w_stations"], r_gain["model_left_out"]))
 
 f_cal = SF.fuse(43.20, -70.80, T0 + 60, [], model_rec, cals, "testofs")
 check("9b. the model is applied with the calibration at the boat: gain 2 doubles it (2 kn north) and the lag shifts the "
@@ -331,6 +385,14 @@ check("12. the sources hold the tables round the boat, no model window outside t
       lambda: len(srcs.tables()) == 2 and srcs.patch() is None and c1 == {} and srcs._cal_key == k1
       and srcs.status()["stations"] == 2,
       lambda: "status %s" % srcs.status())
+srcs2 = SF.StreamSources(os.path.join(TMP, "src"), fetch=fake_fetch, start=False, model_provider=lambda: (
+    (lambda la, lo, t: (0.3 * math.sin(t / 777.0), 0.3 * math.cos(t / 913.0))), "noiseofs", ("ofs", "noiseofs", "t1")))
+srcs2.run_once(43.118, -70.827, now=NOW)
+check("12b. a model both stations reject: the sources hold the two rejections beside no calibration, for the fusion to "
+      "read, and the status counts them",
+      lambda: srcs2.cals() == {} and sorted(srcs2.rejected()) == sorted(t.id for t in srcs2.tables())
+      and len(srcs2.rejected()) == 2 and srcs2.status()["rejected"] == 2,
+      lambda: "rejected %s; status %s" % (srcs2.rejected(), srcs2.status()))
 
 # ── 13-15. THE CONSOLE: the monitor and the simulator ─────────────────────────────────────
 _spec = _ilu.spec_from_file_location("console_for_stream_fusion", os.path.join(APP, "asv_console.py"))
@@ -446,6 +508,31 @@ check("16. at New Castle - stations, no gomofs cycle - the good reading carries 
       and bad.get("ok") is False and "no NOAA current-prediction station" in bad.get("note", "")
       and "missing frames" in bad.get("note", "") and "no cycle cached yet" not in bad.get("note", ""),
       lambda: "good note %r model_note %r; refusal %r" % (good.get("note"), good.get("model_note"), bad.get("note")))
+
+# ── 16b. THE MONITOR, WHERE THE STATIONS REJECT ITS MODEL (New Castle, measured 2026-10-09) ────────────────────────
+mon4 = C.CurrentsMonitor.__new__(C.CurrentsMonitor)
+mon4._lock, mon4._ofs, mon4._tag, mon4._cur = threading.Lock(), "gomofs", "gomofs_t00z", _Cur()   # 1 kn north
+mon4._no_cycle_why = None
+mon4._sources = SF.StreamSources(os.path.join(TMP, "mon4"), fetch=dead_fetch, start=False)
+mon4._sources.stations._tables = (table("FTP", 43.0712, -70.7098, 300.0, 120.0, [NOWT - 3600, NOWT + 3600], [1.0, 1.0],
+                                        name="Fort Point"),)
+mon4._sources._rejected = {"FTP": {"lat": 43.0712, "lon": -70.7098, "r": 0.24, "gain": 6.16, "n": 151, "name": "Fort Point"}}
+mon4._pass((43.0712 + 0.009, -70.7098), False)              # 1 km north of the station
+r4 = dict(mon4._last)
+page4 = C.current_page(r4, "gomofs")
+on4 = mon4.field_at(43.0712 + 0.009, -70.7098)             # 1 km off: the station's alone, not blended 63/37
+off4 = mon4.field_at(43.0712 + 0.05, -70.7098)              # 5.6 km north: no station in reach
+check("16b. where the stations reject the OFS, the monitor's reading is the stations' alone (1 kn toward 300, no model, "
+      "weight 1) and says why in model_note - where the page says \"No model in it\" - and the Current pill opens the "
+      "station; the simulator is set the same way, and past the stations' reach by the model",
+      lambda: r4.get("ok") and r4["model"] is None and r4["w_stations"] == 1.0 and abs(r4["speed_kn"] - 1.0) < 0.01
+      and abs(r4["set_deg"] - 300) < 0.5 and not r4.get("note")
+      and (r4.get("model_note") or "").startswith("gomofs left out here - the 1 NOAA station within 15 km")
+      and r4["sources"]["rejected"] == 1 and "FTP" in (page4[0] or "")
+      and abs(on4[0] - 1.0) < 0.01 and abs(on4[1] - 300) < 0.5 and abs(off4[0] - 1.0) < 0.01 and abs(off4[1]) < 0.5,
+      lambda: "%s kn @ %s, model %s, w %s, model_note %r; page %s; field on %s, off %s" % (
+          r4.get("speed_kn"), r4.get("set_deg"), r4.get("model"), r4.get("w_stations"), r4.get("model_note"),
+          page4[0], on4, off4))
 
 # ── 17. THE CALM SWITCH IS CALM ─────────────────────────────────────────────────────────────
 C.CURRENTS = _Field()

@@ -3698,7 +3698,8 @@ class CurrentsMonitor:
             uv, label = self._model()
             f = stream_fusion.fuse(lat, lon, time.time() if t is None else t,
                                    src.tables() if src is not None else (), uv,
-                                   src.cals() if src is not None else {}, label)
+                                   src.cals() if src is not None else {}, label,
+                                   rejected=src.rejected() if src is not None else {})
         except Exception:
             return None
         return (f["speed_kn"], f["set_deg"]) if f else None
@@ -3750,7 +3751,7 @@ class CurrentsMonitor:
                    src.status().get("note"), ofs.get("note")]
             return dict(ofs, note="; ".join(w for w in why if w))
         uv, label = self._model()
-        f = stream_fusion.fuse(lat, lon, now_t, tables, uv, cals, label)
+        f = stream_fusion.fuse(lat, lon, now_t, tables, uv, cals, label, rejected=src.rejected())
         status = src.status()
         if f is None:
             why = ["no NOAA current-prediction station within %d km" % int(stream_fusion.STATION_REACH_M / 1000)]
@@ -3762,6 +3763,10 @@ class CurrentsMonitor:
         out = {"ok": True, "source": f["source"], "speed_kn": round(f["speed_kn"], 2), "set_deg": round(f["set_deg"], 1),
                "projected_h": 0.0, "w_stations": f["w_stations"], "stations": f["stations"],
                "near_station_m": f["near_station_m"], "model": f["model"], "sources": status}
+        if f.get("model_left_out"):
+            # the stations here reject the model, so it is not in the reading - said where the page says "No model in
+            # it" (stream_fusion.fuse, 2026-10-09)
+            out["model_note"] = f["model_left_out"]
         if (ofs.get("ok") and self._ofs and f["model"] is not None and f["w_stations"] < 0.995
                 and (label or "").startswith(self._ofs)):
             for k in ("tag", "cycle_start_utc", "cycle_end_utc", "projected_h", "note", "via"):
@@ -3921,7 +3926,8 @@ class CurrentsMonitor:
             # a note on a good reading as the projection warning, so the model's reason rides in its own field there.
             # On a refusal it replaces the generic "no cycle cached yet" wherever that stands in the sentence.
             if res.get("ok"):
-                res = dict(res, model_note=self._no_cycle_why)
+                # beside a PacIOOS window the stations reject, not in place of it (2026-10-09)
+                res = dict(res, model_note="; ".join(n for n in (res.get("model_note"), self._no_cycle_why) if n))
             elif self._no_cycle_why in (res.get("note") or ""):
                 pass                         # the sample already says why - and keeps the stations' reason beside it
             elif "no cycle cached yet" in (res.get("note") or ""):

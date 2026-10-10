@@ -526,11 +526,12 @@ def fetch_erddap_patch(model, lat, lon, t0, t1, half_deg=0.05, fetch=fetch_json)
 # --------------------------------------------------------------------------- #
 #  3. Calibration of a model against stations, and the fusion
 # --------------------------------------------------------------------------- #
-def calibrate(model_uv, tab, t0, t1, step_s=1800):
+def calibrate(model_uv, tab, t0, t1, step_s=1800, rejected=None):
     """Fit `model_uv(lat, lon, t) -> (u, v) | None` to one station's predictions over [t0, t1]: the time LAG and GAIN
     that make gain * model(t + lag), projected on the station's axis, best match the prediction. Returns
     {gain, lag_s, r, n, rms_raw_kn, rms_kn} or None where the model has no water there, too little overlap, or the fit
-    is not a fit (correlation under CAL_MIN_R, gain outside CAL_GAIN_RANGE)."""
+    is not a fit (correlation under CAL_MIN_R, gain outside CAL_GAIN_RANGE). Only in that LAST case - the model has
+    water here and was fitted, and the station rejects it - is `rejected`, a dict when given, filled with {r, gain, n}."""
     if tab.flood_deg is None or tab.ebb_deg is None:
         return None
     # the axis: flood direction, with ebb read as its negative (the two are not exactly opposite; the flood axis is the
@@ -584,17 +585,25 @@ def calibrate(model_uv, tab, t0, t1, step_s=1800):
             raw.append(((uv[0] * ex + uv[1] * ey) / KN - p) ** 2)
     rms_raw = math.sqrt(sum(raw) / len(raw)) if raw else None
     if r < CAL_MIN_R or not (CAL_GAIN_RANGE[0] <= g <= CAL_GAIN_RANGE[1]):
+        if rejected is not None:
+            rejected.update(r=round(r, 3), gain=round(g, 3), n=n)
         return None
     return {"gain": round(g, 3), "lag_s": lag, "r": round(r, 3), "n": n,
             "rms_raw_kn": round(rms_raw, 3) if rms_raw is not None else None, "rms_kn": round(rms, 3)}
 
 
-def calibrate_all(model_uv, tables, t0, t1):
+def calibrate_all(model_uv, tables, t0, t1, rejected=None):
+    """{station id: calibration} for the stations the model fits. `rejected`, a dict when given, is filled with the
+    stations that REJECT it - the model has water there and was fitted, and the fit is not a fit - which `fuse` leaves
+    the model out near (2026-10-09)."""
     out = {}
     for tab in tables or ():
-        c = calibrate(model_uv, tab, t0, t1)
+        why = {}
+        c = calibrate(model_uv, tab, t0, t1, rejected=why)
         if c is not None:
             out[tab.id] = dict(c, lat=tab.lat, lon=tab.lon, name=tab.name)
+        elif why and rejected is not None:
+            rejected[tab.id] = dict(why, lat=tab.lat, lon=tab.lon, name=tab.name)
     return out
 
 
@@ -612,14 +621,38 @@ def calibration_at(cals, lat, lon, reach_m=CAL_REACH_M):
     return (sum(a[0] * a[1] for a in acc) / sw, sum(a[0] * a[2] for a in acc) / sw, len(acc))
 
 
-def fuse(lat, lon, t, tables=(), model_uv=None, cals=None, model_label=None):
+def rejection_at(rejected, lat, lon, reach_m=CAL_REACH_M):
+    """The stations within `reach_m` that reject the model (see calibrate_all), nearest first."""
+    near = [(dist_m(lat, lon, c["lat"], c["lon"]), c) for c in (rejected or {}).values()]
+    return [c for d, c in sorted(near, key=lambda x: x[0]) if d <= reach_m]
+
+
+def fuse(lat, lon, t, tables=(), model_uv=None, cals=None, model_label=None, rejected=None):
     """THE STREAM AT (lat, lon, t). Returns None when no layer has a value, else
-    {u, v, speed_kn, set_deg, source, w_stations, stations: [...], model: {...} | None}."""
+    {u, v, speed_kn, set_deg, source, w_stations, stations: [...], model: {...} | None, model_left_out: str | None}."""
     st = stations_field(tables, lat, lon, t)
     mod = None
+    left_out = None
     if model_uv is not None:
         g, lag, ncal = calibration_at(cals, lat, lon)
-        uv = model_uv(lat, lon, t + lag)
+        # A MODEL THE STATIONS HERE REJECT IS LEFT OUT WHERE THEY CAN READ (Andy, 2026-10-09: "do option 1").
+        # Measured that evening at New Castle: GOMOFS has water at only 7 of the 26 stations within 25 km - the harbor
+        # mouth; its 0.01 deg grid cannot resolve the river - and there it runs at about a TENTH of NOAA's predicted
+        # strength (peaks 0.09-0.33 kn against 0.97-2.17), in phase for the first day or so of a cycle (r 0.6-0.9 at
+        # five of them) and out of it later, so no window gives a gain the calibration accepts and none accepts it;
+        # blended in raw, it took the port's reading from 0.64 kn to 0.47 and made a leave-one-out worse at 3 of those
+        # 7. (DBOFS at Lewes, the same test: r 0.88 to 1.00, 15 of 16 accepted.)
+        # So where no station within reach fits the model and one there rejects it, a station reading stands alone,
+        # and says why. Past the stations' reach the model is still the only layer, and fills in as before.
+        rej = rejection_at(rejected, lat, lon) if ncal == 0 and st is not None else []
+        if rej:
+            best_r = max(c["r"] for c in rej)
+            left_out = ("%s left out here - the %d NOAA station%s within %d km where it has water reject%s its fit (%s)"
+                        % (model_label or "the model", len(rej), "" if len(rej) == 1 else "s",
+                           round(CAL_REACH_M / 1000), "s" if len(rej) == 1 else "",
+                           "best r %.2f, %.1f needed" % (best_r, CAL_MIN_R) if best_r < CAL_MIN_R else
+                           "no fit with a gain of %.1f to %.1f" % CAL_GAIN_RANGE))
+        uv = None if rej else model_uv(lat, lon, t + lag)
         if uv is not None:
             mod = {"u": g * uv[0], "v": g * uv[1], "gain": round(g, 3), "lag_s": round(lag), "calibrated_by": ncal,
                    "label": model_label}
@@ -641,7 +674,7 @@ def fuse(lat, lon, t, tables=(), model_uv=None, cals=None, model_label=None):
         parts.append((model_label or "model") + (" calibrated" if mod["calibrated_by"] else ""))
     return {"u": u, "v": v, "speed_kn": kn, "set_deg": sd, "source": " + ".join(parts) or "NOAA predictions",
             "w_stations": round(w, 3), "stations": (st or {}).get("used", []),
-            "near_station_m": round(st["near_m"]) if st else None, "model": mod}
+            "near_station_m": round(st["near_m"]) if st else None, "model": mod, "model_left_out": left_out}
 
 
 # --------------------------------------------------------------------------- #
@@ -673,6 +706,7 @@ class StreamSources:
         self._patch = None
         self._patch_note = None
         self._cals = {}
+        self._rejected = {}
         self._cal_key = None
         self._pos = None
         self._looked_at = None
@@ -692,11 +726,15 @@ class StreamSources:
     def cals(self):
         return self._cals
 
+    def rejected(self):
+        return self._rejected
+
     def status(self):
         """What the readout says about the sources, in words: why a layer is missing, never a bare dash."""
         notes = [n for n in (self.stations.last_note, self._patch_note) if n]
         return {"stations": len(self.tables()), "model_window": (self._patch.label if self._patch else None),
-                "calibrated": len(self._cals), "note": "; ".join(notes) or None, "error": self.error}
+                "calibrated": len(self._cals), "rejected": len(self._rejected), "note": "; ".join(notes) or None,
+                "error": self.error}
 
     # -- the position, and when to look again -----------------------------------
     def update_position(self, lat, lon):
@@ -750,7 +788,9 @@ class StreamSources:
         ck = (key, tuple((t.id, t.t1) for t in tabs))
         if ck == self._cal_key:
             return
-        self._cals = calibrate_all(uv, tabs, now - self.CAL_WINDOW_S, now + self.CAL_WINDOW_S) if uv else {}
+        rej = {}
+        self._cals = calibrate_all(uv, tabs, now - self.CAL_WINDOW_S, now + self.CAL_WINDOW_S, rejected=rej) if uv else {}
+        self._rejected = rej
         self._cal_key = ck
 
     def _loop(self):

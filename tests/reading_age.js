@@ -201,6 +201,17 @@ const curThredds = els["#v_current"].title;
 check("7s. a reading whose cycle came from NOAA's S3 copy says so in its tooltip; one from the model server does not",
       () => /cycle t \(read from NOAA's S3 copy - its model server was down\)/.test(curS3) && !/S3/.test(curThredds),
       () => "s3 tooltip '" + curS3.replace(/\n/g, " ").slice(0, 200) + "'");
+// 7r. A MODEL THE STATIONS REJECT IS SAID TO BE LEFT OUT (2026-10-09, stream_fusion.fuse): the console's model_note,
+//     as the readout at New Castle words it - the stations alone, at full weight, and no "Model gomofs" line
+page.updateCurrentUI(cur({ source: "NOAA predictions", tag: null, w_stations: 1.0, model: null,
+  stations: [["PIR0702", "Fort Point", 312, 1.0]],
+  model_note: "gomofs left out here - the 7 NOAA stations within 15 km where it has water reject its fit (no fit with a gain of 0.4 to 2.5)" }));
+const curRej = els["#v_current"].title;
+check("7r. where the stations reject the model the tooltip names the stations alone and says why the model is not in it",
+      () => /NOAA tidal current predictions: Fort Point .* \(100%\)/.test(curRej)
+            && /No model in it: gomofs left out here - the 7 NOAA stations within 15 km where it has water reject its fit/.test(curRej)
+            && !/Model gomofs, cycle/.test(curRej) && !/weight/.test(curRej),
+      () => "tooltip '" + curRej.replace(/\n/g, " ").slice(0, 300) + "'");
 // 7b. THE FUSED READING SAYS WHAT IT WAS BUILT FROM (2026-10-07, stream_fusion.py): the NOAA prediction stations with
 //     their distance and share, and the model with the gain and lag that calibrated it - while an OFS-only reading's
 //     tooltip still names the model and its cycle (7 above).

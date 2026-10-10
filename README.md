@@ -278,6 +278,15 @@ station predictions and a model (`stream_fusion.py`) rather than read from one m
   **PacIOOS** regional ocean model at Honolulu, Samoa, the main Hawaiian Islands and the
   western North Pacific. Where stations lie inside it, the model is **calibrated** to them
   by a gain and a time lag along each station's axis, and only where the fit is a fit.
+  **A model the stations reject is left out near them** (2026-10-09): where no station
+  within 15 km fits it and one there rejects it - the model has water at that station and
+  the fit fails - a station reading stands alone and the tooltip says why; past the
+  stations' 3 km reach the model still fills in. Measured at New Castle that evening with
+  the console's own calibration: GOMOFS has water at only 7 of the 26 stations within 25 km,
+  all at the harbor mouth, and there runs at about a tenth of NOAA's predicted strength
+  (peaks 0.09-0.33 kn against 0.97-2.17), so none accepts it; blended in raw it had taken
+  the port's reading from 0.64 kn to 0.47. DBOFS at Lewes, the same test: r 0.88-1.00,
+  15 of 16 stations accept it.
 - The two are **blended by distance** to the nearest station.
 
 The simulator is **set by this stream at her own position, every tick**, so a boat running
