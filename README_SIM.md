@@ -40,8 +40,10 @@ python asv_console.py --sim --browser none --port 8791
 A model of the ASV + Autonomous Control Module good enough to exercise every
 screen and command:
 
-Defaults are scaled for the real boat — a **~2 m × 0.75 m** survey ASV-class ASV
-for short surveys in constrained waters — not a large survey vessel.
+Every hull-specific number (speeds, turn rate, look-ahead, windage, energy, planning
+defaults) comes from the active vessel profile, `vessels/<id>.json`; the default is the
+**DriX H-8 with the EM712 gondola**. The figures quoted in the table below are the
+**Z-Boat 1800 HS**'s (`zboat_1800hs`, ~1.9 m × 0.75 m, battery), unless a row says otherwise.
 
 | Aspect | Behaviour |
 |---|---|

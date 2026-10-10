@@ -8349,11 +8349,11 @@ def main():
                          "tool - and the original goes only once the copy has been read back and compared"
                          % STORAGE_OLD_DAYS)
     ap.add_argument("--no-tide-window", action="store_true",
-                    help="do not open the third window (the NOAA CO-OPS page for the "
-                         "water-level station nearest the vessel)")
+                    help="do not offer the Tide pill (the top bar's one-click window on the "
+                         "NOAA CO-OPS page for the water-level station nearest the vessel)")
     ap.add_argument("--no-weather-window", action="store_true",
-                    help="do not open the fourth window (the NOAA NDBC page for the "
-                         "weather buoy nearest the vessel)")
+                    help="do not offer the Weather pill (the top bar's one-click window on "
+                         "the NOAA NDBC page for the weather buoy nearest the vessel)")
     ap.add_argument("--roc-config", metavar="PATH",
                     help="ROC registry file to use instead of roc_config.json (a test "
                          "harness points this at a temp file so it cannot write to the "

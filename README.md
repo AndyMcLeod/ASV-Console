@@ -1,12 +1,14 @@
 # ASV Simulator Console
 
-A browser-only command-and-control (C2) shore station and simulator for a
-**small-class survey ASV** (autonomous surface vehicle) — a small (~2 m × 0.75 m),
-battery-powered boat for **short surveys in constrained waters**. Plan a survey (or
+A browser-only command-and-control (C2) shore station and simulator for **survey ASVs**
+(autonomous surface vehicles), from a ~1.9 m battery boat to the 7.7 m diesel **DriX H-8**.
+Each hull is a profile under `vessels/` (see *Vessel profiles*); **the default is the DriX
+H-8 with the Kongsberg EM712 gondola**. Plan a survey (or
 search pattern, or a transit line) on a live NOAA-ENC chart, and run it — or a
-one-off **Go-To / Return-to-Home / Hold / Transit** behaviour — on the boat's
+one-off **Go-To / Return-to-Home / Hold / Transit** behavior — on the boat's
 Vehicle Control Unit (VCU), while watching position (decimal degrees),
-heading, speed, **battery voltage** and autonomy state.
+heading, speed, **energy** (fuel, endurance and range on a diesel hull; battery voltage
+on an electric one) and autonomy state.
 
 Every commanded motion is planned **clear of charted ENC obstacles** (shoreline,
 piers/docks, and shallow water) — the console extracts a **nogo model** at startup
@@ -36,8 +38,9 @@ round its hold point (clear of the chart and of the AIS contacts the guard sees)
 water and is routed back beyond it).
 
 Run it, a
-browser tab opens. Defaults are scaled for the ~2 m boat (tight turns, small
-keep-clear buffer, short survey/search patterns).
+browser tab opens. Defaults (speeds, turn rate, keep-clear buffer, search-pattern sizes)
+come from the active vessel profile, so they are the DriX's unless you start on another
+hull with `--vessel <id>`.
 
 > **The RC transmitter is master.** This console is *additive* shore-side C2. It
 > never replaces the RC transmitter, whose Autonomy switch (Sw A) and E-stop are
@@ -420,12 +423,15 @@ TAKE OVER moves the controls window with supervision. Of two controls windows th
 **newer steps aside**: it closes itself, or, where the browser will not let it, goes silent
 and says ANOTHER CONTROLS WINDOW IS ALREADY OPEN. And the mirror is sent only when it
 changes - it used to go out four times a second regardless. Pass
-`--single-window` to skip the second window. A **third window** opens the NOAA
-CO-OPS water-levels page for the station nearest the vessel — the station is
-derived from the live GPS fix, not configured, and the depth correction behind it
-is an inverse-distance blend of up to 3 stations in range (`--no-tide-window` to
-skip it). A **fourth window** does the same for weather — the NDBC page for the
-nearest buoy, whose wind and waves drive the sim forcing (`--no-weather-window`).
+`--single-window` to skip the second window. Those two are all the console opens at
+start-up. The official pages behind its readings are **offered, not opened** (2026-09-02):
+a **`⏏ Tide`** pill on the top bar opens the NOAA CO-OPS water-levels page for the station
+nearest the vessel — the station is derived from the live GPS fix, not configured, and the
+depth correction behind it is an inverse-distance blend of up to 3 stations in range
+(`--no-tide-window` withdraws the pill). A **`⏏ Weather`** pill does the same for weather —
+the NDBC page for the nearest buoy, whose wind and waves drive the sim forcing
+(`--no-weather-window`). Each pill appears once the vessel has a fix, and hides while its
+window is open.
 
 **Both of those windows follow the boat, in place.** The station is re-derived whenever the
 vessel moves far enough — changing port, or simply steaming until a different gauge is
@@ -2524,8 +2530,8 @@ of the operator.
       over the rock's own length along her route and, beyond it
       either side, its floor, two smoothing steps and a sample step (outside a set,
       about 120 m either side of a rock of no extent at a 3 m buffer, 175 m at 5; a
-      charted rock with no sounding over it is sized by the assumed radius above, 50 m
-      by default, and that is added too), so the smoothing that follows rounds nothing
+      charted rock with no sounding over it is sized by the assumed radius above, 10 m
+      by default (50 m until 2026-10-09), and that is added too), so the smoothing that follows rounds nothing
       back toward it. A far pass that another rock's near pass has made
       impossible gives way to a near one (a side only ever changes far to near), a
       pass the smoothing still cuts into is widened by what it cut, and the line is
