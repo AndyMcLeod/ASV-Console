@@ -461,8 +461,16 @@ battery survey ASV), `drix08` (the Exail DriX H-8, a 7.71 m **diesel** survey US
 — shows fuel/endurance/range, not battery), and `example_usv_4m` (a larger
 illustrative USV). Add your own by dropping a new complete `vessels/<id>.json`.
 
+A hull's **windage** is its length, and its beam, times one above-water height - unless
+the file gives measured areas, `hull.wind_area_side_m2` and `hull.wind_area_front_m2`
+(2026-10-09). The DriX needs them: it stands about 2.76 m above water to its mast tips, but
+the wind sees a low hull under a narrow mast - about **4.9 m^2 side-on and 1.8 m^2 end-on**,
+measured from photographs (no dimensioned profile is published; the method and ranges are in
+the file's `hull.wind_source`), where one height of 1.0 m made the side 7.7 m^2 and the front
+0.82 m^2. The other profiles give none and are unchanged.
+
 Selecting a vessel also changes the **nogo model**: the minimum navigable depth is
-that vessel's `draft + under-keel clearance`, so the deep-draft `drix08` (2.5 m floor)
+that vessel's `draft + under-keel clearance`, so the deep-draft `drix08` (2.9 m floor)
 avoids shallow water the shallow-draft `zboat_1800hs` (1.0 m) can cross.
 
 Pick the active vessel with `--vessel <id>`, or switch live from the **vessel

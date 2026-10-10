@@ -702,6 +702,15 @@ def validate_vessel(v, source="<vessel>"):
     if not isinstance(v, dict):
         raise ValueError("%s: vessel config must be a JSON object" % source)
     _check_fields(v, _VESSEL_SCHEMA, source)
+    # OPTIONAL MEASURED WIND AREAS (Andy, 2026-10-09: "fix the DriX windage height in the vessel file"). Without them a
+    # hull's windage is its length, or its beam, times ONE height - which cannot describe a long low hull under a tall
+    # narrow mast: measured from photographs, the DriX H-8 shows the wind about 4.9 m^2 side-on and 1.8 m^2 end-on,
+    # where 7.71 m or 0.824 m times any single height gets one of the two badly wrong. Either may be given alone.
+    for key in ("wind_area_side_m2", "wind_area_front_m2"):
+        if key in v["hull"]:
+            a = v["hull"][key]
+            if isinstance(a, bool) or not isinstance(a, (int, float)) or not a > 0:
+                raise ValueError("%s: hull.%s must be a number > 0 (got %r)" % (source, key, a))
     # Energy model: power.type selects which sub-block is required. Default
     # "battery" when absent (back-compat with the earliest profiles).
     ptype = v.get("power", {}).get("type", "battery") if isinstance(v.get("power"), dict) else None
@@ -787,8 +796,10 @@ def apply_vessel(v):
     BOAT_LEN_M = float(h["loa_m"]); BOAT_BEAM_M = float(h["beam_m"])
     BOAT_ABOVE_H = float(h["above_water_h_m"]); BOAT_DRAFT_M = float(h["draft_m"])
     WIND_CD = float(h["wind_cd"]); HULL_CD = float(h["hull_cd"])
-    WIND_A_SIDE = BOAT_LEN_M * BOAT_ABOVE_H      # beam-on windage silhouette (m^2)
-    WIND_A_FRONT = BOAT_BEAM_M * BOAT_ABOVE_H    # bow/stern-on windage silhouette (m^2)
+    # beam-on and bow/stern-on windage silhouettes (m^2): the hull file's measured areas where it gives them
+    # (validate_vessel), else length or beam times its one above-water height
+    WIND_A_SIDE = float(h.get("wind_area_side_m2") or BOAT_LEN_M * BOAT_ABOVE_H)
+    WIND_A_FRONT = float(h.get("wind_area_front_m2") or BOAT_BEAM_M * BOAT_ABOVE_H)
     HULL_A_LAT = BOAT_LEN_M * BOAT_DRAFT_M       # underwater lateral area (m^2), for leeway drag
     # THE HULL'S COAST LENGTH, or None when this vessel carries no coast datum - which is the
     # honest degrade, and the default: two of the three shipped hulls have none and so do not
