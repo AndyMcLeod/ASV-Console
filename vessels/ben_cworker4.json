@@ -2,7 +2,7 @@
   "id": "ben_cworker4",
   "name": "BEN (C-Worker 4)",
   "class": "4 m survey ASV",
-  "notes": "BEN, the Bathymetric Explorer and Navigator: an ASV Global C-Worker 4 built in 2016, the 4 m ASV this console models (Andy, 2026-10-10: 'It is to be used as the 4m ASV in your current vessel file'). A Yanmar 3YM30AE diesel through a centrifugal clutch, direct drive to a waterjet, with a Kongsberg EM2040P on a ram amidships. MEASURED off ASV Global's general arrangement ASV-396-7-000-i0001-01-C, rev C, 08/03/2016 (embedded in 'BEN Calibration and Offsets Narrative for BEN_v1.0', UNH CCOM, 2018): length, hull draft, and the side areas above and below the waterline. Andy's own figures: 5.5 kn through the water, surveying at full throttle, for 20 h. The beam is the C-Worker 4 sheet's. ESTIMATED, not measured: the front wind area, the turn rate, the loiter speed, the under-keel clearance, the buffer, the maneuvering and autopilot numbers, and the whole fuel block (see its source). Until 2026-10-10 this place was held by example_usv_4m, an illustrative hull with a battery.",
+  "notes": "BEN, the Bathymetric Explorer and Navigator: an ASV Global C-Worker 4 built in 2016, the 4 m ASV this console models (Andy, 2026-10-10: 'It is to be used as the 4m ASV in your current vessel file'). A Yanmar 3YM30AE diesel through a centrifugal clutch, direct drive to a waterjet, with a Kongsberg EM2040P on a ram amidships. MEASURED off ASV Global's general arrangement ASV-396-7-000-i0001-01-C, rev C, 08/03/2016 (embedded in 'BEN Calibration and Offsets Narrative for BEN_v1.0', UNH CCOM, 2018): length, hull draft, and the side areas above and below the waterline. Andy's own figures: 5.5 kn through the water, surveying at full throttle, for 20 h, and a 100 L tank. The beam is the C-Worker 4 sheet's. ESTIMATED, not measured: the front wind area, the turn rate, the loiter speed, the under-keel clearance, the buffer, the maneuvering and autopilot numbers, and the fuel burn below full throttle (see the fuel block's source). Until 2026-10-10 this place was held by example_usv_4m, an illustrative hull with a battery.",
   "hull": {
     "loa_m": 4.21,
     "beam_m": 1.6,
@@ -45,7 +45,7 @@
       "burn_exp": 3.0,
       "warn_frac": 0.25,
       "crit_frac": 0.1,
-      "source": "PLACEHOLDER, NOT BEN'S TANK: her capacity and burn are not known. Sized to Andy's one figure - 20 h of survey at full throttle (5.5 kn) - with 100 'liters' so the gauge's liters read as percent of a full tank: full burn 5.0 an hour, so a full tank is 20 h at survey speed and 110 nm. The idle burn (1.0) and the exponent (3, power against speed) are guesses. Replace all four with BEN's tank size and her measured burn."
+      "source": "TANK 100 L: Andy, 2026-10-10 ('BENS fuel tank size is 100 liters'). FULL BURN 5.0 L/h DERIVED from his two figures, the 100 L and 20 h of survey at full throttle (5.5 kn), on the reading that the 20 h runs the tank dry; a full tank is then 20 h and 110 nm at survey speed. If the 20 h kept a reserve, the true burn is lower. The idle burn (1.0 L/h) and the exponent (3, power against speed) are still GUESSES - replace them with her measured burn when there is one."
     }
   },
   "planning": {

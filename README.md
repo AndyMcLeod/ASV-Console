@@ -513,9 +513,9 @@ through the water and she surveys at it (Andy's own figure), so she is selectabl
 Her **0.66 m draft is the sonar's, not the hull's** (0.404 m): to survey, the ram lowers the
 EM2040P's face to 0.66 m below the waterline (UNH CCOM's 2018 offsets: 0.36 m retracted, a 300 mm
 stroke), and the depth floor is judged at the deepest point - 0.66 + 0.65 = 1.31 m.
-Her fuel block is a **placeholder** sized to her 20 h of survey at full throttle, with 100
-"liters" so the gauge reads in percent, until her tank size and burn are known; the file's
-`notes` and `*.source` fields name every estimate.
+Her tank is **100 L** (Andy's figure), and her full-throttle burn of **5.0 L/h** follows from
+it and her 20 h of survey at full throttle; the burn below full throttle is still a guess. The
+file's `notes` and `*.source` fields name every estimate.
 
 **Speed is selected in whole knots** (2026-10-09, every hull). The three role speeds - the
 survey card's Survey, Turn and Transit kn, and the command bar's Transit kn - offer the hull's

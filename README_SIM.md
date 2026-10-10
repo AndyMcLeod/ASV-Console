@@ -207,9 +207,9 @@ with warn/crit reserve bands. The DriX's blocks are the Fuel planner's measured 
 (250 L; 1.05→7.21 L/h, exp 2.77 with the EM2040 gondola; 1.05→5.96 L/h, exp 1.62 with the
 EM712), where they used to reproduce Exail's published endurances. Her 24 V lithium service
 battery powers hotel/payload loads only and isn't the propulsion energy source, so it isn't
-modeled as the endurance limit. BEN's block is a **placeholder** sized to her 20 h of survey
-at full throttle (5.5 kn), with 100 "liters" so the gauge reads in percent, until her tank
-size and burn are known.
+modeled as the endurance limit. BEN's block is her 100 L tank (Andy's figure) and a 5.0 L/h
+full-throttle burn derived from it and her 20 h of survey at 5.5 kn; her burn below full
+throttle (idle 1.0 L/h, exponent 3) is still a guess.
 
 > **Caveat carried from the manual:** on the real boat, battery voltage is
 > telemetered to the **RC transmitter**, and it is not yet confirmed to be on the
