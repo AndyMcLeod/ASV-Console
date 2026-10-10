@@ -702,11 +702,13 @@ def validate_vessel(v, source="<vessel>"):
     if not isinstance(v, dict):
         raise ValueError("%s: vessel config must be a JSON object" % source)
     _check_fields(v, _VESSEL_SCHEMA, source)
-    # OPTIONAL MEASURED WIND AREAS (Andy, 2026-10-09: "fix the DriX windage height in the vessel file"). Without them a
-    # hull's windage is its length, or its beam, times ONE height - which cannot describe a long low hull under a tall
-    # narrow mast: measured from photographs, the DriX H-8 shows the wind about 4.9 m^2 side-on and 1.8 m^2 end-on,
-    # where 7.71 m or 0.824 m times any single height gets one of the two badly wrong. Either may be given alone.
-    for key in ("wind_area_side_m2", "wind_area_front_m2"):
+    # OPTIONAL MEASURED AREAS (Andy, 2026-10-09: "fix the DriX windage height in the vessel file", then "fix the DriX
+    # underwater lateral area"). Without them a hull's windage is its length, or its beam, times ONE height, and its
+    # underwater lateral area its length times its draft - which describe neither a long low hull under a tall narrow
+    # mast nor a 2.0 m draft that is a gondola on a slender drop keel. Off iXblue's own dimensioned starboard view the
+    # DriX shows the wind about 6.2 m^2 side-on (6.5 with the H-8's additions) and the water 4.2 m^2 below the design
+    # waterline, where 7.71 m x 2.0 m said 15.4. Each may be given alone.
+    for key in ("wind_area_side_m2", "wind_area_front_m2", "underwater_lateral_area_m2"):
         if key in v["hull"]:
             a = v["hull"][key]
             if isinstance(a, bool) or not isinstance(a, (int, float)) or not a > 0:
@@ -800,7 +802,9 @@ def apply_vessel(v):
     # (validate_vessel), else length or beam times its one above-water height
     WIND_A_SIDE = float(h.get("wind_area_side_m2") or BOAT_LEN_M * BOAT_ABOVE_H)
     WIND_A_FRONT = float(h.get("wind_area_front_m2") or BOAT_BEAM_M * BOAT_ABOVE_H)
-    HULL_A_LAT = BOAT_LEN_M * BOAT_DRAFT_M       # underwater lateral area (m^2), for leeway drag
+    # underwater lateral area (m^2), for the leeway drag: the hull file's measured area where it gives one, else
+    # length times draft (a full-length plate as deep as the deepest point)
+    HULL_A_LAT = float(h.get("underwater_lateral_area_m2") or BOAT_LEN_M * BOAT_DRAFT_M)
     # THE HULL'S COAST LENGTH, or None when this vessel carries no coast datum - which is the
     # honest degrade, and the default: two of the three shipped hulls have none and so do not
     # coast at all.

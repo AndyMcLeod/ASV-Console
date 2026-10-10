@@ -461,13 +461,16 @@ battery survey ASV), `drix08` (the Exail DriX H-8, a 7.71 m **diesel** survey US
 — shows fuel/endurance/range, not battery), and `example_usv_4m` (a larger
 illustrative USV). Add your own by dropping a new complete `vessels/<id>.json`.
 
-A hull's **windage** is its length, and its beam, times one above-water height - unless
-the file gives measured areas, `hull.wind_area_side_m2` and `hull.wind_area_front_m2`
-(2026-10-09). The DriX needs them: it stands about 2.76 m above water to its mast tips, but
-the wind sees a low hull under a narrow mast - about **4.9 m^2 side-on and 1.8 m^2 end-on**,
-measured from photographs (no dimensioned profile is published; the method and ranges are in
-the file's `hull.wind_source`), where one height of 1.0 m made the side 7.7 m^2 and the front
-0.82 m^2. The other profiles give none and are unchanged.
+A hull's **windage** is its length, and its beam, times one above-water height, and its
+**underwater lateral area** (the leeway drag's) its length times its draft - unless the file
+gives measured areas: `hull.wind_area_side_m2`, `hull.wind_area_front_m2` and
+`hull.underwater_lateral_area_m2` (2026-10-09). The DriX needs all three. Off iXblue's own
+dimensioned starboard view (in the DriX training notes; the method and ranges are in the
+file's `hull.wind_source` and `hull.underwater_source`), the wind sees **6.5 m^2 side-on**
+(with the H-8's radar dome and stern pole) and **1.8 m^2 end-on**, and the water **4.2 m^2**
+below the design waterline: its 2.0 m draft is a gondola on a slender drop keel, where
+length x draft said 15.4 m^2 - so every DriX leeway ran about 1.9 times too slow. The other
+profiles give none and are unchanged.
 
 Selecting a vessel also changes the **nogo model**: the minimum navigable depth is
 that vessel's `draft + under-keel clearance`, so the deep-draft `drix08` (2.9 m floor)

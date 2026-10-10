@@ -1,16 +1,19 @@
-"""tests/wind_area.py - a hull's windage from MEASURED side and front areas (2026-10-09).
+"""tests/wind_area.py - a hull's windage and underwater area from MEASURED areas (2026-10-09).
 
 Andy: "slide 13: DriX H8 height above water is greater than 1m. Review drawings and correct", then "fix the DriX
-windage height in the vessel file" (choosing separate side and front areas over one height).
+windage height in the vessel file" (choosing separate side and front areas over one height), then "fix the DriX
+underwater lateral area".
 
 WHAT WAS WRONG. A hull's wind areas were its length, and its beam, times ONE above-water height - an estimated 1.0 m
-for the DriX H-8. The boat stands about 2.76 m above water to its mast tips, but the wind sees a low hull under a
-narrow mast: measured from photographs (vessels/drix08.json, hull.wind_source) about 4.9 m^2 side-on and 1.8 m^2
-end-on, where 7.71 m x 1.0 m gave the side 7.7 m^2 and 0.824 m x 1.0 m gave the front 0.82 m^2 - one half again too
-big, the other under half.
+for the DriX H-8 - and its underwater lateral area, the leeway drag's, its length times its draft: 7.71 x 2.0 =
+15.4 m^2, a full-length plate as deep as the gondola's bottom. Off iXblue's own dimensioned starboard view (in Andy's
+DriX training notes; vessels/drix08.json hull.wind_source and hull.underwater_source) the wind sees 6.5 m^2 side-on
+(with the H-8's additions) and 1.8 end-on, and the water 4.2 m^2 below the design waterline: the 2.0 m draft is a
+gondola on a slender drop keel. So every DriX leeway ran about 1.9x too slow.
 
-WHAT IT IS NOW. hull.wind_area_side_m2 and hull.wind_area_front_m2 are optional in a vessel file: given, they are the
-wind's areas; absent, the old rule stands (loa or beam x above_water_h_m), so the other hulls are unchanged.
+WHAT IT IS NOW. hull.wind_area_side_m2, hull.wind_area_front_m2 and hull.underwater_lateral_area_m2 are optional in a
+vessel file: given, they are the areas; absent, the old rules stand (loa or beam x above_water_h_m; loa x draft_m), so
+the other hulls are unchanged.
 
     python tests/wind_area.py     # exit 0 = pass, 1 = fail   (in-process: no console, no network)
 """
@@ -63,17 +66,19 @@ def raw(vid):
 got = {}
 for vid in ("drix08", "example_usv_4m", "zboat_1800hs"):
     A.apply_vessel(A.load_vessel(vid))
-    got[vid] = (A.WIND_A_SIDE, A.WIND_A_FRONT)
+    got[vid] = (A.WIND_A_SIDE, A.WIND_A_FRONT, A.HULL_A_LAT)
 want = {}
 for vid in ("example_usv_4m", "zboat_1800hs"):
     h = raw(vid)["hull"]
-    want[vid] = (h["loa_m"] * h["above_water_h_m"], h["beam_m"] * h["above_water_h_m"])
+    want[vid] = (h["loa_m"] * h["above_water_h_m"], h["beam_m"] * h["above_water_h_m"], h["loa_m"] * h["draft_m"])
 dh = raw("drix08")["hull"]
-check("1. the DriX's measured areas are the wind's (4.9 m^2 side, 1.8 front - not 7.71 or 0.824 times one height); the "
-      "hulls that give none keep length and beam times their height, unchanged",
-      lambda: got["drix08"] == (4.9, 1.8) == (dh["wind_area_side_m2"], dh["wind_area_front_m2"])
-      and all(abs(got[k][i] - want[k][i]) < 1e-12 for k in want for i in (0, 1))
-      and "wind_area_side_m2" not in raw("example_usv_4m")["hull"] and "wind_area_side_m2" not in raw("zboat_1800hs")["hull"],
+check("1. the DriX's measured areas are the sim's (wind 6.5 m^2 side, 1.8 front; water 4.2 m^2 - not 7.71 or 0.824 "
+      "times one height, nor 7.71 x 2.0 = 15.4); the hulls that give none keep the old rules, unchanged",
+      lambda: got["drix08"] == (6.5, 1.8, 4.2)
+      == (dh["wind_area_side_m2"], dh["wind_area_front_m2"], dh["underwater_lateral_area_m2"])
+      and all(abs(got[k][i] - want[k][i]) < 1e-12 for k in want for i in (0, 1, 2))
+      and not any(key in raw(v)["hull"] for v in ("example_usv_4m", "zboat_1800hs")
+                  for key in ("wind_area_side_m2", "wind_area_front_m2", "underwater_lateral_area_m2")),
       lambda: "drix %s; example %s (want %s); small %s (want %s)" % (
           got["drix08"], got["example_usv_4m"], want["example_usv_4m"], got["zboat_1800hs"], want["zboat_1800hs"]))
 
@@ -90,24 +95,29 @@ def refused(key, val):
         return str(e)
 
 
-bad = [(k, x) for k in ("wind_area_side_m2", "wind_area_front_m2") for x in (0, -1.0, "4.9", True, None)]
+bad = [(k, x) for k in ("wind_area_side_m2", "wind_area_front_m2", "underwater_lateral_area_m2")
+       for x in (0, -1.0, "4.9", True, None)]
 msgs = {(k, repr(x)): refused(k, x) for k, x in bad}
 only_side = copy.deepcopy(raw("drix08"))
 del only_side["hull"]["wind_area_front_m2"]
+del only_side["hull"]["underwater_lateral_area_m2"]
 only_side["hull"]["wind_area_side_m2"] = 5
 A.apply_vessel(A.validate_vessel(only_side, "drix08.json"))
-os_side, os_front = A.WIND_A_SIDE, A.WIND_A_FRONT
-check("2. a wind area that is zero, negative, text, a boolean or null is refused in words naming the field; an integer "
-      "is taken, and one given alone leaves the other to beam (or length) times the height",
+os_side, os_front, os_lat = A.WIND_A_SIDE, A.WIND_A_FRONT, A.HULL_A_LAT
+check("2. an area that is zero, negative, text, a boolean or null is refused in words naming the field; an integer is "
+      "taken, and one given alone leaves the others to their old rules (beam x height, length x draft)",
       lambda: all(m and ("hull.%s must be a number > 0" % k) in m for (k, _), m in msgs.items())
-      and os_side == 5.0 and abs(os_front - dh["beam_m"] * dh["above_water_h_m"]) < 1e-12,
+      and os_side == 5.0 and abs(os_front - dh["beam_m"] * dh["above_water_h_m"]) < 1e-12
+      and abs(os_lat - dh["loa_m"] * dh["draft_m"]) < 1e-12,
       lambda: "refusals %d/%d, e.g. %r; side alone -> %s / %s" % (
           sum(1 for m in msgs.values() if m), len(msgs), msgs[("wind_area_side_m2", "0")], os_side, os_front))
 
 
 # 3. ON THE HULL. A stopped DriX in a steady 6 m/s wind (no gusts, no veer, no waves, no stream), first tick: her
-#    leeway is the drag balance on the side area beam-on and on the front area head-on - worked out here from the
-#    FILE's areas - so beam-on she drifts sqrt(4.9 / 1.8) = 1.65x faster than head-on (it was sqrt(7.71 / 0.824) = 3.06x).
+#    leeway is the drag balance of the wind on the side area beam-on, or the front area head-on, against the water on
+#    the underwater area - all three worked out here from the FILE - so beam-on she drifts sqrt(6.5 / 1.8) = 1.90x
+#    faster than head-on (it was sqrt(7.71 / 0.824) = 3.06x), and both sqrt(15.4 / 4.2) = 1.9x faster than length x
+#    draft would make them.
 class _Wind:
     def __init__(self, frm):
         self.frm = frm
@@ -142,14 +152,17 @@ def leeway(frm):
 A.apply_vessel(A.load_vessel("drix08"))
 A.GUST_VEER_DEG = 0.0                                  # the sim's own slow veer would swing the angle off beam
 beam_ms, head_ms = leeway(270.0), leeway(0.0)
-lat_area = dh["loa_m"] * dh["draft_m"]                 # the hull's underwater lateral area, as the sim takes it
-expect = lambda area: math.sqrt(A.RHO_AIR * dh["wind_cd"] * area * 36.0 / (1000.0 * dh["hull_cd"] * lat_area))
-check("3. on the hull: a stopped DriX's leeway in a steady 6 m/s wind is the drag balance on the side area beam-on and "
-      "the front area head-on, so beam-on she drifts sqrt(4.9/1.8) = 1.65x faster than head-on (it was 3.06x)",
-      lambda: abs(beam_ms - expect(4.9)) < 1e-9 and abs(head_ms - expect(1.8)) < 1e-9
-      and abs(beam_ms / head_ms - math.sqrt(4.9 / 1.8)) < 1e-9,
-      lambda: "beam %.4f m/s (want %.4f), head %.4f (want %.4f), ratio %.3f" % (
-          beam_ms, expect(4.9), head_ms, expect(1.8), beam_ms / head_ms))
+lat_area = dh["underwater_lateral_area_m2"]            # the hull's underwater lateral area, from the file
+expect = lambda area, lat=lat_area: math.sqrt(A.RHO_AIR * dh["wind_cd"] * area * 36.0 / (1000.0 * dh["hull_cd"] * lat))
+plate = dh["loa_m"] * dh["draft_m"]
+check("3. on the hull: a stopped DriX's leeway in a steady 6 m/s wind is the drag balance of the side area beam-on, or "
+      "the front head-on, against the 4.2 m^2 underwater - beam-on 1.90x faster than head-on (it was 3.06x), and "
+      "sqrt(15.4/4.2) = 1.9x faster than a length-by-draft plate would let her",
+      lambda: abs(beam_ms - expect(6.5)) < 1e-9 and abs(head_ms - expect(1.8)) < 1e-9
+      and abs(beam_ms / head_ms - math.sqrt(6.5 / 1.8)) < 1e-9
+      and abs(beam_ms / expect(6.5, plate) - math.sqrt(plate / 4.2)) < 1e-9,
+      lambda: "beam %.4f m/s (want %.4f), head %.4f (want %.4f), ratio %.3f; vs the plate %.2fx" % (
+          beam_ms, expect(6.5), head_ms, expect(1.8), beam_ms / head_ms, beam_ms / expect(6.5, plate)))
 
 print("\n%s (%d ran)" % ("%d CHECK(S) FAILED" % fails if fails else "all checks passed", ran))
 sys.stdout.flush()
