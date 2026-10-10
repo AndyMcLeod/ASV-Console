@@ -455,11 +455,11 @@ vessel-specific parameter — hull/windage, speeds, turn rate, autopilot gains, 
 **energy model** (battery *or* diesel fuel), planning defaults (incl. under-keel
 clearance), spawn — lives in one self-contained file under `vessels/<id>.json`,
 and that file is the single source of truth (the server and the UI both read it,
-nothing is hardcoded twice). **The default is `drix08`** — the DriX H-8 at Lewes.
-Profiles that ship: `zboat_1800hs` (a small ~1.9 m
-battery survey ASV), `drix08` (the Exail DriX H-8, a 7.71 m **diesel** survey USV
-— shows fuel/endurance/range, not battery), and `example_usv_4m` (a larger
-illustrative USV). Add your own by dropping a new complete `vessels/<id>.json`.
+nothing is hardcoded twice). **The default is `drix08_em712`** — the DriX H-8 at Lewes as
+she is fitted now, with the Kongsberg EM712 gondola. Profiles that ship: `zboat_1800hs` (a
+small ~1.9 m battery survey ASV), the Exail DriX H-8 - a 7.71 m **diesel** survey USV that
+shows fuel/endurance/range, not battery - as **`drix08_em712`** and as **`drix08`** (the same
+hull with the original EM2040 gondola), and `example_usv_4m` (a larger illustrative USV). Add your own by dropping a new complete `vessels/<id>.json`.
 
 A hull's **windage** is its length, and its beam, times one above-water height, and its
 **underwater lateral area** (the leeway drag's) its length times its draft - unless the file
@@ -472,8 +472,22 @@ below the design waterline: its 2.0 m draft is a gondola on a slender drop keel,
 length x draft said 15.4 m^2 - so every DriX leeway ran about 1.9 times too slow. The other
 profiles give none and are unchanged.
 
+**The DriX's gondola is sized round the sonar in it**, and it sets more than the payload
+(2026-10-09). The original **EM2040** gondola (`drix08`; iXblue drawing 920C12-1-DWG-002) is
+2.0 m long and 0.31 m deep - the one in iXblue's general drawing, and the one fitted for every
+log measurement. The **EM712** gondola (`drix08_em712`, fitted now; 922C01-DWG-002) is 2.25 x
+0.56 x 1.21 m and 577 kg in air. Off the drawings and the measured laws, the EM712 profile has a
+**2.25 m draft** (depth floor 3.15 m, against 2.9), 4.5 m^2 underwater (4.2), a top speed of
+**10 kn at 3100 rpm** (Andy's own figure; 11.5 kn with the EM2040), and its own fuel law - about
+a quarter fewer miles a liter at 8 kn. Both burn curves are the Fuel planner's measured laws
+now, not Exail's endurances, which had the DriX burning 1.65 L/h at 7 kn against 2.61 measured.
+The EM712's coast and slow-down are **estimated** from the EM2040's measured ones (scaled by
+mass over drag) until EM712 logs can measure them; each file's `*.source` fields say where
+every number came from.
+
 Selecting a vessel also changes the **nogo model**: the minimum navigable depth is
-that vessel's `draft + under-keel clearance`, so the deep-draft `drix08` (2.9 m floor)
+that vessel's `draft + under-keel clearance`, so the deep-draft DriX (2.9 m floor with the
+EM2040 gondola, 3.15 m with the EM712)
 avoids shallow water the shallow-draft `zboat_1800hs` (1.0 m) can cross.
 
 Pick the active vessel with `--vessel <id>`, or switch live from the **vessel
@@ -483,7 +497,7 @@ the new vessel's parameters, so you can run the same mission on different hulls
 and compare.
 
 Each profile also carries its own **spawn** position, so a vessel comes up in its own
-work area — `zboat_1800hs` in **Erie** (Presque Isle Bay) and `drix08` at **Lewes**
+work area — `zboat_1800hs` in **Erie** (Presque Isle Bay) and both DriX profiles at **Lewes**
 (the UDel facility on the Lewes-Rehoboth Canal). To place the boat anywhere else,
 press **Spawn** in the command bar and click the chart: the sim boat comes up there
 instead, with the same clean slate as Reset (full energy, SAFE, no plan or home).
@@ -610,7 +624,9 @@ prop-out coast - so after a dead time her speed decays toward her idle-in-gear s
 and 6.2 to 4.0 kn took **32.5 m and 13 s** (n=20), about twice what the coast law allowed. Her
 `maneuvering.slowdown` block (idle 3.65 kn, decay length 23.8 m, lag 3.3 s - the slower measured
 response) now sets her reach: **about 90 m at the 6.2 kn her 7-kn setpoint really makes, 96 m at a
-literal 7 kn, 131 m at 14 kn** (an extrapolation - she never logged above ~10.6 kn), more in a set -
+literal 7 kn, 131 m at 14 kn** (an extrapolation - she never logged above ~10.6 kn; 14 kn was her
+high setting until 2026-10-09, and her profiles now top out at 11.5 kn, or 10 kn with the EM712,
+whose slow-down is estimated), more in a set -
 the console's own 1 s command delay included, since she runs on for it before the SLOW reaches her.
 It was 65-70 m. Her prop-out coast datum, which the drift-in uses, is measured too: 40.3 m from 6 to
 2 kn (Lc 36.7 m, against the 35.1 m estimate). The simulator flies the same law (see *the lead*

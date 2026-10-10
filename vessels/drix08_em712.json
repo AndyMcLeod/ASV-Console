@@ -1,0 +1,96 @@
+{
+  "id": "drix08_em712",
+  "name": "DriX H-8 (Exail), EM712 gondola",
+  "class": "8 m survey USV",
+  "notes": "GONDOLA: the Kongsberg EM712 gondola (hull.gondola; iXblue 922C01-DWG-002), FITTED NOW (Andy, 2026-10-09: 'DriX currently has the 712 mounted') and the console's default. Same hull as vessels/drix08.json (the original EM2040 gondola), but a gondola 2.25 x 0.56 x 1.21 m and 577 kg in air: deeper (draft 2.25 m), more underwater area (4.5 m^2), and much more drag - measured 1.43x the fuel per hour at 8 kn and a top speed of 10 kn (at 3100 rpm, Andy). MEASURED here: the gondola (drawing), the speed and fuel laws (2024 trials). ESTIMATED here: coast and slow-down (maneuvering.coast / slowdown: the EM2040's measured values scaled by mass and drag) - measure them from EM712 logs when there are some. Everything else as drix08: Exail DriX H-8 medium-range USV. DIESEL-POWERED (single 38 HP diesel, straight shaft + fixed-pitch prop, 250 L fuel @ ~2 L/h -> multi-day endurance), NOT battery-propelled. OFFICIAL SPECS (Exail / naval-technology): LOA 7.71 m, beam 0.824 m, draft 2.0 m, 1,380 kg / 1.4 t, max 14 kn, survey/operating 7 kn, loiter 4 kn, 180 deg turn ~17 yd @ 14 kn (~8-10 m radius, matches the training notes' ~10 m). ENERGY: DIESEL FUEL (power.type=fuel), 250 L, the burn MEASURED for this gondola (power.fuel.source); Exail's published endurances (10 d @ 4 kn, 7 d @ 7 kn, 24 h @ 14 kn) are far more optimistic than her measured burn. The onboard 24 V 5 Ah lithium service battery (from the training notes) powers hotel/payload loads only and is engine/alternator-charged; it is NOT the propulsion energy source and is not modeled as the endurance limit. SPAWN: the DriX's operating base - UDel College of Earth, Ocean & Environment, Hugh R. Sharp Campus, 700 Pilottown Rd, Lewes DE. Point is on the Lewes-Rehoboth Canal CENTERLINE in the deep dredged channel (charted ~1.9 m) off the research pier - ~120 m from the pier and ~120 m clearance from either bank (verified via NOAA ENC: in the dredged deep-water area, clear of land/docks). ESTIMATED: autopilot gains, search-pattern sizes. WINDAGE AND UNDERWATER AREA: measured off iXblue's own dimensioned starboard view (hull.wind_source, hull.underwater_source) - the boat stands about 2.85 m above her design waterline to the antenna tips, but the wind sees a low hull and a narrow mast, and her 2.25 m draft is a gondola on a slender drop keel. max_turn_rate_deg_s (20) is chosen to give ~10 m turn radius at the 7 kn survey speed (the sim models a constant yaw-rate cap, not a constant min radius). UNDER-KEEL CLEARANCE 0.9 m (Andy, 2026-10-06; was 0.3): the 2.25 m draft is the gondola, the deepest point, and at 14 kn a hull squats while the ENC's depth bands are 1.8 m wide - so the navigable floor is 3.15 m, the same clearance the console gives the other hulls.",
+  "hull": {
+    "loa_m": 7.71,
+    "beam_m": 0.824,
+    "above_water_h_m": 0.84,
+    "draft_m": 2.25,
+    "wind_cd": 1.0,
+    "hull_cd": 1.0,
+    "wind_area_side_m2": 6.5,
+    "wind_area_front_m2": 1.8,
+    "underwater_lateral_area_m2": 4.5,
+    "wind_source": "MEASURED OFF iXblue's DIMENSIONED STARBOARD VIEW, 2026-10-09 ('DriX General Characteristics', in Andy's DriX Supervisor Training Notes: a starboard side view with the design waterline (DWL), the base line and a 7,667 mm length chain; LOA 7.67 m, beam 0.85 m, height overall 4.85 m keel down / 3.71 m keel up, draft 2 m). Scaled by the length chain (184.95 px/m), it reproduces the drawing's own height (4.84 m) and draft (1.98 m). SIDE: the silhouette above the DWL - hull, mast and crown - inks 5.95 m^2, the instruments and antennas above the crown 0.22 m^2: 6.2 m^2 for the original DriX; plus about 0.34 m^2 for what the H-8 adds (radar dome on the mast, stern GNSS/satcom pole, from Exail's H-8 photo): 6.5 m^2 (6.3-6.8). FRONT 1.8 m^2 (1.5-2.1), no front view being published: the hull's face (0.824 m beam x the drawing's 0.66-0.71 m freeboard beside the mast, rounded) about 0.50, the mast (0.47 m wide from iXblue's wind-farm photo, 1.74 m from deck to crown top on the drawing) about 0.8, crown and instruments about 0.2, plus the H-8's 0.34. above_water_h_m is the side area / length (0.84 m), used only where these areas are absent. HISTORY: an estimated 1.0 m height (7.7 m^2 side, 0.82 m^2 front) until 2026-10-09, then 4.9 m^2 measured from photographs (NOAA's near-broadside photo, scaled by the crown) the same evening - about a quarter low against this drawing, which turned up afterwards.",
+    "underwater_source": "The same iXblue starboard view with the gondola exchanged: below the design waterline the hull, keel strut, rudder, skeg and propeller are 3.75 m^2 (4.16 measured, less the EM2040 gondola's 0.45, plus the propeller's ~0.04); with the EM712 gondola's 0.73 m^2 side silhouette (hull.gondola), 4.5 m^2, against 4.2 with the EM2040.",
+    "gondola": {
+      "payload": "Kongsberg EM712 (RX and TX units), Kongsberg Simrad ES70-18CD, Kongsberg Simrad ES200-7C, Sonardyne HPT3000, iXblue PHINS C7",
+      "drawing": "iXblue 922C01-DWG-002 'Gondola General Arrangement', UNH, 2022-07-04 (page 4: 1:10 side and top views, dimensioned, with the mass table)",
+      "length_m": 2.247,
+      "depth_m": 0.556,
+      "width_m": 1.208,
+      "side_area_m2": 0.73,
+      "mass_in_air_kg": 577.4,
+      "mass_in_water_kg": 330.1,
+      "source": "The drawing's own dimensions: 2246.7 mm long, 555.8 mm deep overall (442.7 mm the body, the rest the HPT3000 fairing), 1207.9 mm wide - wider than the hull's 0.824 m beam; mass 577.41 kg in air and 330.05 kg in water ('between 330 and 340 kg'). Side area 0.73 m^2: the side view's silhouette rendered at 1.27 mm a pixel, slivers under 2 cm removed, bounding box 558.8 x 2250.4 mm against the drawn 555.8 x 2246.7."
+    },
+    "draft_source": "Both gondolas bolt to the same drop keel (12 x M10), so the EM712's bottom sits its extra depth below the EM2040's: 2.0 m + (0.556 - 0.31) = 2.25 m keel down. With the 0.9 m under-keel clearance the depth floor is 3.15 m, against 2.9 with the EM2040."
+  },
+  "propulsion": {
+    "speeds_kn": {
+      "low": 4.0,
+      "survey": 7.0,
+      "high": 10.0
+    },
+    "source": "high 10.0 kn at 3100 rpm: Andy's direct experience with the DriX on the EM712 gondola (2026-10-09: 'absolute top speed at 10 knots with ERPM at 3100'); the 2024 speed law (Fuel planner, 9 points, 1020-3000 rpm) reads 9.3 kn there, low at the top end. low and survey unchanged."
+  },
+  "maneuvering": {
+    "max_turn_rate_deg_s": 20,
+    "steering_settle_s": 4.0,
+    "approach_m": 6.0,
+    "lookahead_m": 20.0,
+    "arrival_radius_m": 5.0,
+    "coast": {
+      "from_kn": 6.0,
+      "to_kn": 2.0,
+      "distance_m": 30.7,
+      "measured": false,
+      "source": "ESTIMATED (2026-10-09), not measured: the EM2040's measured coast (vessels/drix08.json, 40.3 m from 6 to 2 kn, Lc 36.7 m) scaled by mass over drag - a coast length is mass / (rho Cd A). Drag 1.44x (the EM712's fuel per hour at 8 kn over the EM2040's, 4.75 / 3.31), mass 1.09x (577 kg gondola in air against ~430 for the EM2040, on a 1600 kg boat): 0.76x, so 30.7 m from 6 to 2 kn (Lc 27.9 m). Measure it from EM712 logs when there are some."
+    },
+    "slowdown": {
+      "idle_kn": 3.05,
+      "length_m": 18.1,
+      "lag_s": 3.3,
+      "measured": false,
+      "source": "ESTIMATED (2026-10-09), not measured: the EM2040's measured slow-down (vessels/drix08.json) scaled the same way - the in-gear decay length 23.8 m by mass over drag (0.76x) to 18.1 m, and the idle-in-gear speed 3.65 kn by 1/sqrt(drag) (the same idle thrust against 1.44x the drag) to 3.05 kn. lag_s 3.3 is the controller's, unchanged. Measure them from EM712 logs when there are some."
+    }
+  },
+  "autopilot": {
+    "xte_ki_deg": 0.15,
+    "xte_i_max_deg": 8.0
+  },
+  "power": {
+    "type": "fuel",
+    "fuel": {
+      "capacity_l": 250,
+      "burn_lph_idle": 1.05,
+      "burn_lph_full": 5.96,
+      "burn_exp": 1.62,
+      "warn_frac": 0.25,
+      "crit_frac": 0.1,
+      "source": "MEASURED (Fuel planner model.json: gondolas.em712 speed law kt = 1.1348 + 0.0026241 rpm and the shared 2024 fuel law L/h = -1.7761 + 0.0024949 rpm, both from the 2024 trials with this gondola; idle 1.05 L/h, the engine's 2026 loiter). The console's burn is fitted to it: full = the fuel law at 3100 rpm, her top speed of 10.0 kn (Andy) - 5.96 L/h, extrapolated past the law's measured 2500 rpm - and exp through 7 kn (3.80 L/h by the laws). At 8 kn the laws give 4.75 L/h, 1.68 NM/L, against the EM2040's 3.31 L/h and 2.42 NM/L."
+    }
+  },
+  "planning": {
+    "nogo_buffer_m": 5.0,
+    "under_keel_clearance_m": 0.9,
+    "channel_reach_m": 120,
+    "min_survey_line_m": 80,
+    "search": {
+      "expbox_step_m": 40,
+      "sector_radius_m": 100,
+      "parallel_length_m": 200,
+      "parallel_spacing_m": 30,
+      "parallel_lanes": 8
+    }
+  },
+  "spawn": {
+    "lat": 38.78965,
+    "lon": -75.16094
+  },
+  "display": {
+    "hull_color": "#d0342c"
+  }
+}

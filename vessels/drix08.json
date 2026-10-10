@@ -1,8 +1,8 @@
 {
   "id": "drix08",
-  "name": "DriX H-8 (Exail)",
+  "name": "DriX H-8 (Exail), EM2040 gondola",
   "class": "8 m survey USV",
-  "notes": "Exail DriX H-8 medium-range USV. DIESEL-POWERED (single 38 HP diesel, straight shaft + fixed-pitch prop, 250 L fuel @ ~2 L/h -> multi-day endurance), NOT battery-propelled. OFFICIAL SPECS (Exail / naval-technology): LOA 7.71 m, beam 0.824 m, draft 2.0 m, 1,380 kg / 1.4 t, max 14 kn, survey/operating 7 kn, loiter 4 kn, 180 deg turn ~17 yd @ 14 kn (~8-10 m radius, matches the training notes' ~10 m). ENERGY: modeled as DIESEL FUEL (power.type=fuel) - 250 L capacity, speed-cubed burn calibrated to Exail's published endurances (10 d @ 4 kn, 7 d @ 7 kn, 24 h @ 14 kn -> ~0.8 L/h idle rising to ~10.4 L/h at 14 kn). The onboard 24 V 5 Ah lithium service battery (from the training notes) powers hotel/payload loads only and is engine/alternator-charged; it is NOT the propulsion energy source and is not modeled as the endurance limit. SPAWN: the DriX's operating base - UDel College of Earth, Ocean & Environment, Hugh R. Sharp Campus, 700 Pilottown Rd, Lewes DE. Point is on the Lewes-Rehoboth Canal CENTERLINE in the deep dredged channel (charted ~1.9 m) off the research pier - ~120 m from the pier and ~120 m clearance from either bank (verified via NOAA ENC: in the dredged deep-water area, clear of land/docks). ESTIMATED: autopilot gains, search-pattern sizes. WINDAGE AND UNDERWATER AREA: measured off iXblue's own dimensioned starboard view (hull.wind_source, hull.underwater_source) - the boat stands about 2.85 m above her design waterline to the antenna tips, but the wind sees a low hull and a narrow mast, and her 2.0 m draft is a gondola on a slender drop keel. max_turn_rate_deg_s (20) is chosen to give ~10 m turn radius at the 7 kn survey speed (the sim models a constant yaw-rate cap, not a constant min radius). UNDER-KEEL CLEARANCE 0.9 m (Andy, 2026-10-06; was 0.3): the 2.0 m draft is the gondola, the deepest point, and at 14 kn a hull squats while the ENC's depth bands are 1.8 m wide - so the navigable floor is 2.9 m, the same clearance the console gives the other hulls.",
+  "notes": "GONDOLA: the original Kongsberg EM2040 gondola (hull.gondola; iXblue 920C12-1-DWG-002) - the one in iXblue's general-characteristics drawing and the one fitted for every log measurement in this file (Aug 2026). The larger EM712 gondola is vessels/drix08_em712.json, FITTED NOW (Andy, 2026-10-09: 'DriX currently has the 712 mounted') and the console's default. Exail DriX H-8 medium-range USV. DIESEL-POWERED (single 38 HP diesel, straight shaft + fixed-pitch prop, 250 L fuel @ ~2 L/h -> multi-day endurance), NOT battery-propelled. OFFICIAL SPECS (Exail / naval-technology): LOA 7.71 m, beam 0.824 m, draft 2.0 m, 1,380 kg / 1.4 t, max 14 kn, survey/operating 7 kn, loiter 4 kn, 180 deg turn ~17 yd @ 14 kn (~8-10 m radius, matches the training notes' ~10 m). ENERGY: DIESEL FUEL (power.type=fuel), 250 L, the burn MEASURED for this gondola (power.fuel.source); Exail's published endurances (10 d @ 4 kn, 7 d @ 7 kn, 24 h @ 14 kn) are far more optimistic than her measured burn. The onboard 24 V 5 Ah lithium service battery (from the training notes) powers hotel/payload loads only and is engine/alternator-charged; it is NOT the propulsion energy source and is not modeled as the endurance limit. SPAWN: the DriX's operating base - UDel College of Earth, Ocean & Environment, Hugh R. Sharp Campus, 700 Pilottown Rd, Lewes DE. Point is on the Lewes-Rehoboth Canal CENTERLINE in the deep dredged channel (charted ~1.9 m) off the research pier - ~120 m from the pier and ~120 m clearance from either bank (verified via NOAA ENC: in the dredged deep-water area, clear of land/docks). ESTIMATED: autopilot gains, search-pattern sizes. WINDAGE AND UNDERWATER AREA: measured off iXblue's own dimensioned starboard view (hull.wind_source, hull.underwater_source) - the boat stands about 2.85 m above her design waterline to the antenna tips, but the wind sees a low hull and a narrow mast, and her 2.0 m draft is a gondola on a slender drop keel. max_turn_rate_deg_s (20) is chosen to give ~10 m turn radius at the 7 kn survey speed (the sim models a constant yaw-rate cap, not a constant min radius). UNDER-KEEL CLEARANCE 0.9 m (Andy, 2026-10-06; was 0.3): the 2.0 m draft is the gondola, the deepest point, and at 14 kn a hull squats while the ENC's depth bands are 1.8 m wide - so the navigable floor is 2.9 m, the same clearance the console gives the other hulls.",
   "hull": {
     "loa_m": 7.71,
     "beam_m": 0.824,
@@ -14,14 +14,25 @@
     "wind_area_front_m2": 1.8,
     "underwater_lateral_area_m2": 4.2,
     "wind_source": "MEASURED OFF iXblue's DIMENSIONED STARBOARD VIEW, 2026-10-09 ('DriX General Characteristics', in Andy's DriX Supervisor Training Notes: a starboard side view with the design waterline (DWL), the base line and a 7,667 mm length chain; LOA 7.67 m, beam 0.85 m, height overall 4.85 m keel down / 3.71 m keel up, draft 2 m). Scaled by the length chain (184.95 px/m), it reproduces the drawing's own height (4.84 m) and draft (1.98 m). SIDE: the silhouette above the DWL - hull, mast and crown - inks 5.95 m^2, the instruments and antennas above the crown 0.22 m^2: 6.2 m^2 for the original DriX; plus about 0.34 m^2 for what the H-8 adds (radar dome on the mast, stern GNSS/satcom pole, from Exail's H-8 photo): 6.5 m^2 (6.3-6.8). FRONT 1.8 m^2 (1.5-2.1), no front view being published: the hull's face (0.824 m beam x the drawing's 0.66-0.71 m freeboard beside the mast, rounded) about 0.50, the mast (0.47 m wide from iXblue's wind-farm photo, 1.74 m from deck to crown top on the drawing) about 0.8, crown and instruments about 0.2, plus the H-8's 0.34. above_water_h_m is the side area / length (0.84 m), used only where these areas are absent. HISTORY: an estimated 1.0 m height (7.7 m^2 side, 0.82 m^2 front) until 2026-10-09, then 4.9 m^2 measured from photographs (NOAA's near-broadside photo, scaled by the crown) the same evening - about a quarter low against this drawing, which turned up afterwards.",
-    "underwater_source": "MEASURED OFF THE SAME iXblue STARBOARD VIEW, 2026-10-09 (Andy: 'fix the DriX underwater lateral area'): everything drawn below the design waterline - the hull down to the base line (0.46 m below the DWL; 3.08 m^2), the keel strut, gondola, rudder and skeg (1.07 m^2) - is 4.16 m^2; with the propeller (drawn in outline) 4.2 m^2 (4.0-4.5: the H-8's gondola may differ from the drawing's). It was length x draft, 7.71 x 2.0 = 15.4 m^2 - a full-length plate as deep as the gondola's bottom - so every DriX leeway ran sqrt(15.4 / 4.2) = 1.9 times too slow."
+    "underwater_source": "MEASURED OFF THE SAME iXblue STARBOARD VIEW, 2026-10-09 (Andy: 'fix the DriX underwater lateral area'): everything drawn below the design waterline - the hull down to the base line (0.46 m below the DWL; 3.08 m^2), the keel strut, gondola, rudder and skeg (1.07 m^2) - is 4.16 m^2; with the propeller (drawn in outline) 4.2 m^2 - with THIS gondola: the drawing's gondola is the EM2040 (hull.gondola). It was length x draft, 7.71 x 2.0 = 15.4 m^2 - a full-length plate as deep as the gondola's bottom - so every DriX leeway ran sqrt(15.4 / 4.2) = 1.9 times too slow.",
+    "gondola": {
+      "payload": "Kongsberg EM2040 (2040S 0.7 TX and RX), Kongsberg Simrad ES200-7C, Sonardyne HPT3000, iXblue PHINS",
+      "drawing": "iXblue 920C12-1-DWG-002 'Gondola General Arrangement', UNH_DriX8, 2020-12-07 (1:10 side and top views)",
+      "length_m": 2.03,
+      "depth_m": 0.31,
+      "width_m": 0.55,
+      "side_area_m2": 0.47,
+      "mass_in_water_kg": 250,
+      "source": "Length, depth and side area off iXblue's general-characteristics starboard view, whose gondola IS this one (Andy, 2026-10-09: 'Annotate DriX gondola as the 2040 gondola'): 2.03 m long, the body 0.26 m deep plus the HPT3000 fairing to 0.31 m, its top 1.67 m and its bottom 1.98 m below the design waterline; side area 0.45 m^2 dark plus the fairing about 0.02. The 1:10 side and top views of 920C12-1-DWG-002 agree (about 2.02 m long, 0.29 m deep, 0.55 m wide). Weight in water about 250 kg (the DriX Supervisor Training Notes); no air mass is published."
+    }
   },
   "propulsion": {
     "speeds_kn": {
       "low": 4.0,
       "survey": 7.0,
-      "high": 14.0
-    }
+      "high": 11.5
+    },
+    "source": "high 11.5 kn: the measured EM2040 speed law (Fuel planner, 16 MCAP sessions Aug 2026, SOG-based, +-5% tidal) at 3054 rpm, inside its measured 1280-3080 rpm; Exail's spec says 14 kn, which neither gondola reaches in the logs. low and survey unchanged."
   },
   "maneuvering": {
     "max_turn_rate_deg_s": 20,
@@ -52,11 +63,12 @@
     "type": "fuel",
     "fuel": {
       "capacity_l": 250,
-      "burn_lph_idle": 0.8,
-      "burn_lph_full": 10.4,
-      "burn_exp": 3.5,
+      "burn_lph_idle": 1.05,
+      "burn_lph_full": 7.21,
+      "burn_exp": 2.77,
       "warn_frac": 0.25,
-      "crit_frac": 0.1
+      "crit_frac": 0.1,
+      "source": "MEASURED (Fuel planner model.json gondolas.em2040: 16 MCAP sessions, 04-15 Aug 2026, flow meter vs thruster rpm): L/h = 3.1135 - 0.0029201 rpm + 1.39607e-6 rpm^2 and kt = -0.4380 + 0.0039094 rpm; idle 1.05 L/h (loiter, ~1010 rpm). The console's burn = idle + (full - idle)(v / high)^exp is fitted to it: full = the law at 11.5 kn (7.21 L/h), exp through 7 kn (2.61 L/h); within 2% of the law from 7 to 11 kn. It was 0.8 / 10.4 L/h, exp 3.5 at 14 kn, from Exail's endurances - 1.65 L/h at 7 kn against the 2.61 measured."
     }
   },
   "planning": {

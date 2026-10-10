@@ -41,6 +41,18 @@ fails = 0
 ran = 0
 
 
+def _crash_report(t, e, tb):
+    import traceback
+    print("  FAIL 0. the suite itself CRASHED before finishing - %s: %s" % (t.__name__, e))
+    print("".join(traceback.format_exception(t, e, tb))[-900:])
+    print("\n1 CHECK(S) FAILED (crashed before finishing)")
+    sys.stdout.flush()
+    os._exit(1)
+
+
+sys.excepthook = _crash_report             # a death is REPORTED, not silent (turn_geometry.js check 30)
+
+
 def check(name, cond, detail=""):
     global fails, ran
     ran += 1

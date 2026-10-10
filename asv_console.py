@@ -103,7 +103,10 @@ PORTS_DEFAULT_PATH = os.path.join(APP_DIR, "ports.default.json")
 # and the default decides more than the hull. The AIS service subscribes to a box around
 # the THEN-CURRENT spawn at startup, so a default that spawns elsewhere leaves the
 # traffic layer scoped to the wrong water until a vessel switch re-scopes it.
-DEFAULT_VESSEL_ID = "drix08"
+# AS SHE IS FITTED: the DriX carries one of two gondolas, sized round the sonar in it, and the gondola sets her draft,
+# her underwater area, her drag and so her top speed, burn, coast and slow-down. Andy, 2026-10-09: "DriX currently has
+# the 712 mounted" - so the default is the EM712 profile; drix08 is the same hull with the original EM2040 gondola.
+DEFAULT_VESSEL_ID = "drix08_em712"
 # Unique per server run. Sent in every state so the browser can tell a page refresh
 # (same run - keep the trail) from a reboot (new run - drop the stale trail; the run
 # is in the session logs). Changes on every restart.
