@@ -1102,7 +1102,8 @@ function tangentsEN(samp, h = 1) {
  * side was still 150 m off the routed path where the channel ended (drawn at the Turning
  * Basin). Where she runs off the END of a channel the pin is put beyond it instead
  * (`chartOwnership`'s ramps), so she holds the lane to the end and eases off in the water
- * past it - not, as the first cut did, 350 m early, left of center, before a 208 m swing.
+ * past it - not, as the first cut did, 350 m early, left of center, before a 208 m swing. (A
+ * lane to PORT of her path is not held past the end: it eases in inside the channel.)
  *
  * `jog` (optional): how far the path itself moves across the SEARCH's path between samples
  * i-1 and i (chartOwnership's `lat`). The shift may change by that much more there, so a lane
@@ -1150,7 +1151,8 @@ function median(a) {
  * she reaches it (the first cut overshot a width step by 16 m, with 70-90 m jumps where a bank
  * stood) - to port of the middle only for a narrowing on the stretch she runs straight along. And
  * where she runs off the END of the channel the samples beyond it carry the lane on (`ramp`)
- * long enough to ease back to the path in the water past it.
+ * long enough to ease back to the path in the water past it - a lane to starboard of her path
+ * only; one to port of it eases in inside the channel (THE ENDS, below).
  *
  * Shared, so the marks stage and the lane agree about which water is the chart's.
  *
@@ -1550,18 +1552,27 @@ export function chartOwnership(pathLL, frame, ko, buf, baseLL = null, clr = buf)
     }
     return false;
   };
+  // ⚠ ONLY A LANE TO STARBOARD OF HER PATH IS HELD PAST THE END (2026-10-10). The hold is an offset
+  // from her path, and past the end there is no channel to say where in the water that offset puts
+  // her. A move to starboard of the search's path is one Rule 9 asks for anywhere; a move to PORT is
+  // asked for only inside the channel, to bring her in to its line. Bound up the Piscataqua her path
+  // ran 21 m north of the fairway that begins at the Memorial Bridge, the fairway's lane was 49 m to
+  // port of it, and that 49 m held six steps back along a path bending south below the bridge put her
+  // on the port side of the reach there and through the south half of its opening - the swerve he
+  // circled, on most runs of that mission. Not held, the lane eases in to its line inside the
+  // channel's first steps, from the starboard side of it.
   for (let i = 1; i < N - 1; i++) {
     if (!own[i]) continue;
     let j = i;
     while (j < N - 1 && own[j]) j++;
     const i0 = i, i1 = j - 1;
-    if (i1 + 1 < N - 1 && pathLeaves(i1, 1) && endsBy(i1, 1)) {
+    if (i1 + 1 < N - 1 && T[i1] >= 0 && pathLeaves(i1, 1) && endsBy(i1, 1)) {
       for (let k = i1 + 1; k < Math.min(N - 1, i1 + 1 + K(T[i1])); k++) {
         if (own[k] || blocked(at(k, T[i1]), ko, buf)) break;
         T[k] = T[i1]; ramp[k] = 1;
       }
     }
-    if (i0 - 1 > 0 && pathLeaves(i0, -1) && endsBy(i0, -1)) {
+    if (i0 - 1 > 0 && T[i0] >= 0 && pathLeaves(i0, -1) && endsBy(i0, -1)) {
       for (let k = i0 - 1; k > Math.max(0, i0 - 1 - K(T[i0])); k--) {
         if (own[k] || ramp[k] || blocked(at(k, T[i0]), ko, buf)) break;
         T[k] = T[i0]; ramp[k] = 1;

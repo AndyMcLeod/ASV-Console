@@ -2398,7 +2398,13 @@ of the operator.
       it; a short gap between two rings is bridged; and the lane is capped so it never
       stands outside a narrower stretch ahead or behind. She holds the line to the
       channel's **end** and eases off past it; leaving through its **side**, she eases
-      off inside it. A crossing, a path beside the channel that never enters it, a
+      off inside it. The line is held past the end only where it is to **starboard** of
+      her path: where her path runs outside the channel's starboard edge, the line is to
+      port of it, and she eases in to it inside the channel instead. Held past the end
+      as an offset from a path that bends there, it put her on the **port** side of the
+      water beyond - bound up the Piscataqua, through the south half of the Memorial
+      Bridge's lift span and along the south side of the reach below it (2026-10-10;
+      tests/channel_end.js, on that chart and that path). A crossing, a path beside the channel that never enters it, a
       basin about as wide as it is long, and a patch shorter than 120 m are not water
       she is proceeding along. A cross-section cut by the channel's own end — where her
       path turns within 75 m of it — is the end's, not the channel's, and does not
