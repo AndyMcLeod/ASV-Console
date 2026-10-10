@@ -237,7 +237,7 @@ the propulsion energy source, so it isn't modeled as the endurance limit.
    (reversals + arc) draw **unlabeled** — the line's own `L#` label identifies it —
    and arcs use a coarse (~3 m) point spacing, so a wide survey keeps only a handful
    of waypoints per turn.
-4. **Set run params:** arrival radius, speed (Low/Survey/High), and **completion**
+4. **Set run params:** arrival radius, the transit speed (whole knots, the hull's own range), and **completion**
    (RTH / Complete / Loiter / Repeat; RTH is the default) in the command bar.
 4b. **(Optional) Set a ROC as HOME:** open **ROC**, click **+ Shore** or **+ Ship**,
    then click the chart to place it. Set its recovery offset (range + bearing; a ship's

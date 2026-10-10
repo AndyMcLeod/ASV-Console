@@ -186,6 +186,8 @@ eval([
   grabDecl("LINE_PART_OFFSET_M"), grabDecl("_drawnLines"), grab("linePartContinues"), grab("drawnLines"),
   grab("lineNo"), grab("lineCount"), grab("linePartTxt"),
   grab("resumePointOn"), grab("backtrackClear"),
+  // the speed in words (2026-10-09, whole knots): dropCornerSlow and the release note say a key through these
+  grab("isStepKey"), grab("spdTxt"), grab("slowestSelectableKey"),
   grab("roleSpeed"), grab("roleSpeedMS"), grab("linePhase"), grab("currentActivity"),
   // sendSpeed is the one door a speed command reaches the wire by (2026-09-22).
   // ⚠ THE LAUNCH GRANT REACHES THE CLASSIFIER (R8). currentActivity() returns role "depart"
@@ -1249,7 +1251,7 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     const ev = logged.find(e => e && e.kind === "resume");
     check("19k. what it did is said out loud, on the Intent card, and in the session log - as a resume, from a point, with the line, the distances and whose throttle it is",
           () => /Resumed from the point you chose on line 1 \(250 m along it\)/.test(notes.join(" "))
-                && /transit speed and the line at the survey speed/.test(notes.join(" ")) && /select LOW if you want it slow/.test(notes.join(" "))
+                && /transit speed and the line at the survey speed/.test(notes.join(" ")) && /set a slower speed if you want it slow/.test(notes.join(" "))   // no LOW on a whole-knot selector (2026-10-09)
                 && planIntent.why.some(w => /RESUMED FROM A CHOSEN POINT/.test(w.s) && /governor has the throttle/.test(w.s))
                 && !!ev && ev.data && ev.data.from_point === true && ev.data.line === 1 && ev.data.along_m === 250
                 && ev.data.transit_m === Math.round(distTo(ll(150, 25), ll(250, 0))) && ev.data.via === 0 && ev.data.certified === true,

@@ -425,6 +425,8 @@ eval([
   grab("dropHeldSurvey"),
   grab("logGuardLow"),
   grab("resumeBackM"), grab("resumePointOn"), grab("backtrackClear"), grab("alongLineM"),
+  // the speed in words (2026-10-09, whole knots): dropCornerSlow and the release note say a key through these
+  grab("isStepKey"), grab("spdTxt"), grab("slowestSelectableKey"),
   grab("roleSpeed"), grab("roleSpeedMS"), grab("linePhase"), grab("currentActivity"),
   grab("speedRole"), grab("speedGovernor"),
   // THE LEAD (2026-10-03): speedGovernor asks leadSpeedKey every frame; with no slowdown block on V.VESSEL it answers null at once

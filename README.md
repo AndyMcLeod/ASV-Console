@@ -194,7 +194,7 @@ card is resizable and remembers its size):
   dead on track.
 * **Speed** — three rows, because one number answers none of the questions once there are
   three speeds. What the boat is **making good** and what it was **told** (`6.8 kn · told
-  survey (7.0)`); the **role** that value is for and why (`SURVEY — on coverage line 7 of
+  7 kn`); the **role** that value is for and why (`SURVEY — on coverage line 7 of
   22`), so 14 kn in the middle of a survey reads as *TRANSIT — approach to the survey area*
   rather than as a fault; and all three **settings** with the live one in bold, so a value
   can be checked without opening the survey card. When the clearance guard has the throttle
@@ -484,6 +484,19 @@ now, not Exail's endurances, which had the DriX burning 1.65 L/h at 7 kn against
 The EM712's coast and slow-down are **estimated** from the EM2040's measured ones (scaled by
 mass over drag) until EM712 logs can measure them; each file's `*.source` fields say where
 every number came from.
+
+**Speed is selected in whole knots** (2026-10-09, every hull). The three role speeds - the
+survey card's Survey, Turn and Transit kn, and the command bar's Transit kn - offer the hull's
+whole knots, from its low speed rounded up to its high speed rounded down: 4-10 kn on the DriX
+with the EM712 gondola, 4-11 with the EM2040, 2-9 on the example 4 m and 2-6 on the small-class
+hull. The speed picked is **commanded through the water**: the current and the wind act on it,
+so the speed over the ground is the commanded speed plus the set - 7 kn into a 1 kn head current
+makes good about 6. The hull's named low / survey / high stay as the **console's own** speeds -
+the guard's LOW, the escape's HIGH, the slowest speed a hold makes way at - and are on no
+selector, so advice to slow down names the slowest whole knot instead. A plan saved before this
+reads back at the nearest whole knot (only the example 4 m hull's 4.5 kn survey speed, the
+small-class hull's 1.5 kn low and the EM2040's 11.5 kn high move), and a vessel switch brings
+each speed inside the new hull's range.
 
 Selecting a vessel also changes the **nogo model**: the minimum navigable depth is
 that vessel's `draft + under-keel clearance`, so the deep-draft DriX (2.9 m floor with the
@@ -1070,7 +1083,7 @@ of the operator.
    (start / center / finish) positions the leftover margin. Both **Spacing** and
    **Direction** are editable fields — type a value to force the spacing or rotate
    the whole pattern to a bearing. `Add to plan` commits the lines + waypoints. Set
-   arrival radius, speed (Low / Survey / High), and **completion** (below) in the
+   arrival radius, the transit speed (whole knots, the hull's own range), and **completion** (below) in the
    command bar. The plan persists server-side (`mission.json`). Reads and writes are locked and
    retried; a file that is there but cannot be read as a plan is refused rather than treated as
    empty (a corrupt one is copied aside as `mission.json.corrupt-*`); and each change to the

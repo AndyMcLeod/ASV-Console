@@ -150,7 +150,7 @@ const page = eval("(function(){ \"use strict\";\n"
   + "const linePhase = () => ({ phase: 'coverage' });\n"
   + decl(/^const LINE_PART_OFFSET_M = [^;]*;/m) + "\n" + decl(/^let _drawnLines = [^;]*;/m) + "\n"
   + decl(/^let _lineTableShape = [^;]*;/m) + "\n"
-  + ["lineSetKey", "linePartContinues", "drawnLines", "lineNo", "lineCount", "linePartTxt", "roleSpeed", "roleSpeedMS",
+  + ["lineSetKey", "linePartContinues", "drawnLines", "lineNo", "lineCount", "linePartTxt", "isStepKey", "spdTxt", "roleSpeed", "roleSpeedMS",
      "setCellText", "setHtmlIfChanged", "setStyleIfChanged", "transitRowHtml", "lineTableSkeleton", "buildLineTable",
      "buildTurnTable", "reversalScaleM", "isReversalGap", "routeLenM", "hopVia", "buildHopTable", "renderLineTable"].map(grab).join("\n")
   + "\nreturn { renderLineTable,"

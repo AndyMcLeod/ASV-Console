@@ -493,19 +493,15 @@
     <div class="prow"><label>Buffer m</label><input type="number" id="sp_buffer" value="3" min="0" max="200" step="1" title="Keep-clear buffer around every nogo zone. SHARED — this is the buffer all behaviors (Go-To / RTH / search / survey) route clear by."/></div>
     <!-- SPEED BY ROLE. A survey run is three jobs and they do not want one speed; the
          console commands each as the boat moves between them. They start EQUAL, so a
-         console that has never been told otherwise behaves exactly as it always did. -->
-    <div class="prow punchsep"><label>Survey spd</label>
-      <select id="sp_spd_survey" title="Speed held on the COVERAGE LINES — the one the sensor is specified at. The per-line plan times in the LINES table are computed from it.">
-        <option value="low">Low</option><option value="survey" selected>Survey</option><option value="high">High</option>
-      </select></div>
-    <div class="prow"><label>Turn spd</label>
-      <select id="sp_spd_turn" title="Speed through the REVERSALS between lines. It also sets the RADIUS every generated turn is built at — a hull can only hold v/ω — so a slower turn is tighter and reaches less far outboard, which is what buys clearance from a dock at the end of a line.">
-        <option value="low">Low</option><option value="survey" selected>Survey</option><option value="high">High</option>
-      </select></div>
-    <div class="prow"><label>Transit spd</label>
-      <select id="sp_spd_transit" title="Speed on everything that is not coverage and not a turn: the approach out to the survey area, hops between separated regions, and the Go-To / RTH / Transit behaviors.">
-        <option value="low">Low</option><option value="survey" selected>Survey</option><option value="high">High</option>
-      </select></div>
+         console that has never been told otherwise behaves exactly as it always did.
+         IN WHOLE KNOTS since 2026-10-09, the hull's own range: the options are filled from the
+         vessel (fillSpeedSelects), so the markup carries none. -->
+    <div class="prow punchsep"><label>Survey kn</label>
+      <select id="sp_spd_survey" title="Speed held on the COVERAGE LINES — the one the sensor is specified at. The per-line plan times in the LINES table are computed from it. Whole knots, COMMANDED through the water: the current and the wind make her speed over the ground differ."></select></div>
+    <div class="prow"><label>Turn kn</label>
+      <select id="sp_spd_turn" title="Speed through the REVERSALS between lines. It also sets the RADIUS every generated turn is built at — a hull can only hold v/ω — so a slower turn is tighter and reaches less far outboard, which is what buys clearance from a dock at the end of a line. Whole knots, COMMANDED through the water."></select></div>
+    <div class="prow"><label>Transit kn</label>
+      <select id="sp_spd_transit" title="Speed on everything that is not coverage and not a turn: the approach out to the survey area, hops between separated regions, and the Go-To / RTH / Transit behaviors. Whole knots, COMMANDED through the water: the current and the wind make her speed over the ground differ."></select></div>
     <div class="phint" id="sp_spd_note">speeds: --</div>
     <!-- LEAD-IN / LEAD-OUT. The first stretch of a survey line is not usable data: the
          steering is still settling onto the track after the reversal, and the IMU is
@@ -765,10 +761,10 @@
          SURV card; TRANSIT is the one that governs Go-To, RTH and a drawn Transit, so it is
          the one an operator needs with no survey drawn. Mirrored with #sp_spd_transit through
          setRoleSpeed(). (The single #c_speed selector removed on 2026-08-31 was the OLD
-         one-speed-for-everything control; this is not that coming back.) -->
-    <label style="font-family:var(--mono);font-size:9px;color:var(--ink-faint);text-transform:uppercase;" title="Speed for everything that is not survey coverage and not a reversal: Go-To, RTH, a drawn Transit, the approach out to a survey and hops between coverage regions. Shared with the SURV panel's Transit spd.">Transit</label>
-    <select id="c_spd_transit" title="TRANSIT speed — governs Go-To, RTH, Transit, the approach to a survey and region hops. Shared with the SURV panel's Transit spd; applies live, mid-run included." style="background:var(--abyss);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:11px;padding:6px 4px;border-radius:2px;">
-      <option value="low">Low</option><option value="survey" selected>Survey</option><option value="high">High</option>
+         one-speed-for-everything control; this is not that coming back.) Whole knots, filled
+         from the vessel like the panel's three (fillSpeedSelects). -->
+    <label style="font-family:var(--mono);font-size:9px;color:var(--ink-faint);text-transform:uppercase;" title="Speed for everything that is not survey coverage and not a reversal: Go-To, RTH, a drawn Transit, the approach out to a survey and hops between coverage regions. Shared with the SURV panel's Transit kn.">Transit kn</label>
+    <select id="c_spd_transit" title="TRANSIT speed in whole knots — governs Go-To, RTH, Transit, the approach to a survey and region hops. COMMANDED through the water: the current and the wind make her speed over the ground differ. Shared with the SURV panel's Transit kn; applies live, mid-run included." style="background:var(--abyss);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:11px;padding:6px 4px;border-radius:2px;">
     </select>
     <select id="c_completion" title="What the ASV does at the end of the plan (Survey / search route): RTH = chain the Return-to-Home behavior (ENC-routed) and station-keep at home (default); Complete = stop; Loiter = station-keep at the last waypoint; Repeat = loop the route until Stop." style="background:var(--abyss);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:11px;padding:6px 4px;border-radius:2px;">
       <option value="rth" selected>RTH</option><option value="complete">Complete</option><option value="loiter">Loiter</option><option value="repeat">Repeat</option>
@@ -4106,7 +4102,7 @@ function clearanceGuard(){
           ? "the escape still has the throttle at high until you command her somewhere."
           : resumeSlow
           ? "still at LOW on your authority; RELEASE LOW on the bar gives the throttle back to the plan's speed."
-          : "speed back to " + roleSpeed(speedRole()) + " (" + speedRole() + ")."));
+          : "speed back to " + spdTxt(roleSpeed(speedRole())) + " (" + speedRole() + ")."));
         clearance.slowed = false; commandedSpeed = null;   // let the governor re-assert
         guardLevel = "clear";
         // The episode is over: the operator's decision was about THIS situation, and the
@@ -4880,8 +4876,8 @@ function commandSpeed(asked){
   const key = makesWayKey(asked);
   if(key !== asked && !(speedWant && speedWant.asked === asked && speedWant.key === key)){
     const st = (typeof S !== "undefined" && S && S.status) || {};
-    flashNote("Speed " + asked + " cannot make way against the "
-      + (st.env_set_kn != null ? (+st.env_set_kn).toFixed(2) : "?") + " kn set " + "—" + " commanding " + key + " instead.");
+    flashNote("Speed " + spdTxt(asked) + " cannot make way against the "
+      + (st.env_set_kn != null ? (+st.env_set_kn).toFixed(2) : "?") + " kn set " + "—" + " commanding " + spdTxt(key) + " instead.");
   }
   // `tw`: her speed through the water when it was sent, on a hull that slows in gear - the start of the curve cutAge
   // holds her to. Not asked of any other hull (no law, no curve).
@@ -4900,8 +4896,9 @@ function speedReconcile(s, st){
   sendSpeed(speedWant.key);                     // the same rule as the first send: see above
   if(speedWant.sends > SPEED_RESEND_MAX && !speedWant.told){
     speedWant.told = true;
+    const loud = k => isStepKey(k) ? spdTxt(k) : String(k).toUpperCase();
     showBanner("⚠ THE VESSEL IS NOT TAKING THE SPEED COMMAND — the console wants "
-      + speedWant.key.toUpperCase() + " and the vessel still reports " + String(st.speed_key).toUpperCase()
+      + loud(speedWant.key) + " and the vessel still reports " + loud(st.speed_key)
       + " after " + SPEED_RESEND_MAX + " re-sends. It keeps trying; take the speed by hand if it does not change.");
   }
   return "resent";
@@ -5185,10 +5182,10 @@ function renderIntent(){
   // throttle it says THAT instead, because then the role is not why the boat is slow.
   const spRole = act.role || speedRole(), lsh = leadShown();
   if(st.sog_kn != null){
-    const told = st.speed_key
-      ? " · told " + st.speed_key + (V.SPEED_KN[st.speed_key] != null
-          ? " (" + V.SPEED_KN[st.speed_key].toFixed(1) + ")" : "")
-      : "";
+    const told = !st.speed_key ? ""
+      : isStepKey(st.speed_key) ? " · told " + spdTxt(st.speed_key)        // a whole knot says its knots already
+      : " · told " + st.speed_key + (V.SPEED_KN[st.speed_key] != null
+          ? " (" + V.SPEED_KN[st.speed_key].toFixed(1) + ")" : "");
     html += row("speed", st.sog_kn.toFixed(1) + " kn" + told);
   }
   if(clearance.slowed)
@@ -5197,7 +5194,7 @@ function renderIntent(){
     html += row("for", "HELD AT LOW ON YOUR INSTRUCTION — RELEASE LOW on the guard bar, or change a speed selector", "#e8b46a");
   else if(lsh && lsh.key)
     // THE LEAD, SAID (2026-10-03): the speed told is not this leg's role speed, and the reason is ahead of her
-    html += row("for", spRole.toUpperCase() + " — " + act.detail + " · SLOWING to " + lsh.key + " "
+    html += row("for", spRole.toUpperCase() + " — " + act.detail + " · SLOWING to " + spdTxt(lsh.key) + " "
                 + fmtDist(lsh.d) + " before " + (lsh.arrival ? (lsh.coast ? "the drift-in (the prop stops there)" : "the hold point")
                                                        : "the leg to waypoint " + (lsh.idx + 1))
                 + " — in gear she needs that water to come down", "#e8c07a");
@@ -5208,7 +5205,7 @@ function renderIntent(){
   // them is that they differ, and an operator cannot check a setting they cannot see.
   html += row("speeds", SPEED_ROLES.map(r=>{
       const k = roleSpeed(r), kn = V.SPEED_KN[k];
-      const txt = r + " " + k + (kn != null ? " " + kn.toFixed(1) : "");
+      const txt = r + " " + (isStepKey(k) ? spdTxt(k) : k + (kn != null ? " " + kn.toFixed(1) : ""));
       return (r === spRole && !clearance.slowed && !resumeSlow)
         ? '<b style="color:var(--ink)">' + txt + '</b>' : txt;
     }).join(" · "), "var(--ink-dim)");
@@ -5416,17 +5413,18 @@ function dropCornerSlow(why){
   // its own `csKey` from it.
   if(!(had || un)) return;   // nothing was claimed, so nothing to retract - and this is what
                              // makes the saying happen ONCE: the next deviation finds it empty.
-  const what = (had ? had + " corner(s) measured at " + cornerPlanKey : "")
+  const what = (had ? had + " corner(s) measured at " + spdTxt(cornerPlanKey) : "")
              + (had && un ? ", and the " : "")
              + (un ? un + " corner(s) slowing did not answer" : "");
   try {
-    flashNote("Corner slowing has lapsed — " + why + ". Set the survey speed to LOW to fly "
+    flashNote("Corner slowing has lapsed — " + why + ". Set the survey speed to its slowest, "
+      + spdTxt(slowestSelectableKey()) + ", to fly "
       + "the rest slowly; the corners can only be measured again by an Upload.");
     showBanner("CORNER SLOWING HAS LAPSED — " + why + ", so the " + what + " index a route "
       + "she is no longer flying, and the console will not guess which corners of the amended "
       + "route those numbers name. Nothing is being slowed FOR A CORNER now; the clearance "
       + "guard is unchanged and still assessing the track ahead. To fly the rest at the low "
-      + "speed, set the survey speed to LOW.");
+      + "speed, set the survey speed to its slowest, " + spdTxt(slowestSelectableKey()) + ".");
   } catch(e) {}
 }
 // ⚠ UPLOAD IS NOW AWAITED BEFORE IT POSTS, SO IT NEEDS A BUSY STATE. Measuring the
@@ -5761,7 +5759,14 @@ function applyVesselToUI(v){
   if(!v) return;
   V.VESSEL = v;
   // physics mirrors the sim uses for routing/turn geometry
-  if(v.propulsion && v.propulsion.speeds_kn) V.SPEED_KN = {...v.propulsion.speeds_kn};
+  // ... and the operator's WHOLE KNOTS beside the named three, as keys of the same table ("7" -> 7), from the list
+  // the console derives and sends with the vessel (apply_vessel) - so the page offers exactly what the console takes.
+  if(v.propulsion && v.propulsion.speeds_kn){
+    V.SPEED_KN = {...v.propulsion.speeds_kn};
+    V.SPEED_STEPS = Array.isArray(v.propulsion.speed_steps_kn) ? v.propulsion.speed_steps_kn.filter(Number.isInteger) : [];
+    V.SPEED_STEPS.forEach(n => { V.SPEED_KN[String(n)] = n; });
+    fillSpeedSelects();
+  }
   if(v.maneuvering && v.maneuvering.max_turn_rate_deg_s) V.MAX_TURN_RATE_DEG_S = v.maneuvering.max_turn_rate_deg_s;
   // Steering settle time, which is what an EASED reversal's spiral is built from. Absent
   // or non-numeric reads as 0 = no easing available, so a vessel file written before this
@@ -7528,7 +7533,7 @@ function transitRowHtml(label, est, spd, spdKey, actualS){
   if(!est) txt = `<span style="color:var(--ink-faint)">--</span>`;
   else if(est.err) txt = `<span class="warn" style="color:#d9958f">unroutable — ${est.err}</span>`;
   else { const t = (spd>0) ? fmtMS(Math.round(est.m/spd)) : "--";
-    txt = `${t} <span style="color:var(--ink-faint)">${spdKey?"@ "+spdKey+" ":""}(${fmtDist(est.m)})${est.direct?" · direct — nogo not loaded":""}${est.uncharted?(est.outM > 0 ? " · part of it over water the chart is not yet read over" : " · it runs near the edge of the water the chart was read over")+" - the command reads it first":""}</span>`; }
+    txt = `${t} <span style="color:var(--ink-faint)">${spdKey?"@ "+spdTxt(spdKey)+" ":""}(${fmtDist(est.m)})${est.direct?" · direct — nogo not loaded":""}${est.uncharted?(est.outM > 0 ? " · part of it over water the chart is not yet read over" : " · it runs near the edge of the water the chart was read over")+" - the command reads it first":""}</span>`; }
   // ... and the ACTUAL beside it once the leg has been flown (the approach and the RTH are clocked in accumLineTime).
   const act = actualS > 0 ? ` <span style="color:#e8d9a0">· actual ${fmtMS(Math.round(actualS))}</span>` : "";
   return `<div style="margin-top:4px"><span style="color:var(--ink-faint)">${label}</span> ${txt}${act}</div>`;
@@ -7640,7 +7645,7 @@ function renderLineTable(){
   // inputs" - and the row said "transit" while dividing by the coverage speed. On a DriX
   // that is 7.0 kn where the boat will actually run 14.0, so both figures read DOUBLE.
   const trSpd=roleSpeedMS("transit");
-  setCellText(q("lt_speed"), roleSpeed("survey")+" speed");
+  setCellText(q("lt_speed"), isStepKey(roleSpeed("survey")) ? "survey " + spdTxt(roleSpeed("survey")) : roleSpeed("survey")+" speed");
   setHtmlIfChanged(q("lt_transit"), transitRowHtml("transit → L1:", transitEst.transit, trSpd, roleSpeed("transit"), approachSec));
   for(const r of lines){
     setStyleIfChanged(q("lt_r"+r.i), "background", r.active ? "rgba(63,192,255,.14)" : "");
@@ -7677,7 +7682,7 @@ function renderLineTable(){
     setCellText(q("lt_h"+j+"_sec"), h.sec ? fmtMS(h.sec) : "--");
     setStyleIfChanged(q("lt_h"+j+"_sec"), "color", h.sec ? "#e8d9a0" : "var(--ink-faint)");
   });
-  if(ht.length){ setCellText(q("lt_hspeed"), "@ " + roleSpeed("transit"));
+  if(ht.length){ setCellText(q("lt_hspeed"), "@ " + spdTxt(roleSpeed("transit")));
     setCellText(q("lt_hsum_plan"), fmtMS(ht.reduce((a,r)=>a+r.plan_s,0)));
     const HT=ht.reduce((a,r)=>a+r.sec,0); setCellText(q("lt_hsum_act"), HT ? fmtMS(HT) : "--"); }
   const lastLine=lineCount();                    // the DRAWN line the return leaves from (review #18)
@@ -8732,7 +8737,7 @@ function punchRefusal(){
     nSkew ? nSkew + " where the two runs are more than " + SKEW_LIMIT_DEG + "° off a true reversal" : "",
     nDegen ? nDegen + " where the run ends are too close together to loop between" : ""].filter(Boolean);
   const sp = currentPattern(), turnKey = roleSpeed("turn");
-  const minR = minTurnRadiusM(turnKey), need = 2 * minR, needLow = 2 * minTurnRadiusM("low");
+  const minR = minTurnRadiusM(turnKey), need = 2 * minR, needLow = 2 * minTurnRadiusM(slowestSelectableKey());
   const fixes = ["draw the box so those lines end short of what refused the turn", "strike off one of the two runs"];
   // A CHANNEL LOOKS LIKE OPEN WATER, so it gets its own words: the turn-water rule keeps every turn out of a channel the
   // survey's own lines do not enter, and the sure remedies are standoff or surveying the channel on purpose.
@@ -8745,8 +8750,8 @@ function punchRefusal(){
   if(teardrop) fixes.push("widen the spacing to " + Math.ceil(need) + " m");
   // A slower turn is a tighter one: it helps a loop the boat could not TRACK, and a teardrop plan whose spacing the
   // low-speed radius already fits. The punch reruns by itself when the TURN speed changes (recalcForSpeed).
-  if(turnKey !== "low" && (nTrack || (teardrop && needLow < sp.spacing)))
-    fixes.push("set the TURN speed to low (the punch reruns by itself)");
+  if((V.SPEED_KN[turnKey] || 0) > (V.SPEED_KN[slowestSelectableKey()] || 0) && (nTrack || (teardrop && needLow < sp.spacing)))
+    fixes.push("set the TURN speed to " + spdTxt(slowestSelectableKey()) + " (the punch reruns by itself)");
   return {short: n + " reversal(s) with no flyable turn (red)",
     text: "ADD TO PLAN REFUSED — " + n + " reversal(s) have NO FLYABLE TURN (dashed red; runs " + pairs + "): "
         + causes.join("; ") + ". Added, each would hand the boat a 180° at zero radius beside what refused its turn. "
@@ -12451,7 +12456,7 @@ async function punchOut(){
     // at all. Both are the operator's call to make (widen the lines, or slow down), so
     // quote the actual numbers rather than just reporting the symptom.
     const spdKey = roleSpeed("turn");     // the advisory is about the TURN radius
-    const needSpacing = 2*minTurnR, lowSpacing = 2*minTurnRadiusM(makesWayKey("low"));
+    const needSpacing = 2*minTurnR, lowSpacing = 2*minTurnRadiusM(makesWayKey(slowestSelectableKey()));
     // WIDENING ONLY HELPS WHEN THE SPACING IS THE PROBLEM. Below 2*minTurnR the
     // reversals are teardrops, and widening turns them back into semicircles that
     // reach less far outboard. At or above it there is nothing to widen towards, and
@@ -12472,8 +12477,8 @@ async function punchOut(){
     // is a transit and is timed at the transit speed. Quoting one speed for both was
     // right only while there was one speed.
     const spd=roleSpeedMS("survey"), spdT=roleSpeedMS("transit");                    // m/s
-    const surveyTxt = spd>0 && patClip.length ? `${fmtDur(surveyLen/spd)} @ ${roleSpeed("survey")} (${fmtDist(surveyLen)})` : "--";
-    const approachTxt = spdT>0 && approachLen>0 ? `${fmtDur(approachLen/spdT)} @ ${roleSpeed("transit")} (${fmtDist(approachLen)})` : "--";
+    const surveyTxt = spd>0 && patClip.length ? `${fmtDur(surveyLen/spd)} @ ${spdTxt(roleSpeed("survey"))} (${fmtDist(surveyLen)})` : "--";
+    const approachTxt = spdT>0 && approachLen>0 ? `${fmtDur(approachLen/spdT)} @ ${spdTxt(roleSpeed("transit"))} (${fmtDist(approachLen)})` : "--";
     $("#v_surveydur").textContent = surveyTxt;                                   // vessel-card readouts
     $("#v_approach").textContent = approachTxt;
     const depthLbl = dr.max>0 ? `${dr.min}-${dr.max} m` : `≥ ${dr.min} m`;
@@ -12572,13 +12577,13 @@ async function punchOut(){
       // above is set, so this clause and the ending used to say a punch that left the operator nothing was clear of
       // keep-outs and ready to add; punchRefusal refuses it now, and this line says so in its own words.
       (patClip.length&&!nRoute&&!nU&&!nSemi&&!nTear&&!nRace?`, clear of keep-outs`:``)+
-      ((nTear||nNoTurn)&&canWiden?`. Spacing ${sp.spacing.toFixed(1)} m is under the ${needSpacing.toFixed(0)} m a semicircle needs at ${spdKey} speed (min turn radius ${minTurnR.toFixed(1)} m)`:``)+
+      ((nTear||nNoTurn)&&canWiden?`. Spacing ${sp.spacing.toFixed(1)} m is under the ${needSpacing.toFixed(0)} m a semicircle needs at ${spdAtTxt(spdKey)} (min turn radius ${minTurnR.toFixed(1)} m)`:``)+
       (patClip.length?`. Survey ~${surveyTxt}`+(approachLen>0?`, approach ~${approachTxt}`:``):``)+
       (!patClip.length?`. NOTHING LEFT TO SURVEY, so nothing to add to the plan — the note under Add to plan says what took the lines.`
        :nUnsafeTurn?`. NOT READY for the plan — the note under Add to plan says why.`:`. Add to plan.`);
     // Banner priority: hard blocks first, then the turn-radius advisories, then routing.
     const widenTxt = !canWiden ? `` : `Widen the spacing to ${Math.ceil(needSpacing)} m`+
-      (lowSpacing < sp.spacing ? `, or plan at low speed (needs only ${lowSpacing.toFixed(0)} m)` : ``)+`.`;
+      (lowSpacing < sp.spacing ? `, or set the turn speed to ${spdTxt(slowestSelectableKey())} (needs only ${lowSpacing.toFixed(0)} m)` : ``)+`.`;
     // ⚠ A RED LEG HAS TWO CAUSES AND THEY NEED DIFFERENT WORDS. This branch once called
     // every one of them a blocked transit — "the ASV would cross the obstacle on those legs" —
     // which is false for a refused REVERSAL (what has no answer is the TURN, not the line
@@ -12628,7 +12633,7 @@ async function punchOut(){
                      .filter(Boolean).join(", ");
       showBanner(`${nNoTurn} join(s) have no clean turn (${whyTxt}): the route folds back there tighter than the ASV can turn, so expect it to swing wide. Review those before adding the plan.${chanTxt}`); }
     else if(nTear){ clearViolation();
-      showBanner(`${nTear} turn(s) are teardrops at the ASV's ${minTurnR.toFixed(1)} m minimum radius — ${sp.spacing.toFixed(1)} m line spacing is below the ${needSpacing.toFixed(0)} m a plain semicircle needs at ${spdKey} speed. They swing up to ${maxOutboard.toFixed(0)} m past the line ends; confirm that water is clear.${widenTxt?` ${widenTxt}`:``}`); }
+      showBanner(`${nTear} turn(s) are teardrops at the ASV's ${minTurnR.toFixed(1)} m minimum radius — ${sp.spacing.toFixed(1)} m line spacing is below the ${needSpacing.toFixed(0)} m a plain semicircle needs at ${spdAtTxt(spdKey)}. They swing up to ${maxOutboard.toFixed(0)} m past the line ends; confirm that water is clear.${widenTxt?` ${widenTxt}`:``}`); }
     else if(nRoute){ clearViolation(); showBanner(`${nRoute} transit(s) auto-routed around obstacles (amber). Review the detours before committing.`); }
     else { clearViolation(); showBanner("Chart-feature planning aid — ENC scale/currency varies; NOT hydrographic-certified. The operator remains responsible for the survey plan."); }
     updatePatReadout(); render();
@@ -13352,7 +13357,7 @@ function updateLeadNote(){
   const i = leadInM(), o = leadOutM();
   if(!(i > 0 || o > 0)){ el.textContent = "lead: none — the run is the coverage"; return; }
   const dur = mission.lead_mode === "s";
-  const conv = dur ? ` (${mission.lead_in||0} s / ${mission.lead_out||0} s at ${roleSpeed("survey")} `
+  const conv = dur ? ` (${mission.lead_in||0} s / ${mission.lead_out||0} s at ${spdTxt(roleSpeed("survey"))} = `
                      + `${roleSpeedMS("survey").toFixed(2)} m/s)` : ``;
   el.textContent = `lead: ${fmtDist(i)} in / ${fmtDist(o)} out${conv}`
     + ` — +${fmtDist(i+o)} of RUN per line, not coverage. Punch Out applies it.`;
@@ -13391,7 +13396,7 @@ function updateEaseNote(){
   }
   el.style.color = "";
   el.textContent = "turns: eased — " + t.toFixed(1) + " s of steering settle at "
-    + roleSpeed("turn") + " = " + fmtDist(easeLsM()) + " of spiral each end. "
+    + spdTxt(roleSpeed("turn")) + " = " + fmtDist(easeLsM()) + " of spiral each end. "
     + "Costs a little outboard water and about twice the waypoints; Punch Out reports both.";
 }
 $("#sp_turn_ease").onchange = ()=>setTurnEase($("#sp_turn_ease").value);
@@ -13524,12 +13529,12 @@ function recalcCommittedForSpeed(){
   const runSec = parts ? parts.reduce((a,[m,v])=>a + (v>0 ? m/v : 0), 0) : runLen/spd;
   // Name the speeds that actually contributed, so a figure that is not simply
   // "length ÷ survey speed" does not look like one that is.
-  const mix = parts ? parts.filter(([m])=>m>0.5).map(([,,k])=>roleSpeed(k)) : [roleSpeed("survey")];
+  const mix = parts ? parts.filter(([m])=>m>0.5).map(([,,k])=>spdTxt(roleSpeed(k))) : [spdTxt(roleSpeed("survey"))];
   const uniq = [...new Set(mix)];
   $("#v_surveydur").textContent = fmtDur(runSec) + " @ " + uniq.join("/")
     + " (" + fmtDist(runLen) + ")";
   $("#v_approach").textContent = approachLen > 0 && spdT > 0
-    ? fmtDur(approachLen/spdT) + " @ " + roleSpeed("transit") + " (" + fmtDist(approachLen) + ")" : "--";
+    ? fmtDur(approachLen/spdT) + " @ " + spdTxt(roleSpeed("transit")) + " (" + fmtDist(approachLen) + ")" : "--";
   // THE CHECK THAT MATTERS. The committed turn waypoints were generated at whatever speed
   // was set when the plan was punched. SLOWING DOWN only ever makes them easier - the
   // minimum radius shrinks. SPEEDING UP can make a reversal the boat can no longer hold,
@@ -13545,7 +13550,7 @@ function recalcCommittedForSpeed(){
   }
   const need = 2 * minTurnRadiusM(makesWayKey(roleSpeed("turn")));   // the TURN speed - as flown - sets the radius
   if(ci && ci.spacing != null && ci.spacing < need){
-    showBanner(SPEED_WARN_PREFIX + roleSpeed("turn") + ": the committed plan's " + (ciSv ? "S" + ciSv.no + " " : "") + ci.spacing.toFixed(1)
+    showBanner(SPEED_WARN_PREFIX + spdTxt(roleSpeed("turn")) + ": the committed plan's " + (ciSv ? "S" + ciSv.no + " " : "") + ci.spacing.toFixed(1)
       + " m spacing is inside the " + need.toFixed(1) + " m a plain reversal needs at this speed. "
       + "Its turn waypoints were generated for the SPEED IT WAS PUNCHED AT — re-draw and Punch Out "
       + "again to rebuild them, or drop the speed.");
@@ -13610,16 +13615,49 @@ SPEED_ROLES.forEach(role=>{
   el.onchange = ()=>setRoleSpeed(role, el.value);
 });
 if($("#c_spd_transit")) $("#c_spd_transit").onchange = ()=>setRoleSpeed("transit", $("#c_spd_transit").value);
-// What the three are, in one line under them - and in KNOTS, because "survey" is a label
-// and the operator is deciding about a speed. Says so out loud when they are all equal,
-// which is the state a console that has never been told otherwise is in.
+// SPEED IN WHOLE KNOTS (Andy, 2026-10-09: "Change speed selection to knots in integer increments. This is commanded
+// speed that environmental forcing will affect. All ASV's."). The four selectors offer the hull's whole knots, its low
+// rounded up to its high rounded down - V.SPEED_STEPS, derived by the console and sent with the vessel (apply_vessel),
+// so the page offers exactly what the console takes. Each is a key of V.SPEED_KN ("7" -> 7), so roleSpeed, the
+// governor, every estimate and the turn radius take it unchanged. The NAMED keys stay in the table as the CONSOLE'S
+// speeds - the guard's low, the escape's high, the hold's slowest-that-makes-way - and are on no selector. A plan saved
+// with a named speed comes back from the console moved to the nearest whole knot (_norm_speeds).
+// And all of it is COMMANDED speed, through the water: the stream and the wind are added, and her speed over the
+// ground is the sum - which is why the vessel card's SOG and the selector need not agree.
+const SPEED_SELECTS = [["transit", "#sp_spd_transit"], ["turn", "#sp_spd_turn"], ["survey", "#sp_spd_survey"],
+                       ["transit", "#c_spd_transit"]];
+function isStepKey(k){ return /^\d+$/.test(String(k)); }
+// A speed key as the operator reads it: a whole knot is "7 kn"; a named one is its name, as every message naming one
+// always said ("SLOWED to low").
+function spdTxt(k){ return (isStepKey(k) && V.SPEED_KN && V.SPEED_KN[k] != null) ? V.SPEED_KN[k] + " kn" : String(k); }
+// THE SLOWEST SPEED THE OPERATOR CAN SELECT. Advice to slow down names this and is judged at it - never at the hull's
+// low, which is on no selector and on the small-class hull (1.5 kn) is not a whole knot at all: "set the TURN speed to
+// low" would name a speed the operator cannot pick, at a radius the one they can pick does not have.
+// "at 7 kn", or "at survey speed" for a named speed, as the advisories that use it always read.
+function spdAtTxt(k){ return isStepKey(k) ? spdTxt(k) : k + " speed"; }
+function slowestSelectableKey(){ return (V.SPEED_STEPS && V.SPEED_STEPS.length) ? String(V.SPEED_STEPS[0]) : "low"; }
+function fillSpeedSelects(){
+  const steps = V.SPEED_STEPS || [];
+  SPEED_SELECTS.forEach(([role, id]) => {
+    const el = $(id); if(!el) return;
+    el.innerHTML = "";
+    steps.forEach(n => { const o = document.createElement("option");
+      o.value = String(n); o.textContent = n + " kn"; el.appendChild(o); });
+    el.value = (mission.speeds || {})[role] || "";
+  });
+  updateSpeedNote();
+}
+// What the three are, in one line under them - and in KNOTS. Says so out loud when they are all equal, which is the
+// state a console that has never been told otherwise is in, and says what the knots ARE: commanded, through the water.
 function updateSpeedNote(){
   const el = $("#sp_spd_note"); if(!el) return;
   const kn = r => (V.SPEED_KN[roleSpeed(r)] != null ? V.SPEED_KN[roleSpeed(r)].toFixed(1) + " kn" : "--");
+  const one = r => isStepKey(roleSpeed(r)) ? spdTxt(roleSpeed(r)) : roleSpeed(r) + " (" + kn(r) + ")";
   const same = SPEED_ROLES.every(r => roleSpeed(r) === roleSpeed("survey"));
-  el.textContent = same
-    ? "all three at " + roleSpeed("survey") + " · " + kn("survey") + " — set them apart to differ"
-    : SPEED_ROLES.map(r => r + " " + roleSpeed(r) + " (" + kn(r) + ")").join(" · ");
+  el.textContent = (same
+    ? "all three at " + one("survey") + " — set them apart to differ"
+    : SPEED_ROLES.map(r => r + " " + one(r)).join(" · "))
+    + " · commanded through the water; current and wind change her speed over the ground";
 }
 // TWO DIFFERENT THINGS, and keeping them apart is the whole point:
 //   runCompletion() - what the run IN PROGRESS does at its end. A Go-To station-keeps,
@@ -15169,8 +15207,8 @@ async function doUpload(opts){
     // The banner reads "at <csKey> the hull would round them ...": what was judged is each leg's own
     // commanded speed, and saying `high` about a survey turn walked at 3 kn would name a cause the walk
     // did not measure.
-    csKey = "the speed the run commands there (transit " + roleSpeed("transit") + ", survey "
-          + roleSpeed("survey") + ", turn " + roleSpeed("turn") + ")";
+    csKey = "the speed the run commands there (transit " + spdTxt(roleSpeed("transit")) + ", survey "
+          + spdTxt(roleSpeed("survey")) + ", turn " + spdTxt(roleSpeed("turn")) + ")";
   } catch(e) {
     cs = {slow: [], unanswered: []};
     // ⚠ RECORDED, NOT SAID - because its own sentence is "The plan is uploaded and routed
@@ -15734,7 +15772,7 @@ async function resumeFromHere(ll){
   const said = "from the point you chose on line " + line + " (" + fmtDist(fromStart) + " along it): " + way
              + ", then on down the line the way the plan runs it";
   flashNote("Resumed " + said + ". The transit is at the transit speed and the line at the survey speed"
-            + (resumeSlow ? " once your LOW hold is released" : "") + '—' + " select LOW if you want it slow.");
+            + (resumeSlow ? " once your LOW hold is released" : "") + '—' + " set a slower speed if you want it slow.");
   if(planIntent) planIntent.why.push({t:"warn", s:"RESUMED FROM A CHOSEN POINT after a pause " + '—' + " " + said
     + "; the governor has the throttle (the transit at the transit speed, the line at the survey speed)"});
   fetch("/api/logevent", {method:"POST", headers:{"Content-Type":"application/json"},
@@ -16550,7 +16588,7 @@ async function resumeHeldRun(opts){
                 held_s: ep ? Math.round((Date.now() - ep.since) / 1000) : null, wpts: left, manual: !!(opts && opts.manual)});
     } else {
       flashNote("Survey resumed " + (note || "from the point you chose") + ". The transit is at the transit speed and the line at "
-        + "the survey speed" + (resumeSlow ? " once your LOW hold is released" : "") + " — select LOW if you want it slow.");
+        + "the survey speed" + (resumeSlow ? " once your LOW hold is released" : "") + " — set a slower speed if you want it slow.");
       if(planIntent) planIntent.why.push({t:"warn", s:"RESUMED FROM A CHOSEN POINT while the guard held the survey " + '—' + " "
         + (note || "carrying on") + "; " + left + " waypoint" + (left === 1 ? "" : "s") + " re-uploaded; the governor has the throttle"});
       logClient("resume", {line: lineNo(at.line), from_point: true, held: true, along_m: at.fromStart != null ? Math.round(at.fromStart) : null,
@@ -17572,7 +17610,7 @@ function updateMissionCard(){
     const k = st.speed_key, kn = st.speed_target_kn;
     if(!k){ msp.textContent = "--"; msp.className = "vv"; }
     else {
-      msp.textContent = k + (kn != null ? " · " + kn.toFixed(1) + " kn" : "");
+      msp.textContent = isStepKey(k) ? spdTxt(k) : k + (kn != null ? " · " + kn.toFixed(1) + " kn" : "");
       // Against the ROLE the boat is in, not against one setting - during a turn the
       // right answer IS the turn speed, and flagging that as a disagreement would train
       // the operator to ignore the one readout that catches a real one.
@@ -17597,13 +17635,13 @@ function updateMissionCard(){
                              : "the speed of the slower leg ahead (to waypoint " + (shown.idx + 1) + "), commanded ")
               + fmtDist(shown.d) + " early because she sheds speed in gear and needs that water."
             : "what the command bar has selected.")
-        : "DISAGREEMENT: the vessel is running to " + k + " but the command bar selects "
+        : "DISAGREEMENT: the vessel is running to " + spdTxt(k) + " but the command bar selects "
           + (escapeThrottle ? "high (the in-extremis escape's claim)"
              : clearance.slowed ? "low (safety override)"
              : resumeSlow ? "low (held there since the run was resumed; change any speed to release it)"
-             : (shown && shown.key) ? shown.key + " (slowing ahead of " + (shown.arrival ? (shown.coast ? "the drift-in" : "the hold point")
+             : (shown && shown.key) ? spdTxt(shown.key) + " (slowing ahead of " + (shown.arrival ? (shown.coast ? "the drift-in" : "the hold point")
                                                                           : "the leg to waypoint " + (shown.idx + 1)) + ")"
-             : roleSpeed(speedRole()) + " for the "
+             : spdTxt(roleSpeed(speedRole())) + " for the "
                + speedRole() + " it is doing") + ". The vessel's value is the one moving it.";
     }
   }

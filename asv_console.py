@@ -317,6 +317,7 @@ def finite_only(obj):
 # import once the default vessel is loaded).
 BATT_FULL_V = BATT_WARN_V = BATT_CRIT_V = BATT_EMPTY_V = 0.0
 SPEED_KN = {}
+SPEED_STEPS_KN = []        # the operator's whole-knot speeds, low rounded up to high rounded down (apply_vessel)
 WP_APPROACH_M = WP_LOOKAHEAD_M = 0.0
 XTE_KI_DEG = XTE_I_MAX_DEG = 0.0
 BOAT_LEN_M = BOAT_BEAM_M = BOAT_ABOVE_H = BOAT_DRAFT_M = 0.0
@@ -716,6 +717,11 @@ def validate_vessel(v, source="<vessel>"):
             a = v["hull"][key]
             if isinstance(a, bool) or not isinstance(a, (int, float)) or not a > 0:
                 raise ValueError("%s: hull.%s must be a number > 0 (got %r)" % (source, key, a))
+    # The operator selects speed in WHOLE KNOTS between the hull's low and high (apply_vessel), so a hull must have one.
+    lo, hi = v["propulsion"]["speeds_kn"]["low"], v["propulsion"]["speeds_kn"]["high"]
+    if not (lo > 0 and math.floor(hi + 1e-9) >= math.ceil(lo - 1e-9)):
+        raise ValueError("%s: propulsion.speeds_kn needs low > 0 and a whole knot from low (%r) to high (%r) - speed "
+                         "is selected in whole knots" % (source, lo, hi))
     # Energy model: power.type selects which sub-block is required. Default
     # "battery" when absent (back-compat with the earliest profiles).
     ptype = v.get("power", {}).get("type", "battery") if isinstance(v.get("power"), dict) else None
@@ -771,7 +777,7 @@ def list_vessels():
 
 def apply_vessel(v):
     """Publish a validated vessel dict to the module globals SimVcu/UI read."""
-    global VESSEL, BATT_FULL_V, BATT_WARN_V, BATT_CRIT_V, BATT_EMPTY_V, SPEED_KN
+    global VESSEL, BATT_FULL_V, BATT_WARN_V, BATT_CRIT_V, BATT_EMPTY_V, SPEED_KN, SPEED_STEPS_KN
     global WP_APPROACH_M, WP_LOOKAHEAD_M, XTE_KI_DEG, XTE_I_MAX_DEG
     global BOAT_LEN_M, BOAT_BEAM_M, BOAT_ABOVE_H, BOAT_DRAFT_M, WIND_CD, HULL_CD
     global WIND_A_SIDE, WIND_A_FRONT, HULL_A_LAT, MAX_TURN_RATE_DEG_S, DRAIN_IDLE, DRAIN_LOAD
@@ -794,6 +800,19 @@ def apply_vessel(v):
         FUEL_BURN_EXP = float(fu["burn_exp"])
         FUEL_WARN_FRAC = float(fu["warn_frac"]); FUEL_CRIT_FRAC = float(fu["crit_frac"])
     SPEED_KN = {k: float(pk) for k, pk in p["speeds_kn"].items()}
+    # SPEED IS SELECTED IN WHOLE KNOTS (Andy, 2026-10-09: "Change speed selection to knots in integer increments. This
+    # is commanded speed that environmental forcing will affect. All ASV's."). The operator's three role speeds are
+    # each a whole knot from the hull's LOW rounded up to its HIGH rounded down: a speed the hull has, never below its
+    # slowest nor above its top. Each is a key of SPEED_KN beside the named three ("7" -> 7.0), so everything that
+    # turns a key into a speed - the sim's throttle, the page's estimates, the turn radius - takes it unchanged.
+    # THE NAMED THREE STAY, AND MEAN WHAT THEY MEANT: they are the CONSOLE'S speeds now, not choices on a selector -
+    # the guard's LOW, the escape's HIGH, hold_speed_kn's ladder. And every one of them is a COMMANDED speed, through
+    # the water: the stream and the wind are added to it, and her speed over the ground is what results.
+    lo, hi = SPEED_KN["low"], SPEED_KN["high"]
+    SPEED_STEPS_KN = list(range(math.ceil(lo - 1e-9), math.floor(hi + 1e-9) + 1))
+    SPEED_KN.update({str(n): float(n) for n in SPEED_STEPS_KN})
+    # Published WITH the vessel so the page's selectors offer exactly these: derived here, never written to a file.
+    p["speed_steps_kn"] = list(SPEED_STEPS_KN)
     WP_APPROACH_M = float(m["approach_m"]); WP_LOOKAHEAD_M = float(m["lookahead_m"])
     MAX_TURN_RATE_DEG_S = float(m["max_turn_rate_deg_s"])
     ARRIVAL_DEFAULT_M = float(m["arrival_radius_m"])
@@ -1083,18 +1102,55 @@ def _cache_plan_completion(v):
 SPEED_ROLES = ("transit", "turn", "survey")
 
 
-def _norm_speeds(raw, fallback="survey"):
-    """Three role speeds, each a key the active vessel actually has.
+def speed_step_key(kn):
+    """The operator's whole-knot speed nearest `kn` knots, inside the hull's range, as its SPEED_KN key ("7"), or
+    None on a hull with no steps. Halves round up: the example 4 m hull's 4.5 kn survey speed becomes 5."""
+    if not SPEED_STEPS_KN or kn is None:
+        return None
+    return str(min(max(int(math.floor(float(kn) + 0.5)), SPEED_STEPS_KN[0]), SPEED_STEPS_KN[-1]))
 
-    A missing or unknown role falls back - to the legacy single `speed` when the
-    mission file predates this, which is what makes the upgrade a no-op: all three
-    start exactly where the one used to be, so nobody's boat changes speed because
-    they pulled a new build.
+
+def _speed_kn_of(v):
+    """Knots for a speed as a plan file holds it: a key this hull has, or a bare number - which is what another hull's
+    whole-knot key is to this one. None for anything else."""
+    if isinstance(v, str) and v in SPEED_KN:
+        return SPEED_KN[v]
+    if isinstance(v, bool) or not isinstance(v, (str, int, float)):
+        return None
+    try:
+        kn = float(v)
+    except ValueError:
+        return None
+    return kn if math.isfinite(kn) and kn > 0 else None
+
+
+def speed_txt(key):
+    """A speed key as the operator reads it: a whole knot is "7 kn"; a named speed gives its name and its knots."""
+    kn = SPEED_KN.get(key)
+    if kn is None:
+        return str(key)
+    return "%d kn" % kn if str(key).isdigit() else "%s (%.1f kn)" % (key, kn)
+
+
+def _norm_speeds(raw, fallback="survey"):
+    """Three role speeds, each one of the hull's WHOLE-KNOT speeds (apply_vessel).
+
+    A role holding anything else is moved to the whole knot nearest it: a named speed from a plan saved before
+    2026-10-09 (Low / Survey / High were the choices then), another hull's knot after a vessel switch ("10" on a boat
+    whose top is 6 becomes "6"). A role with nothing usable takes the legacy single `speed`, so all three start where
+    the one used to be. Three named speeds are not whole knots and move: the example 4 m hull's survey 4.5 -> 5, the
+    small-class hull's low 1.5 -> 2 (its slowest whole knot) and the EM2040's high 11.5 -> 11 (its top one).
+    A hull with no steps (a test that installs a bare SPEED_KN) keeps the named keys, as before.
     """
     out = {}
     for role in SPEED_ROLES:
         v = (raw or {}).get(role)
-        out[role] = v if (isinstance(v, str) and (not SPEED_KN or v in SPEED_KN)) else fallback
+        if SPEED_STEPS_KN:
+            kn = _speed_kn_of(v)
+            kn = kn if kn is not None else _speed_kn_of(fallback)
+            out[role] = speed_step_key(kn if kn is not None else SPEED_KN.get("survey"))
+        else:
+            out[role] = v if (isinstance(v, str) and (not SPEED_KN or v in SPEED_KN)) else fallback
     return out
 
 
@@ -5428,7 +5484,10 @@ class Engine:
         three role choices, is still written only by the survey card through save_mission.
         """
         if key not in SPEED_KN:
-            raise VcuProtocolError("unknown speed %r (want one of %s)" % (key, ", ".join(sorted(SPEED_KN))))
+            named = sorted(k for k in SPEED_KN if not k.isdigit())
+            raise VcuProtocolError("unknown speed %r (want a whole knot from %s to %s, or one of %s)"
+                                   % (key, SPEED_STEPS_KN[0] if SPEED_STEPS_KN else "-",
+                                      SPEED_STEPS_KN[-1] if SPEED_STEPS_KN else "-", ", ".join(named)))
         with self._lock:
             if self._link is not None:
                 try:
@@ -5437,7 +5496,7 @@ class Engine:
                     raise
                 except Exception:
                     pass
-            self.note = "Speed: %s (%.1f kn) - applied live." % (key, SPEED_KN[key])
+            self.note = "Speed: %s - applied live." % speed_txt(key)
         self._push_state()
 
     def set_berth(self, berth):

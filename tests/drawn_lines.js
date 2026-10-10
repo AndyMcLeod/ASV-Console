@@ -98,6 +98,8 @@ const page = eval("(function(){ \"use strict\";\n"
   + " hopSeg = [], curHop = -1, approachSec = 0, rthSec = 0,"
   + " lineActual = [], transitEst = { transit: null, rth: null };\n"
   + "const linePhase = () => ({ phase: 'coverage' });\n"
+  // the table heads its speeds through these (2026-10-09, whole knots); this world's roleSpeed answers a name
+  + grab("isStepKey") + "\n" + grab("spdTxt") + "\n"
   // R8: currentActivity() returns role "depart" while a launch grant stands, so the symbol
   // must exist in this world too. Null here - no berth is latched - so the classifier answers
   // exactly as it always did, which is what makes these checks evidence that the OPEN regime

@@ -815,6 +815,8 @@ function buildWorld(env) {
     + "const startRun = async () => { env.log.starts.push(1); return env.startTakes !== false; };\n"
     // punchRefusal's wording asks these about a red reversal (the refusal itself is tests/turn_refusal.js's subject)
     + "const roleSpeed = () => 'survey', minTurnRadiusM = () => 5, kindsSummary = () => 'a dock / pier';\n"
+    // punchRefusal judges a slower turn against the slowest WHOLE KNOT on offer (2026-10-09): none in this world
+    + "const V = { SPEED_KN: { low: 1.5, survey: 3.0, high: 6.0 }, SPEED_STEPS: [] };\n"
     + "const doGoTo = async (t) => { env.log.gotos.push(t); }; const doUpload = async (o) => { env.log.uploads.push(o); return env.uploadTakes !== false; };\n"
     // the punch, as the suite says it came out: {clip, red} - or null for a punch that did not finish (no chart)
     + "const punchNow = async () => { env.log.punches.push({reverse: patReverse, A: pat.A && {...pat.A}});"
@@ -848,7 +850,7 @@ function buildWorld(env) {
     + ["rocEsc", "depthRange", "boundaryActive", "lineSetKey", "linePartContinues", "drawnLines", "lineNo", "lineCount",
        "committedPatternInfo", "surveySettingsNow", "applySurveySettings", "surveyById", "surveyFigures",
        "renderSurveyTable", "cardSurveyId", "surveysChanged", "editSurvey", "deleteSurvey", "moveSurveyRow",
-       "renameSurvey", "emptyPunchRefusal", "punchRefusal", "commitPattern",
+       "renameSurvey", "emptyPunchRefusal", "isStepKey", "spdTxt", "spdAtTxt", "slowestSelectableKey", "punchRefusal", "commitPattern",
        // phase 3a
        "lineCovFrame", "lineGeoKey", "trackLineCoverage", "saveLineCov", "lineDoneFrac", "surveyProgress",
        "surveyTideMoved", "goToSurvey", "uploadFromSurvey", "repunchSurvey", "withCardKept", "punchAll",

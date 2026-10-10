@@ -161,7 +161,7 @@ const PAGE_FUNCS = ["punchOut", "currentPattern", "surveyPattern", "patSourceLin
   "patClipBufM", "patClipKey",
   "makesWayKey", "slowestMakingWayKey", "setMsNow",     // the speed a turn is flown at (2026-09-26)
   "patLeadTotal", "leadMetres", "leadInM", "leadOutM", "easeLsM", "roleSpeed", "roleSpeedMS", "depthRange",
-  "kindsSummary", "emptyPunchRefusal", "punchRefusal", "commitPattern", "resetPattern", "updatePatReadout", "flushRepunch", "punchNow",
+  "kindsSummary", "emptyPunchRefusal", "isStepKey", "spdTxt", "spdAtTxt", "slowestSelectableKey", "punchRefusal", "commitPattern", "resetPattern", "updatePatReadout", "flushRepunch", "punchNow",
   "dropStruckFromPunch", "strikeSelectedRun", "scheduleRepunch", "applyWaterOffset"];
 const PAGE_DECLS = [/^const NO_LEAD = [^;]*;/m, /^const LEAD_GIVE = [^;]*;/m, /^const MAX_SURVEY_LINES = [^;]*;/m,
   /^const LEAD_MAX_M = [^;]*;/m, /^const REPUNCH_DELAY_MS = [^;]*;/m, /^const TIDE_REBUILD_M = [^;]*;/m, /^const TRIM_MAX_M = [^;]*;/m, /^const JUDGE_RUN_M = [^;]*;/m, /^const SPEED_ROLES = [^;]*;/m];

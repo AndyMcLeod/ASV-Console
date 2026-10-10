@@ -179,6 +179,8 @@ eval("let grant = null;" + grabDecl("SPEED_ROLES") + "\n" + grab("alongLineM") +
      grab("lineSetKey") + "\n" + grabDecl("LINE_PART_OFFSET_M") + "\n" + grabDecl("_drawnLines") + "\n" + grab("linePartContinues") + "\n" +
      grab("drawnLines") + "\n" + grab("lineNo") + "\n" + grab("lineCount") + "\n" + grab("linePartTxt") + "\n" +
      grab("roleSpeed") + "\n" + grab("roleSpeedMS") + "\n" +
+     // the speed in words (2026-10-09, whole knots): commandSpeed and speedReconcile say a key through these
+     grab("isStepKey") + "\n" + grab("spdTxt") + "\n" +
      grabDecl("SPEED_RESEND_MS") + "\n" + grabDecl("speedWant") + "\n" +
      // the floor under every command (2026-09-26): the slowest speed that makes way in the set
      grab("slowestMakingWayKey") + "\n" + grab("setMsNow") + "\n" + grab("makesWayKey") + "\n" +

@@ -2538,7 +2538,7 @@ const P2 = (a) => a.map(([e, n]) => ({ e, n }));
   // (e) THE PAGE'S CHOICE REACHES THE PLANNER: state.js holds 'land'; passage.js's channelLaneRoute (every Go-To, RTH
   // and transit) hands V.REACH_ROCK down; the page's "Channel rocks" offers both, Land selected, and sets it.
   const { V } = require("../static/js/state.js"), PS = require("../static/js/passage.js");
-  const HTML = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
+  const HTML = fs.readFileSync(process.env.ASV_HTML || path.join(__dirname, "..", "static", "asv.html"), "utf8");
   const viaPage = (m) => {
     const was = V.REACH_ROCK;
     try {

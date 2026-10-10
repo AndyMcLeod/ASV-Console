@@ -523,6 +523,12 @@ const fresh = () => { banners = []; downs = []; covers = []; aisTaken = 0; cover
   // eslint-disable-next-line no-eval
   const transitEstCompute = eval("(" + grab("transitEstCompute") + ")");
   // eslint-disable-next-line no-eval
+  // the row names its speed through spdTxt (2026-10-09, whole knots): "@ 7 kn", or a named key as itself
+  // eslint-disable-next-line no-eval
+  const isStepKey = eval("(" + grab("isStepKey") + ")");
+  // eslint-disable-next-line no-eval
+  const spdTxt = eval("(" + grab("spdTxt") + ")");
+  // eslint-disable-next-line no-eval
   const transitRowHtml = eval("(" + grab("transitRowHtml") + ")");
   let outM = 429;
   planNogoRoute = (from, to) => ({ error: "the route runs 429 m beyond the water the chart was read over",

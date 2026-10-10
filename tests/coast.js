@@ -523,7 +523,7 @@ check("12. a coast of COAST_MIN_M (5 m) or less is not worth stopping the prop f
 // LOW). The page's own function, in a world of the real coast.js and a stand-in for the page's speed roles.
 {
   const fs = require("fs"), path = require("path"), G = require("../static/js/geodesy.js");
-  const PAGE = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
+  const PAGE = fs.readFileSync(process.env.ASV_HTML || path.join(__dirname, "..", "static", "asv.html"), "utf8");
   const grab = (name) => {
     const start = PAGE.indexOf("function " + name + "(");
     if (start < 0) throw new Error("test setup: function " + name + " not found (renamed?)");

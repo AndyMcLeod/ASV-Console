@@ -29,6 +29,9 @@ export const V = {
 
   // --- physics mirrors the sim uses for routing + turn geometry ---
   SPEED_KN: {low:1.5, survey:3.0, high:6.0},
+  // The operator's whole-knot speeds (2026-10-09), sent with the vessel; each is also a key of SPEED_KN ("7" -> 7).
+  // Empty until a vessel arrives - the named three above are the console's own speeds and on no selector.
+  SPEED_STEPS: [],
   MAX_TURN_RATE_DEG_S: 60,
   // HOW LONG THE STEERING TAKES TO REACH THE COMMANDED RATE, seconds (2026-09-08). The
   // turn rate above says how tightly a hull CAN turn; this says how fast it can get there,
