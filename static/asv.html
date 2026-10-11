@@ -6281,9 +6281,10 @@ async function switchVessel(id){
 // CAMP 3-click survey pattern (port of SurveyPattern::getLines). A=start,
 // B=diagonal end, C=spacing/direction (optional; defaults to diag/10 at 90deg).
 // Returns {lines:[[p0,p1],...] boustrophedon, spacing, direction, legLength,
-// width, count}. align: 0=start, 1=center, 2=finish.
+// width, count}. align: 0=start, 1=center, 2=finish. `area` (a closed boundary, [{lat, lon}] >= 3): the lines are
+// laid across IT instead of across the A-B box - see areaPattern.
 const MAX_SURVEY_LINES = 600;                  // safety/perf cap on derived count
-function surveyPattern(A, B, C, align){
+function surveyPattern(A, B, C, align, area){
   if(!A || !B) return null;
   const diagD = distTo(A, B), diagA = azTo(A, B);
   let spacing, spacingAngle;
@@ -6293,6 +6294,9 @@ function surveyPattern(A, B, C, align){
   const legHeading = spacingAngle - 90;
   const legLength = diagD*Math.cos((diagA-legHeading)*Math.PI/180);
   const width = diagD*Math.sin((diagA-legHeading)*Math.PI/180);
+  if(area && area.length >= 3)
+    return areaPattern(A, area, spacing, spacingAngle, legHeading, legLength >= 0 ? 1 : -1, width >= 0 ? 1 : -1, align,
+                       {A, B, C: C || null, align});
   let count = Math.ceil(Math.abs(width)/spacing - 1e-3);   // stable at ~exact multiples
   // THE CAP, MADE VISIBLE (2026-08-18). This clamp has always been here and has
   // always been SILENT: past 600 lines the pattern simply stopped widening while
@@ -6325,6 +6329,46 @@ function surveyPattern(A, B, C, align){
           // WHAT IT WAS DRAWN FROM (2026-10-02): the three clicks and the alignment are all this function needs to
           // draw it again, so a committed survey records them (commitPattern) for the editor phase 2 brings.
           anchors: {A, B, C: C || null, align}};
+}
+// THE BOUNDARY'S OWN LINES (Andy, 2026-10-11: "The boundary box function constrains line generation within it after
+// initial survey pattern generation. When rotating lines by bearing the outer lines disappear. The box should remain
+// full of lines end-to-end during any rotation or line spacing change.")
+//   The boundary used to CLIP the A-B box's lines, and that box is the A-B diagonal laid out at the chosen bearing and
+// spacing: a new bearing reshapes it (at 45 degrees off the diagonal it is a thin strip), so turned it no longer reached
+// the boundary's corners and every line beyond it was lost - and a new spacing changed which lines there were to clip.
+// With a closed boundary the lines are laid across the BOUNDARY's own extent instead, at the pattern's bearing and
+// spacing - a box oriented to the lines that holds every vertex of it - and patSourceLines clips them to it as before,
+// so the boundary is full end-to-end at any bearing or spacing. A, B and C still decide everything they decided: the
+// bearing and the spacing (C), which side is the start and which end each line starts from (A's, toward B), and where
+// the leftover margin goes (`align`).
+const AREA_EDGE_M = 0.05;                      // a line ON the outermost vertex or edge is cut to nothing, or kept or
+                                               // lost by rounding: never nearer the box's sides than this
+function areaPattern(A, area, spacing, spacingAngle, legHeading, legSgn, sgn, align, anchors){
+  const fr = planeFrame(A), r = Math.PI / 180;
+  const u = {e: Math.sin(legHeading * r) * legSgn, n: Math.cos(legHeading * r) * legSgn};   // along a line, A's end first
+  const v = {e: Math.sin(spacingAngle * r) * sgn, n: Math.cos(spacingAngle * r) * sgn};      // across, toward B's side
+  let t0 = Infinity, t1 = -Infinity, s0 = Infinity, s1 = -Infinity;
+  for(const p of area){
+    const q = fr.toEN(p), t = q.e * u.e + q.n * u.n, s = q.e * v.e + q.n * v.n;
+    t0 = Math.min(t0, t); t1 = Math.max(t1, t); s0 = Math.min(s0, s); s1 = Math.max(s1, s);
+  }
+  const width = s1 - s0, legLength = t1 - t0;
+  if(!(width >= 0) || !(legLength > 0)) return null;
+  const wanted = Math.max(1, Math.ceil(width / spacing - 1e-3));       // stable at ~exact multiples, as the box's
+  const count = Math.min(MAX_SURVEY_LINES, wanted);                     // the cap, and said (sp_hint), as the box's
+  const residual = Math.max(0, width - (count - 1) * spacing);
+  const lo = s0 + Math.min(AREA_EDGE_M, width / 2), hi = s1 - Math.min(AREA_EDGE_M, width / 2);
+  const lines = [];
+  // Each line runs the box's whole length; the box's ends touch the boundary only at its outermost vertices, so the
+  // CLIP (patSourceLines), not the box, makes every line's two ends.
+  for(let i = 0; i < count; i++){
+    const s = Math.min(hi, Math.max(lo, s0 + align * residual / 2 + i * spacing));
+    const a = fr.fromEN(v.e * s + u.e * t0, v.n * s + u.n * t0);
+    const b = fr.fromEN(v.e * s + u.e * t1, v.n * s + u.n * t1);
+    lines.push(i % 2 ? [b, a] : [a, b]);                                // boustrophedon: reverse each leg
+  }
+  return {lines, spacing, direction: (spacingAngle - 90 + 360) % 360, legLength, width, count, wanted,
+          capped: wanted > count, anchors, area: true};
 }
 
 const mapEl = $("#map"), tilesEl = $("#tiles"), cv = $("#overlay"), ctx = cv.getContext("2d");
@@ -8176,7 +8220,8 @@ function patHandleAt(cx, cy){
   if(m && Math.hypot(m.x-(cx-r.left), m.y-(cy-r.top)) < 11) return "M";
   return null;
 }
-function currentPattern(){ return surveyPattern(pat.A, pat.B, pat.C, pat.align); }
+// With a closed boundary the lines are laid across IT (areaPattern, 2026-10-11), not across the A-B box it clips.
+function currentPattern(){ return surveyPattern(pat.A, pat.B, pat.C, pat.align, boundaryActive() ? boundary : null); }
 function boundaryActive(){ return boundaryClosed && boundary.length >= 3; }
 // ref for local ENU planning maths: centroid of the pattern's bounding box
 function planRef(){
@@ -8193,9 +8238,11 @@ function patSourceLines(){
   const sp = currentPattern(); if(!sp) return [];
   if(!boundaryActive()) return sp.lines;
   const ref = planRef(), ring = boundary.map(p=>llEN(p.lat,p.lon,ref));
-  const out = []; sp.lines.forEach(l=>clipToPoly(l[0], l[1], ring, ref).forEach(s=>out.push(s)));
+  // ... and a SLIVER is no line: a line laid AREA_EDGE_M inside a pointed vertex clips to a few centimeters there
+  const out = []; sp.lines.forEach(l=>clipToPoly(l[0], l[1], ring, ref).forEach(s=>{ if(distTo(s[0], s[1]) >= AREA_SLIVER_M) out.push(s); }));
   return out;
 }
+const AREA_SLIVER_M = 1;                         // a clipped piece shorter than this is dropped (see patSourceLines)
 
 // ── Striking a punched run off ──────────────────────────────────────────────────────
 

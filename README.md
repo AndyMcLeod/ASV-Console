@@ -2205,7 +2205,16 @@ of the operator.
    **Arbitrary survey-area boundary.** `BND` draws a **CAMP-style survey-area
    polygon** — click the chart to drop points, click the first point to close
    (vertices are draggable). The survey lines are clipped exactly to that polygon,
-   including concave shapes (legs crossing a notch split into two). It **composes
+   including concave shapes (legs crossing a notch split into two). **With a boundary
+   closed, the lines are laid across the boundary itself** (2026-10-11), at the pattern's
+   bearing and spacing, so it stays full of lines end to end through any change of
+   Direction or Spacing. They used to be the A-B box's lines clipped to it, and a new
+   bearing reshaped the box: turned, it stopped reaching the boundary's corners and the
+   outer lines vanished. A, B and C still set the bearing and spacing, the start side
+   (A's) and the alignment of the leftover margin; Line len, Width and the line count
+   are then the boundary's. Next to an edge the lines are not parallel to, the strip
+   between the edge and the nearest line can be up to one spacing wide (true of any
+   parallel lines); inside, every point is within half a spacing of a line. It **composes
    with Punch Out**: the boundary keeps lines *inside* the area, ENC features keep
    them *out* of hazards / shallow water. The boundary **persists** (saved in
    `mission.json`, so it survives a reload / a session at sea), and **`AREA`**

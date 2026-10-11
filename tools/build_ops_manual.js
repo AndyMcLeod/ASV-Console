@@ -298,6 +298,7 @@ c.push(TBL(["Control", "Effect"], [
 ], [2400, 6960]));
 c.push(H2("9.3  Constraining the area"));
 c.push(P("`BND` draws an arbitrary boundary polygon: click to drop points, click the first point to close it. Survey lines clip to that polygon rather than the rectangle. `AREA` hides or shows it — it still clips while hidden."));
+c.push(P("WITH A BOUNDARY CLOSED, THE LINES FILL THE BOUNDARY. They are laid across the whole of it at the survey's Direction and Spacing, so turning the lines or changing the spacing keeps the boundary full of lines, edge to edge - none drop out at its corners. A, B and C still set the direction and spacing, which side the survey starts from, and where the leftover margin goes (Align); Line len, Width and Lines then describe the boundary. Along an edge the lines are not parallel to, the gap between the edge and the nearest line can be up to one line spacing."));
 c.push(H2("9.4  Depth limits for coverage"));
 c.push(P("`Min depth` and `Max depth` in the survey panel are COVERAGE limits — do not survey shallower or deeper than this. They are separate from the navigability floor, which every behavior always avoids and which you cannot survey your way around. Blank maximum means deep water is fine."));
 c.push(H2("9.5  Punch Out"));
