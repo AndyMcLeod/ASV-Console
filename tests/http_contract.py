@@ -294,7 +294,8 @@ check("5. the endpoint list came out of the source, not a list in this file",
 # not a bug. The moment headers are ended, the client has an answer.
 GET_FN = FNS.get("do_GET")
 SENDERS = {"_send", "end_headers", "_serve_events", "_serve_tile", "_serve_log",
-           "_serve_enc", "_serve_chartinfo", "_serve_ais"}
+           "_serve_enc", "_serve_chartinfo", "_serve_ais",
+           "_serve_corridor"}          # the chart read along a route (2026-10-11) - itself judged below
 
 
 def is_send_call(n):

@@ -415,6 +415,8 @@ function menu(opts) {
     // review #14: the gate predicates also ask whether this tab is the supervising one. This world is that tab -
     // what a view-only tab offers is tests/supervisor_page.js's subject.
     "const supervising = () => true;" +
+    // the fuel rehearsal row (2026-10-11) reads the fuel monitor's latest; this world has none
+    "let fuelNow = null;" +
     grab("linkConnected") + grab("canCommand") + grab("canSpawn") + grab("canSetHome") +
     grab("chartMenuOpen") + grab("closeChartMenu") + grab("cmGate") + grab("openChartMenu") + grab("cmRow") +
     // RESUME FROM HERE (2026-09-26): openChartMenu shows, hides and gates the row through gateResumeHere

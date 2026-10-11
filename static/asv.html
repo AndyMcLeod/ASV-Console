@@ -613,6 +613,8 @@
       <button class="ctl small" id="tr_clr" title="Discard the transit line" style="flex:1">Clear</button>
     </div>
     <div class="phint" id="tr_hint">Click the chart to drop transit points (1+). Then Follow.</div>
+    <button class="ctl small" id="tr_read" disabled title="Read the chart along the line now - every chart tile within 5 km of the boat and the line's points, at whatever scale charts it - and keep it, so the passage's chart is on hand (offline too). A route through water no chart covers is refused; this shows where that is before you plan. Moves nothing.">Read chart</button>
+    <div class="phint" id="tr_read_st"></div>
   </div>
 
   <!-- ROC / HOME card: track each Remote Operations Center (shore or ship/Mothership)
@@ -993,13 +995,13 @@ import { scanChartSliced, EXPLAIN_PX as INK_EXPLAIN_PX, ATTACH_M as INK_ATTACH_M
 // THE SEABED'S OWN GAPS. S-57's skin of the earth tiles the chart with no gaps, so wherever the depth areas, land
 // and docks the console holds leave the seabed uncovered, the ENC charts an object NOAA's vector service does not
 // serve - the floats at Pepperrell Cove (Andy, 2026-09-30). Pure, like chartink.js: features in, gaps out.
-import { skinGaps, skinGapFeature, SKIN_KIND } from "/static/js/skin.js";
+import { skinGaps, skinGapFeature, SKIN_KIND, SKIN_CLASSES } from "/static/js/skin.js";
 // Coming in on the drift: where to stop the prop, and whether it is safe to.
 import { coastLc, coastWorthIt, solveCoast, COAST_ARRIVE_MS, slowLaw, slowLeadM, leadWant, slowProfile } from "/static/js/coast.js";
 import { easeOffered } from "/static/js/turns.js";
 import { MAX_HALF_M, SKEW_LIMIT_DEG, arcPts, cornerSlowPlan, minTurnRadiusM, shortenSeg,
          teardropTurn, turnWithRetry, joinBreaches, SPEED_CMD_LATENCY_S } from "/static/js/turns.js";
-import { LANE_FRAC, SEG_LEN_M, beyondChart, beyondChartSay, buoyChannelLane, buoyageNote, channelLaneRoute,
+import { CHART_EDGE_M, LANE_FRAC, SEG_LEN_M, beyondChart, beyondChartSay, buoyChannelLane, buoyageNote, channelLaneRoute,
          channelSpanKeepouts, channelTurnKeepouts, dilateGrid, gateLegClear,
          holdTarget, junctionKnot, legPath, narrowChannelLane, planNogoRoute, pruneJunctionKnots,
          pruneStitch, rasterKeepouts, regionOrder,
@@ -3558,7 +3560,7 @@ function tautRoundHer(fromLL, toLL, herRing, ko, std){
   // the amend, the one route on these paths beyondChart never saw. Null hands it to the router, which refuses it by name.
   const done = (viaEN) => { const via = viaEN.map(p => { const q = Fr.fromEN(p.e, p.n); return {lat: q.lat, lon: q.lon}; });
     const route = [...via, {lat: toLL.lat, lon: toLL.lon}];
-    if(beyondChart([{lat: fromLL.lat, lon: fromLL.lon}, ...route], nogo.bbox)) return null;
+    if(beyondChart([{lat: fromLL.lat, lon: fromLL.lon}, ...route], nogo.bbox, undefined, nogo.unread)) return null;
     return {route, direct: !via.length, routed: via.length > 0, taut: true, standoffM: std}; };
   if(legClear(fromLL, toLL, Fr, ko, std)) return done([]);
   const need = std + 0.05;                                    // a hair over the standoff, so a leg along it certifies
@@ -9973,9 +9975,11 @@ function drawENC(toScreen, ctx){
     ctx.setLineDash([]); };
   // fills: land / docks / informational areas. Shallow-water (depth) shading is
   // owned SOLELY by the NOGO layer (drawNogo) - the single depth-shading layer.
-  for(const f of sea.enc.features){ const g=f.geometry, r=f.role;
-    if(r==="land") fillPoly(g,"rgba(120,96,58,0.38)","rgba(150,120,70,0.7)");
-    else if(r==="dock"||r==="hazard_area") fillPoly(g,"rgba(200,120,40,0.30)","rgba(210,140,60,0.85)");
+  // A coarser chart's piece (`clip`, the layered extract) is filled with NO outline: its edge along the cut is not a
+  // coast, and the coast is drawn from the shoreline's own lines.
+  for(const f of sea.enc.features){ const g=f.geometry, r=f.role, cut=!!f.clip;
+    if(r==="land") fillPoly(g,"rgba(120,96,58,0.38)",cut?null:"rgba(150,120,70,0.7)");
+    else if(r==="dock"||r==="hazard_area") fillPoly(g,"rgba(200,120,40,0.30)",cut?null:"rgba(210,140,60,0.85)");
     else if(r==="dredged"||r==="restricted") fillPoly(g,"rgba(90,140,190,0.10)",null); }
   // lines
   for(const f of sea.enc.features){ const g=f.geometry, r=f.role;
@@ -10015,7 +10019,11 @@ async function fetchENCBbox(b, minDepth){
   const d=await (await fetch(url)).json();
   // `partial` names the layers that failed to arrive (the server serves such an extract once and never caches
   // it). The seabed-gap check refuses on it: a missing depth layer would read as one gap over the whole area.
-  sea.enc={features:d.features||[], band:d.band, minDepth, partial:(d && d.partial) || []}; return d;
+  // `unread` (2026-10-11, the layered chart): the squares of the box no chart covers, and those whose chart could not
+  // be read (`failed`) - nogo.unread once the extract is taken in (refreshNogo).
+  const sq = (rs, failed) => (rs || []).map(r => ({W: r[0], S: r[1], E: r[2], N: r[3], failed}));
+  sea.enc={features:d.features||[], band:d.band, bands:(d && d.bands) || [], minDepth, partial:(d && d.partial) || [], layered: !!(d && d.layered),
+           unread: [...sq(d && d.unread, false), ...sq(d && d.unread_failed, true)]}; return d;
 }
 // clip one survey line to the sub-segments that clear every keep-out (sampled)
 function clipLine(a, b, ref, ko, buf){
@@ -10216,7 +10224,7 @@ async function refreshNogo(centerLL, bbox, ask){     // extract ENC for the oper
     // extract (140-270 ms on his New Castle one), and `sea.enc` can be replaced by another fetch while it waits.
     const enc = sea.enc, feats = (enc.features||[]).slice();
     await new Promise(r => setTimeout(r, 0));
-    const skin = skinGaps(feats, b, {partial: enc.partial});
+    const skin = skinOverHarbour(feats, b, enc);
     for(const g of skin.gaps) feats.push(skinGapFeature(g));
     // ⚠ A NEW EXTRACT INVALIDATES THE CHART READ. The scan is keyed on the box AND the band
     // it was taken over; dropping the key here means the next plan re-reads rather than
@@ -10235,6 +10243,7 @@ async function refreshNogo(centerLL, bbox, ask){     // extract ENC for the oper
     nogo.features = feats;                              // shared feature snapshot (behaviors + survey build from this)
     nogo.skin = skin;
     nogo.band = enc.band; nogo.bbox = b; nogo.center = {lat:ll.lat, lon:ll.lon};
+    nogo.unread = enc.unread || [];                    // the same extract's: set with the box, never apart from it
     if(wider) refoldInk();                              // the kept reads, merged again before the model is built
     // CLEAR `busy` BEFORE rebuilding: rebuildNogo() ends with its own updateNogoUI(), so
     // painting the row while this was still true left it reading "loading…" forever on
@@ -10255,6 +10264,20 @@ async function refreshNogo(centerLL, bbox, ask){     // extract ENC for the oper
   // success - because a FAILED extract must end a waiting Go-To in the ordinary refusal,
   // never in an await that never returns.
   finally { settle(); nogoPending = null; }
+}
+// ⚠ THE SEABED'S GAPS, OVER THE HARBOUR CHART ALONE IN A LAYERED EXTRACT (2026-10-11). The seabed's topology is exact
+// only within one chart: a coarser chart is cut to the squares it applies in (asv_console.py fetch_enc_layered), and
+// its cuts are not seabed edges. Floats are charted at harbour scale, and the harbour chart is served whole. A hole in
+// it that a coarser chart's seabed fills is where the harbour chart ENDS (a cell's coverage with a gap in it), not a
+// float, and is not taken for one. An extract that is not layered is read whole, as it always was.
+function skinOverHarbour(feats, b, enc){
+  const layered = !!(enc && enc.layered);
+  const skin = skinGaps(layered ? feats.filter(f => f.band === "enc_harbour") : feats, b, {partial: enc && enc.partial});
+  const coarse = layered ? feats.filter(f => f.band && f.band !== "enc_harbour" && SKIN_CLASSES.includes(f.cls)) : [];
+  if(coarse.length) skin.gaps = skin.gaps.filter(g => !coarse.some(f => {
+    const fb = featureLLBox(f);
+    return g.lat >= fb.S && g.lat <= fb.N && g.lon >= fb.W && g.lon <= fb.E && ptInGeom(g.lat, g.lon, f.geometry); }));
+  return skin;
 }
 function nogoStatus(t){ showBanner(t); }
 function nogoReadout(){
@@ -10358,10 +10381,19 @@ function nogoReadout(){
                + (enfNow.chan === false ? "\n\nShipping channels OFF: the survey's channel rules are disregarded - "
                          + "survey lines keep their coverage across a channel and the turns may use channel water. "
                          + "Go-To, RTH and transits still keep right in a channel." : "");
+  // THE CHART IN LAYERS (2026-10-11): which scales were read, and the water none of them covers - said where the model
+  // is, because a square nobody charted holds nothing and the planners refuse to route through it.
+  const encNow = sea.enc || {}, bandsTxt = encNow.layered && encNow.bands && encNow.bands.length > 1
+    ? " with " + encNow.bands.slice(1).map(x => String(x).replace("enc_", "")).join(" and ") + " filling in where it has no chart" : "";
+  const un = nogo.unread || [], unFailed = un.filter(r => r.failed).length;
+  const unTxt = un.length ? "\n\nUnread water: " + un.length + " area(s) of this box " + (unFailed === un.length
+      ? "whose chart could not be read (NOAA did not answer) - read again on the next command"
+      : "no chart at any scale covers" + (unFailed ? ", " + unFailed + " of them because the chart could not be read" : ""))
+      + ". Drawn gray with the zones; a route through, or within " + fmtDist(CHART_EDGE_M) + " of, one is refused." : "";
   return {text: n + " zones · floor " + floor + (skinN ? " · +" + skinN + " seabed" : "")
-                + (inkN ? " · +" + inkN + " chart" : "") + (wOff ? " · wrecks off" : ""),
-    cls: (inkN || (sk && sk.refused)) ? "warn" : "",
-    title: "Chart read (ENC band " + band + "): " + brk + "." + pastTxt + skinTxt + inkTxt + offTxt + why};
+                + (inkN ? " · +" + inkN + " chart" : "") + (wOff ? " · wrecks off" : "") + (un.length ? " · unread" : ""),
+    cls: (inkN || (sk && sk.refused) || un.length) ? "warn" : "",
+    title: "Chart read (ENC band " + band + bandsTxt + "): " + brk + "." + pastTxt + skinTxt + inkTxt + unTxt + offTxt + why};
 }
 let lastNogoLogged = null;
 function updateNogoUI(){
@@ -10726,11 +10758,105 @@ function drawMeasure(toScreen){
 function clearMeasures(){ measures = []; measPend = null; render(); }
 function updateTransitPanel(){
   $("#tr_count").textContent = transit.length;
+  const rd = $("#tr_read"), rs = $("#tr_read_st"), c = corridorRead;
+  if(rd){ rd.disabled = !transit.length || corridorBusy; rd.textContent = corridorBusy ? "Reading chart…" : "Read chart"; }
+  if(rs) rs.textContent = !c ? "" : c.state === "running"
+    ? "reading chart: " + c.done + " of " + c.total + " tiles" + (c.eta_s != null ? " · ~" + fmtMS(c.eta_s) + " left" : "")
+    : "chart read: " + c.total + " tiles" + (c.unread_n ? " · " + c.unread_n + " unread" : "")
+      + (c.failed && c.failed.length ? " · " + c.failed.length + " NOT read" : "") + (c.state === "canceled" ? " · stopped" : "");
   $("#tr_follow").disabled = !(transit.length>=1 && S.armed && !S.estop);
   $("#tr_hint").textContent = transit.length
     ? (S.armed ? "Follow to drive the transit (ENC-routed), or click to add more points."
                : "ARM to Follow. Click to add more points.")
     : "Click the chart to drop transit points (1+). Then Follow.";
+}
+// ── THE CHART ALONG A ROUTE (2026-10-11, step 3 of the long-transit plan) ──────────────────────────────────────────
+// Andy: read a corridor, not a box - for a passage, the tiles within a few km of the route (asv_console.py
+// corridor_start), a few dozen for 500 nm, where a box read stops at 1.5 deg. Two doors:
+//   READ CHART on the transit line: the boat and the line's points, the whole passage, with progress on the panel and a
+//   summary at the end - which scale charts it, the water no chart covers (drawn gray), the tiles that could not be read.
+//   The tiles are kept, so the passage's chart is on disk before she sails.
+//   THE READ-AHEAD, in the supervising window while she runs: the next CORRIDOR_AHEAD_M of her route, asked for every
+//   CORRIDOR_AHEAD_EVERY_M she makes good, so the guard's own 10 km reads round her (refreshNogo) find their tiles read.
+// Neither moves anything: a chart read is not a command, and the planners still read their own boxes as before.
+const CORRIDOR_HALF_KM = 5;                    // either side of the line: the guard's own box reaches NOGO_RADIUS_M
+const CORRIDOR_POLL_MS = 2000;
+const CORRIDOR_AHEAD_M = 30000, CORRIDOR_AHEAD_EVERY_M = 2000;
+let corridorRead = null;                       // the last read's status, its unread squares as {W, S, E, N}
+let corridorBusy = false;
+let corridorAhead = {at: null, route: null};
+async function postCorridor(body){
+  const r = await fetch("/api/enc/corridor", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  return r.json();
+}
+async function getCorridor(id){ return (await fetch("/api/enc/corridor?id=" + encodeURIComponent(id))).json(); }
+function toCorridor(st){
+  return st && !st.error ? {...st, unread: (st.unread || []).map(r => ({W: r[0], S: r[1], E: r[2], N: r[3], failed: false}))} : null;
+}
+const CORRIDOR_SCALES = ["harbour", "approach", "coastal", "general"];
+/** A read's status, in words: what it read, at which scales, what it could not, and the water no chart covers. */
+function corridorSummary(st){
+  if(!st || st.error) return "Chart NOT read along the line: " + ((st && st.error) || "no answer") + ".";
+  const scales = CORRIDOR_SCALES.filter(k => st.bands && st.bands[k]).map(k => k + " " + st.bands[k]).join(", ");
+  const none = st.bands && st.bands.none ? "; " + st.bands.none + " tile(s) with no chart at any scale" : "";
+  if(st.state === "canceled")
+    return "Chart read along the line STOPPED after " + st.done + " of " + st.total + " tile(s).";
+  return "Chart read along the line: " + st.total + " tile(s) within " + st.half_km + " km of it, in " + fmtMS(st.seconds)
+    + (scales ? " - charted at " + scales + " (tiles by their most detailed scale)" : "") + none
+    + (st.unread_n ? "; UNREAD water in " + st.unread_n + " square(s) near the line, drawn gray - a route through it is refused"
+                   : "; no unread water near the line")
+    + (st.failed && st.failed.length ? "; " + st.failed.length + " tile(s) could NOT be read - press Read chart again"
+                                     : "")
+    + ". The tiles are kept: this water is read from them from now on, offline too.";
+}
+async function readCorridor(){
+  if(corridorBusy) return;
+  const pts = [...(asv ? [{lat: asv.lat, lon: asv.lon}] : []), ...transit.map(p => ({lat: p.lat, lon: p.lon}))];
+  if(!transit.length){ flashNote("Draw a transit line first, then Read chart."); return; }
+  corridorBusy = true; updateTransitPanel();
+  try{
+    let st = await postCorridor({route: pts, half_km: CORRIDOR_HALF_KM});
+    if(!st || st.error){ showBanner(corridorSummary(st)); return; }
+    logClient("corridor_read", {id: st.id, tiles: st.total, points: pts.length, state: "started"});
+    showBanner("Reading the chart along the line: " + st.total + " tile(s) within " + CORRIDOR_HALF_KM + " km of it. "
+      + "Tiles already read answer at once; a new one takes up to a minute.");
+    while(st && !st.error && st.state === "running"){
+      corridorRead = toCorridor(st); updateTransitPanel(); render();
+      await new Promise(r => setTimeout(r, CORRIDOR_POLL_MS));
+      st = await getCorridor(st.id);
+    }
+    if(st && !st.error){ corridorRead = toCorridor(st); render(); }
+    showBanner(corridorSummary(st));
+    if(st && !st.error) logClient("corridor_read", {id: st.id, tiles: st.total, state: st.state, failed: (st.failed || []).length,
+                                                    bands: st.bands, unread: st.unread_n, s: st.seconds});
+  }catch(e){ showBanner("Chart NOT read along the line: " + ((e && e.message) || e) + "."); }
+  finally{ corridorBusy = false; updateTransitPanel(); }
+}
+/** The route ahead of her: from where she is along `rr` (from waypoint `i0`) for up to `aheadM`, the last leg cut there. */
+function routeAhead(here, rr, i0, aheadM){
+  const pts = [here]; let m = 0, prev = here;
+  for(let i = Math.max(0, Math.min(i0, rr.length - 1)); i < rr.length; i++){
+    const d = distTo(prev, rr[i]);
+    if(m + d >= aheadM){
+      const t = d > 0 ? (aheadM - m) / d : 0;
+      pts.push({lat: prev.lat + (rr[i].lat - prev.lat) * t, lon: prev.lon + (rr[i].lon - prev.lon) * t});
+      return pts;
+    }
+    m += d; pts.push({lat: rr[i].lat, lon: rr[i].lon}); prev = rr[i];
+  }
+  return pts;
+}
+/** THE READ-AHEAD (on every state frame): in the supervising window, while she runs a route, the tiles along its next
+ *  CORRIDOR_AHEAD_M are asked for once she has made good CORRIDOR_AHEAD_EVERY_M since the last ask, or the route has
+ *  changed - fire and forget; read tiles answer at once. */
+function corridorAheadTick(s){
+  if(!asv || !(s && s.run === "running") || !supervising()) return;
+  const rr = indexedRoute(); if(!rr || !rr.length) return;
+  const here = {lat: asv.lat, lon: asv.lon};
+  if(corridorAhead.route === rr && corridorAhead.at && distTo(corridorAhead.at, here) < CORRIDOR_AHEAD_EVERY_M) return;
+  corridorAhead = {at: here, route: rr};
+  postCorridor({route: routeAhead(here, rr, window._wpIndex || 0, CORRIDOR_AHEAD_M), half_km: NOGO_RADIUS_M / 1000})
+    .catch(() => {});                          // a read that fails is read again by the box reads themselves
 }
 async function doTransit(){
   if(transit.length<1){ flashNote("Draw a transit line first (click the chart)."); return; }
@@ -10821,7 +10947,7 @@ function nogoLayerKeyNow(){
 function drawNogoCached(toScreen, w, h, o){
   if(!nogoShow || !nogo.ready || !nogo.features) return;
   if(!(w > 0 && h > 0)) return;                     // a view with no size: see drawENCCached
-  drawLayer(nogoLayer, nogoLayerKeyNow(), [nogo.features, chartInk.lines, chartInk.areas], drawNogo,
+  drawLayer(nogoLayer, nogoLayerKeyNow(), [nogo.features, chartInk.lines, chartInk.areas, nogo.unread, corridorRead], drawNogo,
             toScreen, w, h, o);
 }
 function drawNogo(toScreen, ctx){
@@ -10845,6 +10971,21 @@ function drawNogo(toScreen, ctx){
   for(const f of nogo.features){ const r=f.role;
     if(nogo.enf.land && (r==="shore_line"||r==="dock_line"))
       eachPath(f.geometry,p=>{ ctx.beginPath(); p.forEach((c,i)=>{ const s=toScreen(c[1],c[0]); i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y); }); ctx.stroke(); }); }
+  // ⚠ WATER NO CHART COVERS IS DRAWN GRAY (2026-10-11, the layered chart): the model holds nothing there, and a route
+  // through it is refused - the operator sees where before planning. A square whose chart could not be READ is
+  // outlined as well: reading it again may chart it.
+  const unreadAll = [...(nogo.unread || []), ...((corridorRead && corridorRead.unread) || [])];   // + the corridor's (step 3)
+  if(unreadAll.length){
+    ctx.save();
+    for(const r of unreadAll){
+      const a=toScreen(r.N,r.W), c=toScreen(r.S,r.E);
+      ctx.fillStyle=r.failed?"rgba(150,150,150,0.30)":"rgba(128,128,128,0.22)";
+      ctx.fillRect(a.x,a.y,c.x-a.x,c.y-a.y);
+      if(r.failed){ ctx.strokeStyle="rgba(200,200,200,0.8)"; ctx.lineWidth=1; ctx.setLineDash([4,3]);
+        ctx.strokeRect(a.x,a.y,c.x-a.x,c.y-a.y); ctx.setLineDash([]); }
+    }
+    ctx.restore();
+  }
   // ⚠ THE SEABED'S GAPS ARE OUTLINED IN THEIR OWN COLOR (2026-09-30). They are filled like every structure, because
   // that is what they are to the router; but no NOAA layer served them - the console read them off the depth areas'
   // own holes - and the operator must be able to see which floats those are and look at the chart to check them.
@@ -11827,6 +11968,19 @@ const inkYield = () => new Promise(r => setTimeout(r, 0));
 const INK_SLICE_MS = 40;
 /** A feature's lat/lon box, walked once per feature object: a new extract is new objects, so it cannot go stale. */
 const featLLBoxes = new WeakMap();
+/** A coarser chart's piece, ring or line `cs`, in the runs that are NOT its cut: a segment lying along an edge of its
+ *  square `clip` [W, S, E, N] is the cut (asv_console.py _clip_feature), and is left out. */
+function uncutRuns(cs, clip){
+  const [W, S, E, N] = clip, on = (a, b) => (a[0] === W && b[0] === W) || (a[0] === E && b[0] === E)
+                                         || (a[1] === S && b[1] === S) || (a[1] === N && b[1] === N);
+  const out = []; let cur = null;
+  for(let i = 1; i < cs.length; i++){
+    if(on(cs[i - 1], cs[i])){ cur = null; continue; }
+    if(!cur){ cur = [cs[i - 1]]; out.push(cur); }
+    cur.push(cs[i]);
+  }
+  return out;
+}
 function featureLLBox(f){
   let b = featLLBoxes.get(f);
   if(b) return b;
@@ -11982,8 +12136,11 @@ async function scanChartInk(bb){
     // depth-area and zone rings the drying-line hachures they trace become 13 false footprints over his survey.
     // The pontoons those rings ALSO trace are in nogo.features as seabed gaps (skin.js), so they are painted here
     // as themselves and join the attachment pool.
-    eachPath(g, q=>{ if(paint) paintPath(q); if(isStruct) addSegs(q); });
-    eachRing(g, r=>{ if(paint) paintPath(r); if(isStruct) addSegs(r); });
+    // ⚠ A CUT IS NOT INK (2026-10-11): a coarser chart's piece carries its square (`clip`), and its edges along that
+    // square are the cut, drawn on no chart - painted as explained they would hide a structure lying along them.
+    const runs = (cs) => f.clip ? uncutRuns(cs, f.clip) : [cs];
+    eachPath(g, q=>{ for(const u of runs(q)){ if(paint) paintPath(u); if(isStruct) addSegs(u); } });
+    eachRing(g, r=>{ for(const u of runs(r)){ if(paint) paintPath(u); if(isStruct) addSegs(u); } });
     if(paint) eachPoint(g, c=>paintPt(c));
   }
   // ⚠⚠ AND THE PAGE IS GIVEN BACK BETWEEN THE STEPS. After the tiles land, everything below ran
@@ -12246,7 +12403,9 @@ function sizeWhy(b, tooBig){
 }
 /** What the operator can do about an uncharted refusal: a read that FAILED is not a distance (the review). */
 function unchartedTip(u, partWay){
-  return u && u.cause === "failed" ? "Command it again once the chart can be read there." : partWay;
+  return u && u.cause === "failed" ? "Command it again once the chart can be read there."
+       : u && u.cause === "unread" ? "No chart at any scale covers that water: choose a point inside charted water, or route round it."
+       : partWay;
 }
 /** A planner's refusal in the operator's units: a route past the chart read is said through fmtDist (the planner's own
  *  words are meters), anything else as the planner said it. For the paths that plan without planInsideChart. */
@@ -12314,18 +12473,31 @@ function mooredNote(plan){
   return "clear of " + (names.length <= 2 ? names.join(" and ") : names.length + " vessels not under way") + " (AIS)";
 }
 async function planInsideChart(pts, opts, plan, what){
-  let own = nogo.ready && nogo.bbox ? beyondChart(pts, nogo.bbox) : null;
+  const subjectOf = () => what === "Upload" ? "the plan" : what === "Transit" ? "the transit" : what === "RTH" ? "home" : "the target";
+  // ⚠ WATER NO CHART COVERS IS REFUSED AT ONCE (2026-10-11, the layered chart): reading wider cannot chart it. A read
+  // that FAILED there says so, and to command it again once the chart can be read.
+  const unreadRefusal = (u, route) => {
+    u.subject = route ? null : subjectOf();
+    const say = beyondChartSay(u, fmtDist);           // the advice is unchartedTip's, from `cause`
+    return {error: say, reason: {mode: "uncharted", info: {kind: u.failed ? "water whose chart could not be read" : "water no chart covers"},
+                                 at: u.at, near: !(u.outM > 0)},
+            uncharted: {...u, route: route || [], say, rounds: 0, cause: u.failed ? "failed" : "unread"}};
+  };
+  // The command's own POINTS (her, the target, a plan's own) - not the straight lines between them, which no route is.
+  let own = nogo.ready && nogo.bbox ? beyondChart(pts, nogo.bbox, undefined, nogo.unread, {points: true}) : null;
+  if(own && own.where === "unread") return unreadRefusal(own, null);
   if(own){
     const ownBox = boxAround(pts, CHART_WIDEN_PAD_M);
     const tooBig = encSpanRefusal(bbUnion(nogo.bbox, ownBox));
     const ask = {...(opts || {}), keep: true};
     if(!tooBig){
       await ensureNogoCovers(pts, null, ask);
-      own = nogo.ready && nogo.bbox ? beyondChart(pts, nogo.bbox) : null;
+      own = nogo.ready && nogo.bbox ? beyondChart(pts, nogo.bbox, undefined, nogo.unread, {points: true}) : null;
+      if(own && own.where === "unread") return unreadRefusal(own, null);
     }
     if(own){
       // NOTHING WAS PLANNED, so it is the command's own point that is said, not a route (the review).
-      own.subject = what === "Upload" ? "the plan" : what === "Transit" ? "the transit" : what === "RTH" ? "home" : "the target";
+      own.subject = subjectOf();
       const say = beyondChartSay(own, fmtDist) + " - " + (tooBig ? sizeWhy(ownBox, tooBig)
                                                                  : "the chart could not be read over it (" + (ask.failed || nogo.note || "no extract") + ")");
       return {error: say, reason: {mode: "uncharted", info: {kind: "water the chart was not read over"}, at: own.at, near: !(own.outM > 0)},
@@ -12336,6 +12508,9 @@ async function planInsideChart(pts, opts, plan, what){
   aisKeepoutsNow();
   let p = plan(), why = null, cause = null, round = 0;
   while(p && p.uncharted){
+    if(p.uncharted.where === "unread"){                // no wider read charts it: said at once (the advice: unchartedTip)
+      cause = p.uncharted.failed ? "failed" : "unread"; break;
+    }
     // THE STALL WATCHDOG SPEAKS FIRST. The plan just made held the thread for seconds, and the watchdog says so on its
     // next tick - which, live, landed over this read's own banner and stood there through the whole 65 s read (a bare
     // turn here was not enough: it landed 100 ms after the read's banner on the next live run). One tick and a margin,
@@ -13824,6 +13999,7 @@ $("#sr_add").onclick = commitSearch;
 $("#sr_reset").onclick = resetSearch;
 $("#tranBtn").onclick = ()=>setMode("transit");
 $("#tr_follow").onclick = doTransit;
+$("#tr_read").onclick = () => readCorridor();
 $("#tr_undo").onclick = ()=>{ transit.pop(); updateTransitPanel(); render(); };
 $("#tr_clr").onclick = ()=>{ transit=[]; updateTransitPanel(); render(); };
 $("#areaBtn").onclick = ()=>setBoundaryShow(!boundaryShow);
@@ -17831,6 +18007,8 @@ function onState(s){
   // take the rest of this frame (the guard among it) down with it; said once, because it means fuel is not watched
   try{ fuelTick(s); }catch(e){ if(!fuelErrSaid){ fuelErrSaid = true; console.error(e);
     showBanner("⚠ THE FUEL MONITOR FAILED: " + ((e && e.message) || e) + " - fuel is NOT being watched; keep an eye on the gauge."); } }
+  // the chart read ahead of her (step 3, 2026-10-11) - caught: a read is a convenience, never the frame's business
+  try{ corridorAheadTick(s); }catch(e){ console.error(e); }
   // End-of-Plan RTH: the sim safely HOLDS at the last waypoint; the console chains the
   // existing Return-to-Home behavior (ENC-routed doRTH) exactly as if the operator had
   // pressed RTH. One-shot per run, and never re-chained off the RTH run itself.

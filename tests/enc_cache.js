@@ -113,6 +113,9 @@ globalThis.document = { createElement: () => {
 let nogoShow = true, SD = { min: 0, max: 0 }, PAT = null;
 let nogo = { ready: true, features: [], enf: { land: true, depth: true } };
 let chartInk = { lines: [], areas: [] };
+// the chart read along a route (2026-10-11, step 3): drawNogoCached keys the zones layer on it and drawNogo draws its
+// unread squares - none has been read in this world
+let corridorRead = null;
 function depthRange() { return { min: SD.min, max: SD.max }; }
 function currentPattern() { return PAT; }
 // the page's depthExcluded corrects a feature's depth by the tide; so does this one, so the tide matters

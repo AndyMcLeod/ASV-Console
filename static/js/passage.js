@@ -452,7 +452,18 @@ export function insideBoxM(p, box){
   return Math.min((p.lat - box.S) * M_PER_DEG_LAT, (box.N - p.lat) * M_PER_DEG_LAT,
                   (p.lon - box.W) * k, (box.E - p.lon) * k);
 }
-export function beyondChart(pts, box, edgeM = CHART_EDGE_M){
+// ⚠⚠ AND INSIDE THE BOX, ONLY OVER WATER A CHART COVERS (2026-10-11, the layered chart - asv_console.py
+// fetch_enc_layered). The extract now says which squares of its box NO chart covers at any scale, or whose chart could
+// not be read (`unread`: [{W, S, E, N, failed}], nogo.unread). The model holds nothing there either, so a route that
+// passes through one - or within `edgeM` of one, for the same reason as the box's margin - is refused like a route
+// past the box: `where: "unread"`, `failed` when it is a read that failed rather than no chart. Reading the chart
+// wider cannot help (the page's planInsideChart refuses at once). Every leg is SAMPLED, at most edgeM / 2 apart: a
+// square is not convex to a route the way the box is - unless `opts.points`, which judges the points alone (a
+// command's own points, before any route exists: the straight line between them is not the route).
+// ⚠ THE SQUARES SHE IS IN, OR BESIDE, DO NOT COUNT: a route starts where she is, and refusing every command from a
+// boat that has drifted into, or up to, water no chart covers would strand her there - RTH included. Squares within
+// `edgeM` of the route's first point are let be; a square anywhere else is not.
+export function beyondChart(pts, box, edgeM = CHART_EDGE_M, unread = null, opts = {}){
   if(!box || !pts || !pts.length) return null;
   let near = null, out = null, outM = 0;
   for(const p of pts){
@@ -463,12 +474,55 @@ export function beyondChart(pts, box, edgeM = CHART_EDGE_M){
       if(-inside > outM) outM = -inside;
     }
   }
-  return near ? {at: out || near, outM, edgeM, pts: pts.map(p => ({lat: p.lat, lon: p.lon}))} : null;
+  if(near) return {at: out || near, outM, edgeM, pts: pts.map(p => ({lat: p.lat, lon: p.lon}))};
+  const hit = unreadAlong(pts, unread, edgeM, opts);
+  return hit ? {at: hit.at, outM: hit.inM, edgeM, pts: pts.map(p => ({lat: p.lat, lon: p.lon})), where: "unread", failed: hit.failed}
+             : null;
+}
+/** Where `pts` (legs sampled at most edgeM / 2 apart, or the points alone with `opts.points`) stands in, or within
+ *  `edgeM` of, an unread square - the squares within `edgeM` of its first point aside: {at (its first point INSIDE a
+ *  square, else its first within the margin), inM (the farthest any point stands inside one, 0 when it only reaches
+ *  the margin), failed} - or null. */
+export function unreadAlong(pts, unread, edgeM = CHART_EDGE_M, opts = {}){
+  if(!unread || !unread.length || !pts || !pts.length) return null;
+  let W = Infinity, S = Infinity, E = -Infinity, N = -Infinity;
+  for(const p of pts){ W = Math.min(W, p.lon); E = Math.max(E, p.lon); S = Math.min(S, p.lat); N = Math.max(N, p.lat); }
+  const padLat = edgeM / M_PER_DEG_LAT, padLon = edgeM / (M_PER_DEG_LAT * Math.cos((S + N) / 2 * Math.PI / 180));
+  const near = unread.filter(r => r.W <= E + padLon && r.E >= W - padLon && r.S <= N + padLat && r.N >= S - padLat
+                                  && !(insideBoxM(pts[0], r) > -edgeM));
+  if(!near.length) return null;
+  let first = null, firstIn = null, inM = 0;
+  const judge = (p) => {
+    for(const r of near){
+      const d = insideBoxM(p, r);                       // >0 inside the square, <0 outside: its depth, or distance, in m
+      if(!(d > -edgeM)) continue;
+      const h = {at: {lat: p.lat, lon: p.lon}, failed: !!r.failed};
+      if(!first) first = h;
+      if(d > 0){ if(!firstIn) firstIn = h; if(d > inM) inM = d; }
+    }
+  };
+  const step = edgeM / 2;
+  for(let i = 0; i < pts.length; i++){
+    const a = pts[i];
+    judge(a);
+    const b = pts[i + 1]; if(!b || opts.points) continue;
+    const k = M_PER_DEG_LAT * Math.cos(a.lat * Math.PI / 180);
+    const L = Math.hypot((b.lat - a.lat) * M_PER_DEG_LAT, (b.lon - a.lon) * k);
+    const n = Math.ceil(L / step);
+    for(let j = 1; j < n; j++) judge({lat: a.lat + (b.lat - a.lat) * j / n, lon: a.lon + (b.lon - a.lon) * j / n});
+  }
+  const h = firstIn || first;
+  return h ? {at: h.at, inM, failed: h.failed} : null;
 }
 /** What `beyondChart` found, in words; `fmt` formats meters (the page passes its own km / NM-aware fmtDist). `u.subject`
  *  names something other than a route ("the target" - a command refused before any route was planned). */
 export function beyondChartSay(u, fmt){
   const f = fmt || (m => Math.round(m) + " m");
+  if(u.where === "unread"){
+    const water = u.failed ? "water whose chart could not be read" : "water no chart covers";
+    return u.outM > 0 ? (u.subject ? u.subject + " lies in " : "the route runs through ") + water
+                      : (u.subject ? u.subject + " lies " : "the route runs ") + "within " + f(u.edgeM) + " of " + water;
+  }
   const said = u.subject ? u.subject + " lies " : "the route runs ";
   return u.outM > 0 ? said + f(u.outM) + " beyond the water the chart was read over"
                     : said + "within " + f(u.edgeM) + " of the edge of the water the chart was read over";
@@ -561,7 +615,7 @@ export function planNogoRoute(from, to, opts){
   const route = kr.route.slice(1);
   // THE ROUTE AS FLOWN, judged against the box the chart was read over (beyondChart, above) - after the lane pass,
   // because that is the route the boat is sent. Refused with no `route`, so a caller that reads only `error` cannot fly it.
-  const out = beyondChart([{lat: from.lat, lon: from.lon}, ...route], nogo.bbox);
+  const out = beyondChart([{lat: from.lat, lon: from.lon}, ...route], nogo.bbox, undefined, nogo.unread);
   if(out) return {error: beyondChartSay(out), uncharted: {...out, route},
                   reason: {mode: "uncharted", info: {kind: "water the chart was not read over"}, at: out.at, near: !(out.outM > 0)}};
   return {route, direct: !routed, routed, lane: kr.lane, partial: kr.partial,
@@ -711,7 +765,7 @@ export function routePlan(start, wps, keepRightAll, standoffM, transitAt){
   // ⚠ AND THE WHOLE ROUTE IS JUDGED AGAINST THE BOX THE CHART WAS READ OVER (beyondChart): every leg, the survey's own
   // included, since a survey line over water nobody read is no more checked than a transit over it. `uncharted` is null
   // or what beyondChart found; the route is still returned, and the page refuses it (doTransit, doUpload).
-  const uncharted = beyondChart([{lat: start.lat, lon: start.lon}, ...out], nogo.bbox);
+  const uncharted = beyondChart([{lat: start.lat, lon: start.lon}, ...out], nogo.bbox, undefined, nogo.unread);
   return {route: out, unroutable, lane, partial, how, insideStandoff, standoffM: want, uncharted,
           moored: mooredPassed([{lat: start.lat, lon: start.lon}, ...out], ref, koT.moored)};
 }

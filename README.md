@@ -2340,6 +2340,51 @@ of the operator.
    re-approach to her hold do not read further: a way that runs past the chart is refused by
    name, and she stays where she is.
 
+   **The chart in layers, and water no chart covers (2026-10-11).** The server used to read each
+   box at ONE scale: NOAA's most detailed usage band with any data anywhere in the box. Inside the
+   box, wherever that band has no chart, the extract held nothing at all (no land, no depths, no
+   hazards), and every planner and the clearance guard read that as open water. Measured on the
+   operator's own cache: an extract from Portsmouth to Cape Cod, read at harbour scale, had depth or
+   land under 43% of its box; two other wide reads, 81% and 88%; the 10 km operating box at
+   Portsmouth, 99%. Now the chart is read in fixed **0.25° tiles**, each cached once complete. Each
+   band's coverage outline (NOAA's M_COVR) says where its data is, and within a tile every square
+   (down to 0.25/128°, about 217 m north-south) takes the most detailed band that covers it whole:
+   harbour, then approach, coastal and general. The harbour chart is served whole; a coarser chart
+   is cut to the squares it applies in. In the squares a finer chart's outline runs through, both
+   charts' hazards apply: a strip at most one square wide with a few extra keep-outs, never one
+   missing. The edges two cells of one chart share cancel, so the seams of NOAA's harbour-cell grid
+   cost nothing (checked on the six real Portsmouth cells). Water no chart covers at any scale is
+   **unread**: drawn gray with the NOGO zones, named on the Nogo row (*unread*), and a route through
+   it, or within 100 m of it, is refused at once ("the route runs through water no chart covers"),
+   because no wider read can chart it. A square whose chart could not be read is outlined as well,
+   and the refusal says to command it again once it can be read. Squares within 100 m of the boat
+   herself don't count, so a boat that has drifted into or up to unread water is never stranded by
+   them, RTH included. A tile whose coverage could not be read is unread, never empty water; a tile
+   with a failed layer is served once and not cached. The seabed-gap check runs on the harbour chart
+   alone, which is served whole, and a hole a coarser chart's seabed fills is where the harbour chart
+   ends, not a float. A coarser chart's piece is drawn with no outline along its cut, and the
+   chart-image read doesn't take the cut for charted ink. The first read of the Portsmouth operating
+   box took 59 s (two tiles, every layer of the harbour chart); a box offshore toward the Isles of
+   Shoals (six tiles) took 57 s more and filled the water past the harbour cells from the coastal
+   chart. Read again, both come from the tile cache. The older per-box caches (`features_v5_*`) are
+   no longer read, so an area visited only before this change has no chart offline until it has been
+   read online once.
+
+   **Reading the chart along a passage (2026-10-11).** A box read stops at 1.5° on a side, about 90
+   nm; a passage needs the chart along its route, not a box round it. The transit panel's **Read
+   chart** reads every chart tile within 5 km of the boat and the line's points, in the background,
+   with its progress on the panel ("reading chart: 12 of 67 tiles · ~4:10 left"), and ends with a
+   summary: how many tiles, the most detailed scale charting each, the water no chart covers near the
+   line (drawn gray, as above), and any tile that could not be read (press Read chart again; tiles
+   already read answer at once). The tiles are kept, so the passage's chart is on hand before she
+   sails, offline too. A line from Portsmouth past Cape Cod to Cape Henry, about 450 nm, is 67 tiles.
+   While she runs, the supervising window also reads ahead of her: the tiles along the next 30 km of
+   her route, again every 2 km she makes good, so the guard's own 10 km chart reads round her come
+   from tiles already read. Neither moves the boat; the planners still read their own boxes. The
+   console's side is `POST /api/enc/corridor {route, half_km}` (a background job; the same tiles asked
+   again rejoin it) and `GET /api/enc/corridor?id=` for its progress; it reads at most 600 tiles at
+   once and is not logged as a command.
+
    The vessel-status card's **Nogo** row names which of four things is true, because they
    are not interchangeable: *reading chart… 6 s* (with the seconds climbing, so a chart
    service that has stopped answering doesn't look like a slow first fetch), *334 zones ·

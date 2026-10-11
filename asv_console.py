@@ -2279,13 +2279,21 @@ def _bbox_key(bbox):
     return "%.4f_%.4f_%.4f_%.4f" % tuple(bbox)
 
 
-def fetch_enc_features(bbox, min_depth=0.0):
+def fetch_enc_features(bbox, min_depth=0.0, band=None, extras=True, use_cache=True):
     """Fetch + role-tag ENC vector features for a bbox, from the finest band with
     coverage. Returns {'band', 'features':[{role,cls,props,geometry}], 'counts'}.
     The assembled geometry caches to charts/enc/features_<key>.json; the min-depth
-    'shallow' tag is applied per request so one fetch serves any depth limit."""
+    'shallow' tag is applied per request so one fetch serves any depth limit.
+
+    `band` FORCES the band (the layered read, fetch_enc_tile, asks each band in turn and
+    never wants the finest-with-any-coverage pick); `extras` False fetches the named roles
+    only (a coarser band filling in where no finer chart exists); `use_cache` False neither
+    reads nor writes this function's own cache (the layered read caches the assembled
+    tile instead). Each feature carries `oid`, the service's object id, so a feature
+    fetched by two tiles is kept once."""
     global _enc_down_until
     key = _bbox_key(bbox)
+    forced = band
     # cache version: v2 adds id-first fetch (piers/structures that the old spatial
     # query silently dropped) + the expanded structure classes; v3 splits lateral
     # channel marks into their own 'chan_mark' role and keeps CATLAM/COLOUR; v4 adds
@@ -2305,21 +2313,27 @@ def fetch_enc_features(bbox, min_depth=0.0):
     # and nothing would have said so. A cache does not know what it does not contain.
     # Found by auditing the published layer list against what the extracts actually
     # returned; tests/enc_extract.py now fails if a declared class does not resolve.
-    cache = os.path.join(ENC_DIR, "features_v5_%s.json" % key)
+    cache = os.path.join(ENC_DIR, "features_v5_%s.json" % key) if not forced else \
+        os.path.join(ENC_DIR, "features_v5_%s%s_%s.json" % (forced, "" if extras else "_named", key))
     data = None
-    try:
-        with open(cache, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except OSError:
-        pass
+    if use_cache:
+        try:
+            with open(cache, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except OSError:
+            pass
     if data is None:
         if time.monotonic() < _enc_down_until:
             return {"band": None, "features": [], "note": "ENC offline (no cache for this area)"}
-        band = _enc_pick_band(bbox)
-        if band is None:
-            _enc_down_until = time.monotonic() + 30.0
-            return {"band": None, "features": [], "note": "no ENC coverage here (or offline)"}
+        if forced is None:
+            band = _enc_pick_band(bbox)
+            if band is None:
+                _enc_down_until = time.monotonic() + 30.0
+                return {"band": None, "features": [], "note": "no ENC coverage here (or offline)"}
         lm = _enc_layer_map(band)
+        if not lm:
+            # A forced band whose layer list cannot be had is a failed read, not an empty one.
+            return {"band": None, "features": [], "note": "the %s layer list could not be read" % band}
         jobs = [(role, cls, lm[cls]) for role, classes in ENC_ROLES.items()
                 for cls in classes if cls in lm]
         # ── EVERY OTHER PUBLISHED LAYER, FETCHED AND CACHED (Andy, 2026-08-31: "download
@@ -2341,7 +2355,8 @@ def fetch_enc_features(bbox, min_depth=0.0):
         #
         # THE COST IS PAID ONCE PER AREA, on the first extract, in parallel with the rest.
         _named = {c for cs in ENC_ROLES.values() for c in cs}
-        jobs += [("extra", cls, lid) for cls, lid in lm.items() if cls not in _named]
+        if extras:
+            jobs += [("extra", cls, lid) for cls, lid in lm.items() if cls not in _named]
 
         def _one(job):
             # ⚠⚠ A FAILED LAYER IS NOT AN EMPTY ONE, AND ANSWERING [] FOR BOTH POISONED THE
@@ -2396,7 +2411,7 @@ def fetch_enc_features(bbox, min_depth=0.0):
                 # a no-op for this console's one source, and the trip-wire for
                 # any second one. See its docstring.
                 kept = _enc_keep_props(ft.get("properties"))
-                out.append({"role": role, "cls": cls, "props": kept, "geometry": g})
+                out.append({"role": role, "cls": cls, "props": kept, "geometry": g, "oid": ft.get("id")})
             # A truncated layer reports as a FAILURE, so the extract is served once and
             # never cached - the same rule a dead socket gets, for the same reason.
             return (not short, cls, out)
@@ -2426,7 +2441,8 @@ def fetch_enc_features(bbox, min_depth=0.0):
                   flush=True)
         else:
             data["complete"] = True
-            _cache_json(cache, data)
+            if use_cache:
+                _cache_json(cache, data)
     md = float(min_depth or 0.0)
     for ft in data["features"]:
         if ft["role"] == "depth_area":
@@ -2434,6 +2450,701 @@ def fetch_enc_features(bbox, min_depth=0.0):
             ft["shallow"] = (d1 is not None and float(d1) < md)
     data["min_depth"] = md
     return data
+
+
+# --------------------------------------------------------------------------- #
+#  THE CHART IN LAYERS: each band where it is the best there is (2026-10-11)  #
+# --------------------------------------------------------------------------- #
+# Andy, 2026-10-11 (step 2 of the long-transit plan, "yes" to the squares): read the chart in fixed tiles and,
+# within each, use the most detailed scale wherever it exists and fill the rest from the next coarser one; water no
+# chart covers is UNREAD - refused by the planners, never clear.
+#
+# ⚠⚠ WHY. fetch_enc_features serves the FINEST band with ANY coverage in the box, and only that band - so inside the
+# box, wherever that band has no cell, there is nothing at all: no land, no depth, no hazard, which every planner and
+# the guard read as open water. Measured on his own cache: an extract from Portsmouth to Cape Cod (1.33 deg tall)
+# served at harbour band has depth or land under 43% of its box; two other wide reads 81% and 88%. NOAA's harbour
+# cells are a 0.075 deg grid, and each one's data covers an irregular part of it.
+#
+# HOW, with the standard library alone (his choice - no geometry library):
+#   COVERAGE. Each band's M_COVR polygons (Coverage_area, CATCOV "coverage available") say where its data is. A band's
+#   cells do not overlap and meet along grid lines, so its union is bounded by every coverage edge NOT shared between
+#   two cells: shared edges cancel - vertex for vertex, or as collinear axis-aligned intervals where two cells split
+#   the line at different vertices (_cov_index). A cancellation that fails errs one way only: an edge left standing
+#   makes the squares beside it PARTIAL, which ADDS the coarser chart there (below) and never takes a chart away.
+#   SQUARES. A tile is cut as a quadtree down to ENC_LEAF_DEPTH (0.25 / 128 deg, ~217 m north-south). A square is FULL
+#   for a band when no union edge crosses its interior and a point inside it is in the union, NONE when no edge crosses
+#   and the point is outside, PARTIAL otherwise. A square takes the finest band FULL in it plus every finer band PARTIAL
+#   in it. One that no band covers whole, at the smallest size, takes every band partial in it and is UNREAD (part of
+#   it no chart covers); one no band touches is UNREAD outright. So a coarser chart appears inside a finer one's
+#   coverage only in the squares that chart's edge runs through - a strip at most one square wide where BOTH charts'
+#   hazards apply - and nowhere is a chart left out that covers the water.
+#   CLIPPING. The finest band (harbour) is served WHOLE: nothing finer exists to give way to, and the seabed-gap check
+#   (static/js/skin.js) reads its exact topology. A coarser band's feature is cut to the squares its band applies in
+#   (Sutherland-Hodgman against each rectangle, lines by Liang-Barsky), and kept whole when it lies inside one; a cut
+#   piece carries `clip`, its rectangle, so the page draws no outline along the cut and the chart-image check does not
+#   take the cut for charted ink.
+#   TILES. ENC_TILE_DEG on a fixed grid: the unit fetched and cached (tile_v1_<key>.json, complete tiles only), so
+#   overlapping reads share them and a corridor (the next step) is a list of tiles. A read is the union of its tiles'
+#   features that reach into its box, a whole feature two tiles both fetched kept once (band, class, object id).
+ENC_TILE_DEG = 0.25
+ENC_LEAF_DEPTH = 7
+ENC_TILE_MEM_MAX = 16          # assembled tiles kept in memory: an operating area's reads reuse them
+ENC_TILE_WORKERS = 3           # tiles built at once (each fetches its layers 8 at a time)
+_ENC_NOT_COVERED = ("no coverage available", "2")
+_enc_tile_locks = {}
+_enc_tile_locks_lock = threading.Lock()
+_enc_tile_mem = {}
+
+
+def _enc_tiles(bbox):
+    """The fixed ENC_TILE_DEG tiles a bbox [W, S, E, N] reaches into, each [W, S, E, N]."""
+    W, S, E, N = bbox
+    d = ENC_TILE_DEG
+    i0, i1 = int(math.floor(W / d)), int(math.floor(E / d - 1e-12))
+    j0, j1 = int(math.floor(S / d)), int(math.floor(N / d - 1e-12))
+    return [[i * d, j * d, (i + 1) * d, (j + 1) * d]
+            for j in range(j0, max(j0, j1) + 1) for i in range(i0, max(i0, i1) + 1)]
+
+
+def _geom_polys(g):
+    """GeoJSON Polygon / MultiPolygon -> [[ring, ...], ...], each ring a closed list of [x, y]."""
+    t = (g or {}).get("type")
+    c = (g or {}).get("coordinates") or []
+    return [c] if t == "Polygon" else list(c) if t == "MultiPolygon" else []
+
+
+def _geom_bbox(g):
+    """[W, S, E, N] over every coordinate of a GeoJSON geometry, or None for an empty one."""
+    xs, ys = [], []
+
+    def walk(c):
+        if isinstance(c, (list, tuple)) and c and isinstance(c[0], (int, float)):
+            xs.append(c[0])
+            ys.append(c[1])
+        elif isinstance(c, (list, tuple)):
+            for k in c:
+                walk(k)
+    walk((g or {}).get("coordinates"))
+    return [min(xs), min(ys), max(xs), max(ys)] if xs else None
+
+
+def _enc_coverage(band, tile):
+    """The band's M_COVR polygons that reach into `tile` - where its data is - as [[ring, ...], ...]; raises when the
+    service cannot say (a coverage not known is not a coverage of nothing). Cached per band and tile."""
+    path = os.path.join(ENC_DIR, "cov_v1_%s_%s.json" % (band, _bbox_key(tile)))
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        pass
+    lm = _enc_layer_map(band)
+    if not lm:
+        raise OSError("the %s layer list could not be read" % band)
+    lid = lm.get("Coverage_area")
+    if lid is None:
+        raise ValueError("%s publishes no Coverage_area layer" % band)
+    ids = _enc_query_ids(band, lid, tile)
+    feats = _enc_query_by_ids(band, lid, ids) if ids else []
+    if len(feats) < len(ids):
+        raise ValueError("%s coverage arrived short (%d of %d)" % (band, len(feats), len(ids)))
+    polys = []
+    for ft in feats:
+        # Every M_COVR the service serves carries CATCOV; one that says anything but "no coverage" is coverage.
+        cat = str((ft.get("properties") or {}).get("CATCOV", "")).strip().lower()
+        if cat not in _ENC_NOT_COVERED:
+            polys.extend(_geom_polys(ft.get("geometry")))
+    _cache_json(path, polys)
+    return polys
+
+
+def _cov_index(polys):
+    """A band's coverage as {"polys": [(bbox, rings)], "edges": [(x1, y1, x2, y2)]}: `edges` bound the band's union -
+    every coverage edge not shared by two of its cells, canceled vertex for vertex or, on an axis-aligned line, by
+    the parity of the intervals laid on it."""
+    pl, cnt = [], {}
+    for rings in polys:
+        if not rings or len(rings[0]) < 4:
+            continue
+        xs = [p[0] for p in rings[0]]
+        ys = [p[1] for p in rings[0]]
+        pl.append(((min(xs), min(ys), max(xs), max(ys)), rings))
+        for r in rings:
+            for i in range(len(r) - 1):
+                a = (round(r[i][0], 9), round(r[i][1], 9))
+                b = (round(r[i + 1][0], 9), round(r[i + 1][1], 9))
+                if a == b:
+                    continue
+                k = (a, b) if a <= b else (b, a)
+                cnt[k] = cnt.get(k, 0) + 1
+    edges, axis = [], {}
+    for (a, b), n in cnt.items():
+        if n % 2 == 0:
+            continue                              # laid twice - once by each cell either side: inside the union
+        if a[0] == b[0]:
+            axis.setdefault(("x", a[0]), []).append((min(a[1], b[1]), max(a[1], b[1])))
+        elif a[1] == b[1]:
+            axis.setdefault(("y", a[1]), []).append((min(a[0], b[0]), max(a[0], b[0])))
+        else:
+            edges.append((a[0], a[1], b[0], b[1]))
+    for (ax, c), ivs in axis.items():
+        cuts = sorted({v for iv in ivs for v in iv})
+        for lo, hi in zip(cuts, cuts[1:]):
+            m = (lo + hi) / 2.0
+            if sum(1 for u, v in ivs if u < m < v) % 2:
+                edges.append((c, lo, c, hi) if ax == "x" else (lo, c, hi, c))
+    return {"polys": pl, "edges": edges}
+
+
+def _pip_rings(x, y, rings):
+    """Even-odd: is (x, y) inside the polygon whose rings these are."""
+    inside = False
+    for r in rings:
+        j = len(r) - 1
+        for i in range(len(r)):
+            xi, yi, xj, yj = r[i][0], r[i][1], r[j][0], r[j][1]
+            if (yi > y) != (yj > y) and x < (xj - xi) * (y - yi) / (yj - yi) + xi:
+                inside = not inside
+            j = i
+    return inside
+
+
+def _seg_crosses_rect(x1, y1, x2, y2, W, S, E, N):
+    """Does the segment pass through the rectangle's INTERIOR (not merely along its boundary or through a corner)?"""
+    t0, t1, dx, dy = 0.0, 1.0, x2 - x1, y2 - y1
+    for p, q in ((-dx, x1 - W), (dx, E - x1), (-dy, y1 - S), (dy, N - y1)):
+        if p == 0:
+            if q < 0:
+                return False
+            continue
+        t = q / p
+        if p < 0:
+            if t > t1:
+                return False
+            t0 = max(t0, t)
+        else:
+            if t < t0:
+                return False
+            t1 = min(t1, t)
+    if t1 - t0 <= 1e-12:
+        return False
+    tm = (t0 + t1) / 2.0
+    mx, my = x1 + dx * tm, y1 + dy * tm
+    return W < mx < E and S < my < N
+
+
+def _enc_leaves(tile, idx, depth_max=ENC_LEAF_DEPTH):
+    """The tile cut into squares, each (rect, bands, read): `bands` the ranks (ENC_BANDS order) whose features apply
+    there, `read` False where some or all of it no chart covers. See the block header."""
+    leaves, nb = [], len(idx)
+
+    def near(b, r):
+        return b[0] <= r[2] and b[2] >= r[0] and b[1] <= r[3] and b[3] >= r[1]
+
+    def walk(rect, depth, E, P):
+        W, S, Ea, N = rect
+        # A point off the square's exact center - the center can fall exactly on a grid line two cells share.
+        px, py = W + (Ea - W) * 0.5000137, S + (N - S) * 0.4999263
+        st, E2, P2 = [], [], []
+        for j in range(nb):
+            ej = [e for e in E[j] if near((min(e[0], e[2]), min(e[1], e[3]), max(e[0], e[2]), max(e[1], e[3])), rect)]
+            pj = [p for p in P[j] if near(p[0], rect)]
+            if any(_seg_crosses_rect(e[0], e[1], e[2], e[3], W, S, Ea, N) for e in ej):
+                st.append("partial")
+            elif any(b[0] <= px <= b[2] and b[1] <= py <= b[3] and _pip_rings(px, py, rings) for b, rings in pj):
+                st.append("full")
+            else:
+                st.append("none")
+            E2.append(ej)
+            P2.append(pj)
+        full = [j for j in range(nb) if st[j] == "full"]
+        part = [j for j in range(nb) if st[j] == "partial"]
+        if not full and not part:
+            leaves.append((rect, (), False))
+            return
+        js = full[0] if full else None
+        if js is not None and not any(j < js for j in part):
+            leaves.append((rect, (js,), True))
+            return
+        if depth >= depth_max:
+            if js is not None:
+                leaves.append((rect, tuple(j for j in part if j < js) + (js,), True))
+            else:
+                leaves.append((rect, tuple(part), False))
+            return
+        mx, my = (W + Ea) / 2.0, (S + N) / 2.0
+        for sub in ((W, S, mx, my), (mx, S, Ea, my), (W, my, mx, N), (mx, my, Ea, N)):
+            walk(sub, depth + 1, E2, P2)
+
+    walk(tuple(tile), 0, [ix["edges"] for ix in idx], [ix["polys"] for ix in idx])
+    return leaves
+
+
+def _merge_rects(rects):
+    """Rectangles that share a whole edge merged, row by row and then column by column, until none do."""
+    rs = sorted({tuple(r) for r in rects})
+    while True:
+        n0 = len(rs)
+        for key, lo, hi in ((lambda r: (r[1], r[3]), 0, 2), (lambda r: (r[0], r[2]), 1, 3)):
+            groups = {}
+            for r in rs:
+                groups.setdefault(key(r), []).append(r)
+            out = []
+            for g in groups.values():
+                g.sort(key=lambda r: r[lo])
+                cur = list(g[0])
+                for r in g[1:]:
+                    if r[lo] == cur[hi]:
+                        cur[hi] = r[hi]
+                    else:
+                        out.append(tuple(cur))
+                        cur = list(r)
+                out.append(tuple(cur))
+            rs = out
+        if len(rs) == n0:
+            return rs
+
+
+def _in_edge(p, k, r):
+    return p[0] >= r[0] if k == 0 else p[0] <= r[2] if k == 1 else p[1] >= r[1] if k == 2 else p[1] <= r[3]
+
+
+def _cut(a, b, k, r):
+    if k < 2:
+        X = r[0] if k == 0 else r[2]
+        return (X, a[1] + (b[1] - a[1]) * (X - a[0]) / (b[0] - a[0]))
+    Y = r[1] if k == 2 else r[3]
+    return (a[0] + (b[0] - a[0]) * (Y - a[1]) / (b[1] - a[1]), Y)
+
+
+def _clip_ring(ring, r):
+    """One ring cut to the rectangle (Sutherland-Hodgman): a closed ring, or None when nothing of area is left."""
+    pts = [(p[0], p[1]) for p in (ring[:-1] if len(ring) > 1 and ring[0] == ring[-1] else ring)]
+    for k in range(4):
+        if not pts:
+            return None
+        inp, pts = pts, []
+        prev = inp[-1]
+        for cur in inp:
+            ci, pi = _in_edge(cur, k, r), _in_edge(prev, k, r)
+            if ci:
+                if not pi:
+                    pts.append(_cut(prev, cur, k, r))
+                pts.append(cur)
+            elif pi:
+                pts.append(_cut(prev, cur, k, r))
+            prev = cur
+    if len(pts) < 3:
+        return None
+    a = sum(pts[i - 1][0] * pts[i][1] - pts[i][0] * pts[i - 1][1] for i in range(len(pts)))
+    if abs(a) < 1e-16:
+        return None
+    return [list(p) for p in pts] + [list(pts[0])]
+
+
+def _clip_seg(a, b, r):
+    """The part of segment a-b inside the closed rectangle (Liang-Barsky): (p, q, ends_inside) or None."""
+    t0, t1, dx, dy = 0.0, 1.0, b[0] - a[0], b[1] - a[1]
+    for p, q in ((-dx, a[0] - r[0]), (dx, r[2] - a[0]), (-dy, a[1] - r[1]), (dy, r[3] - a[1])):
+        if p == 0:
+            if q < 0:
+                return None
+            continue
+        t = q / p
+        if p < 0:
+            if t > t1:
+                return None
+            t0 = max(t0, t)
+        else:
+            if t < t0:
+                return None
+            t1 = min(t1, t)
+    if t1 - t0 <= 1e-12:
+        return None
+    pa = list(a) if t0 == 0.0 else [a[0] + dx * t0, a[1] + dy * t0]
+    pb = list(b) if t1 == 1.0 else [a[0] + dx * t1, a[1] + dy * t1]
+    return pa, pb, t1 == 1.0
+
+
+def _clip_lines(lines, r):
+    out = []
+    for ln in lines:
+        cur = None
+        for i in range(len(ln) - 1):
+            c = _clip_seg(ln[i], ln[i + 1], r)
+            if c is None:
+                cur = None
+                continue
+            pa, pb, ends_in = c
+            if cur is not None and cur[-1] == pa:
+                cur.append(pb)
+            else:
+                cur = [pa, pb]
+                out.append(cur)
+            if not ends_in:
+                cur = None
+    return out
+
+
+def _clip_feature(ft, rects):
+    """A coarser band's feature cut to the rectangles its band applies in: whole when it lies inside one, else one
+    piece per rectangle it reaches into, each carrying `clip` (its rectangle). A geometry this cannot cut is kept
+    whole - more chart, never less."""
+    g = ft.get("geometry") or {}
+    b = _geom_bbox(g)
+    if b is None:
+        return []
+    hits = [r for r in rects if b[0] <= r[2] and b[2] >= r[0] and b[1] <= r[3] and b[3] >= r[1]]
+    if not hits:
+        return []
+    for r in hits:
+        if r[0] <= b[0] and b[2] <= r[2] and r[1] <= b[1] and b[3] <= r[3]:
+            return [ft]
+    t, c, out = g.get("type"), g.get("coordinates"), []
+    for r in hits:
+        if t in ("Polygon", "MultiPolygon"):
+            ps = []
+            for rings in _geom_polys(g):
+                outer = _clip_ring(rings[0], r) if rings else None
+                if outer is None:
+                    continue
+                ps.append([outer] + [h for h in (_clip_ring(x, r) for x in rings[1:]) if h is not None])
+            if not ps:
+                continue
+            ng = {"type": "Polygon", "coordinates": ps[0]} if len(ps) == 1 else {"type": "MultiPolygon", "coordinates": ps}
+        elif t in ("LineString", "MultiLineString"):
+            ls = _clip_lines([c] if t == "LineString" else c, r)
+            if not ls:
+                continue
+            ng = {"type": "LineString", "coordinates": ls[0]} if len(ls) == 1 else {"type": "MultiLineString", "coordinates": ls}
+        elif t == "MultiPoint":
+            keep = [p for p in c if r[0] <= p[0] < r[2] and r[1] <= p[1] < r[3]]
+            if not keep:
+                continue
+            ng = {"type": "MultiPoint", "coordinates": keep}
+        else:
+            return [ft]
+        nf = dict(ft)
+        nf["geometry"] = ng
+        nf["clip"] = list(r)
+        out.append(nf)
+    return out
+
+
+def _enc_tile_build(tile):
+    """One tile, read band by band: the features that apply in it and the squares no chart covers. See the header."""
+    global _enc_down_until
+    fail = {"tile": tile, "features": [], "unread": [], "unread_failed": [tile], "bands": [], "partial": []}
+    if time.monotonic() < _enc_down_until:
+        return dict(fail, note="ENC offline (no cache for this tile)")
+    try:
+        idx = [_cov_index(_enc_coverage(b, tile)) for b in ENC_BANDS]
+    except (OSError, ValueError) as e:
+        if isinstance(e, OSError):
+            _enc_down_until = time.monotonic() + 30.0
+        return dict(fail, note="the chart's coverage could not be read here (%s)" % e)
+    leaves = _enc_leaves(tile, idx)
+    feats, failed, present = [], set(), []
+    for r, band in enumerate(ENC_BANDS):
+        rects = _merge_rects([lf[0] for lf in leaves if r in lf[1]])
+        if not rects:
+            continue
+        region = [min(x[0] for x in rects), min(x[1] for x in rects), max(x[2] for x in rects), max(x[3] for x in rects)]
+        # The finest band's every layer, as an extract always held (Andy, 2026-08-31); a coarser band filling in
+        # where no finer chart exists, its named roles only.
+        d = fetch_enc_features(region, 0.0, band=band, extras=(r == 0), use_cache=False)
+        if d.get("band") is None:
+            return dict(fail, note="the %s chart could not be read here (%s)" % (band, d.get("note") or "no answer"))
+        failed.update(d.get("partial") or [])
+        present.append(band)
+        for ft in d.get("features") or []:
+            ft = dict(ft)
+            ft["band"] = band
+            ft.pop("shallow", None)
+            if r == 0:
+                feats.append(ft)
+            else:
+                feats.extend(_clip_feature(ft, rects))
+    out = {"tile": tile, "features": feats, "bands": present, "partial": sorted(failed), "unread_failed": [],
+           "unread": [list(x) for x in _merge_rects([lf[0] for lf in leaves if not lf[2]])], "leaves": len(leaves)}
+    if failed:
+        print("[enc] REFUSING TO CACHE tile %s: %d layer(s) failed (%s) - served once and re-read next time"
+              % (_bbox_key(tile), len(failed), ", ".join(sorted(failed)[:6])), flush=True)
+    else:
+        out["complete"] = True
+    return out
+
+
+def fetch_enc_tile(tile):
+    """One tile, from memory, from disk, or read - complete tiles only are kept."""
+    key = _bbox_key(tile)
+    with _enc_tile_locks_lock:
+        lk = _enc_tile_locks.setdefault(key, threading.Lock())
+    with lk:
+        with _enc_tile_locks_lock:
+            got = _enc_tile_mem.get(key)
+        if got is not None:
+            return got
+        path = os.path.join(ENC_DIR, "tile_v1_%s.json" % key)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                got = json.load(f)
+        except (OSError, ValueError):
+            got = _enc_tile_build(tile)
+            if got.get("complete"):
+                _cache_json(path, got)
+        if got.get("complete"):
+            with _enc_tile_locks_lock:
+                _enc_tile_mem[key] = got
+                while len(_enc_tile_mem) > ENC_TILE_MEM_MAX:
+                    _enc_tile_mem.pop(next(iter(_enc_tile_mem)))
+        return got
+
+
+def fetch_enc_layered(bbox, min_depth=0.0):
+    """The chart over a bbox, layered (the block header): every feature of its tiles that reaches into the box, the
+    min-depth `shallow` tag applied per request, and the squares no chart covers (`unread`) or whose chart could not
+    be read (`unread_failed`), each cut to the box. `band` is the finest band present - the page's readout - and
+    None when nothing was read at all."""
+    W, S, E, N = bbox
+    tiles = _enc_tiles(bbox)
+    with ThreadPoolExecutor(max_workers=ENC_TILE_WORKERS) as ex:
+        got = list(ex.map(fetch_enc_tile, tiles))
+    md = float(min_depth or 0.0)
+    feats, seen, unread, unread_failed, partial, bands, notes = [], set(), [], [], set(), set(), []
+
+    def into(rs, dst):
+        for r in rs:
+            c = [max(r[0], W), max(r[1], S), min(r[2], E), min(r[3], N)]
+            if c[0] < c[2] and c[1] < c[3]:
+                dst.append(c)
+    for d in got:
+        if d.get("note"):
+            notes.append(d["note"])
+        partial.update(d.get("partial") or [])
+        bands.update(d.get("bands") or [])
+        into(d.get("unread") or [], unread)
+        into(d.get("unread_failed") or [], unread_failed)
+        for ft in d.get("features") or []:
+            b = _geom_bbox(ft.get("geometry"))
+            if b is None or b[0] > E or b[2] < W or b[1] > N or b[3] < S:
+                continue
+            if "clip" not in ft and ft.get("oid") is not None:
+                k = (ft.get("band"), ft.get("cls"), ft.get("oid"))
+                if k in seen:
+                    continue
+                seen.add(k)
+            nf = dict(ft)
+            if nf.get("role") == "depth_area":
+                d1 = (nf.get("props") or {}).get("DRVAL1")
+                nf["shallow"] = (d1 is not None and float(d1) < md)
+            feats.append(nf)
+    counts = {}
+    for ft in feats:
+        counts[ft["cls"]] = counts.get(ft["cls"], 0) + 1
+    finest = next((b for b in ENC_BANDS if b in bands), None)
+    out = {"band": finest, "bands": [b for b in ENC_BANDS if b in bands], "layered": True, "features": feats,
+           "counts": counts, "partial": sorted(partial), "unread": unread, "unread_failed": unread_failed,
+           "min_depth": md, "tiles": len(tiles)}
+    if finest is None:
+        out["note"] = notes[0] if notes else "no ENC coverage here"
+    if not partial and not unread_failed:
+        out["complete"] = True
+    return out
+
+
+# --------------------------------------------------------------------------- #
+#  THE CHART ALONG A ROUTE: a corridor of tiles, read ahead (2026-10-11)       #
+# --------------------------------------------------------------------------- #
+# Andy, 2026-10-11 (step 3 of the long-transit plan): read a corridor, not a box - for a passage, only the tiles within
+# a few km of the route, a few dozen for 500 nm. A box read stops at ENC_MAX_SPAN_DEG (1.5 deg); a corridor is a LIST
+# of the layered read's own tiles (fetch_enc_tile), read in the background, each cached as it lands - so the passage's
+# chart is on disk before she sails (and there for the guard's own 10 km reads, which come from the same tiles, when
+# the link is not). A job reports as it goes: tiles read, failed, the scale each tile is charted at, and the squares
+# inside the corridor no chart covers.
+ENC_CORRIDOR_HALF_KM = 5.0      # either side of the route, by default
+ENC_CORRIDOR_MAX_HALF_KM = 25.0
+ENC_CORRIDOR_MAX_TILES = 600    # ~3,500 nm of route at the default width
+ENC_CORRIDOR_MAX_PTS = 20000
+ENC_CORRIDOR_UNREAD_MAX = 2000  # unread squares a status carries (the count is always whole)
+_corridor_jobs = {}
+_corridor_lock = threading.Lock()
+
+
+def _seg_rect_dist_m(a, b, r):
+    """Meters from segment a-b ([lon, lat] each) to rectangle r [W, S, E, N], in a flat frame at the segment's middle
+    latitude: 0 when they meet."""
+    k = 111320.0 * math.cos(math.radians((a[1] + b[1]) / 2.0))
+    ax, ay, bx, by = a[0] * k, a[1] * 111320.0, b[0] * k, b[1] * 111320.0
+    W, S, E, N = r[0] * k, r[1] * 111320.0, r[2] * k, r[3] * 111320.0
+    if W <= ax <= E and S <= ay <= N or W <= bx <= E and S <= by <= N:
+        return 0.0
+    if _seg_crosses_rect(ax, ay, bx, by, W, S, E, N):
+        return 0.0
+
+    def p2s(px, py, x1, y1, x2, y2):
+        dx, dy = x2 - x1, y2 - y1
+        L = dx * dx + dy * dy
+        t = 0.0 if L == 0 else max(0.0, min(1.0, ((px - x1) * dx + (py - y1) * dy) / L))
+        return math.hypot(px - (x1 + dx * t), py - (y1 + dy * t))
+    corners = ((W, S), (E, S), (E, N), (W, N))
+    d = min(p2s(cx, cy, ax, ay, bx, by) for cx, cy in corners)
+    for x1, y1 in ((ax, ay), (bx, by)):
+        cx, cy = min(max(x1, W), E), min(max(y1, S), N)
+        d = min(d, math.hypot(x1 - cx, y1 - cy))
+    return d
+
+
+def _corridor_tiles(route, half_m):
+    """The fixed tiles (fetch_enc_tile's grid) within `half_m` of the route [[lon, lat], ...], in route order."""
+    d, out, seen = ENC_TILE_DEG, [], set()
+    segs = [(route[i], route[i + 1]) for i in range(len(route) - 1)] or [(route[0], route[0])]
+    for a, b in segs:
+        mid = math.radians((a[1] + b[1]) / 2.0)
+        plat, plon = half_m / 111320.0, half_m / (111320.0 * max(0.01, math.cos(mid)))
+        W, E = min(a[0], b[0]) - plon, max(a[0], b[0]) + plon
+        S, N = min(a[1], b[1]) - plat, max(a[1], b[1]) + plat
+        for j in range(int(math.floor(S / d)), int(math.floor(N / d)) + 1):
+            for i in range(int(math.floor(W / d)), int(math.floor(E / d)) + 1):
+                if (i, j) in seen:
+                    continue
+                t = [i * d, j * d, (i + 1) * d, (j + 1) * d]
+                if _seg_rect_dist_m(a, b, t) <= half_m:
+                    seen.add((i, j))
+                    out.append(t)
+    return out
+
+
+def _corridor_parse(body):
+    """The route and half-width a corridor request asks for, or ValueError in words."""
+    pts = body.get("route")
+    if not isinstance(pts, list) or not pts:
+        raise ValueError("a corridor needs `route`: a list of {lat, lon} points")
+    if len(pts) > ENC_CORRIDOR_MAX_PTS:
+        raise ValueError("a corridor route of %d points; at most %d" % (len(pts), ENC_CORRIDOR_MAX_PTS))
+    route = []
+    for p in pts:
+        try:
+            lat, lon = float(p["lat"]), float(p["lon"])
+        except (TypeError, KeyError, ValueError):
+            raise ValueError("every corridor point needs a numeric lat and lon")
+        if not (math.isfinite(lat) and math.isfinite(lon) and -90 <= lat <= 90 and -180 <= lon <= 180):
+            raise ValueError("a corridor point off the earth: %r, %r" % (p.get("lat"), p.get("lon")))
+        route.append([lon, lat])
+    try:
+        half = float(body.get("half_km", ENC_CORRIDOR_HALF_KM))
+    except (TypeError, ValueError):
+        raise ValueError("half_km must be a number of kilometers")
+    if not (0 < half <= ENC_CORRIDOR_MAX_HALF_KM):
+        raise ValueError("half_km must be above 0 and at most %g km" % ENC_CORRIDOR_MAX_HALF_KM)
+    return route, half
+
+
+def corridor_start(body):
+    """Start (or rejoin) the read of the tiles along a route: (200, status) or (400, {error}). The SAME tiles are the
+    same job: one already running is rejoined, one finished is read again - its cached tiles answer at once and the
+    ones that failed are tried again."""
+    route, half = _corridor_parse(body)
+    tiles = _corridor_tiles(route, half * 1000.0)
+    if len(tiles) > ENC_CORRIDOR_MAX_TILES:
+        raise ValueError("that corridor reaches %d chart tiles; at most %d are read at once - read it in parts"
+                         % (len(tiles), ENC_CORRIDOR_MAX_TILES))
+    jid = hashlib.sha1(json.dumps(tiles).encode("utf-8")).hexdigest()[:12]
+    # ⚠ THE STATUS IS READ AFTER THE LOCK IS LET GO: corridor_status takes the same lock, which is not reentrant - a
+    # running job rejoined from inside it hung the request for good (tests/enc_corridor.py 4 found it).
+    with _corridor_lock:
+        job = _corridor_jobs.get(jid)
+        rejoin = job is not None and job["state"] == "running"
+    if rejoin:
+        return corridor_status(jid)
+    with _corridor_lock:
+        # the last few jobs are kept for their status; the oldest FINISHED ones make way
+        for old in [k for k, j in sorted(_corridor_jobs.items(), key=lambda kv: kv[1]["started"])
+                    if j["state"] != "running"][:max(0, len(_corridor_jobs) - 19)]:
+            _corridor_jobs.pop(old, None)
+        job = {"id": jid, "tiles": tiles, "route": route, "half_m": half * 1000.0, "total": len(tiles), "done": 0,
+               "failed": [], "bands": {}, "unread": [], "unread_n": 0, "state": "running", "cancel": False,
+               "started": time.time(), "finished": None}
+        _corridor_jobs[jid] = job
+    threading.Thread(target=_corridor_run, args=(job,), daemon=True, name="corridor-" + jid).start()
+    return corridor_status(jid)
+
+
+def _corridor_run(job):
+    """Read a job's tiles, ENC_TILE_WORKERS at a time, tallying each as it lands."""
+    from concurrent.futures import as_completed
+    with ThreadPoolExecutor(max_workers=ENC_TILE_WORKERS) as ex:
+        futs = {ex.submit(_corridor_one, job, t): t for t in job["tiles"]}
+        for f in as_completed(futs):
+            t = futs[f]
+            try:
+                d = f.result()
+            except Exception as e:                     # a tile that raised is a tile not read, and said
+                d = {"failed": True, "note": "%s: %s" % (type(e).__name__, e)}
+            with _corridor_lock:
+                job["done"] += 1
+                if d is None:                          # canceled before it was read
+                    continue
+                if d.get("failed") or not d.get("complete"):
+                    job["failed"].append({"tile": t, "note": d.get("note") or ("partial: " + ", ".join(d.get("partial") or []))})
+                fin = next((b for b in ENC_BANDS if b in (d.get("bands") or [])), None)
+                key = (fin or "none").replace("enc_", "")
+                job["bands"][key] = job["bands"].get(key, 0) + 1
+                for r in (d.get("unread") or []) + (d.get("unread_failed") or []):
+                    if _near_route(job, r):
+                        job["unread_n"] += 1
+                        if len(job["unread"]) < ENC_CORRIDOR_UNREAD_MAX:
+                            job["unread"].append(list(r))
+    with _corridor_lock:
+        job["state"] = "canceled" if job["cancel"] else "done"
+        job["finished"] = time.time()
+
+
+def _near_route(job, r):
+    """Is the square r within the job's half-width of its route? The route's legs whose padded box reaches it, only."""
+    h = job["half_m"]
+    plat = h / 111320.0
+    plon = h / (111320.0 * max(0.01, math.cos(math.radians((r[1] + r[3]) / 2.0))))
+    route = job["route"]
+    for i in range(max(1, len(route) - 1)):
+        a, b = route[i], route[min(i + 1, len(route) - 1)]
+        if (min(a[0], b[0]) - plon > r[2] or max(a[0], b[0]) + plon < r[0]
+                or min(a[1], b[1]) - plat > r[3] or max(a[1], b[1]) + plat < r[1]):
+            continue
+        if _seg_rect_dist_m(a, b, r) <= h:
+            return True
+    return False
+
+
+def _corridor_one(job, tile):
+    if job["cancel"]:
+        return None
+    d = fetch_enc_tile(tile)
+    return dict(d, failed=bool(d.get("unread_failed")))
+
+
+def corridor_cancel(jid):
+    with _corridor_lock:
+        job = _corridor_jobs.get(jid)
+        if job is None:
+            return None
+        job["cancel"] = True
+    return corridor_status(jid)
+
+
+def corridor_status(jid):
+    """What a job has read so far: {id, state, total, done, failed: [{tile, note}], bands: {finest band: tiles},
+    unread: [[W, S, E, N]] (the first ENC_CORRIDOR_UNREAD_MAX), unread_n, seconds, eta_s} - or None for no such job."""
+    with _corridor_lock:
+        job = _corridor_jobs.get(jid)
+        if job is None:
+            return None
+        now = job["finished"] or time.time()
+        secs = now - job["started"]
+        eta = (secs / job["done"] * (job["total"] - job["done"])) if job["done"] and job["state"] == "running" else None
+        return {"id": job["id"], "state": job["state"], "total": job["total"], "done": job["done"],
+                "failed": list(job["failed"]), "bands": dict(job["bands"]), "unread": list(job["unread"]),
+                "unread_n": job["unread_n"], "half_km": job["half_m"] / 1000.0, "seconds": round(secs, 1),
+                "eta_s": round(eta, 1) if eta is not None else None}
 
 
 # --- CHART SOURCE (the S-57 META objects = an ENC's answer to a paper title block)
@@ -6821,6 +7532,8 @@ class Handler(BaseHTTPRequestHandler):
             self._serve_events()
         elif self.path.startswith("/tiles/"):
             self._serve_tile()
+        elif self.path.startswith("/api/enc/corridor"):      # BEFORE /api/enc, which would take it
+            self._serve_corridor()
         elif self.path.startswith("/api/enc"):
             self._serve_enc()
         elif self.path.startswith("/api/chartinfo"):
@@ -7039,10 +7752,20 @@ class Handler(BaseHTTPRequestHandler):
                 "%.1f degrees on a side (about %d km) - set home nearer, or transit in legs"
                 % (span_w, span_h, ENC_MAX_SPAN_DEG, int(ENC_MAX_SPAN_DEG * 111)))}))
         try:
-            data = fetch_enc_features(bbox, min_depth)
+            # LAYERED since 2026-10-11 (fetch_enc_layered's header): every band where it is the best there is,
+            # and the water no chart covers said, not served as open water.
+            data = fetch_enc_layered(bbox, min_depth)
         except Exception as e:  # never take the server down on a chart fetch
             return self._send(502, json.dumps({"error": str(e)}))
         self._send(200, _json_body_yielding(data))
+
+    def _serve_corridor(self):
+        # /api/enc/corridor?id=<job> -> how far the read of the chart along a route has got (corridor_status).
+        q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        st = corridor_status((q.get("id") or [""])[0])
+        if st is None:
+            return self._send(404, json.dumps({"error": "no such corridor read (usage: /api/enc/corridor?id=<job>)"}))
+        self._send(200, json.dumps(st))
 
     def _serve_chartinfo(self):
         # /api/chartinfo?bbox=W,S,E,N -> ENC cells + zone-of-confidence polygons
@@ -7099,6 +7822,19 @@ class Handler(BaseHTTPRequestHandler):
             except (OSError, MissionUnavailable) as e:
                 return 503, {"error": "the plan could not be saved: %s" % e}
             return 200, {"ok": True, "rev": rev}
+        if path == "/api/enc/corridor":
+            # READ THE CHART ALONG A ROUTE (2026-10-11, step 3 of the long-transit plan): {route: [{lat, lon}], half_km}
+            # starts - or rejoins - the read of every tile within half_km of it; {cancel: id} stops one. Not a command:
+            # it moves nothing, and any tab may ask. (corridor_start's block header.)
+            if body.get("cancel"):
+                st = corridor_cancel(str(body.get("cancel")))
+                if st is None:
+                    return 404, {"error": "no such corridor read"}
+                return 200, st
+            try:
+                return 200, corridor_start(body)
+            except ValueError as e:
+                return 400, {"error": str(e)}
         if path == "/api/supervisor":
             # A tab reporting in (review #14). `take` claims the post; `release` gives it up on unload.
             cid = body.get("id")
@@ -7979,7 +8715,8 @@ SUPERVISOR_BEAT_S = 2.0          # what a supervising page keeps to - published,
 SUPERVISOR_STALE_S = 10.0        # no report for this long and that tab is not running its ladder - published too
 SUPERVISOR_FORGET_S = 120.0      # silent this long and the tab is forgotten: it was closed
 SUPERVISOR_ANY = ("/api/cmd/stop", "/api/cmd/pause", "/api/cmd/estop")
-LOG_QUIET_POSTS = ("/api/supervisor",)   # the heartbeat is not a command; the registry logs what matters about it
+LOG_QUIET_POSTS = ("/api/supervisor",    # the heartbeat is not a command; the registry logs what matters about it
+                   "/api/enc/corridor")  # a chart read moves nothing; the page logs the operator's own (corridor_read)
 
 
 class Supervision:

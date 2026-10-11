@@ -904,8 +904,11 @@ check("20e. ... and a SMALL comb is not a footprint either — a keep-out area h
           + "Upload's routing",
           () => /await scanChartSliced\(rgba, W, H, explained, segs, mPerPx, \{\}, inkYield\)/.test(scan)
                 && /if\(!paint && !isStruct\) continue;/.test(scan)
-                && /eachPath\(g, q=>\{ if\(paint\) paintPath\(q\); if\(isStruct\) addSegs\(q\); \}\);/.test(scan)
-                && /eachRing\(g, r=>\{ if\(paint\) paintPath\(r\); if\(isStruct\) addSegs\(r\); \}\);/.test(scan)
+                // (each path and ring through `runs` since 2026-10-11: a coarser chart's piece leaves out its cut -
+                // tests/unread_water.js 6 - and everything else is painted and gathered whole, as before)
+                && /const runs = \(cs\) => f\.clip \? uncutRuns\(cs, f\.clip\) : \[cs\];/.test(scan)
+                && /eachPath\(g, q=>\{ for\(const u of runs\(q\)\)\{ if\(paint\) paintPath\(u\); if\(isStruct\) addSegs\(u\); \} \}\);/.test(scan)
+                && /eachRing\(g, r=>\{ for\(const u of runs\(r\)\)\{ if\(paint\) paintPath\(u\); if\(isStruct\) addSegs\(u\); \} \}\);/.test(scan)
                 && /performance\.now\(\) - slice > INK_SLICE_MS\)\{ await inkYield\(\)/.test(scan)
                 && (scan.match(/await inkYield\(\)/g) || []).length >= 4
                 && /await scanChartInk\(bb\);\s*await inkYield\(\);/.test(ens)

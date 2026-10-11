@@ -98,7 +98,11 @@ const { nogoKindCounts, nogoDR } = require("../static/js/chart.js");
 // THE SEABED'S GAPS (2026-09-30): refreshNogo folds them in as features and the readout counts them by their kind,
 // so the real module has to resolve in the eval'd scope - a free SKIN_KIND is a RUNTIME error inside the readout,
 // which is exactly how this suite first went red on the change.
-const { skinGaps, skinGapFeature, SKIN_KIND } = require("../static/js/skin.js");
+const { skinGaps, skinGapFeature, SKIN_KIND, SKIN_CLASSES } = require("../static/js/skin.js");
+// ... read over the harbour chart alone in a layered extract (2026-10-11): refreshNogo asks the page's own
+// skinOverHarbour, which reads each feature's box (featureLLBox) and tests a point in it (ptInGeom) - the real ones.
+const { ptInGeom } = require("../static/js/geometry.js");
+const { eachRing: _eR, eachPath: _eP, eachPoint: _ePt } = require("../static/js/core_geometry.js");
 // rebuildNogo() builds a FRAME now (Andy, 2026-08-20: "use frame"), so planeFrame has
 // to resolve in the eval'd scope below. A free variable there is a RUNTIME error inside
 // the function, never a load error -- which is why this suite went red at "it shows the
@@ -356,6 +360,9 @@ eval("const NOGO_QUEUE_MAX_MS = " + NOGO_QUEUE_MAX_MS + ";" + "\n" +
      grab("refoldInk") + "\n" + grab("inkNote") + "\n" +
      grab("foldChartInk") + "\n" + grab("rebuildNogo") + "\n" + grab("nogoStatus") + "\n" +
      grab("updateNogoUI") + "\n" + grab("refreshNogo") + "\n" +
+     "const featLLBoxes = new WeakMap(), eachRingF = _eR;\n" +
+     grab("featureLLBox").replace(/eachRing\(/g, "_eR(").replace(/eachPath\(/g, "_eP(").replace(/eachPoint\(/g, "_ePt(") + "\n" +
+     grab("skinOverHarbour") + "\n" +
      // readPlanInk (2026-10-02) is the step ensureNogoCovers reads the chart through; with no `opts` - every call in this
      // suite - it is the one ensureChartInk above. What an Upload's plan reads is tests/ink_reads.js's subject.
      grab("readPlanInk") + "\n" +

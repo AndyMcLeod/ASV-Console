@@ -20,9 +20,10 @@ THE ENDPOINT'S OWN CONTRACTS (read from fetch_enc_features, asserted hermeticall
   * `?bbox=W,S,E,N&min_depth=X`; anything malformed - no query, missing bbox, three
     edges, non-numeric, unparseable min_depth - is a 400 naming the ENC usage string,
     never a 502 from downstream.
-  * The extract caches to `charts/enc/features_v<N>_<key>.json` and is SERVED from that
-    cache - proven with a sentinel seeded at a mid-ocean bbox that upstream would
-    answer "no coverage" for, so only the cache can be the source.
+  * The extract is LAYERED since 2026-10-11 (tests/enc_layered.py): read in fixed tiles, each
+    cached as `charts/enc/tile_v<N>_<key>.json`, and SERVED from that cache - proven with a
+    sentinel tile seeded at a mid-ocean bbox that upstream would answer "no coverage" for, so
+    only the cache can be the source.
   * THE RETAG IS PER-REQUEST, THE FETCH IS NOT: every depth_area feature gets
     `shallow = DRVAL1 < min_depth` computed fresh on EVERY request, cached or not, and
     the response echoes `min_depth`. One fetch serves any depth limit - the same
@@ -144,11 +145,19 @@ KEY = "%.4f_%.4f_%.4f_%.4f" % BBOX
 # console would never read, and five checks failed for a reason that had nothing to do
 # with what they test. Reading it means a bump moves both together.
 _SRC = open(os.path.join(APP, "asv_console.py"), encoding="utf-8").read()
-_CVER = re.search(r'"(features_v\d+)_%s\.json"', _SRC)
-if not _CVER:
-    raise SystemExit("test setup: cannot find the feature cache version in asv_console.py")
-CACHE = os.path.join(ENC_DIR, _CVER.group(1) + "_%s.json" % KEY)
+# THE ENDPOINT IS LAYERED (2026-10-11): it reads TILES, so the sentinel is a tile - the one the box lies in, on the
+# grid the source declares - and its prefix is read from the source too.
+_CVER = re.search(r'"(tile_v\d+)_%s\.json"', _SRC)
+_TDEG = re.search(r'^ENC_TILE_DEG = ([\d.]+)', _SRC, re.M)
+if not _CVER or not _TDEG:
+    raise SystemExit("test setup: cannot find the tile cache version or the tile size in asv_console.py")
+_T = float(_TDEG.group(1))
+import math as _m                                              # noqa: E402
+TILE = [_m.floor(BBOX[0] / _T) * _T, _m.floor(BBOX[1] / _T) * _T, (_m.floor(BBOX[0] / _T) + 1) * _T, (_m.floor(BBOX[1] / _T) + 1) * _T]
+CACHE = os.path.join(ENC_DIR, _CVER.group(1) + "_%s.json" % ("%.4f_%.4f_%.4f_%.4f" % tuple(TILE)))
 SENTINEL = {
+    # a mid-ocean tile no chart covers - so a band, and these two features, can only have come from this file
+    "tile": TILE, "bands": ["enc_general"], "unread": [], "unread_failed": [], "partial": [], "complete": True,
     "band": "sentinel-band",
     "features": [
         {"role": "depth_area", "cls": "DepthArea",
@@ -223,8 +232,8 @@ try:
     # 3-4. THE CACHE ANSWERS. Mid-ocean, so the sentinel band proves provenance; the
     # response is the cache plus EXACTLY the two per-request fields (shallow, min_depth).
     code, body = get(port, "/api/enc?%s" % BQ)
-    check("3. the extract is SERVED FROM THE CACHE - the sentinel band comes back",
-          lambda: code == 200 and body.get("band") == "sentinel-band"
+    check("3. the extract is SERVED FROM THE CACHE - the sentinel tile's band and its two features come back, mid-ocean",
+          lambda: code == 200 and body.get("band") == "enc_general" and body.get("layered") is True
           and body.get("counts") == SENTINEL["counts"] and len(body["features"]) == 2,
           lambda: "band=%s counts=%s" % (body.get("band"), body.get("counts")))
     code_e, body_e = get(port, "/api/enc?" + BQ.replace(",", "%2C"))

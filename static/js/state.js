@@ -123,9 +123,12 @@ export const NOGO_ENF = {land:true, depth:true, haz:true, area:false, wreck:true
 // `ais` (2026-10-07): the page's read of the AIS proxy along a passage, taken as the passage is
 // planned - {vessels, polledAt} - from which passage.js passageKo lays the route round the
 // vessels NOT under way. null: no read, and a passage is laid in the chart's model alone.
+// `unread` (2026-10-11, the layered chart): the squares inside `bbox` that no chart covers, or whose chart could not be
+// read - [{W, S, E, N, failed}] - set with `bbox` from the same extract. The model holds nothing there, which reads as
+// clear water, so passage.js beyondChart refuses a route through them as it refuses one past the box.
 export const nogo = {ready:false, busy:false, frame:null, ko:null, band:null, note:"nogo not loaded",
             buffer:V.NOGO_BUFFER_M, enf:{...NOGO_ENF}, features:null, bbox:null, center:null,
-            builtOffset:null, ais:null};
+            builtOffset:null, ais:null, unread:null};
 
 // --- live chart state ------------------------------------------------------------------
 // These three ARE reassigned, so they are fields on an object rather than exported bindings

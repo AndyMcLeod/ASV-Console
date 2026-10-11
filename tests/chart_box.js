@@ -509,10 +509,11 @@ const fresh = () => { banners = []; downs = []; covers = []; aisTaken = 0; cover
         () => rpCalls === 3 && /const raw = routePlan\(\{lat:asv\.lat, lon:asv\.lon\}, wps, false, transitStandoffM\(\)\);/.test(up),
         rpCalls + " routePlan( calls");
   const pv = fs.readFileSync(path.join(__dirname, "..", "static", "js", "passage.js"), "utf8").split("\r\n").join("\n");
+  // (with the water no chart covers, nogo.unread, since 2026-10-11 - the layered chart; tests/unread_water.js)
   check("6f. planNogoRoute judges the route AS FLOWN - after the lane pass, from the start - and routePlan the whole "
         + "route, every leg",
-        () => /const route = kr\.route\.slice\(1\);\s*[\s\S]{0,300}const out = beyondChart\(\[\{lat: from\.lat, lon: from\.lon\}, \.\.\.route\], nogo\.bbox\);/.test(pv)
-              && /const uncharted = beyondChart\(\[\{lat: start\.lat, lon: start\.lon\}, \.\.\.out\], nogo\.bbox\);/.test(pv),
+        () => /const route = kr\.route\.slice\(1\);\s*[\s\S]{0,300}const out = beyondChart\(\[\{lat: from\.lat, lon: from\.lon\}, \.\.\.route\], nogo\.bbox, undefined, nogo\.unread\);/.test(pv)
+              && /const uncharted = beyondChart\(\[\{lat: start\.lat, lon: start\.lon\}, \.\.\.out\], nogo\.bbox, undefined, nogo\.unread\);/.test(pv),
         "static/js/passage.js");
 
   // ── 7. the passive estimate and the chart's mark ───────────────────────────────────────────────────────────────
@@ -591,7 +592,7 @@ const fresh = () => { banners = []; downs = []; covers = []; aisTaken = 0; cover
   const taut = grab("tautRoundHer"), rfh = grab("resumeFromHere"), upl = grab("doUpload");
   check("9. a taut way round her that runs past the read water is not taken: tautRoundHer judges every route it "
         + "returns, and hands one past the box to the router, which refuses it by name",
-        () => /if\(beyondChart\(\[\{lat: fromLL\.lat, lon: fromLL\.lon\}, \.\.\.route\], nogo\.bbox\)\) return null;/.test(taut)
+        () => /if\(beyondChart\(\[\{lat: fromLL\.lat, lon: fromLL\.lon\}, \.\.\.route\], nogo\.bbox, undefined, nogo\.unread\)\) return null;/.test(taut)
               && (taut.match(/return \{route/g) || []).length === 1,
         "tautRoundHer");
   const iCov = rfh.indexOf("await ensureNogoCovers([from, target]);"), iPic = rfh.indexOf("await planInsideChart([from, target]");
