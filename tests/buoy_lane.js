@@ -158,7 +158,7 @@ const HELPERS = ["bandIndex", "indexFor", "ringIndexed", "ringInside", "ringDist
                  // above call it; this console's old copy inlined the same arc-length
                  // resampling, so it has to be in the shared scope the way the module
                  // graph puts it.
-                 "resampleEN",
+                 "resampleEN", "resampleAnchoredEN",
                  // THE CHART'S OWN CHANNELS AND THE MARKS THAT STAND ALONE (2026-10-03): two more
                  // lane stages and what they call. A helper missing here is "FAIL 0. the suite
                  // itself CRASHED" at the first route, which is how this list was found short.
@@ -176,7 +176,7 @@ const LANE_DECLS = ["chartRings", "CHART_MARCH_MAX_M", "CHART_BRIDGE_REACH_M", "
                     "MARK_ALONG_COS", "MARK_COURSE_COS", "MARK_COURSE_LOOK_M",
                     "MARK_STAGE_LEGS", "MARK_STAGE_ROUNDS", "MARK_CLEAR_SEARCH_M", "GATE_PATCH_RATIO", "GATE_PATCH_SLACK_M", "END_CLEAR_M",
                     "MARK_PORT_BERTH", "MARK_PASS_M", "MARK_RUN_TURN_DEG", "MARK_JOIN_MAX_DEG", "MARK_TRACK_COS", "MARK_GATE_M", "MARK_BESIDE_RATIO",
-                    "REACH_EDGE_M", "REACH_MAX_WIDTH_M", "REACH_MIN_M", "REACH_HOLD_ROUNDS", "ROCK_MAX_M", "ROCK_MARKED_M", "ROCK_CLASSES", "ROCK_ROUNDS", "NEW_TURN_NEAR_M", "REACH_STRAIGHT_COS", "REACH_RUN_COS", "RESTRICTED_LOCAL_M2",
+                    "REACH_EDGE_M", "REACH_MAX_WIDTH_M", "REACH_MIN_M", "REACH_ANCHOR_GAP", "REACH_HOLD_ROUNDS", "ROCK_MAX_M", "ROCK_MARKED_M", "ROCK_CLASSES", "ROCK_ROUNDS", "NEW_TURN_NEAR_M", "REACH_STRAIGHT_COS", "REACH_RUN_COS", "RESTRICTED_LOCAL_M2",
                     "markName"];
 const M_PER_DEG_LAT = 111320.0;
 

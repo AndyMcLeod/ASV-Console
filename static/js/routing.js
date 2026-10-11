@@ -769,6 +769,33 @@ function resampleEN(en, step) {
   return { pts: out, total, at: atS };
 }
 
+/**
+ * The same, with the samples ANCHORED: the grid starts again at each of `anchors` (stations along `en`, meters), and
+ * between two anchors the samples are spaced evenly at the whole number of steps nearest `step`. Returns what
+ * resampleEN returns and `st`, each sample's station along `en`.
+ *
+ * ⚠ WHY (2026-10-10, the reach lane at Fox Point): a grid begun at the path's first point puts every sample of a
+ * long route where the route's length BEFORE it says. His westbound Go-To got 10.9 m longer below the Memorial
+ * Bridge - another fix's doing - and 15 km on, at Fox Point, every sample of the buoyed reach's lane fell 10.9 m
+ * further along: its cap read at the apex of the turn round Eight-Foot Rock Buoy 2 went from 11 m to 24 m, and the
+ * lane, eased from there, moved 27 m. Over one 35 m period that lane swung 29 m, and elsewhere on the same route 68 m.
+ * Anchored, a sample stands where the path round it says, from the anchor before it on.
+ */
+function resampleAnchoredEN(en, step, anchors) {
+  const base = resampleEN(en, step);
+  if (!base) return null;
+  const { total, at } = base;
+  const marks = [0, ...anchors.filter((s) => s > 0 && s < total).sort((a, b) => a - b), total];
+  const st = [];
+  for (let k = 1; k < marks.length; k++) {
+    const u = marks[k - 1], v = marks[k], n = Math.max(1, Math.round((v - u) / step));
+    for (let j = 0; j < n; j++) st.push(u + (v - u) * j / n);
+  }
+  const pts = st.map(at);
+  pts.push(en[en.length - 1]); st.push(total);
+  return { pts, total, at, st };
+}
+
 // ── The marked lane ─────────────────────────────────────────────────────────
 
 /**
@@ -2513,6 +2540,10 @@ export const REACH_MAX_WIDTH_M = 800;
  *  either - one rock abeam of her in open water, two buoys of a hand forty meters apart. */
 export const REACH_MIN_M = 150;
 
+/** ... and its samples start again at each mark at least this many steps past the mark before it (see
+ *  buoyedReachLane's anchors): six steps keeps the even spacing between two anchors within a twelfth of a step. */
+export const REACH_ANCHOR_GAP = 6;
+
 /**
  * HOW MANY TIMES A REACH LANE THAT GRAZES A HAZARD IS LAID AGAIN, held off what it grazed, before it is dropped
  * (Andy, 2026-10-08: "the ASV shies away from Pierce and Goat islands and violates the stay-right protocol. ... Can
@@ -2654,11 +2685,20 @@ export function buoyedReachLane(pathLL, frame, ko, buf, opts = {}) {
   if (!pathLL || pathLL.length < 2 || !ko || !gov.length) return nil;
   const en = pathLL.map((p) => frame.toEN(p));
   const STEP = Math.max(25, buf * 7), MS = Math.max(2, buf / 2), STANDOFF = Math.max(buf + 2, 6);
-  const rs = resampleEN(en, STEP);
+  // ⚠ THE SAMPLES ARE ANCHORED AT THE REACH'S OWN MARKS (2026-10-10, resampleAnchoredEN): where each mark stands
+  // along her path, the grid starts again, so a sample's place depends on the path from the mark before it and not on
+  // how long her route is upstream. A mark anchors only REACH_ANCHOR_GAP steps or more past the mark before it (or her
+  // start) and short of her end - so whether one does is decided by the marks' own spacing, never by where her route
+  // begins, and the samples between two anchors stay within a twelfth of STEP apart.
+  const enCum = cumEN(en), enTotal = enCum[enCum.length - 1];
+  const markS = gov.map((k) => projectEN(en, enCum, k.m)).filter((q) => !q.beyond).map((q) => q.s).sort((a, b) => a - b);
+  const anchors = markS.filter((s, i) => s - (i ? markS[i - 1] : 0) >= REACH_ANCHOR_GAP * STEP
+                                         && enTotal - s >= REACH_ANCHOR_GAP * STEP);
+  const rs = resampleAnchoredEN(en, STEP, anchors);
   if (!rs || !(rs.total > 3 * STEP)) return nil;
   const samp = rs.pts, N = samp.length;
   if (N < 4) return nil;
-  const cum = cumEN(samp), st = samp.map((_, i) => (i < N - 1 ? i * STEP : rs.total));
+  const cum = cumEN(samp), st = rs.st;
   const { SB, TAN } = tangentsEN(samp, Math.max(1, Math.round(CHART_TAN_M / STEP)));
   const at = (i, x) => ({ e: samp[i].e + SB[i][0] * x, n: samp[i].n + SB[i][1] * x });
   const D = MARK_PASS_M(buf, opts.standoffM), clr = Math.max(buf, opts.standoffM || 0);

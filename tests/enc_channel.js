@@ -86,7 +86,8 @@
 //          buoy to buoy only for the breach (85b) and along her route (85c); 86, a refused pass asked again on a later
 //          round; 87, no re-aim costing a mark its distance; 88, no turn over the stage's limit the route without the
 //          lane does not have (88b: where it is); 89, the reach asked again in the standoff's re-gate; 90, a lane that
-//          puts a counted mark right not vetoed for it; 91, no nearer a rock than the lane's floor where the route
+//          puts a counted mark right not vetoed for it (90b: the lane laid where her path round it says, wherever her
+//          route begins); 91, no nearer a rock than the lane's floor where the route
 //          without it was further off (91b: nor a bridge support; 91c: a graze held off where it is, the lane kept
 //          everywhere else); 92, a drawn transit through a buoyed reach claims it; 93, A ROCK IS A SHALLOW
 //          POINT, NOT AN EDGE (his call on the review): in mid-reach she holds her lane past it in both models (93b:
@@ -2337,53 +2338,47 @@ const P2 = (a) => a.map(([e, n]) => ({ e, n }));
 }
 // 89. THE BUOYED REACH IS ASKED AGAIN WHERE THE PLANNER RE-GATES. In a set the route that ships is passage.js
 // keepStandoff's re-gate of channelLaneRoute's route at the standoff, whose splices have no notion of a side; the lane
-// was kept on what its route did at the BUFFER. A seeded world (4154, bound down, a 12 m standoff at the DriX's 5 m
-// buffer - a 0.9 kn set): green 5, on its proper hand on both the lane's route and the route without it at the buffer,
-// came back from the re-gate 15.5 m on her WRONG hand with the lane, and 15.1 m on its proper hand without it.
+// was kept on what its route did at the BUFFER. Found in a seeded world (4154, bound down, a 12 m standoff at the DriX's
+// 5 m buffer): green 5, on its proper hand on both routes at the buffer, came back from the re-gate 15.5 m on her WRONG
+// hand with the lane, and 15.1 m on its proper hand without it.
+//   ⚠ PINNED DIRECTLY SINCE 2026-10-10. With the reach lane's samples anchored at its marks (buoyedReachLane, 90b) that
+// world's lane is no longer kept even at the buffer, and no mark of it moved up to 60 m brings the case back - the rule
+// had no coverage left. So keepStandoff is handed the case itself: in the reach of 69 bound up, a lane whose route goes
+// round green 1 on its WRONG hand (25 m off the buoy and 25 m off the bank, so the re-gate leaves it as it is) and whose
+// route without the lane has it right; and, paired with it, a lane 30 m further to starboard that leaves it right.
 {
-  const M = [[-112.4,619.7,-1,1,0],[172.2,1236.4,1,2,0],[245.3,1784.8,1,4,0],[103.3,2344.2,-1,5,0],
-             [266.7,2941.5,1,6,0],[-97.1,3536.3,-1,7,0],[-27.5,4093.1,1,8,0],[-263.7,4500.9,-1,9,0],
-             [-30.4,4515.5,1,10,0],[-231.1,4939.9,-1,11,0],[-8,5480.8,1,12,0]];
-  const PL = [[0,[[-229.9,572.1],[-134.6,576.5],[-138.4,660.6],[-233.8,656.2]]],[0,[[264,1751.9],[312.2,1742.4],
-              [323.3,1798.4],[275.1,1808]]],[1,[[-0.2,2286.5],[70.2,2287.9],[68,2399.1],[-2.3,2397.7]]],
-              [0,[[286,2907],[342.4,2916.2],[330.5,2989.4],[274.1,2980.3]]],[1,[[-185.9,3459.6],[-96.5,3484.9],
-              [-123.5,3580.5],[-212.9,3555.2]]],[0,[[10.7,4035.2],[65.2,4040.1],[54.3,4161.9],[-0.2,4157]]],
-              [0,[[-333.4,4464],[-301.3,4464.7],[-302.9,4535.4],[-335,4534.7]]],[0,[[-6.9,4446.5],[80.9,4448.5],
-              [77.7,4587.5],[-10.1,4585.5]]],[0,[[-321.6,4892.8],[-245.4,4886.5],[-236.4,4995],[-312.6,5001.3]]],
-              [0,[[15.2,5443.6],[98.6,5438.5],[103,5509.6],[19.6,5514.8]]]];
-  const PATH = P2([[-127.6,5940],[-163.7,5818.9],[-157.9,5699],[-91.4,5580.8],[-16.7,5456],[25.1,5330.3],[13.2,5210.9],
-                [-49.4,5095.7],[-142.4,4983],[-234,4870.2],[-285.3,4740.2],[-279.9,4620.3],[-223.8,4501.5],
-                [-137.5,4383.5],[-46,4271.5],[-46.2,4091.1],[-22.5,3912.2],[-76.1,3787.6],[-121.9,3650],
-                [-74.9,3532.3],[-76.3,3467.3],[-99.5,3408],[-15.5,3306.6],[97.2,3213],[204.2,3108.5],[270.3,2997.7],
-                [267.2,2996.5],[255.2,2996.5],[253.8,2935.1],[249.2,2927.8],[267.2,2885.8],[285,2878.5],
-                [250.1,2751.2],[177.2,2619.6],[98.5,2498.1],[119.1,2362.9],[119.1,2326.9],[83.1,2260.9],[61.5,2257.3],
-                [115.2,2143],[194.5,2019.6],[268.5,1882.7],[226.7,1801.1],[226.7,1765.1],[244.7,1757.1],
-                [261.6,1639.4],[181.9,1531.8],[74.4,1432],[-29.4,1331.3],[-99.1,1223.4],[-112.8,1092.9],[-72,966.8],
-                [-3.2,837.1],[63,723.6],[113.8,605.8],[112.2,485.6],[53.7,362.8],[-13.9,239.7],[-31,119.2],[0,0]]);
-  const s = seeded(4154, M, PL);
+  const w = model({ polys: REACH_BANKS, marks: REACH_MARKS, points: REACH_MARKS.map((m) => ({ e: m.e, n: m.n, r: 0, kind: "a channel buoy" })) });
   const { nogo } = require("../static/js/state.js"), was = nogo.buffer;
   nogo.buffer = 5;                                   // (keepStandoff's floor is the operator's buffer)
-  const pathLL = PATH.map((p) => ll(p.e, p.n));
-  const kr = R.channelLaneRoute(pathLL, F, s.world, 5, { standoffM: 12, marks: true, charted: true });
-  const ks = require("../static/js/passage.js").keepStandoff(kr, pathLL, F, s.world, 12);
+  const pathLL = REACH_UP.map((p) => ll(p.e, p.n));
+  const kr = R.channelLaneRoute(pathLL, F, w, 5, { standoffM: 12, marks: true, charted: true });
+  const P = require("../static/js/passage.js"), g1 = REACH_MARKS[0];
+  const ask = (laned) => P.keepStandoff({ ...kr, route: laned.map((p) => ll(p.e, p.n)), keep: [], lane: true, how: { ...kr.how, reach: true },
+                                          withoutReach: { route: pathLL, keep: [] } }, pathLL, F, w, 12);
+  const wrongHand = ask([{ e: -100, n: -1500 }, { e: -100, n: 300 }, { e: -175, n: 450 }, { e: -175, n: 550 }, { e: -100, n: 700 }, { e: -100, n: 4500 }]);
+  const rightHand = ask([{ e: -100, n: -1500 }, { e: -70, n: 300 }, { e: -70, n: 700 }, { e: -100, n: 4500 }]);
   nogo.buffer = was;
-  const t = ks.route.map((p) => F.toEN(p)), g5 = s.marks.find((m) => m.num === 5);
-  check("89. THE BUOYED REACH IS ASKED AGAIN WHERE THE PLANNER RE-GATES: in a 12 m standoff at a 5 m buffer, the route "
-        + "that ships has no mark on its wrong hand that the route without the lane has right - green 5 to starboard - "
-        + "and claims no buoyed reach it does not ride",
-        offOf(t, g5) > 0 && ks.how.marks.wrong === 0 && kr.how.reach === true && ks.how.reach === false,
-        "green 5 lies " + f1(offOf(t, g5)) + " m to starboard of the route that ships (reviewed: -15.5; without the lane: 15.1); "
-          + JSON.stringify(ks.how.marks) + "; the buffer's route claimed the reach " + kr.how.reach + ", the route that ships " + ks.how.reach);
+  const xw = offOf(wrongHand.route.map((p) => F.toEN(p)), g1), xr = offOf(rightHand.route.map((p) => F.toEN(p)), g1);
+  check("89. THE BUOYED REACH IS ASKED AGAIN WHERE THE PLANNER RE-GATES: in a 12 m standoff at a 5 m buffer, a lane whose "
+        + "route has green 1 on her wrong hand, where the route without it has it right, does not ship - and claims no "
+        + "buoyed reach; a lane that leaves it right ships, and claims it",
+        kr.marks.some((k) => k.m === g1 && k.keepStbd === false) && xw < 0 && wrongHand.how.reach === false
+          && xr < 0 && rightHand.how.reach === true,
+        "the wrong-hand lane: green 1 " + f1(xw) + " m to starboard of the route that ships (the lane's own: +25), reach "
+          + wrongHand.how.reach + "; the right-hand lane: " + f1(xr) + " m, reach " + rightHand.how.reach);
 }
 // 90. A LANE THAT PUTS A COUNTED MARK RIGHT IS NOT VETOED FOR IT. The lane is not kept where a lateral mark lies between
 // its route and the route without it - asked of every mark, that vetoed every lane that put a counted mark RIGHT, since
 // such a mark lies between the two by definition. A seeded land world (2194, bound down): the route without the lane
 // leaves greens 13 and 15 on her wrong hand; the lane puts green 15 right - and was dropped for it.
+//   ⚠ RE-SEATED 2026-10-10: green 19 stands 8 m further north than seed 2194 laid it. With the reach lane's samples
+// anchored at its marks (90b) the seeded world's lane no longer put green 15 right; with green 19 moved, it does again,
+// and the check fails on the mutant it pins (every mark asked, counted ones too).
 {
   const M = [[-144.3,761.4,-1,1,0],[41.8,1205.6,1,2,0],[-333.7,1751.3,-1,3,0],[-205.9,2017,1,4,0],
              [-562.2,2391.3,-1,5,0],[-516.4,3022.8,1,6,0],[-737.3,2978.8,-1,7,0],[-691,3560.3,1,8,0],
              [-1084.7,3984,-1,9,0],[-1236.2,4557.7,-1,11,0],[-1347.4,4937.3,-1,13,0],[-1155.9,4996.2,1,14,0],
-             [-1357.4,4952.7,-1,15,0],[-1214.3,5286,1,16,0],[-1460.3,5494.1,-1,17,0],[-1470.9,5785.3,-1,19,0]];
+             [-1357.4,4952.7,-1,15,0],[-1214.3,5286,1,16,0],[-1460.3,5494.1,-1,17,0],[-1470.9,5793.3,-1,19,0]];
   const PL = [[1,[[-242.9,732.7],[-178.6,734.6],[-180,786.2],[-244.3,784.3]]],[1,[[-494.9,3003.6],[-424,3024.2],
               [-437.7,3071.2],[-508.6,3050.6]]],[0,[[-819.7,2900.8],[-731.4,2926.5],[-760.4,3026.1],[-848.7,3000.4]]],
               [0,[[-659.4,3522.7],[-620.7,3538.4],[-655.9,3625],[-694.6,3609.3]]],[0,[[-1309.8,4487.8],
@@ -2406,6 +2401,35 @@ const P2 = (a) => a.map(([e, n]) => ({ e, n }));
   check("90. A LANE THAT PUTS A COUNTED MARK RIGHT IS NOT VETOED FOR IT: green 15 ships on its proper hand, the lane kept",
         r.how.reach === true && offOf(r.track, g15) > 0 && r.how.marks.wrong <= 1 && legsClear(r, s.world),
         "how.reach " + r.how.reach + "; green 15 lies " + f1(offOf(r.track, g15)) + " m to starboard (vetoed: -3.6); " + JSON.stringify(r.how.marks));
+  // 90b. THE REACH LANE IS WHERE HER PATH ROUND IT SAYS, WHEREVER HER ROUTE BEGINS (Andy, 2026-10-10: "fix the reach
+  // lane phase sensitivity at Fox Point"). Its samples were laid every STEP from her route's first point, so every one of
+  // them fell where the route's length before it put it: his westbound Go-To got 10.9 m longer below the Memorial Bridge,
+  // and at Fox Point, 15 km on, the lane moved 27 m (68.5 m elsewhere on that route, for no change but where the samples
+  // fell). Anchored at the reach's marks (resampleAnchoredEN), past the first anchor they stand where the path round them
+  // says. In this world, with her start moved back 0 to 30 m, the lanes part by up to 95 m from 600 m on; anchored, not at all.
+  const passed90 = R.markPassRoute(PATH.map((p) => ll(p.e, p.n)), F, s.world, BUF, {});
+  const P0 = passed90.path, A0 = F.toEN(P0[0]), A1 = F.toEN(P0[1]), L0 = Math.hypot(A1.e - A0.e, A1.n - A0.n);
+  const lays = [0, 5, 10, 15, 20, 25, 30].map((d) => R.buoyedReachLane([F.fromEN(A0.e - (A1.e - A0.e) / L0 * d, A0.n - (A1.n - A0.n) / L0 * d),
+                                                                       ...P0.slice(1)], F, s.world, BUF, { marks: passed90.marks }));
+  const tracks = lays.map((q) => q.path.map((p) => F.toEN(p))), en0 = P0.map((p) => F.toEN(p));
+  const dTo = (T, q) => { let d = Infinity;
+    for (let i = 1; i < T.length; i++) { const a = T[i - 1], b = T[i], dx = b.e - a.e, dy = b.n - a.n, l2 = dx * dx + dy * dy || 1e-9;
+      const u = Math.max(0, Math.min(1, ((q.e - a.e) * dx + (q.n - a.n) * dy) / l2)); d = Math.min(d, Math.hypot(a.e + u * dx - q.e, a.n + u * dy - q.n)); }
+    return d; };
+  let spread = 0, at90 = 0, sAt = 0;
+  for (let i = 1; i < en0.length; i++) {
+    const a = en0[i - 1], b = en0[i], L = Math.hypot(b.e - a.e, b.n - a.n);
+    for (let t = 0; t < L; t += 10) {
+      if (sAt + t >= 600) { const q = { e: a.e + (b.e - a.e) * t / L, n: a.n + (b.n - a.n) * t / L }, ds = tracks.map((T) => dTo(T, q));
+        if (Math.max(...ds) - Math.min(...ds) > spread) { spread = Math.max(...ds) - Math.min(...ds); at90 = sAt + t; } }
+    }
+    sAt += L;
+  }
+  check("90b. THE REACH LANE IS WHERE HER PATH ROUND IT SAYS, WHEREVER HER ROUTE BEGINS: with her first point moved back 0 "
+        + "to 30 m, the lane laid past the first of its marks is the same lane",
+        lays.every((q) => q.used) && spread < 0.5,
+        "the lanes part by " + f1(spread) + " m at most from 600 m on" + (spread ? " (at " + f1(at90) + " m)" : "")
+          + " (laid from her route's first point: 95.4)");
 }
 // 91. NO NEARER A HAZARD THAN ITS OWN FLOOR WHERE THE ROUTE WITHOUT IT WAS FURTHER OFF. The lane lays its points at
 // least clr + STANDOFF off what bounds it; the smoothing rounds the V it makes round a rock and can cut inside that. A
@@ -2978,9 +3002,12 @@ const reaches = (parts) => {
 // leaves green 7 on her wrong hand, which the route without it has right; in the second it puts red 106 right, which the
 // route without it has wrong - one wrong either way. Compared by the count, the lane shipped with green 7 9.3 m on her
 // wrong hand and the buoyed reach claimed.
+//   ⚠ RE-SEATED 2026-10-10: red 10 of the first reach stands 4 m further south than seed 229 laid it. With the reach
+// lane's samples anchored at its marks (90b) the seeded lane put green 7 RIGHT, and so the case was gone; with red 10
+// moved it is back, and the check fails on the mutant it pins (the routes compared by the count).
 {
   const MA = [[205.4,629,1,2,0],[51.5,789.3,-1,3,0],[397.5,968.2,1,4,0],[513.7,1459.1,-1,5,0],[932.7,1980.8,1,6,0],
-              [817.4,2677.8,-1,7,0],[1343.7,3096.1,1,8,0],[1748.3,3412.1,-1,9,0],[1979.9,3263.6,1,10,0],
+              [817.4,2677.8,-1,7,0],[1343.7,3096.1,1,8,0],[1748.3,3412.1,-1,9,0],[1979.9,3259.6,1,10,0],
               [2187.7,3443.2,-1,11,0],[2553.8,3464.3,-1,13,0]];
   const PLA = [[1,[[431.2,1461],[455.7,1440.8],[520.6,1519.5],[496.1,1539.7]]],
                [0,[[702.5,2685.4],[792.5,2660.6],[804.8,2705.3],[714.8,2730.1]]],

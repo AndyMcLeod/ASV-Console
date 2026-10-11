@@ -2491,7 +2491,13 @@ of the operator.
       no edge — the bank is. A stretch of it must be a channel: water two edges bound
       along at least 150 m, laned no further off her path than it is long at the
       lane's slope — a rock or an islet off an open shore, or two buoys forty meters
-      apart, make no channel.
+      apart, make no channel. The lane is read every 35 m along her route, and those
+      places are **anchored at the reach's own marks** (2026-10-10): read from her
+      route's first point, every one of them fell where the route's length before it
+      put it, so a change kilometers back moved the lane - 27 m at Fox Point when the
+      route got 10.9 m longer below the Memorial Bridge, and up to 68 m elsewhere on
+      that run. Past the first of its marks the lane is now where her path round it
+      says, wherever her route begins (enc_channel 90b).
 
       *Never across a mark, never round the far side of the bank.* Every lateral mark
       on her starboard hand stays there — a buoy kept to starboard is passed close, any
