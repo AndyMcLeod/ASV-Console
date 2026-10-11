@@ -68,7 +68,7 @@ process.on("unhandledRejection", __crash);
 
 const fs = require("fs");
 const path = require("path");
-const { cpa, cpaAlong, routeTrack, velocityEN, hullBox, KN_TO_MS, MIN_REL_SPEED_MS } =
+const { cpa, cpaAlong, routeTrack, legGroundMs, velocityEN, hullBox, KN_TO_MS, MIN_REL_SPEED_MS } =
   require("../static/js/targets.js");
 const { fmtDist } = require("../static/js/units.js");
 
@@ -312,7 +312,7 @@ console.log("CPA / TCPA — the closest two vessels will come, and when:");
   // 20. cpaTrack: the GUARD'S route ahead, each leg at the speed the governor will command on it and the set along it
   const minMs = +(/const CPA_MIN_LEG_MS = ([\d.]+);/.exec(RAW) || [])[1];
   const mkTrack = new Function("S", "asv", "nogo", "guardTrack", "groundVel", "runRoute", "runLegKeys", "V", "roleSpeed",
-    "speedRole", "KN_TO_MS", "routeTrack", "let cpaTrackMemo = {key: null, route: null, val: null}; const CPA_MIN_LEG_MS = "
+    "speedRole", "KN_TO_MS", "routeTrack", "legGroundMs", "let cpaTrackMemo = {key: null, route: null, val: null}; const CPA_MIN_LEG_MS = "
     + minMs + ";\n" + grabFn("cpaTrack") + "\nreturn cpaTrack;");
   const KN = 0.514444, COS42 = Math.cos(42 * Math.PI / 180);
   const at = (e, n) => ({ lat: 42.0 + n / M_PER_DEG_LAT_42, lon: -70.0 + e / (M_PER_DEG_LAT_42 * COS42) });
@@ -321,7 +321,7 @@ console.log("CPA / TCPA — the closest two vessels will come, and when:");
   const keys = () => (i) => (i === 1 ? "survey" : i === 2 ? "transit" : null);
   const nogo = { frame: G.planeFrame({ lat: 42, lon: -70 }) };
   const run = (setKn, gt) => mkTrack({ status: { sog_kn: 4, cog_deg: 90, env_set_deg: 0, env_set_kn: setKn } }, at(200, 0), nogo,
-    gt, groundVel, route, keys, V, () => "turn", () => "turn", KN, routeTrack)();
+    gt, groundVel, route, keys, V, () => "turn", () => "turn", KN, routeTrack, legGroundMs)();
   const ahead = () => ({ idx: 1, ahead: route.slice(1) });
   const calm = run(0, ahead), set = run(1, ahead), none = run(0, () => null);
   // calm: 800 m at 4 kn = 388.8 s, then 1000 m at 8 kn = 243.0 s (631.8). A 1 kn set to the NORTH: across the first

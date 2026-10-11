@@ -4175,6 +4175,7 @@ class VcuLink:
     def set_hold_clear(self, m): ...        # re-certify the clear disc round the hold point (2026-09-30)
     def set_speed(self, key): ...        # live-tune the commanded speed (low|survey|high)
     def set_unlimited_energy(self, on): ... # sim testing aid (no-op on real hardware)
+    def set_energy_level(self, level): ...   # rehearsal aid: the sim's tank (L) or pack (V); a real link has none
     # True while an uploaded plan waits for start() because the link was running when it
     # arrived (SimVcu). A link that cannot stage never reports one.
     plan_staged = False
@@ -4477,6 +4478,12 @@ class SimVcu(VcuLink):
         if on:                             # snap the active source to full immediately on enable
             self.battery_v = BATT_FULL_V
             self.fuel_l = FUEL_CAPACITY_L
+
+    def set_energy_level(self, level):     # rehearsal aid (2026-10-11): the tank in L, or the pack in V
+        if POWER_TYPE == "fuel":
+            self.fuel_l = clamp(float(level), 0.0, FUEL_CAPACITY_L)
+        else:
+            self.battery_v = clamp(float(level), BATT_EMPTY_V, BATT_FULL_V)
 
     def start(self):
         if self._staged is not None:           # the plan uploaded while running starts NOW
@@ -5532,6 +5539,23 @@ class Engine:
         with self._lock:
             self.note = ("Energy override ON - reporting full (all modes)." if on
                          else "Energy override OFF - actual energy reported.")
+        self._push_state()
+
+    def set_energy_level(self, level):
+        """REHEARSAL, SIMULATOR ONLY (2026-10-11): put the sim's tank (liters) or pack (volts) at `level`, so the
+        page's fuel monitor can be brought to its RTH point on purpose - the alert and the shift to RTH rehearsed in
+        a minute, not after hours of running. A real link reports its own level and has nothing to set; the energy
+        override reports a full tank whatever is set, so it must be off."""
+        with self._lock:
+            link = self._link
+            self._require(self._mode == "sim" and link is not None,
+                          "setting the fuel is a simulator rehearsal - a real link reports its own")
+            self._require(not self.energy_override,
+                          "turn the energy override off first - it reports a full tank whatever is set")
+        link.set_energy_level(level)
+        with self._lock:
+            self.note = "Sim energy set to %s %s (rehearsal)." % (round(float(level), 2),
+                                                                 "L" if POWER_TYPE == "fuel" else "V")
         self._push_state()
 
     def start(self):
@@ -7364,7 +7388,18 @@ class Handler(BaseHTTPRequestHandler):
                     ENGINE.set_berth({"at": {"lat": blat, "lon": blon},
                                       "t": time.time(), "by": by})
             elif path == "/api/cmd/energy":            # energy override (report full) on/off, all modes
-                ENGINE.set_energy_override(bool(body.get("unlimited")))
+                # ... or, in the simulator, `level` - the tank (L) or pack (V) put where a rehearsal of the fuel
+                # RTH wants it (2026-10-11)
+                if "level" in body:
+                    try:
+                        lv = float(body.get("level"))
+                    except (TypeError, ValueError):
+                        lv = float("nan")
+                    if not math.isfinite(lv):
+                        return 400, {"error": "level must be a number - liters of fuel, or the pack's volts"}
+                    ENGINE.set_energy_level(lv)
+                else:
+                    ENGINE.set_energy_override(bool(body.get("unlimited")))
             else:
                 return 404, {"error": "not found"}
             return 200, {"ok": True, "state": ENGINE.state()}

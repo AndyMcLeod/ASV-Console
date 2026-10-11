@@ -38,9 +38,10 @@
       "empty": 18.0
     },
     "drain": {
-      "idle": 0.0006,
-      "load": 0.0025
-    }
+      "idle": 0.0001,
+      "load": 0.0011
+    },
+    "source": "ESTIMATED (2026-10-11) from the maker's User's Guide (January 2017): start 26-27 V, the default 23 V alarm says the boat should be brought back to shore, 18 V is complete failure, the steering first (p. 8); 'operating endurance between charges ranges from 30 minutes to 90 minutes' on three 24 V 10 Ah NiMH packs (p. 13), 'up to 4.5 hours, depending on configuration' (p. 3), survey speed 3-3.5 kn. The drain (V/s at idle, and added at full speed) is fitted to 90 minutes from full to the 23 V alarm at survey speed (3 kn), 0.36 V/h of it the hotel load: 49 minutes at 6 kn, and 3.6 h to 18 V. It was 0.0006 / 0.0025, which reached the alarm in 32 minutes at survey speed. NiMH holds its voltage on a plateau and falls at the end, so a straight-line drain is an estimate - replace it with a measured discharge."
   },
   "planning": {
     "nogo_buffer_m": 3.0,

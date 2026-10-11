@@ -2753,6 +2753,34 @@ of the operator.
    own pop-out card, which put the boat on one card and its run on another; it is now a
    section of the **vessel-status** card that appears only while there is a run to
    describe.
+
+   **Fuel, and the point she must turn for home (2026-10-11).** The block carries two
+   more rows. **Fuel** (Battery on an electric hull) is the projected fuel for the rest of
+   the mission and what she will have left at its end, or at home when the run ends in an
+   RTH: each leg at the speed the plan flies it (survey, turn, transit), its time over the
+   ground in the set now running, its burn at the speed through the water, by the hull's
+   own burn law, the one the simulator burns by. **RTH point** is the level at which she
+   must turn for home to arrive with **20% of her tank**: the fuel home from where she is,
+   by water at the transit speed, plus that reserve. When the plan would bring her down to
+   it, the row says how far ahead ("reached in 3.2 km"). When she reaches it the console
+   **alerts** (banner, alerts card, history and the session log's `fuel_rth`) and **shifts
+   the mission to RTH**: once per crossing, from the supervising window, and an RTH you
+   then change stands. Reached while she cannot be sent (disarmed, E-STOP, the guard's
+   in-extremis escape) it is said, and she is sent the frame she can be. The reserve is a
+   fraction of the TANK, not of what is aboard, as the Fuel planner and the Transit
+   Calculator take it. The DriX's burn is MEASURED (the Fuel planner's laws); BEN's and the
+   Z-Boat's are ESTIMATES until there are measurements. A battery's empty, for a mission,
+   is its factory low-voltage alarm (the Z-Boat's 23 V, at which the maker says to bring
+   her back to shore), not its gauge's 0%, and the Z-Boat's drain is fitted to the maker's
+   guide: 90 minutes from full to that alarm at survey speed.
+
+   The water distance home is a field built once per home and chart model in a **Web
+   Worker** (`static/js/home_field.js`): the RTH planner is far too slow to ask from every
+   point of a mission, and the clearance guard shares the page's thread. It runs a little
+   short of the planner's route, which keeps right in channels; the reserve covers that.
+   Until it is built, or where it cannot reach her, the rows say **straight line**. In the
+   simulator, the chart menu's **Set fuel to the RTH point** puts the tank just below it,
+   to rehearse the alert and the shift home (`/api/cmd/energy {level}`, sim only).
 5. **Pause / Stop / E-STOP** — Pause holds the next waypoint; Stop aborts the
    plan; the command E-STOP latches motors to zero and disarms. Link-loss also
    halts commanding automatically and surfaces the boat's own failsafe.

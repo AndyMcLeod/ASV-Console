@@ -51,6 +51,12 @@ matched TWICE, because /api/enc carries a byte-identical parse-and-key twin of t
 chartinfo path. The SKIP rule surfaced it instead of mutating the wrong function; the
 re-run anchored on chartinfo-specific context. The twin itself (/api/enc) is still on
 the OPEN/NEXT coverage list, and its duplication is worth knowing when someone gets there.
+
+AND THE FUEL RTH REHEARSAL (2026-10-11): `level` on /api/cmd/energy, sim only - 13-13c. Three
+mutations RUN on scratch copies, all caught:
+  * the level accepted and not set                        -> caught by 13, 13b, 13c
+  * a level set under the override                        -> caught by 13c
+  * a level that is not a number let through              -> caught by 13b
 """
 
 import glob as globmod
@@ -303,6 +309,34 @@ try:
           and st["status"].get("unlimited_energy") is False
           and (st["status"].get("fuel_l") or 0) >= cap - 0.05,
           lambda: "mode=%s fuel=%.1f" % (st.get("mode"), st["status"].get("fuel_l") or -1))
+
+    # 13. THE FUEL RTH REHEARSAL (2026-10-11): in the simulator `level` puts the sim's own tank where a rehearsal of the
+    # page's RTH point wants it - it burns on from there - and is refused, in words, where it would mean nothing.
+    def post_raw(path, body):
+        try:
+            return api(port, path, body)
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read().decode())
+
+    code, r = post_raw("/api/cmd/energy", {"level": 42.5})
+    st = wait_for(port, lambda s: abs((s["status"].get("fuel_l") or -1) - 42.5) < 0.2, limit=15)
+    check("13. in the simulator /api/cmd/energy {level} puts the sim's own tank there (liters), and says so",
+          lambda: code == 200 and abs((st["status"].get("fuel_l") or -1) - 42.5) < 0.2
+          and "42.5" in ((r.get("state") or {}).get("note") or ""),
+          lambda: "code %s, fuel %s, note %r" % (code, st["status"].get("fuel_l"), ((r.get("state") or {}).get("note") or "")[:50]))
+    code_b, rb = post_raw("/api/cmd/energy", {"level": "lots"})
+    st = state(port)
+    check("13b. ... a level that is not a number is a 400 in words, and the tank is left where it was",
+          lambda: code_b == 400 and "number" in (rb.get("error") or "") and abs((st["status"].get("fuel_l") or -1) - 42.5) < 0.3,
+          lambda: "code %s %r, fuel %s" % (code_b, rb.get("error"), st["status"].get("fuel_l")))
+    cmd(port, "/api/cmd/energy", {"unlimited": True})
+    code_c, rc = post_raw("/api/cmd/energy", {"level": 10})
+    cmd(port, "/api/cmd/energy", {"unlimited": False})
+    st = state(port)
+    check("13c. ... and refused while the energy override is ON - it reports a full tank whatever is set - with a 409 in "
+          "words, nothing set",
+          lambda: code_c == 409 and "override" in (rc.get("error") or "") and (st["status"].get("fuel_l") or 0) > 40,
+          lambda: "code %s %r, fuel after %s" % (code_c, rc.get("error"), st["status"].get("fuel_l")))
 
 finally:
     try:

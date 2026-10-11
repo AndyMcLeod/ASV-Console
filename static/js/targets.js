@@ -103,6 +103,18 @@ export function cpa(own, target) {
  * {frame, pts: [{e, n, t}]} in a plane anchored at her, `t` seconds from now - or null when there is no route to
  * walk, or a leg with no speed to walk it at (the straight projection then stands in).
  */
+/**
+ * HER SPEED OVER THE GROUND ALONG A LEG, m/s, flown at `twMs` through the water in a set `drift` {e, n} m/s, the leg's
+ * unit vector `u` {e, n}: she crabs to hold the line, so the cross-set costs along-track speed and the along-set adds to
+ * it - never below `minMs`. ONE answer for the CPA's route clock and the mission's fuel (static/js/fuel.js), so the
+ * two cannot disagree about how long a leg takes.
+ */
+export function legGroundMs(twMs, drift, u, minMs) {
+  const d = drift || { e: 0, n: 0 };
+  const along = d.e * u.e + d.n * u.n, across = d.e * u.n - d.n * u.e;
+  return Math.max(minMs, Math.sqrt(Math.max(0, twMs * twMs - across * across)) + along);
+}
+
 export function routeTrack(pts, legMs) {
   if (!pts || pts.length < 2 || !legMs || legMs.length < pts.length - 1) return null;
   const frame = planeFrame({ lat: pts[0].lat, lon: pts[0].lon });
