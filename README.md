@@ -857,14 +857,24 @@ went on promising the console would route round her. Held on a turn, the way rou
 plan up at its **next waypoint**, routed round her (a next waypoint inside her ring is refused by
 name), and the bar says she was stopped on a turn (ais_avoid 17h).
 
-**CPA and TCPA** — the closest the two vessels will come on present course and speed, and
-how long until that happens — are shown for every contact with a track. They are recomputed
+**CPA and TCPA** — the closest the two vessels will come, and how long until that happens —
+are shown for every contact with a track. The contact is projected on its present course and
+speed. So is your boat, **unless she is being steered along a route** (a running plan, a
+Go-To, a transit, an RTH): then she is walked **along that route** — every turn, each leg at
+the speed the plan commands on it and the set along it — and holds at its end (2026-10-10;
+Andy: *"the ASV path should be known through the whole mission barring avoidance
+maneuvers"*). The route is the one the clearance guard projects, so a deviation it splices
+in is the route, and a hold, a stop or the transmitter is not: then her present course and
+speed stand in. Along a route the CPA is the closest over the **whole** route, not the first
+close pass; a contact the route only opens from shows its range now and no time (her route
+behind her is not walked); and the hover tip says *along her route* when it is. They are recomputed
 from the live kinematics every time they are read, so a **manoeuvre by either vessel is
 reflected immediately**; there is no cached figure to go stale. A contact already drawing
 away says so rather than showing its past closest approach as though it were ahead, and two
 vessels holding station on each other report a range with **no** time rather than an
-enormous one divided out of report jitter. CPA is a *prediction* on the assumption that both
-hold course — an input to a watch, never a substitute for one, and the console reports it
+enormous one divided out of report jitter. CPA is a *prediction* on the assumption that the
+contact holds its course and your boat its plan — an input to a watch, never a substitute
+for one, and the console reports it
 without ever steering on it.
 
 **TCPA has its own column, beside CPA** (2026-09-08). It used to ride only in the row's

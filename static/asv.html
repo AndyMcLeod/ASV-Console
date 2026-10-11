@@ -949,7 +949,7 @@ import { V, NOGO_ENF, nogo, sea } from "/static/js/state.js";
 // CPA / TCPA and the hull footprint an AIS contact broadcasts. Pure kinematics, so
 // the numbers follow a maneuver by either vessel the moment the next report lands -
 // see the module header for why nothing is cached.
-import { cpa as cpaOf, hullBox, KN_TO_MS } from "/static/js/targets.js";
+import { cpa as cpaOf, cpaAlong, routeTrack, hullBox, KN_TO_MS } from "/static/js/targets.js";
 // AIS CONTACTS AS KEEP-OUTS (2026-09-25): the hull box each broadcasts (20 x 8 m assumed where it
 // broadcasts none), dead-reckoned between polls and swept over the guard's look-ahead while she is
 // under way. Pure geometry; the clearance guard below is what acts on it, and nothing else reads it.
@@ -5585,9 +5585,44 @@ function aisTypeLabel(v){ return (AIS_LABEL[v.cat]||v.cat) + (v.type ? " (AIS "+
 // A hull dimension in the operator's own distance unit is WRONG - a ship is quoted in
 // meters the world over, and converting 295 m to 0.16 NM helps nobody. Meters always.
 function fmtHullM(m){ return m >= 100 ? Math.round(m)+" m" : m.toFixed(1).replace(/\.0$/,"")+" m"; }
+// HER ROUTE AHEAD AS A CLOCK, for the CPA (Andy, 2026-10-10: "CPA/TCPA should be computed from current range on the
+// ASV planned route, projecting both vessels' speed and course ... the ASV path should be known through the whole
+// mission barring avoidance maneuvers"). Or null, and the straight projection stands in.
+//   ⚠ THE ROUTE IS THE GUARD'S, ASKED OF THE GUARD: `guardTrack` decides whether she is being steered along a route
+// at all and which of its waypoints are still ahead (a running plan, not holding, the index counting into the route
+// this page holds, no route command in flight, way on). Gated twice, the two would drift apart - and a CPA along a
+// route the guard has stopped believing in is the readout claiming a future the helm is not flying. A deviation the
+// guard splices in IS the route then; a hold, a stop or the transmitter is not.
+//   Each leg is walked at the speed the governor will command on it (runLegKeys: the plan's survey, turn and transit
+// speeds and its slowed corners; the role she is in for a leg it has no key for) and the set along it - crabbing
+// across a cross-set costs along-track speed - and never slower than CPA_MIN_LEG_MS. Built once a frame however many
+// contacts ask (`cpaTrackMemo`).
+const CPA_MIN_LEG_MS = 0.3;
+let cpaTrackMemo = {key: null, route: null, val: null};
+function cpaTrack(){
+  const st = (S && S.status) || {};
+  if(!asv || !nogo.frame) return null;
+  const drift = groundVel(st.env_set_deg, st.env_set_kn) || {e:0, n:0};
+  const trk = guardTrack(nogo.frame.toEN({lat:asv.lat, lon:asv.lon}), groundVel(st.cog_deg, st.sog_kn), drift);
+  if(!trk) return null;
+  const key = [trk.idx, trk.ahead.length, asv.lat, asv.lon, drift.e, drift.n, JSON.stringify(V.SPEED_KN)].join("|");
+  if(cpaTrackMemo.key === key && cpaTrackMemo.route === runRoute) return cpaTrackMemo.val;
+  const keys = runLegKeys(runRoute), pts = [{lat:asv.lat, lon:asv.lon}, ...trk.ahead], legMs = [];
+  for(let k = 0; k < trk.ahead.length; k++){
+    const kn = V.SPEED_KN[keys(trk.idx + k) || roleSpeed(speedRole())];
+    const a = nogo.frame.toEN(pts[k]), b = nogo.frame.toEN(pts[k + 1]), L = Math.hypot(b.e - a.e, b.n - a.n);
+    const u = L > 0 ? {e:(b.e - a.e)/L, n:(b.n - a.n)/L} : {e:0, n:0};
+    const tw = (kn || 0) * KN_TO_MS, along = drift.e*u.e + drift.n*u.n, across = drift.e*u.n - drift.n*u.e;
+    legMs.push(Math.max(CPA_MIN_LEG_MS, Math.sqrt(Math.max(0, tw*tw - across*across)) + along));
+  }
+  cpaTrackMemo = {key, route: runRoute, val: routeTrack(pts, legMs)};
+  return cpaTrackMemo.val;
+}
 // CPA/TCPA for one contact against the boat, RECOMPUTED ON EVERY CALL. Nothing is cached,
 // so a maneuver by either vessel is reflected as soon as the next report lands - see
 // static/js/targets.js. Null when the boat has no fix or the contact reports no track.
+// ALONG HER ROUTE when she is being steered along one (cpaTrack, 2026-10-10); on her present
+// course and speed otherwise.
 function aisCpa(v){
   // ⚠ THE BOAT'S TRACK IS ON `S.status`, NOT ON `asv`. `asv` carries the POSITION and the
   // heading it is drawn at; the speed and course over ground live on the telemetry status
@@ -5597,6 +5632,8 @@ function aisCpa(v){
   // readout can quietly say. Found by reading the live tip, not by any unit check.
   const st = (S && S.status) || {};
   if(!asv || v.sog==null || v.cog==null) return null;
+  const route = cpaTrack();
+  if(route) return cpaAlong(route, {lat:v.lat, lon:v.lon, sog:v.sog, cog:v.cog});
   const sog = st.sog_kn, cog = (st.cog_deg != null ? st.cog_deg : asv.hdg);
   if(sog == null || cog == null) return null;      // no track of our own to project
   return cpaOf({lat:asv.lat, lon:asv.lon, sog:sog, cog:cog},
@@ -5612,11 +5649,13 @@ function cpaText(c){
   // fmtDist keeps anything under 1000 m in meters in both unit modes, which is exactly
   // right for a CPA: meters where it matters, the operator's own unit beyond that.
   const d = fmtDist(c.cpaM);
+  // (and WHICH projection: along her planned route, or her present course and speed - cpaTrack, aisCpa)
+  const how = c.along ? " · along her route" : "";
   if(c.tcpaS == null) return `CPA ${d} · holding station`;
-  if(!c.closing)      return `CPA ${d} · opening`;
+  if(!c.closing)      return `CPA ${d} · opening` + how;
   const t = c.tcpaS < 90 ? Math.round(c.tcpaS)+"s"
           : Math.floor(c.tcpaS/60)+"m"+String(Math.round(c.tcpaS%60)).padStart(2,"0")+"s";
-  return `CPA ${d} in ${t}`;
+  return `CPA ${d} in ${t}` + how;
 }
 let nogoInit = false;                           // one-shot startup extraction guard
 
@@ -10725,6 +10764,7 @@ function tcpaFmt(sec){
 }
 function tcpaCell(c){
   if(!c || c.tcpaS == null) return "–";                // no track of our own, or holding
+  if(c.along && !c.closing) return "–";                // along her route, opening has no past time (cpaAlong)
   return (c.closing ? "" : "-") + tcpaFmt(c.tcpaS);
 }
 function renderAisTable(){

@@ -5,8 +5,12 @@
 // ... Build the resultant vessel icon to match the relative size and/or have those data
 // attached to the icon to read on cursor hover."*
 //
-// CPA is the closest two vessels will come on present course and speed; TCPA is when.
-// They are the two numbers a collision judgement is built on and the console had neither.
+// CPA is the closest two vessels will come; TCPA is when. They are the two numbers a
+// collision judgement is built on and the console had neither. The contact runs on its
+// present course and speed; our boat does too (checks 1-11), unless she is being steered
+// along a route - then she is walked along it, every turn and every leg's own speed, and
+// holds at its end (checks 12-21; Andy, 2026-10-10: "CPA/TCPA should be computed from
+// current range on the ASV planned route, projecting both vessels' speed and course").
 //
 // ⚠ "RECALCULATE AFTER A MANOEUVRE" IS A PROPERTY OF THE DESIGN, NOT A FEATURE. `cpa()` is
 // a pure function of the kinematics handed to it, so there is no stored value to go stale
@@ -42,6 +46,16 @@
 //   hull box centred instead of anchored on the antenna   -> 7
 //   aisCpa reads asv.sog again                            -> 10
 //   cpaText divides by 1000 again                         -> 11
+// ... and nine more against the route (2026-10-10, each on a scratch copy of static/ and tests/):
+//   she runs straight on her first leg (turns ignored)    -> 13, 14, 15, 18
+//   every leg at the first leg's speed                    -> 14, 20
+//   no hold at her last waypoint                          -> 17
+//   the FIRST closest approach, not the least             -> 18
+//   a closest approach in the PAST along her route        -> 16
+//   aisCpa never asks for her route                       -> 19
+//   cpaTrack ignores the set                              -> 20
+//   cpaTrack runs every leg at the role she is in now     -> 20
+//   the TCPA cell shows -0s for an opening contact        -> 21
 
 function __crash(e) {
   console.log("  FAIL 0. the suite itself CRASHED before finishing - " +
@@ -54,7 +68,7 @@ process.on("unhandledRejection", __crash);
 
 const fs = require("fs");
 const path = require("path");
-const { cpa, velocityEN, hullBox, KN_TO_MS, MIN_REL_SPEED_MS } =
+const { cpa, cpaAlong, routeTrack, velocityEN, hullBox, KN_TO_MS, MIN_REL_SPEED_MS } =
   require("../static/js/targets.js");
 const { fmtDist } = require("../static/js/units.js");
 
@@ -208,6 +222,130 @@ console.log("CPA / TCPA — the closest two vessels will come, and when:");
   check("11b. ... and above a kilometre it follows the operator's own unit",
         () => /km|nm/.test(fmtDist(1272)),
         "fmtDist(1272) = " + fmtDist(1272));
+}
+
+// ── 12-18. ALONG HER ROUTE (Andy, 2026-10-10: "CPA/TCPA should be computed from current range on the ASV planned
+// route, projecting both vessels' speed and course ... the ASV path should be known through the whole mission barring
+// avoidance maneuvers"). Each answer is worked here by hand, in meters east/north of her, and built into lat/lon with
+// this file's own meridian scale - not the module's frame.
+{
+  const KN = 0.514444, COS42 = Math.cos(42 * Math.PI / 180);
+  const at = (e, n) => ({ lat: 42.0 + n / M_PER_DEG_LAT_42, lon: -70.0 + e / (M_PER_DEG_LAT_42 * COS42) });
+  const lay = (pts, ms) => routeTrack(pts.map(([e, n]) => at(e, n)), ms);
+  const ship = (e, n, ms, cog) => ({ ...at(e, n), sog: ms / KN, cog });
+  const f1 = (x) => (x == null ? "null" : x.toFixed(1));
+  // 12. A straight route is the straight projection: east 3 km at 3 m/s; a ship 1500 m east and 600 m north of her
+  // runs south at 2 m/s. R = (1500 - 3t, 600 - 2t), least at 13t = 5700: t = 438.5 s, 332.8 m apart.
+  const tgt12 = ship(1500, 600, 2, 180);
+  const a12 = cpaAlong(lay([[0, 0], [3000, 0]], [3]), tgt12), s12 = cpa({ ...at(0, 0), sog: 3 / KN, cog: 90 }, tgt12);
+  check("12. along a STRAIGHT route she is where the straight projection puts her: the same CPA and TCPA",
+        () => near(a12.cpaM, 332.8, 0.02) && near(a12.tcpaS, 438.5, 0.02) && near(a12.cpaM, s12.cpaM, 0.01)
+              && near(a12.tcpaS, s12.tcpaS, 0.01) && a12.closing && a12.along === true,
+        "along " + f1(a12.cpaM) + " m in " + f1(a12.tcpaS) + " s; straight " + f1(s12.cpaM) + " m in " + f1(s12.tcpaS)
+          + " s (want 332.8 m, 438.5 s)");
+  // 13. HER ROUTE TURNS: east 600 m, then north 600 m, at 3 m/s; a ship lying stopped 600 m east and 300 m north.
+  // Her route runs through it: 0 m at (600 + 300) / 3 = 300 s. On her present course (east) it is 300 m off at 200 s.
+  const L = [[0, 0], [600, 0], [600, 600]], moored = ship(600, 300, 0, 0);
+  const a13 = cpaAlong(lay(L, [3, 3]), moored), s13 = cpa({ ...at(0, 0), sog: 3 / KN, cog: 90 }, moored);
+  check("13. HER ROUTE TURNS: a ship lying on the leg after the turn is passed at 0 m in 300 s - not 300 m off in "
+        + "200 s, where her present course would put it",
+        () => a13.cpaM < 3 && near(a13.tcpaS, 300, 0.02) && near(s13.cpaM, 300, 0.02) && near(s13.tcpaS, 200, 0.02),
+        "along " + f1(a13.cpaM) + " m in " + f1(a13.tcpaS) + " s; present course " + f1(s13.cpaM) + " m in " + f1(s13.tcpaS) + " s");
+  // 14. ... AT EACH LEG'S OWN SPEED: the leg after the turn at 1.5 m/s - 200 + 300 / 1.5 = 400 s.
+  const a14 = cpaAlong(lay(L, [3, 1.5]), moored);
+  check("14. ... and each leg is run at its OWN speed: the leg after the turn at half speed puts the pass at 400 s",
+        () => a14.cpaM < 3 && near(a14.tcpaS, 400, 0.02), f1(a14.cpaM) + " m in " + f1(a14.tcpaS) + " s (want 0 m, 400 s)");
+  // 15. A SHIP UNDER WAY: 600 m east and 600 m north, running south at 1.5 m/s. After her turn (t = 200 s) she is at
+  // (600, 3(t - 200)), the ship at (600, 600 - 1.5 t): they meet at 4.5 t = 1200, t = 266.7 s. On her present course
+  // R = (600 - 3t, 600 - 1.5t), least at 11.25 t = 2700: 240 s, 268.3 m.
+  const crossing = ship(600, 600, 1.5, 180);
+  const a15 = cpaAlong(lay(L, [3, 3]), crossing), s15 = cpa({ ...at(0, 0), sog: 3 / KN, cog: 90 }, crossing);
+  check("15. A SHIP UNDER WAY meets her on the leg after the turn: 0 m in 267 s (her present course says 268 m in 240 s)",
+        () => a15.cpaM < 4 && near(a15.tcpaS, 266.7, 0.02) && near(s15.cpaM, 268.3, 0.02) && near(s15.tcpaS, 240, 0.02),
+        "along " + f1(a15.cpaM) + " m in " + f1(a15.tcpaS) + " s; present course " + f1(s15.cpaM) + " m in " + f1(s15.tcpaS) + " s");
+  // 16. OPENING: a ship 300 m astern running away west at 2 m/s while she runs east - the range only grows. Along her
+  // route there is no past: the CPA is the range now, at 0 s, not closing.
+  const a16 = cpaAlong(lay([[0, 0], [600, 0]], [3]), ship(-300, 0, 2, 270));
+  check("16. OPENING along her route: the range only grows, so the CPA is the range now, at 0 s, and not closing",
+        () => !a16.closing && a16.tcpaS === 0 && near(a16.cpaM, 300, 0.02) && near(a16.rangeM, 300, 0.02),
+        f1(a16.cpaM) + " m at " + f1(a16.tcpaS) + " s, closing=" + a16.closing);
+  // 17. AFTER HER LAST WAYPOINT SHE HOLDS THERE: east 300 m at 3 m/s (there at 100 s); a ship 300 m east and 500 m
+  // north runs south at 2 m/s and reaches her end point at 250 s - while she waits on it.
+  const a17 = cpaAlong(lay([[0, 0], [300, 0]], [3]), ship(300, 500, 2, 180));
+  check("17. ... AND HOLDS AT HER LAST WAYPOINT: a ship crossing her end point after she has reached it passes 0 m off "
+        + "at 250 s (with her route stopped at 100 s it would read 300 m)",
+        () => a17.cpaM < 3 && near(a17.tcpaS, 250, 0.02), f1(a17.cpaM) + " m in " + f1(a17.tcpaS) + " s");
+  // 18. THE CLOSEST OVER THE WHOLE MISSION, NOT THE FIRST: a survey line east 1000 m at 5 m/s, 100 m north, and back
+  // west. A stopped ship 500 m east and 150 m north is 150 m off on the first line at 100 s and 50 m off on the second
+  // at 200 + 20 + 100 = 320 s.
+  const a18 = cpaAlong(lay([[0, 0], [1000, 0], [1000, 100], [0, 100]], [5, 5, 5]), ship(500, 150, 0, 0));
+  check("18. THE CLOSEST OVER THE WHOLE MISSION: 50 m on the second survey line at 320 s, not 150 m on the first at 100 s",
+        () => near(a18.cpaM, 50, 0.03) && near(a18.tcpaS, 320, 0.02), f1(a18.cpaM) + " m in " + f1(a18.tcpaS) + " s");
+  // 18b. ... and what has no answer says so: a contact with no track, a route with a leg it cannot run.
+  check("18b. ... a contact reporting no track gets no CPA along her route either, and a route with a leg of no speed "
+        + "is no clock (the straight projection stands in)",
+        () => cpaAlong(lay(L, [3, 3]), { ...at(600, 300), sog: null, cog: null }) === null
+              && lay(L, [3, 0]) === null && lay([[0, 0]], []) === null && lay(L, [3, 3]) !== null);
+}
+
+// ── 19-21. THE PAGE'S OWN FUNCTIONS, run against stubs ─────────────────────────────────────────────────────────────
+{
+  const RAW = fs.readFileSync(process.env.ASV_HTML || path.join(__dirname, "..", "static", "asv.html"), "utf8");
+  const grabFn = (name) => {
+    const start = RAW.indexOf("function " + name + "(");
+    if (start < 0) throw new Error("function " + name + " not found in the page (renamed?)");
+    let k = RAW.indexOf("{", RAW.indexOf(")", start)), depth = 0;
+    for (;;) { const c = RAW[k]; if (c === "{") depth++; else if (c === "}") { depth--; if (!depth) break; } k++; }
+    return RAW.slice(start, k + 1);
+  };
+  const G = require("../static/js/geodesy.js"), { groundVel } = require("../static/js/guard.js");
+  // 19. aisCpa: ALONG HER ROUTE when cpaTrack has one, her present course and speed when it has none
+  const mkCpa = new Function("S", "asv", "cpaTrack", "cpaAlong", "cpaOf", grabFn("aisCpa") + "\nreturn aisCpa;");
+  const along = (tr) => ({ along: true, tr }), straight = () => ({ along: false });
+  const S0 = { status: { sog_kn: 5, cog_deg: 90 } }, asv0 = { lat: 42, lon: -70, hdg: 90 }, v0 = { lat: 42.01, lon: -70, sog: 3, cog: 180 };
+  const r19a = mkCpa(S0, asv0, () => "TRACK", along, straight)(v0), r19b = mkCpa(S0, asv0, () => null, along, straight)(v0);
+  check("19. the card's CPA is ALONG HER ROUTE when she is being steered along one, and on her present course and speed "
+        + "when she is not",
+        () => r19a.along === true && r19a.tr === "TRACK" && r19b.along === false
+              && mkCpa(S0, asv0, () => "TRACK", along, straight)({ ...v0, sog: null }) === null,
+        "with a route: " + JSON.stringify(r19a) + "; without: " + JSON.stringify(r19b));
+  // 20. cpaTrack: the GUARD'S route ahead, each leg at the speed the governor will command on it and the set along it
+  const minMs = +(/const CPA_MIN_LEG_MS = ([\d.]+);/.exec(RAW) || [])[1];
+  const mkTrack = new Function("S", "asv", "nogo", "guardTrack", "groundVel", "runRoute", "runLegKeys", "V", "roleSpeed",
+    "speedRole", "KN_TO_MS", "routeTrack", "let cpaTrackMemo = {key: null, route: null, val: null}; const CPA_MIN_LEG_MS = "
+    + minMs + ";\n" + grabFn("cpaTrack") + "\nreturn cpaTrack;");
+  const KN = 0.514444, COS42 = Math.cos(42 * Math.PI / 180);
+  const at = (e, n) => ({ lat: 42.0 + n / M_PER_DEG_LAT_42, lon: -70.0 + e / (M_PER_DEG_LAT_42 * COS42) });
+  const route = [at(0, 0), at(1000, 0), at(1000, 1000)];
+  const V = { SPEED_KN: { survey: 4, transit: 8, turn: 3 } };
+  const keys = () => (i) => (i === 1 ? "survey" : i === 2 ? "transit" : null);
+  const nogo = { frame: G.planeFrame({ lat: 42, lon: -70 }) };
+  const run = (setKn, gt) => mkTrack({ status: { sog_kn: 4, cog_deg: 90, env_set_deg: 0, env_set_kn: setKn } }, at(200, 0), nogo,
+    gt, groundVel, route, keys, V, () => "turn", () => "turn", KN, routeTrack)();
+  const ahead = () => ({ idx: 1, ahead: route.slice(1) });
+  const calm = run(0, ahead), set = run(1, ahead), none = run(0, () => null);
+  // calm: 800 m at 4 kn = 388.8 s, then 1000 m at 8 kn = 243.0 s (631.8). A 1 kn set to the NORTH: across the first
+  // (east) leg she crabs, sqrt(2.0578^2 - 0.5144^2) = 1.9925 m/s -> 401.5 s; along the second it follows her,
+  // 4.1156 + 0.5144 = 4.630 m/s -> 216.0 s (617.5).
+  const tOf = (tr) => (tr ? tr.pts.map((p) => +p.t.toFixed(1)) : null);
+  check("20. her route for the CPA is the GUARD'S route ahead, each leg at the speed the governor will command on it "
+        + "(survey 4 kn, then transit 8 kn) and the set along it - and none when the guard has none",
+        () => calm && near(calm.pts[1].t, 388.8, 0.01) && near(calm.pts[2].t, 631.8, 0.01)
+              && set && near(set.pts[1].t, 401.5, 0.01) && near(set.pts[2].t, 617.5, 0.01) && none === null && minMs > 0,
+        "calm " + JSON.stringify(tOf(calm)) + " s (want 0, 388.8, 631.8); 1 kn set north " + JSON.stringify(tOf(set))
+          + " s (want 0, 401.5, 617.5); no guard route: " + none);
+  // 21. THE READOUTS: opening along her route has no past time to show; the tip says which projection it used
+  const { fmtDist: fd } = require("../static/js/units.js");
+  const tcpaCell = new Function("tcpaFmt", grabFn("tcpaCell") + "\nreturn tcpaCell;")(new Function(grabFn("tcpaFmt") + "\nreturn tcpaFmt;")());
+  const cpaText = new Function("fmtDist", grabFn("cpaText") + "\nreturn cpaText;")(fd);
+  const cells = [tcpaCell({ cpaM: 300, tcpaS: 0, closing: false, along: true }), tcpaCell({ cpaM: 300, tcpaS: -84, closing: false }),
+                 tcpaCell({ cpaM: 300, tcpaS: 136, closing: true, along: true })];
+  const tips = [cpaText({ cpaM: 300, tcpaS: 136, closing: true, along: true }), cpaText({ cpaM: 300, tcpaS: 136, closing: true })];
+  check("21. the readouts: OPENING along her route shows no time (her past is not walked), the straight projection's "
+        + "past CPA still shows its negative time, and the tip says which projection it is",
+        () => cells[0] === "–" && cells[1] === "-84s" && cells[2] === "2m16s"
+              && /along her route/.test(tips[0]) && !/along her route/.test(tips[1]),
+        "TCPA cells " + JSON.stringify(cells) + "; tips " + JSON.stringify(tips));
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"

@@ -4,9 +4,12 @@
 // maneuver. ... These data will be used for advanced features when we implement sensor
 // fusion and advanced target analysis."*
 //
-// CPA is the closest the two vessels will come if BOTH hold their present course and
-// speed; TCPA is how long until that happens. They are the two numbers every collision
-// judgment is built on, and the console had neither.
+// CPA is the closest the two vessels will come; TCPA is how long until that happens. They
+// are the two numbers every collision judgment is built on, and the console had neither.
+// The contact is projected on its present course and speed. So is our boat (`cpa`) -
+// unless she is being steered along a route, when she is walked along it (`cpaAlong`,
+// 2026-10-10: Andy, "the ASV path should be known through the whole mission barring
+// avoidance maneuvers").
 //
 // ⚠ "RECALCULATE AFTER A MANEUVER" IS NOT A FEATURE HERE - IT IS THE CONSEQUENCE OF
 // THESE BEING PURE FUNCTIONS OF THE PRESENT KINEMATICS. There is no stored CPA to go
@@ -87,6 +90,69 @@ export function cpa(own, target) {
   const tcpaS = -(R.e * V.e + R.n * V.n) / (relSpeedMs * relSpeedMs);
   const cpaM = Math.hypot(R.e + V.e * tcpaS, R.n + V.n * tcpaS);
   return { rangeM, bearingDeg, cpaM, tcpaS, closing: tcpaS > 0, relSpeedMs };
+}
+
+/**
+ * HER ROUTE AHEAD AS A CLOCK, for `cpaAlong` (Andy, 2026-10-10: "CPA/TCPA should be computed from current range on
+ * the ASV planned route, projecting both vessels' speed and course. These values will change as AIS or other source of
+ * contact information updates. But the ASV path should be known through the whole mission barring avoidance
+ * maneuvers").
+ *
+ * `pts`: [{lat, lon}] - her position NOW first, then every waypoint still ahead of her; `legMs[k]`: her speed over the
+ * ground from pts[k] to pts[k+1], m/s (the page's: the plan's speed for that leg and the set along it). Returns
+ * {frame, pts: [{e, n, t}]} in a plane anchored at her, `t` seconds from now - or null when there is no route to
+ * walk, or a leg with no speed to walk it at (the straight projection then stands in).
+ */
+export function routeTrack(pts, legMs) {
+  if (!pts || pts.length < 2 || !legMs || legMs.length < pts.length - 1) return null;
+  const frame = planeFrame({ lat: pts[0].lat, lon: pts[0].lon });
+  const o = frame.toEN(pts[0]), out = [{ e: o.e, n: o.n, t: 0 }];
+  for (let k = 1; k < pts.length; k++) {
+    if (!(legMs[k - 1] > 0)) return null;
+    const p = frame.toEN(pts[k]), q = out[out.length - 1], d = Math.hypot(p.e - q.e, p.n - q.n);
+    if (d > 1e-6) out.push({ e: p.e, n: p.n, t: q.t + d / legMs[k - 1] });
+  }
+  return out.length >= 2 ? { frame, pts: out } : null;
+}
+
+/**
+ * CLOSEST POINT OF APPROACH WITH HER ON HER ROUTE: the contact runs on its present course and speed, as in `cpa`, and
+ * she runs along `track` (routeTrack) - every turn of the plan, at every leg's own speed - and HOLDS at its last
+ * waypoint after it. Returns what `cpa` returns, and `along: true`:
+ *
+ *   { rangeM, bearingDeg, cpaM, tcpaS, closing, relSpeedMs, along }
+ *
+ * ⚠ THE CLOSEST OVER THE WHOLE MISSION, NOT THE FIRST. A route can close on a contact, open, and close again a survey
+ * line later; the CPA is the least of them and the TCPA is when. Between two waypoints both move in straight lines,
+ * so each leg's least distance is the closed form `cpa` uses, clamped to the leg.
+ *
+ * ⚠ NO PAST. Her route behind her is not walked, so "opening" means the range only grows from now: `cpaM` is the range
+ * now, `tcpaS` 0 and `closing` false. (The straight projection's negative TCPA - a closest approach already past - has
+ * no counterpart here.)
+ */
+export function cpaAlong(track, target) {
+  if (!track || !track.pts || track.pts.length < 2 || !target) return null;
+  const vt = velocityEN(target.sog, target.cog);
+  if (!vt) return null;
+  const P = track.pts, T = track.frame.toEN(target);
+  const R0 = { e: T.e - P[0].e, n: T.n - P[0].n };
+  const rangeM = Math.hypot(R0.e, R0.n);
+  const bearingDeg = (Math.atan2(R0.e, R0.n) * 180 / Math.PI + 360) % 360;
+  let best = { d: rangeM, t: 0, rel: 0 };
+  // (the target relative to her from `t0` on, while she moves at `vo`: R(t0 + u) = R + (vt - vo) u, for u in [0, dt])
+  const leg = (a, vo, dt) => {
+    const R = { e: T.e + vt.e * a.t - a.e, n: T.n + vt.n * a.t - a.n }, V = { e: vt.e - vo.e, n: vt.n - vo.n };
+    const v2 = V.e * V.e + V.n * V.n;
+    const u = v2 > 1e-12 ? Math.max(0, Math.min(dt, -(R.e * V.e + R.n * V.n) / v2)) : 0;
+    const d = Math.hypot(R.e + V.e * u, R.n + V.n * u);
+    if (d < best.d - 1e-9) best = { d, t: a.t + u, rel: Math.sqrt(v2) };
+  };
+  for (let k = 0; k < P.length - 1; k++) {
+    const a = P[k], b = P[k + 1], dt = b.t - a.t;
+    if (dt > 0) leg(a, { e: (b.e - a.e) / dt, n: (b.n - a.n) / dt }, dt);
+  }
+  leg(P[P.length - 1], { e: 0, n: 0 }, Infinity);       // holding at her last waypoint
+  return { rangeM, bearingDeg, cpaM: best.d, tcpaS: best.t, closing: best.t > 0, relSpeedMs: best.rel, along: true };
 }
 
 /**
