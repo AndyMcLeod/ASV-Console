@@ -1204,6 +1204,7 @@ def check_plan_body(m):
     if boundary is not None and not (isinstance(boundary, list) and all(_is_position(p) for p in boundary)):
         raise PlanRefused("the survey-area boundary is not a list of positions - nothing was saved")
     _check_surveys(m)
+    _check_breaks(m)
     for k in ("arrival_radius_m", "approach_radius_m", "buffer_m", "min_depth_m", "lead_in", "lead_out"):
         v = m.get(k)
         if v is not None and (isinstance(v, bool) or not isinstance(v, (int, float))
@@ -1217,6 +1218,54 @@ def check_plan_body(m):
 
 SURVEY_ID_MAX = 32          # characters in a survey's id - the page's own bound (static/js/surveys.js)
 SURVEY_NAME_MAX = 120
+
+
+BREAKS_MAX = 3              # survey break-offs a plan keeps, newest first (the page keeps one per survey)
+BREAK_ROUTE_MAX = 20000     # waypoints in a break-off's remainder - the console's own route bound (route_max_wpts)
+
+
+def _finite_num(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def _check_breaks(m):
+    """THE SURVEYS BROKEN OFF FOR A RETURN HOME (Andy, 2026-10-11: "When an ASV breaks off a survey to RTH for refueling
+    the survey departure point must be recorded. On refuel, the option to regain the survey from the break off point
+    minus 100m for overlap coverage must be presented."). The page records each break-off on the PLAN - so a page
+    reloaded, or a console restarted, while she is refueled still offers Continue - as {id, t, why, sv, no, name,
+    line_no, line: {a, b, along, fwd} or null, at, route: [the waypoints she had still to fly], level, unit}.
+
+    TYPES ONLY, as the surveys are checked: every position a position, every number finite, every text short, the
+    remainder a non-empty list no longer than the console flies, and no more than BREAKS_MAX of them. What the page
+    does with a record (which survey it names, whether she has been refueled) is the page's."""
+    breaks = m.get("breaks")
+    if breaks is None:
+        return
+    if not isinstance(breaks, list) or len(breaks) > BREAKS_MAX:
+        raise PlanRefused("the plan's survey break-offs must be a list of at most %d - nothing was saved" % BREAKS_MAX)
+    for i, b in enumerate(breaks):
+        if not isinstance(b, dict):
+            raise PlanRefused("survey break-off %d is not a record - nothing was saved" % (i + 1))
+        route = b.get("route")
+        if not (isinstance(route, list) and 0 < len(route) <= BREAK_ROUTE_MAX and all(_is_position(w) for w in route)):
+            raise PlanRefused("survey break-off %d's remainder is not a list of 1 to %d positions - nothing was saved"
+                              % (i + 1, BREAK_ROUTE_MAX))
+        if b.get("at") is not None and not _is_position(b.get("at")):
+            raise PlanRefused("survey break-off %d's position is not a position - nothing was saved" % (i + 1))
+        ln = b.get("line")
+        if ln is not None and not (isinstance(ln, dict) and _is_position(ln.get("a")) and _is_position(ln.get("b"))
+                                   and _finite_num(ln.get("along")) and ln.get("fwd") in (1, -1)):
+            raise PlanRefused("survey break-off %d's line is not {a, b, along, fwd} - nothing was saved" % (i + 1))
+        for k in ("id", "why", "sv", "name", "unit"):
+            v = b.get(k)
+            if v is not None and not (isinstance(v, str) and len(v) <= SURVEY_NAME_MAX):
+                raise PlanRefused("survey break-off %d's %s must be text of at most %d characters - nothing was saved"
+                                  % (i + 1, k, SURVEY_NAME_MAX))
+        for k in ("t", "level", "no", "line_no"):
+            v = b.get(k)
+            if v is not None and not _finite_num(v):
+                raise PlanRefused("survey break-off %d's %s must be a finite number (got %r) - nothing was saved"
+                                  % (i + 1, k, v))
 
 
 def _is_survey_id(v):
@@ -1553,6 +1602,8 @@ def load_mission():
             # because each builds its dict from a list of names and a field missing from either is dropped on the
             # next save (the `speeds` lesson). The page judges them (normalizeSurveys); this only carries them.
             "surveys": m.get("surveys") if isinstance(m.get("surveys"), list) else [],
+            # THE SURVEY BREAK-OFFS (2026-10-11) - carried in both dicts for the same reason as the surveys
+            "breaks": m.get("breaks") if isinstance(m.get("breaks"), list) else [],
             # the revision a page sends back with its next save - see save_mission (review #10)
             "rev": (m.get("rev") if isinstance(m.get("rev"), int) and not isinstance(m.get("rev"), bool)
                     and m.get("rev") >= 0 else 0),
@@ -1563,7 +1614,7 @@ def load_mission():
             "speeds": _norm_speeds(None), "completion": "rth",
             "buffer_m": NOGO_BUFFER_DEFAULT_M, "min_depth_m": 2.0,
             "lead_mode": "m", "lead_in": 0, "lead_out": 0, "turn_ease": "arc",
-            "boundary": [], "boundary_closed": False, "surveys": [], "rev": 0}
+            "boundary": [], "boundary_closed": False, "surveys": [], "breaks": [], "rev": 0}
     return dict(_MISSION_CACHE)
 
 
@@ -1609,6 +1660,7 @@ def save_mission(m):
         "boundary": m.get("boundary") or [],
         "boundary_closed": bool(m.get("boundary_closed")),
         "surveys": m.get("surveys") or [],          # checked by check_plan_body above; see load_mission
+        "breaks": m.get("breaks") or [],            # the survey break-offs (2026-10-11); checked above, see load_mission
     }
     # ⚠ THE LOCK THE READS NOW HOLD TOO, the previous plan kept (_keep_previous_plan), a temp
     # file per writer, and the replace retried - review #5, see _read_mission_file. The revision is

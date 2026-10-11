@@ -2790,6 +2790,31 @@ of the operator.
    Until it is built, or where it cannot reach her, the rows say **straight line**. In the
    simulator, the chart menu's **Set fuel to the RTH point** puts the tank just below it,
    to rehearse the alert and the shift home (`/api/cmd/energy {level}`, sim only).
+
+   **A survey broken off for a return home, and Continue (2026-10-11).** When an RTH takes her
+   off a survey under way (the fuel RTH above, or your own RTH press) the console records where
+   she broke off: the survey, the line, how far along it and which way she was running it, the
+   rest of the survey she still had to fly, and the fuel aboard. A paused survey's point is the
+   one taken at the press of Pause, not where she has drifted since. The record is banked only
+   once she has taken the RTH, and kept with the plan (`mission.breaks`, saved and loaded with
+   it), so a page reloaded or a console restarted while she is refueled still has it. Each
+   survey keeps its newest; the plan keeps three. The end-of-plan RTH records nothing (nothing
+   was left to fly), and neither does an RTH from a hold. **Continue** then appears beside
+   **Start**. It routes her from wherever she is to her line **100 m back** from where she broke
+   off, on the side she came from and never past the line's start, so the new coverage overlaps
+   the old; then she flies the rest of the survey and End of plan. The point and the rest come
+   from the record, not the plan, so an edit made meanwhile does not change what she completes.
+   A fuel break-off waits until she is **refueled** (her level 2% of the tank above what it was
+   when she broke off): until then the button is grayed and its tip says what she has aboard;
+   once she is, a **REFUELED** banner says the survey can be continued and the button flashes.
+   A vessel that reports no level leaves that to you. Continue asks first, routes the way in
+   round the keep-outs, uploads, starts a fresh run and then spends the record. If the way in
+   cannot be routed, the point is one the keep-out model would hold her off, the upload or the
+   Start does not take, or she was commanded meanwhile, nothing more is sent and the record is
+   kept. It is live while she is stopped or holding (at home, after the RTH), not while she is
+   under way. With more than one survey broken off, a selector beside it picks which; the **×**
+   drops the selected record. This is not the survey table's **Continue S*n* ▶**, which releases
+   a held survey. Session log: `survey_break`, `survey_continue`, `survey_break_drop`.
 5. **Pause / Stop / E-STOP** — Pause holds the next waypoint; Stop aborts the
    plan; the command E-STOP latches motors to zero and disarms. Link-loss also
    halts commanding automatically and surfaces the boat's own failsafe.

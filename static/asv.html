@@ -776,6 +776,11 @@
     <button class="cbtn arm" id="b_arm">Arm</button>
     <button class="cbtn" id="b_upload" disabled>Upload</button>
     <button class="cbtn go" id="b_start" disabled>Start</button>
+    <!-- CONTINUE (2026-10-11): a survey broken off for an RTH, picked up 100 m back from where she left it. Shown only
+         while the plan holds one; the selector only when it holds more than one. -->
+    <button class="cbtn go" id="b_continue" style="display:none" disabled>Continue</button>
+    <select id="b_contSel" style="display:none" title="Which broken-off survey Continue picks up"></select>
+    <button class="cbtn" id="b_contDrop" style="display:none" title="Drop this survey break-off: Continue will no longer offer it">&#215;</button>
     <button class="cbtn" id="b_pause" disabled>Pause</button>
     <button class="cbtn" id="b_stop" disabled>Stop</button>
     <span class="cdiv"></span>
@@ -958,7 +963,7 @@ import { cpa as cpaOf, cpaAlong, routeTrack, legGroundMs, hullBox, KN_TO_MS } fr
 // THE MISSION'S FUEL, AND THE POINT SHE MUST TURN FOR HOME (2026-10-11). Pure: the burn law, the walk of the mission and
 // the monitor's decision (fuel.js), and her WATER distance home (home_field.js, built in a worker). The page acts on them.
 import { energyModel, energyLevel, homeEnergy, rthLevel, projectMission, rthDecision,
-         FUEL_RESERVE_FRAC } from "/static/js/fuel.js";
+         FUEL_RESERVE_FRAC, FUEL_REARM_FRAC } from "/static/js/fuel.js";
 import { homeGrid, fieldDistM, cellOf } from "/static/js/home_field.js";
 // AIS CONTACTS AS KEEP-OUTS (2026-09-25): the hull box each broadcasts (20 x 8 m assumed where it
 // broadcasts none), dead-reckoned between polls and swept over the guard's look-ahead while she is
@@ -1008,7 +1013,7 @@ import { HAZ_UNKNOWN_EXTENT, MARK_TAIL, WATER_FAR_KM, WATER_REMOTE_KM, WATER_STA
 // the surveys in run order, and the survey's number staying with it. See the module header.
 import { normalizeSurveys, surveyPoints, pathThroughSurveys,
          surveyEntries, moveSurvey, removeSurvey, replaceSurvey, surveyLabel,
-         runBackwards, surveyStartIdx, waypointsFrom, addCoverage, coveredM, splitAtHold } from "/static/js/surveys.js";
+         runBackwards, surveyStartIdx, waypointsFrom, addCoverage, coveredM, splitAtHold, svOf } from "/static/js/surveys.js";
 // EVERY CHART READ OF THE EXTRACT, KEPT AND MERGED (2026-10-02): what is already read, the reads as one set of
 // structures, and a plan too big for one read cut into boxes that are not. See the module header.
 import { INK_READS_MAX, boxAround, coveringRead, mergeReads, pathBoxes } from "/static/js/inkreads.js";
@@ -5755,7 +5760,9 @@ async function loadMission(){
                  turn_ease:(m.turn_ease === "eased" ? "eased" : "arc"),
                  // THE SURVEYS (2026-10-02) ride through this whitelist like everything above - left out, they would
                  // be dropped here and written back as none by the next save, the `speeds` defect again.
-                 surveys:Array.isArray(m.surveys) ? m.surveys : []};
+                 surveys:Array.isArray(m.surveys) ? m.surveys : [],
+                 // ... and THE SURVEY BREAK-OFFS (2026-10-11), for the same reason: Continue's records ride the plan.
+                 breaks:Array.isArray(m.breaks) ? m.breaks : []};
       // ... and are JUDGED before anything reads the plan: a plan from before surveys were kept becomes one survey,
       // S1, everything in it; one whose grouping does not hold is flown as ONE survey - the plan as it was - and that
       // is SAID, because the operator would otherwise see lines counted and timed as one survey with no reason given.
@@ -8110,7 +8117,7 @@ function fuelTick(s){
     showBanner("⚠ LOW FUEL — THE RTH POINT: " + say + " Returning home now.");
     logClient("fuel_rth", {...rec, sent: true});
     // ⚠ CAUGHT, NOT FIRED AND FORGOTTEN: an async command that throws must say so (doRTH's own refusals say themselves)
-    doRTH({why: "⚠ LOW FUEL, at the RTH point (" + fuelFmt(model, level) + (model.kind === "fuel" ? " aboard" : " on the pack") + ")"}).catch(e => showBanner("⚠ LOW FUEL — the RTH could not be commanded: "
+    doRTH({why: "⚠ LOW FUEL, at the RTH point (" + fuelFmt(model, level) + (model.kind === "fuel" ? " aboard" : " on the pack") + ")", breakWhy: "fuel"}).catch(e => showBanner("⚠ LOW FUEL — the RTH could not be commanded: "
       + ((e && e.message) || e) + ". Command RTH by hand."));
     return;
   }
@@ -10427,6 +10434,9 @@ function rthTooFar(fromLL, homeLL){
 async function doRTH(opts){
   const chained = !!(opts && opts.chained === true);
   const why = (opts && typeof opts.why === "string" && opts.why) ? opts.why + " · " : "";   // LOW FUEL (2026-10-11)
+  // THE SURVEY IT BREAKS OFF (2026-10-11), taken at the press - before the RTH replaces the plan aboard - and banked on
+  // the plan only once the vessel has taken the RTH (below). Not by the end-of-plan chain: nothing is left to fly.
+  const brk = chained ? null : surveyBreakNow(opts && opts.breakWhy);
   const wasGen = planGen;             // see doGoTo: taken at the press, not at the post
   if(!S.home){ flashNote("No home set (no GPS fix yet)."); if(chained) rthChainFailed=true; return; }
   if(!asv){                                       // no fix: let the server drive direct
@@ -10506,6 +10516,7 @@ async function doRTH(opts){
     updateMissionCard(); render(); return;
   }
   if(planGen === wasGen) releaseEscapeClaim("RTH replaced it");     // see doGoTo
+  if(brk) bankBreak(brk);                         // the survey she has left: Continue picks it up (2026-10-11)
   plan.coast = rCoast;
   runRoute = plan.route; runUnsafe = []; setPlanIntent("rth", plan, plan.route); updateMissionCard();   // draw the transit line + waypoints like a survey
   legStartsHere(0, r);                           // see doGoTo
@@ -15873,12 +15884,15 @@ $("#b_upload").onclick = doUpload;
 // The Start button's press, named so the survey table's Continue (phase 3b) starts the rest of a held plan through
 // exactly this - its question, its fresh-run clears and its refusal handling. Answers whether Start was taken.
 $("#b_start").onclick = () => startRun();
-async function startRun(){
+async function startRun(opts){
   // ⚠ RESUMING A PAUSE IS RESUMING, WHICHEVER BUTTON DOES IT. Start is enabled while paused
   // and has always been the way back; routing it through the same function as the Pause
   // toggle is what stops the backtrack depending on which control the operator reached for.
-  if(S && S.run === "paused") return resumeRun();
-  if(!await guiConfirm("Start the autonomous survey",
+  // ... EXCEPT FOR CONTINUE (2026-10-11): it has just uploaded a NEW plan (`fresh`) and asked its own question
+  // (`confirmed`) - the pause it would "resume" belonged to the plan that upload replaced.
+  const fresh = !!(opts && opts.fresh), confirmed = !!(opts && opts.confirmed);
+  if(S && S.run === "paused" && !fresh) return resumeRun();
+  if(!confirmed && !await guiConfirm("Start the autonomous survey",
     "The transit is planned clear of ENC obstacles (green path). Confirm the routed path looks safe and no uncharted obstacle is in the way.")) return;
   // ⚠⚠ THESE CLEAR IN FRONT OF THE POST, UNLIKE EVERY OTHER CONTROL ON THIS BAR, AND THAT
   // IS DELIBERATE. Engine.start sets `run = "running"` and calls _push_state() INSIDE its
@@ -15916,6 +15930,213 @@ async function startRun(){
   }
   return true;
 }
+
+// ── A SURVEY BROKEN OFF FOR A RETURN HOME, AND CONTINUED (2026-10-11) ──────────────────────────────────────────────
+// Andy: "When an ASV breaks off a survey to RTH for refueling the survey departure point must be recorded. On refuel,
+// the option to regain the survey from the break off point minus 100m for overlap coverage must be presented. The ASV
+// will then proceed to continue or complete the initial survey. From the users point of view I envision a "Continue"
+// button next to the "Start" button. But a survey selection process may have to be put in place."
+//   THE RECORD is taken by doRTH itself, at the press - BEFORE the RTH replaces the plan aboard, after which the index
+// describes the route home, not the survey - and BANKED on the plan (mission.breaks, saved with the rest of it) only
+// once the vessel has taken the RTH, so a page reloaded or a console restarted while she is refueled still offers it.
+// Any RTH that leaves a survey under way unfinished banks one: the fuel monitor's (why "fuel") and the operator's own
+// ("rth"); not the end-of-plan chain (nothing left to fly). One survey keeps one record, its newest; the plan BREAKS_MAX.
+//   IT CARRIES ITS OWN ROUTE (what she had still to fly, from the waypoint she was heading for) and its own LINE (its
+// ends, how far along, which way), so Continue completes THE INITIAL SURVEY even if the plan is edited meanwhile.
+//   CONTINUE, beside Start, rejoins that line SURVEY_BREAK_BACK_M back from where she broke off - resumePointOn, the pause
+// resume's and the guard's own point, clamped to the line's start - so the new coverage overlaps the old; routes the way
+// in from wherever she is with the planner a Go-To and Resume from here fly; uploads it; and Starts it. A FUEL break-off
+// waits until she is REFUELED - her level up FUEL_REARM_FRAC of the tank since she broke off, said once when it is; a
+// vessel that reports no level leaves that to the operator. More than one: the selector beside it picks which survey.
+const SURVEY_BREAK_BACK_M = 100;     // Andy: "the break off point minus 100m for overlap coverage"
+const BREAKS_MAX = 3;                // the plan keeps this many, newest first (asv_console.py BREAKS_MAX)
+let breakSel = null, continueBusy = false, breakReadySaid = null;
+/** Where she is in the survey under way, as a break-off record - or null when no survey is under way with anything left
+ *  to fly (another behavior, the end of the plan, a hold). Taken at the press, by doRTH. */
+function surveyBreakNow(why){
+  const st = (S && S.status) || {};
+  if(!(S && S.behavior === "survey" && (S.run === "running" || S.run === "paused") && !st.holding)) return null;
+  const rr = indexedRoute(); if(!rr || !rr.length) return null;
+  const idx = Math.min(window._wpIndex || 0, rr.length);
+  const route = rr.slice(idx).map(q => ({...q}));
+  if(!route.length) return null;
+  // A paused run's mark is the one taken at the press of Pause: read again now it would be her drift, not her line.
+  const mark = (S.run === "paused" && pauseMark) ? pauseMark : lineMark();
+  const L = mark ? (mission.lines || [])[mark.line] : null;
+  const sv = svOf(L || route[0]), sur = sv ? surveyById(sv) : null;
+  const model = fuelModel(), level = model ? energyLevel(model, st) : null;
+  return {id: "B" + Date.now().toString(36), t: Date.now(), why: why === "fuel" ? "fuel" : "rth",
+          sv: sv || null, no: sur ? sur.no : null, name: sur ? (sur.name || "") : null,
+          line_no: (mark && L) ? lineNo(mark.line) : null,
+          line: (mark && L) ? {a: {lat: L.a.lat, lon: L.a.lon}, b: {lat: L.b.lat, lon: L.b.lon}, along: mark.along, fwd: mark.fwd} : null,
+          at: asv ? {lat: asv.lat, lon: asv.lon} : null, route,
+          level: level != null ? +level.toFixed(3) : null, unit: model ? model.unit : null};
+}
+/** Bank a break-off on the plan: the newest per survey, BREAKS_MAX in all, saved. */
+function bankBreak(rec){
+  const keep = breakList().filter(b => b.sv !== rec.sv);
+  mission.breaks = [rec, ...keep].slice(0, BREAKS_MAX);
+  breakSel = rec.id; breakReadySaid = null;
+  saveMission();
+  logClient("survey_break", {id: rec.id, why: rec.why, sv: rec.sv, no: rec.no, line: rec.line_no,
+            along: rec.line ? Math.round(rec.line.along) : null, wpts: rec.route.length, level: rec.level, unit: rec.unit});
+  flashNote("Survey break-off recorded: " + breakLabel(rec) + (rec.line ? " (" + fmtDist(rec.line.along) + " along it)" : "")
+    + ". " + (rec.why === "fuel" ? "Once she is refueled, " : "") + "Continue (beside Start) picks it up "
+    + fmtDist(SURVEY_BREAK_BACK_M) + " back.");
+}
+function breakList(){
+  return Array.isArray(mission.breaks) ? mission.breaks.filter(b => b && Array.isArray(b.route) && b.route.length) : [];
+}
+function breakSelected(){ const L = breakList(); return L.find(b => b.id === breakSel) || L[0] || null; }
+function breakLabel(b){
+  return (b && b.no != null ? "S" + b.no + (b.name ? " " + b.name : "") : "the survey")
+       + (b && b.line_no != null ? ", line " + b.line_no : "");
+}
+/** May she Continue it now? A fuel break-off waits for the refuel. {ok, why} */
+function breakReady(b){
+  if(!b) return {ok: false, why: "no survey was broken off"};
+  if(b.why === "fuel"){
+    const model = fuelModel(), lv = model ? energyLevel(model, (S && S.status) || {}) : null;
+    if(model && lv != null && b.level != null && b.unit === model.unit
+       && lv < b.level + FUEL_REARM_FRAC * (model.full - model.floor))
+      return {ok: false, why: "waiting for her to be REFUELED (" + fuelFmt(model, lv) + " aboard, " + fuelFmt(model, b.level)
+                              + " when she broke off)"};
+  }
+  return {ok: true, why: ""};
+}
+/** The route Continue flies, the way in apart: the point SURVEY_BREAK_BACK_M back down her line, then what she had left. */
+function breakTail(b){
+  const L = b && b.line;
+  const to = L ? resumePointOn({a: L.a, b: L.b}, {along: L.along, fwd: L.fwd}, SURVEY_BREAK_BACK_M) : null;
+  const len = L ? distTo(L.a, L.b) : 0;
+  const backedM = to ? Math.abs(L.along - Math.max(0, Math.min(len, L.along - L.fwd * SURVEY_BREAK_BACK_M))) : 0;
+  return {tail: to ? [to, ...b.route] : b.route.slice(), to, backedM};
+}
+/** Continue, the selector and the drop, beside Start (applyCmdState). */
+function renderBreakControls(armed, estop, underWay){
+  const cb = $("#b_continue"), sel = $("#b_contSel"), drop = $("#b_contDrop"); if(!cb) return;
+  const list = breakList(), b = breakSelected(), rd = breakReady(b);
+  cb.style.display = b ? "" : "none";
+  if(drop) drop.style.display = b ? "" : "none";
+  if(sel){
+    sel.style.display = list.length > 1 ? "" : "none";
+    const key = list.map(x => x.id).join(",");
+    if(sel.dataset.key !== key){
+      sel.dataset.key = key; sel.textContent = "";
+      for(const x of list){
+        const o = document.createElement("option"), d = new Date(x.t), p2 = n => String(n).padStart(2, "0");
+        o.value = x.id; o.textContent = breakLabel(x) + " · " + p2(d.getHours()) + ":" + p2(d.getMinutes()) + (x.why === "fuel" ? " · fuel" : "");
+        sel.appendChild(o);
+      }
+    }
+    if(b && sel.value !== b.id) sel.value = b.id;
+  }
+  if(!b) return;
+  const why = !rd.ok ? rd.why : continueBusy ? "continuing" : estop ? "clear E-STOP first" : !armed ? "arm her first"
+            : !supervising() ? "this window is not supervising" : underWay ? "she is under way - stop her or let the RTH finish" : "";
+  cb.disabled = !!why;
+  cb.classList.toggle("flash", !why);
+  const {tail, to, backedM} = breakTail(b), d = new Date(b.t);
+  setTip(cb, (why ? "CONTINUE - NOT YET: " + why + ".\n\n" : "CONTINUE ")
+    + breakLabel(b) + ", broken off at " + d.toLocaleTimeString() + (b.why === "fuel" ? " for LOW FUEL" : " for an RTH")
+    + ". She is routed from wherever she is to " + (to ? "line " + b.line_no + ", " + fmtDist(backedM) + " back from where she broke off "
+      + "(so the new coverage overlaps the old)" : "the survey's next waypoint (she broke off between lines)")
+    + ", then flies the rest of it - " + tail.length + " waypoint(s) - and End of plan. The × beside it drops the break-off."
+    + (list.length > 1 ? " The selector picks which broken-off survey." : ""));
+  // ON REFUEL, SAID ONCE: the option to regain the survey is PRESENTED, not left for the operator to find.
+  if(rd.ok && b.why === "fuel" && breakReadySaid !== b.id){
+    breakReadySaid = b.id;
+    showBanner("REFUELED — " + breakLabel(b) + " can be continued: CONTINUE, beside Start, routes her back to "
+      + (to ? "line " + b.line_no + ", " + fmtDist(backedM) + " back from where she broke off for low fuel, so the coverage overlaps,"
+            : "the survey's next waypoint") + " and flies the rest of it.");
+  }
+}
+async function continueSurvey(){
+  const b = breakSelected();
+  if(!b || continueBusy) return;
+  const rd = breakReady(b);
+  if(!rd.ok){ flashNote("Continue: " + rd.why + "."); return; }
+  if(!canCommand()){ flashNote("Continue: arm her first."); return; }
+  const underWay = () => !!(S && S.run === "running" && !((S.status || {}).holding));
+  if(underWay()){ flashNote("Continue: she is under way - stop her, or let the RTH finish, first."); return; }
+  if(!asv){ flashNote("Continue: no position fix yet."); return; }
+  continueBusy = true; applyCmdState(S);
+  try{
+    const {tail, to, backedM} = breakTail(b), label = breakLabel(b);
+    const where = to ? "line " + b.line_no + ", " + fmtDist(backedM) + " back from where she broke off"
+                     : "the survey's next waypoint (she broke off between lines)";
+    if(!await guiConfirm("Continue the survey", "Continue " + label + ": she is routed from here to " + where
+        + ", then flies the rest of the survey - " + tail.length + " waypoint(s) - and End of plan. Confirm the route "
+        + "looks safe and no uncharted obstacle is in the way.")) return;
+    const from = {lat: asv.lat, lon: asv.lon}, target = tail[0];
+    showBanner("Routing to the survey… a long way round obstacles can take several seconds.");
+    await ensureNogoCovers([from, target]);
+    const pin = await planInsideChart([from, target], undefined,
+      () => planNogoRoute(from, target, {...holdOpts(), standoffM: patClipBufM(), flyThrough: true}), "Continue");
+    takeDownBanner(/^Routing to the survey/);
+    if(pin.error){
+      showBanner("⚠ CANNOT CONTINUE " + label + " — " + (planWhy(pin) || pin.error) + ". Nothing was sent; the break-off is kept.");
+      render(); return;
+    }
+    if(pin.heldOff){
+      showBanner("⚠ CANNOT CONTINUE " + label + " — " + heldOffWhy(pin.heldOff) + ", so the way in cannot be certified. "
+        + "Nothing was sent; the break-off is kept.");
+      render(); return;
+    }
+    const via = pin.degraded ? [] : pin.route.slice(0, -1), route = [...via, ...tail];
+    if(routeTooLong(route.length)) return;
+    // ⚠ ASKED AGAIN AFTER THE AWAITS: the confirm is unbounded and the routing takes seconds, and she may have been
+    // commanded, disarmed or put in E-STOP meanwhile - an upload now would replace whatever she was given.
+    if(!canCommand() || underWay()){
+      showBanner("⚠ NOT CONTINUED — she was commanded, disarmed or stopped while the way in was being planned. Nothing "
+        + "was sent; the break-off is kept.");
+      render(); return;
+    }
+    const up = await cmd("/api/cmd/upload", {route, hold_clear_m: holdClearAt(route[route.length - 1]),
+                                             ...(tailEndsAtHold(route) ? {completion: "loiter"} : {})});
+    if(!took(up)){
+      const say = notTookSay(up, "UPLOAD");
+      showBanner((say || "⚠ THE UPLOAD DID NOT LAND") + " - NOT CONTINUED; the break-off is kept.");
+      render(); return;
+    }
+    runRoute = route; runUnsafe = [];
+    dropCornerSlow("the survey was continued as a new plan of " + route.length + " waypoint(s)");
+    setPlanIntent("survey", {routed: via.length > 0, degraded: !!pin.degraded}, route);
+    if(planIntent) planIntent.why.push({t: "route", s: "CONTINUING " + label + " after its break-off"
+      + (b.why === "fuel" ? " for low fuel" : "") + " - " + (to ? "rejoining line " + b.line_no + " " + fmtDist(backedM)
+      + " back from where she left it, so the coverage overlaps" : "from its next waypoint")});
+    legStartsHere(0, up);
+    const started = await startRun({confirmed: true, fresh: true});
+    if(!started){
+      showBanner("⚠ NOT CONTINUED — the rest of " + label + " is UPLOADED but did NOT start (see above). The break-off "
+        + "is kept: press Start to fly what is aboard, or Continue again.");
+      return;
+    }
+    mission.breaks = breakList().filter(x => x.id !== b.id); saveMission();
+    const way = via.length ? "routed " + fmtDist(distTo(from, target)) + " to it via " + via.length + " waypoint(s) clear of the keep-outs"
+              : pin.degraded ? "the way in NOT certified (the keep-out model is not loaded)" : "the way in is direct";
+    showBanner("SURVEY CONTINUED — " + label + ": " + (to ? "rejoining line " + b.line_no + " " + fmtDist(backedM)
+      + " back from where she broke off, so the coverage overlaps" : "from its next waypoint") + "; " + way + ". "
+      + tail.length + " waypoint(s) of survey to fly, then End of plan. Recorded in the session log.");
+    logClient("survey_continue", {id: b.id, why: b.why, sv: b.sv, no: b.no, line: b.line_no, back_m: Math.round(backedM),
+              via: via.length, wpts: route.length, degraded: !!pin.degraded});
+  } finally {
+    continueBusy = false; applyCmdState(S); render();
+  }
+}
+/** The ×: the selected break-off dropped, at the operator's word - Continue no longer offers it. */
+async function dropBreak(){
+  const b = breakSelected(); if(!b) return;
+  if(!await guiConfirm("Drop the survey break-off", "Drop " + breakLabel(b) + "'s break-off? Continue will no longer "
+      + "offer to pick it up; the survey can still be flown again from the survey table.", {always: true})) return;
+  mission.breaks = breakList().filter(x => x.id !== b.id); breakSel = null; saveMission();
+  logClient("survey_break_drop", {id: b.id, sv: b.sv, no: b.no});
+  flashNote("Break-off dropped: " + breakLabel(b) + ".");
+  applyCmdState(S);
+}
+$("#b_continue").onclick = () => continueSurvey();
+$("#b_contSel").onchange = (e) => { breakSel = e.target.value; applyCmdState(S); };
+$("#b_contDrop").onclick = () => dropBreak();
 
 /**
  * WHERE THE BOAT IS ON ITS COVERAGE LINE AT THIS INSTANT, or null when it is not on one.
@@ -17474,6 +17695,7 @@ function applyCmdState(s){
   $("#b_upload").disabled = !armed || estop || underWay || uploadBusy;
   if(uploadBusy) $("#b_upload").title = "Measuring the plan’s corners — the route has not been sent yet.";
   $("#b_start").disabled = !armed || estop || !s.plan_uploaded || (run==="running" && !s.plan_staged);
+  renderBreakControls(armed, estop, underWay);   // Continue, beside Start (2026-10-11)
   // ⚠ PAUSE IS ENABLED WHILE PAUSED, BECAUSE IT IS THE WAY BACK. It used to gray out the
   // moment it worked, which left Start as the only resume — a control the operator has no
   // reason to look at for a run that is already going. It toggles, it says which way it

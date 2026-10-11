@@ -624,6 +624,37 @@ check("16g. a water level, punch time or backwards flag that is not what it clai
       all(w_said.values()) and all("S1" in v for v in w_said.values()) and open(_C.MISSION_PATH, "rb").read() == w_before,
       "; ".join("%s: %s" % (k, (v or "NOT REFUSED")[:40]) for k, v in w_said.items()))
 
+# 17-17b. THE SURVEY BREAK-OFFS (2026-10-11, Andy: "When an ASV breaks off a survey to RTH for refueling the survey
+# departure point must be recorded"). The page banks each on the plan - so a page reloaded or a console restarted while
+# she is refueled still offers Continue - and they ride both dicts and are type-checked like the surveys.
+# TEETH: four mutations RUN on scratch copies, all caught - not saved -> 17; not loaded -> 17; a remainder's
+# positions not checked -> 17b; a line's direction not checked -> 17b.
+BRK = {"id": "Bx1", "t": 1791721000000, "why": "fuel", "sv": "S1", "no": 1, "name": "North basin", "line_no": 2,
+       "line": {"a": SV_WPS[2], "b": SV_WPS[3], "along": 129.5, "fwd": 1}, "at": SV_WPS[2],
+       "route": [dict(w, turn=True) for w in SV_WPS[3:6]], "level": 49.6, "unit": "L"}
+BRK2 = dict(BRK, id="Bx2", why="rth", sv="S3", no=3, line=None, level=None, unit=None)
+_, b_err = attempt(_C.save_mission, sv_plan(breaks=[BRK, BRK2]))
+b_back = _C.load_mission().get("breaks")
+check("17. the plan's SURVEY BREAK-OFFS - where she left each survey for an RTH, and what she had still to fly - are "
+      "saved and loaded as they were (a break-off between lines has no line)",
+      b_err is None and b_back == [BRK, BRK2], "save: %s; loaded %s" % (b_err or "ok", json.dumps(b_back)[:140]))
+b_before = open(_C.MISSION_PATH, "rb").read()
+b_bad = {"not a list": sv_plan(breaks={"id": "B"}),
+         "four of them": sv_plan(breaks=[dict(BRK, id="B%d" % i) for i in range(4)]),
+         "a record that is not one": sv_plan(breaks=["B"]),
+         "no remainder": sv_plan(breaks=[dict(BRK, route=[])]),
+         "a remainder with a non-position": sv_plan(breaks=[dict(BRK, route=[{"lat": 91, "lon": 0}])]),
+         "a line with no direction": sv_plan(breaks=[dict(BRK, line=dict(BRK["line"], fwd=0))]),
+         "a line with an end missing": sv_plan(breaks=[dict(BRK, line={"a": SV_WPS[2], "along": 1, "fwd": 1})]),
+         "a position that is not one": sv_plan(breaks=[dict(BRK, at={"lat": "x", "lon": 0})]),
+         "an infinite level": sv_plan(breaks=[dict(BRK, level=float("inf"))]),
+         "a level that is a bool": sv_plan(breaks=[dict(BRK, level=True)]),
+         "a name too long": sv_plan(breaks=[dict(BRK, name="x" * 200)])}
+b_said = {k: refused(v) for k, v in b_bad.items()}
+check("17b. a break-off that is not what it claims is REFUSED in words and nothing is written",
+      all(b_said.values()) and open(_C.MISSION_PATH, "rb").read() == b_before,
+      "; ".join("%s: %s" % (k, (v or "NOT REFUSED")[:36]) for k, v in b_said.items()))
+
 # 10. None of it touched the operator's own plan.
 check("10. nothing in this suite wrote, replaced or removed the app directory's own plan files",
       not _WRITES_TO_APP, "; ".join(_WRITES_TO_APP[:3]) or "no write named them")

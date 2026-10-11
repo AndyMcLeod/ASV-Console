@@ -251,6 +251,9 @@ const PRELUDE = [
   // #b_start asks before it commands, and hands a paused boat to resumeRun
   "const guiConfirm = async () => true;",
   "const resumeRun = async () => { out.resumed++; };",
+  // the survey break-off doRTH takes at the press and banks once the RTH took (2026-10-11): tests/survey_break.js's;
+  // this world has no survey under way, so there is none to take
+  "const surveyBreakNow = () => null, bankBreak = () => {};",
   // the clearance guard's per-episode record, as it stands mid-episode when RTH is pressed
   "let guardOverride = {said:'proceed'}, edgeSpentM = 40, edgeCount = 2;",
   "let guardActedAt = 12345, holdWant = null, guardHeld = {route:[1,2]};",

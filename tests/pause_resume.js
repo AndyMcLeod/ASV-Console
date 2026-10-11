@@ -1347,10 +1347,13 @@ function finish(){
 
 // ── 16-17. RESUME IS RESUME, WHICHEVER CONTROL DOES IT ─────────────────────────────
 {
+  // (Start's carries `&& !fresh` since 2026-10-11: Continue starts a FRESH plan it has just uploaded over the paused
+  // one, and that is the one Start that must not resume - tests/survey_break.js 6b pins that only Continue sets it.)
+  const PAUSED_RESUME = /if\(S && S\.run === "paused"( && !fresh)?\) return resumeRun\(\);/g;
   check("16. Start while paused goes through the same resume, backtrack and all",
         () => /if\(S && S\.run === "paused"\) return resumeRun\(\);/.test(grab("resumeRun") ? H : H)
-              && (H.match(/if\(S && S\.run === "paused"\) return resumeRun\(\);/g) || []).length === 2,
-        () => (H.match(/if\(S && S\.run === "paused"\) return resumeRun\(\);/g) || []).length
+              && (H.match(PAUSED_RESUME) || []).length === 2,
+        () => (H.match(PAUSED_RESUME) || []).length
               + " control(s) route a paused run through resumeRun — Start and Pause. Start "
               + "has always been enabled while paused, so leaving it on the plain command "
               + "would make the backtrack depend on which button the operator reached for");
