@@ -899,9 +899,10 @@ changed. Measured on a six-contact feed: 51 DOM node insertions and removals per
 updates became 6, with the writes landing as in-place text edits instead. And **a
 contact missing from a single update is no longer deleted** — AIS is intermittent and
 the range filter runs on the server, so a ship near the edge dropped out of one snapshot
-and returned in the next, blinking every 8 s. It is held for one update, dimmed and
-saying so on hover, then removed on the second consecutive miss; held, never refreshed,
-so stale numbers are never shown as live.
+and returned in the next, blinking every 8 s. Since 2026-10-10 it is not removed at all
+except by the operator: it stays in its place on its last report, struck through when
+out of range and dimmed when not reporting (the table's order, below), and its CPA and
+TCPA read "–", so stale numbers are never shown as live.
 
 **Tonnage is the one thing AIS does not carry.** No AIS message contains gross or deadweight
 tonnage — it is a registry fact rather than a broadcast one — so `gt`, `dwt`, `built` and
@@ -919,9 +920,20 @@ the **whole lake** when you're on an enclosed lake (e.g. a Great Lake), or **wit
 each vessel drawn pointing the way she is heading, colored by ship type
 (cargo / tanker / passenger / fishing / tug / …), with the name (or MMSI) beside it
 and full details on hover — **and** in an **AIS traffic table** (each vessel by
-range / bearing / speed / CPA / TCPA, sorted nearest-first) that opens with the layer and
-can be
-closed to a chip / reopened at will. The table always carries a **status line naming
+range / bearing / speed / CPA / TCPA) that opens with the layer and can be closed to a
+chip / reopened at will. **The table keeps its own order.** Contacts stand in the order the
+console acquired them (a batch first seen together goes nearest first, card open or not),
+and nothing the feed does reshuffles them: a new contact joins at the bottom however near
+she is. **Drag a row by its grip (⠿) to put it where you want it**, the top included, and
+**× removes one**; she comes back, at the bottom, once she has left the range and come back
+into it. A header click sorts the list once, and it then stays in that order. A contact
+**out of the selected range is struck through with one red line** and keeps her place.
+Each poll names the contacts the card is holding (`held` on `/api/ais`), and the console
+reports the ones it still collects beyond the range (`beyond`, apart from `vessels`, so the
+guard's model is untouched): one that sails out is struck where she is now, not left on her
+last report from just inside the line. One that falls silent inside the range is dimmed as
+*not reporting*. Nothing leaves the list but by the operator's ×; there is no row cap, the
+card scrolls, and the order and the removals survive a reload. The table always carries a **status line naming
 the live feed and its coverage** — e.g. *connected · aisstream (global) · no vessels in
 5 nm yet*, or *connected · digitraffic (Finland/Baltic only)* — so an empty list tells
 you whether the service is down, still warming up, genuinely quiet, or simply on a feed

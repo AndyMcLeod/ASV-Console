@@ -473,6 +473,10 @@ var aisArea = null, aisState = "idle", aisSrc = null, aisSrcName = null, aisNote
 function aisCenter() { return asv ? { lat: asv.lat, lon: asv.lon } : { lat: 0, lon: 0 }; }
 function renderAisTable() {}
 function setAisTable() {}
+// the card's own list (2026-10-10): the poll names the contacts it holds and keeps the server's `beyond` apart - the
+// card's business alone, driven in tests/ais_table.js 6l-6m; this world's card holds nothing
+var aisBeyondRpts = [];
+function aisHeldQuery() { return ""; }
 function lsSet() {}
 var planGen = 0;
 function setPlanIntent(kind, _, route) { planIntent = { kind, why: [], route: route ? route.length : 0 }; }

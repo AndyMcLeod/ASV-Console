@@ -6834,6 +6834,12 @@ class Handler(BaseHTTPRequestHandler):
                 lat, lon = (float(x) for x in params["center"][0].split(","))
             except (ValueError, TypeError):
                 lat = lon = None
+        # THE CONTACTS THE CARD IS HOLDING (2026-10-10): its list keeps every contact until the operator removes one, and
+        # strikes one that is out of range - but a contact that sails out of range simply stops arriving here, so the
+        # page's last report of her is from just INSIDE the line. Named here, the ones collected but beyond the range
+        # come back in `beyond`, apart from `vessels`, so the card can strike her where she really is. Nothing else
+        # reads `beyond`: the guard's model stays the in-range contacts.
+        held = set(x for x in (params.get("held") or [""])[0].split(",")[:400] if x)
         if lat is None:
             return self._send(200, json.dumps({"ok": False, "vessels": [], "count": 0,
                               "area": {"mode": "none"}, "note": "no position for the AIS area"}))
@@ -6869,6 +6875,7 @@ class Handler(BaseHTTPRequestHandler):
             area["collected"] = len(vs)
             if area.get("mode") == "sea" and AIS_SHOW_RADIUS_KM > 0:
                 kept = []
+                beyond = []                       # the held contacts collected beyond the range (above)
                 nearest = None
                 for v in vs:
                     try:
@@ -6885,9 +6892,13 @@ class Handler(BaseHTTPRequestHandler):
                     if d_km <= AIS_SHOW_RADIUS_KM:
                         v["range_m"] = round(d_km * 1000.0)
                         kept.append(v)
+                    elif str(v.get("mmsi")) in held:
+                        v["range_m"] = round(d_km * 1000.0)
+                        beyond.append(v)
                 vs = kept
                 data["vessels"] = vs
                 data["count"] = len(vs)
+                data["beyond"] = beyond
                 if nearest is not None:
                     area["nearest_km"] = round(nearest, 1)
             tests = _ais_test_snapshot(lat, lon)

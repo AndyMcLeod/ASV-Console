@@ -5536,6 +5536,9 @@ let nogoShow = true;                            // nogo overlay wash visibility
 // AIS layer: nearby vessels polled from the standalone AIS service via /api/ais.
 const AIS_KEY = "asv_ais_show_v1";
 let aisShow = false, aisVessels = [], aisTimer = null, aisNote = "", aisBusy = false;
+// The card's held contacts that the server still collects BEYOND the range (/api/ais `beyond`): for the card alone, to
+// strike her where she is. Never the guard's - its model is aisVessels.
+let aisBeyondRpts = [];
 // WHEN THE CONTACTS IN aisVessels WERE FETCHED - the dead-reckoning clock for the AIS keep-outs
 // (2026-09-25). Advanced only by a reply the service answered; an offline service leaves it where it
 // was, which is how the guard tells a feed that has stopped from a sea that is empty.
@@ -10556,9 +10559,10 @@ function aisGuardWanted(){ return !!(S && S.armed && !S.estop); }
 function aisWanted(){ return aisShow || aisGuardWanted(); }
 async function pollAIS(){ if(!aisWanted() || aisBusy) return; aisBusy=true;
   try{ const c=aisCenter();
-    const r=await fetch(`/api/ais?center=${c.lat.toFixed(5)},${c.lon.toFixed(5)}`);
+    const r=await fetch(`/api/ais?center=${c.lat.toFixed(5)},${c.lon.toFixed(5)}${aisHeldQuery()}`);
     const d=await r.json();
     aisVessels = (d && Array.isArray(d.vessels)) ? d.vessels : [];
+    aisBeyondRpts = (d && Array.isArray(d.beyond)) ? d.beyond : [];
     // THE SERVICE ANSWERED (contacts, or none in range): the DR clock moves. This is the AIS proxy's own
     // reply, not a command result - `ok` is the service's word for "I am up" - so it is read as such,
     // and not through took() (command_result.js 17 keeps the two apart).
@@ -10584,7 +10588,7 @@ async function pollAIS(){ if(!aisWanted() || aisBusy) return; aisBusy=true;
     else                                      aisState = "connecting";
     aisNote = (d && d.ok===false) ? (d.note || "AIS service offline")
             : (allErr ? ((aisSrc && aisSrc.note) || "all sources erroring") : "");
-  }catch(e){ aisVessels=[]; aisState="offline"; aisSrc=null; aisSrcName=null; aisNote="AIS query failed"; }
+  }catch(e){ aisVessels=[]; aisBeyondRpts=[]; aisState="offline"; aisSrc=null; aisSrcName=null; aisNote="AIS query failed"; }
   finally{ aisBusy=false; renderAisTable(); render(); }
 }
 (function(){ const el=$("#aisRange"); if(!el) return;
@@ -10689,14 +10693,129 @@ let aisSort = (function(){
   return AIS_SORT_COLS.includes(raw[0]) ? {key: raw[0], dir: raw[1] === "-1" ? -1 : 1}
                                         : {key: "rng", dir: 1};
 })();
+// ⚠ A HEADER CLICK SORTS THE LIST ONCE, AND THEN IT STAYS (2026-10-10, below). Re-applied on every update, the sort was
+// what made the card jump: a ship whose range ticked past another's swapped rows with it every 8 s.
 function setAisSort(key){
   if(!AIS_SORT_COLS.includes(key)) return;
-  // Clicking the ACTIVE column reverses it; clicking another starts that one ascending -
+  // Clicking the same column again reverses it; clicking another starts that one ascending -
   // the convention every table the operator has ever used already follows.
   aisSort = (aisSort.key === key) ? {key, dir: -aisSort.dir} : {key, dir: 1};
   lsSet(AIS_SORT_KEY, aisSort.key + ":" + aisSort.dir);
-  aisRebuildHead = true;                      // the arrow moved
+  aisSortOnce();
   renderAisTable();
+}
+
+// ── THE LIST'S OWN ORDER (Andy, 2026-10-10) ──────────────────────────────────────────
+//
+// "The jumpy characteristic of the AIS card has returned. Structure this cards contacts by order of acquisition then do
+// not reshuffle. Once a vessel is out of selected range, one line through it in red. allow the user to scroll contacts.
+// Allow the user to drag contacts to selected position. Like the top position. Allow the user to delete a contact, but
+// bring it back if it comes back into range."
+//
+// THE ORDER IS THE LIST'S, NOT THE FEED'S. A contact joins at the BOTTOM the first time it is seen (those first seen in
+// one update, nearest first among themselves) and keeps its place until the operator moves it - dragged by its grip, or
+// once by a header click. Nothing the feed does reorders it.
+// NOTHING LEAVES ON ITS OWN. The range filter runs on the server, so a ship that leaves the range is simply missing from
+// the next update; her row stays, on her last report: struck through in RED where that report puts her beyond the range,
+// dimmed as not reporting where it does not (on a Great Lake there is no range: dimmed). Only the operator removes a row
+// (its x) - and a removed contact comes back, at the bottom, when it comes back into range: next time it reports in
+// range if it was out of range or not reporting when removed, and after it has left and come back if it was in range.
+// The order and the removals are remembered across a reload (lsGet/lsSet; the last reports are not - a contact known
+// only from before a reload has its place kept and no row until it reports).
+const AIS_LIST_KEY = "asv_ais_list_v1", AIS_LIST_MAX = 400;
+const aisList = (function(){
+  const o = lsGet(AIS_LIST_KEY, null) || {};
+  const order = Array.isArray(o.order) ? o.order.map(String) : [];
+  const removed = new Map(Object.entries(o.removed || {}).map(([k, armed]) => [String(k), !!armed]));
+  return {order, removed, last: new Map()};          // removed: key -> armed (it has been out of range since)
+})();
+function saveAisList(){
+  const removed = {};
+  for(const [k, armed] of [...aisList.removed].slice(-AIS_LIST_MAX)) removed[k] = armed;
+  lsSet(AIS_LIST_KEY, {order: aisList.order.slice(-AIS_LIST_MAX), removed});
+}
+// The feed ANSWERED this poll from a live source. Only then is a contact's absence news: a failed poll, an erroring feed or
+// the warm-up after the layer comes on all arrive empty, and must not count as a removed contact leaving the range.
+function aisHeard(){ return aisState === "ok" || aisState === "empty"; }
+// BEYOND THE SELECTED RANGE (sea mode; a lake has none). The server sends only contacts inside it, except the simulator's
+// test contacts, which it serves wherever they are placed (asv_console.py _ais_test_snapshot) - so a contact can be
+// reporting AND beyond it, and is struck all the same.
+function aisBeyond(rng){
+  const km = aisArea && aisArea.mode === "sea" ? aisArea.show_km : null;
+  return km != null && rng != null && rng > km * 1000;
+}
+// One update of the feed into the list: the removed that came back, the newly acquired, the last reports. Returns the
+// rows to draw, in the list's order: {k, r, state, beyond} with state "live", "out" (beyond the range) or "lost" (not
+// reporting), and beyond true for every row past the range, reporting or not. farRpts: the server's reports of the held
+// contacts it still collects beyond the range (aisBeyondRpts).
+function aisListUpdate(liveRows, c, heard = true, farRpts = []){
+  const now = Date.now(), byKey = new Map(liveRows.map((r) => [String(r.v.mmsi), r]));
+  let changed = false;
+  // A REMOVED CONTACT comes back when she comes back INTO RANGE: reporting from inside it, after an answered poll found
+  // her out of it - absent, or reporting from beyond it (a test contact; or the operator widened the range).
+  for(const [k, armed] of [...aisList.removed]){
+    const r = byKey.get(k), inRange = !!r && !aisBeyond(r.rng);
+    if(!inRange){ if(!armed && heard){ aisList.removed.set(k, true); changed = true; } }
+    else if(armed){ aisList.removed.delete(k); changed = true; }            // back in range: acquired again, below
+  }
+  const placed = new Set(aisList.order);
+  const fresh = liveRows.filter((r) => { const k = String(r.v.mmsi); return !placed.has(k) && !aisList.removed.has(k); })
+                        .sort((a, b) => nullLast(a.rng, b.rng, 1));
+  for(const r of fresh){ aisList.order.push(String(r.v.mmsi)); changed = true; }
+  for(const [k, r] of byKey) aisList.last.set(k, {v: r.v, at: now});
+  // ONE THAT SAILED OUT OF RANGE stops arriving in the live set, so her last report there is from just INSIDE the line
+  // and would read "not reporting". The server's report of her beyond it is where she is now: struck, at that range.
+  const inList = new Set(aisList.order);
+  for(const v of farRpts){ const k = String(v.mmsi); if(inList.has(k) && !byKey.has(k)) aisList.last.set(k, {v, at: now}); }
+  if(changed) saveAisList();
+  const out = [];
+  for(const k of aisList.order){
+    if(aisList.removed.has(k)) continue;
+    const r = byKey.get(k);
+    if(r){ out.push({k, r, state: "live", beyond: aisBeyond(r.rng)}); continue; }
+    const held = aisList.last.get(k);
+    if(!held) continue;
+    const v = held.v, rng = c ? distTo(c, {lat: v.lat, lon: v.lon}) : null;
+    const brg = c ? Math.round(azTo(c, {lat: v.lat, lon: v.lon})) : null;
+    out.push({k, r: {v, rng, brg, cpa: null}, age: (now - held.at) / 1000,
+              state: aisBeyond(rng) ? "out" : "lost", beyond: aisBeyond(rng)});
+  }
+  return out;
+}
+// The held contacts - in the list, not in the last answer - named on the next poll (`held`), so the server can report the
+// ones it still collects beyond the range. Digits in practice; encoded all the same.
+function aisHeldQuery(){
+  const live = new Set(aisVessels.map((v) => String(v.mmsi)));
+  const held = aisList.order.filter((k) => !live.has(k)).slice(-AIS_LIST_MAX);
+  return held.length ? "&held=" + encodeURIComponent(held.join(",")) : "";
+}
+// The operator's x: off the list now, and back when it comes back into range (armed: it is not in range now - and only
+// the feed's answer can say so).
+function aisRemove(k){
+  aisList.order = aisList.order.filter((x) => x !== k);
+  const v = aisVessels.find((x) => String(x.mmsi) === k), c = aisCenter();
+  const inRange = !!v && !aisBeyond(c ? distTo(c, {lat: v.lat, lon: v.lon}) : null);
+  aisList.removed.set(k, aisHeard() && !inRange);
+  saveAisList(); renderAisTable();
+}
+// The operator's drag: `k` to just before `before` (null: to the bottom).
+function aisMoveTo(k, before){
+  if(k === before) return;
+  const o = aisList.order.filter((x) => x !== k), i = before == null ? -1 : o.indexOf(before);
+  if(i < 0) o.push(k); else o.splice(i, 0, k);
+  aisList.order = o; saveAisList(); renderAisTable();
+}
+// A header click: the rows that can be drawn, once, by that column (aisRowCmp); the rest keep their places after them.
+function aisSortOnce(){
+  const c = aisCenter(), live = new Map(aisVessels.map((v) => [String(v.mmsi), v])), rows = [], rest = [];
+  for(const k of aisList.order){
+    const v = live.get(k) || (aisList.last.get(k) || {}).v;
+    if(!v){ rest.push(k); continue; }
+    rows.push({k, v, rng: c ? distTo(c, {lat: v.lat, lon: v.lon}) : null,
+               brg: c ? Math.round(azTo(c, {lat: v.lat, lon: v.lon})) : null, cpa: live.has(k) ? aisCpa(v) : null});
+  }
+  rows.sort(aisRowCmp);
+  aisList.order = rows.map((r) => r.k).concat(rest); saveAisList();
 }
 let aisRebuildHead = false;
 // The RANK of a CPA state - see the block comment. Lower sorts first, and it is applied
@@ -10768,34 +10887,38 @@ function tcpaCell(c){
   return (c.closing ? "" : "-") + tcpaFmt(c.tcpaS);
 }
 function renderAisTable(){
-  const panel=$("#aisTablePanel"); if(!panel || panel.style.display==="none") return;
+  // A HIDDEN CARD STILL ACQUIRES (2026-10-10): the list's order is the order the CONSOLE acquired its contacts, so it is
+  // kept on every poll, card open or not - no CPA, nothing drawn.
+  const panel=$("#aisTablePanel");
+  if(!panel || panel.style.display==="none"){ const c0 = aisCenter();
+    aisListUpdate(aisVessels.map(v => ({v, rng: c0 ? distTo(c0, {lat: v.lat, lon: v.lon}) : null})), c0, aisHeard(), aisBeyondRpts);
+    return; }
   updateAisRangeRow();
   const el=$("#aisTableBody"); if(!el) return;
   const c=aisCenter();
-  // CPA is computed ONCE PER ROW here, not inside the comparator: a sort calls its
-  // comparator O(n log n) times and cpa() builds a tangent frame each call.
-  let rows=aisVessels.map(v=>({v, rng:c?distTo(c,{lat:v.lat,lon:v.lon}):null,
+  // CPA is computed ONCE PER ROW here, not inside a comparator: a sort calls its comparator
+  // O(n log n) times and cpa() builds a tangent frame each call.
+  const live=aisVessels.map(v=>({v, rng:c?distTo(c,{lat:v.lat,lon:v.lon}):null,
                                   brg:c?Math.round(azTo(c,{lat:v.lat,lon:v.lon})):null,
                                   cpa:aisCpa(v)}));
-  rows.sort(aisRowCmp);                                   // area scoped by /api/ais
-  // ⚠ THE CAP IS APPLIED ONCE, HERE, AND THE HEADLINE COUNTS WHAT IS DRAWN. It used to be
-  // applied at the forEach alone, so the status line said "94 vessels" over sixty rows with
-  // the range note underneath reading "whole lake — all contacts". A count the operator
-  // cannot reconcile with what they can see reads as a fault in the feed, and there was
-  // nothing on the card saying otherwise.
-  const AIS_MAX_ROWS = 60;
-  const shown = rows.slice(0, AIS_MAX_ROWS);
+  // THE LIST, IN ITS OWN ORDER (aisListUpdate, 2026-10-10): every contact the operator has not removed, live or held on
+  // its last report. There is no row cap any more - the list scrolls (max-height:46vh), and a cap cut whatever sorted
+  // last, which in the order of acquisition is the newest contact.
+  const list = aisListUpdate(live, c, aisHeard(), aisBeyondRpts);
+  const nIn = list.filter(x => x.state === "live" && !x.beyond).length, nOut = list.filter(x => x.beyond).length,
+        nLost = list.filter(x => x.state === "lost").length;
+  const held = (nOut ? " · " + nOut + " out of range" : "") + (nLost ? " · " + nLost + " not reporting" : "");
   // STATUS LINE - always present, so an empty table says WHY (offline vs warming up vs
   // connected-but-nothing-in-range) instead of an ambiguous blank, and NAMES the live
   // source so a feed that cannot cover this area is obvious at a glance.
   // ⚠ NO innerHTML HERE ANY MORE. This line carries "nearest 0.2 nm", which changes on EVERY
   // update, so `statusEl.innerHTML = status` rebuilt the whole line - at the top of the card -
-  // eight seconds apart, for ever. The rows underneath were carefully patched in place while
-  // the headline above them was thrown away and re-parsed. It is three fixed spans now (dot,
-  // main, faint note) and only their TEXT is written, through the same setCellText that edits
-  // a text node instead of replacing it.
+  // eight seconds apart, for ever. It is three fixed spans now (dot, main, faint note) and only
+  // their TEXT is written, through the same setCellText that edits a text node instead of
+  // replacing it.
   const srcLbl = aisSrcLabel() || "";
-  const nearest = rows.length && rows[0].rng!=null ? fmtNm(rows[0].rng)+" nm" : null;
+  let nearM = null; for(const r of live) if(r.rng!=null && (nearM==null || r.rng<nearM)) nearM = r.rng;
+  const nearest = nearM!=null ? fmtNm(nearM)+" nm" : null;
   let stDot, stMain, stNote = "";
   if(aisState==="offline"){        stDot="#d9534f"; stMain="AIS service offline"; stNote=aisNote||""; }
   else if(aisState==="error"){     stDot="#d9534f"; stMain="AIS feed error";
@@ -10808,55 +10931,38 @@ function renderAisTable(){
   // range" rather than "nothing is working". `nearest_km` is the nearest COLLECTED contact,
   // which the client cannot work out for itself - the range filter runs on the server, so
   // the browser never sees the vessels that were excluded.
-  else if(aisState==="empty" || !rows.length){
+  else if(aisState==="empty" || !live.length){
     const col = aisArea && aisArea.collected, near = aisArea && aisArea.nearest_km;
     const inner = (col > 0 && near != null)
       ? `none within ${aisAreaLabel()} · nearest ${nmRound(near)} nm of ${col} tracked`
       : `no vessels in ${aisAreaLabel()} yet`;
-    stDot="#e8a13f"; stMain="connected"; stNote=[srcLbl, inner].filter(Boolean).join(" · ");
+    stDot="#e8a13f"; stMain="connected" + held; stNote=[srcLbl, inner].filter(Boolean).join(" · ");
   }
+  // ⚠ THE HEADLINE COUNTS THE ROWS THE OPERATOR CAN SEE, by what they are: in range, struck out of range, dimmed not
+  // reporting. A count the operator cannot reconcile with the rows reads as a fault in the feed.
   else { stDot="#3fbf6b";
-         stMain=(shown.length < rows.length
-                   ? `${shown.length} of ${rows.length} vessels`
-                   : `${rows.length} vessel${rows.length!=1?"s":""}`) + ` · ${aisAreaLabel()}`;
+         stMain=`${nIn} vessel${nIn!=1?"s":""} in ${aisAreaLabel()}` + held;
          stNote=[srcLbl, nearest?("nearest "+nearest):""].filter(Boolean).join(" · "); }
   // PATCHED IN PLACE, NOT REBUILT. This used to assign el.innerHTML every poll, so every
   // 8 s the entire body was destroyed and re-created. The list SCROLLS (max-height:46vh),
   // so that reset the scroll position while you were reading it, dropped any text selection
   // mid-copy, and flashed. Rows are keyed by MMSI and reused: only cells whose text actually
-  // changed are written, re-sorting MOVES the existing node rather than making a new one,
-  // and contacts that drop out are removed. Nothing the operator is interacting with is
-  // destroyed, so scroll position and selection simply survive.
+  // changed are written, a row moves (insertBefore) only when the operator moved it, and only
+  // a row the operator removed is removed. Scroll position and selection simply survive.
   ensureAisSkeleton(el);
-  aisPaintHead(el);                       // no-op unless the sort moved
+  aisPaintHead(el);                       // no-op after the first paint
   const stDotEl = el.querySelector("#aisStDot");
   if(stDotEl.style.color !== stDot) stDotEl.style.color = stDot;
   setCellText(el.querySelector("#aisStMain"), stMain);
   setCellText(el.querySelector("#aisStNote"), stNote ? " · " + stNote : "");
   const table = el.querySelector("#aisRowsTable"), body = el.querySelector("#aisRowsBody");
-  // ⚠⚠ AN EMPTY SNAPSHOT IS EVERY CONTACT MISSING AT ONCE, and this returned ABOVE the
-  // grace sweep - so the whole body was wiped on the first empty update while ONE missing
-  // contact got a full update of grace and a dimmed row saying so. That asymmetry is the rest
-  // of what Andy reported on 2026-09-08 ("The entire AIS traffic card blinks and resets data
-  // with each update"): the feeder empties the list on ANY throw, so a single bad poll blanked
-  // a card the operator was reading, scroll position and all.
-  // It falls through now. `shown` is empty so the update loop is a no-op, the row-cap loop is
-  // a no-op, and the sweep below marks every row missed, dims it, says so in its title, and
-  // removes it on the SECOND consecutive miss - exactly what one missing contact already gets.
-  // ⚠ AND THE TABLE STAYS VISIBLE WHILE ROWS ARE HELD, or the grace would be invisible:
-  // hiding the table shows the operator an empty card either way, which is the thing being
-  // fixed. It hides only when there is nothing left to show.
-  const holding = body.children.length > 0;
-  table.style.display = (rows.length || holding) ? "" : "none";
-  if(!rows.length && !holding){ body.textContent = ""; return; }
-
+  table.style.display = list.length ? "" : "none";
   // The live rows, DERIVED from the DOM rather than remembered in a parallel map - a map
   // would go stale the moment the card is closed and reopened, or the body cleared above.
   const existing = new Map();
   for(const tr of body.children) existing.set(tr.dataset.mmsi, tr);
-
-  shown.forEach((r, i) => {
-    const v = r.v, key = String(v.mmsi);
+  list.forEach((x, i) => {
+    const r = x.r, v = r.v, key = x.k;
     let tr = existing.get(key);
     if(tr) existing.delete(key); else { tr = aisMakeRow(); tr.dataset.mmsi = key; }
     const col = AIS_COL[v.cat] || AIS_COL.unknown;
@@ -10869,10 +10975,17 @@ function renderAisTable(){
     setCellText(tr.cells[1], r.rng!=null ? fmtNm(r.rng) : "–");
     setCellText(tr.cells[2], r.brg!=null ? r.brg + "°" : "–");
     setCellText(tr.cells[3], v.sog!=null ? String(v.sog) : "–");
-    setCellText(tr.cells[4], cpaCell(r.cpa));
-    setCellText(tr.cells[5], tcpaCell(r.cpa));
-    // A contact that reported in THIS update is not stale, however it looked a moment ago.
-    if(tr.dataset.miss !== "0"){ tr.dataset.miss = "0"; tr.style.opacity = ""; }
+    // (held on a last report there is nothing current to project: no CPA)
+    setCellText(tr.cells[4], x.state === "live" ? cpaCell(r.cpa) : "–");
+    setCellText(tr.cells[5], x.state === "live" ? tcpaCell(r.cpa) : "–");
+    // ONE RED LINE THROUGH THE WHOLE ROW out of range - a stripe on every cell, so it runs unbroken across the gaps
+    // between the cells' text where a text-decoration would not; dimmed when not reporting. Written only on a change.
+    const look = x.state + (x.beyond ? "+beyond" : "");
+    if(tr.dataset.state !== look){
+      tr.dataset.state = look;
+      tr.style.opacity = x.state === "lost" ? "0.45" : "";
+      for(const td of tr.cells) td.style.backgroundImage = x.beyond ? AIS_OUT_LINE : "";
+    }
     // The row's own tip carries what the narrow columns cannot: the TIME to that closest
     // approach, the hull, and where it is bound. Same facts as the chart hover, so the
     // two never disagree about a contact.
@@ -10880,50 +10993,25 @@ function renderAisTable(){
                   v.beam!=null ? Math.round(v.beam)+" m beam" : null].filter(Boolean).join(" · ");
     const title = aisTypeLabel(v) + " · COG "
       + (v.cog!=null ? Math.round(v.cog) + "°" : "–")
-      + (r.cpa ? " · " + cpaText(r.cpa) : "")
+      + (x.state === "live" && r.cpa ? " · " + cpaText(r.cpa) : "")
       + (size ? " · " + size : "")
       + (v.dest ? " · → " + v.dest : "")
-      + " · " + Math.round(v.age) + "s ago";
+      + (x.state === "live" ? " · " + Math.round(v.age) + "s ago"
+         + (x.beyond ? " · OUT OF RANGE (beyond " + aisAreaLabel() + "), still reporting" : "")
+         : x.state === "out" ? " · OUT OF RANGE (beyond " + aisAreaLabel() + ") on her report of " + Math.round(x.age + (v.age || 0)) + "s ago"
+         : " · NOT REPORTING - her last report, " + Math.round(x.age + (v.age || 0)) + "s ago")
+      + (x.state === "live" ? "" : " · x removes her; she comes back if she comes back into range");
     // ⚠ THROUGH setTip: `tr.title` is "" while this row is the hovered one, so the
     // inequality is always true then and the old line re-attached the native tip on the very
     // next render pass rather than only when the age ticked over.
     if(tr.title !== title) setTip(tr, title);
     if(body.children[i] !== tr) body.insertBefore(tr, body.children[i] || null);  // move, not remake
   });
-  // ⚠⚠ AND A CONTACT CUT BY THE ROW CAP IS NOT A CONTACT THAT STOPPED REPORTING. `existing`
-  // is built from the DOM and emptied only by the loop above, so a ship that had a row last
-  // poll and merely steamed out to rank 61st fell into the grace sweep below - dimmed to
-  // 0.45 and titled "no report in this update", with its LAST numbers frozen under a label
-  // asserting the opposite of the truth. Driven on a 94-contact feed: the contact reported
-  // healthily (3 s old, 12 kn), its row showed 7.2 nm while it was at 17 nm and "12s ago"
-  // while it had just reported, and on the next poll - still reporting - it vanished. Its
-  // row goes NOW, without the grace: the grace below is for a contact the FEED lost.
-  // For any feed of AIS_MAX_ROWS or fewer this loop body never runs.
-  for(const r of rows.slice(AIS_MAX_ROWS)){
-    const k = String(r.v.mmsi), tr = existing.get(k);
-    if(tr){ existing.delete(k); tr.remove(); }
-  }
-  // ⚠ A CONTACT MISSING FROM ONE UPDATE IS NOT A CONTACT THAT HAS GONE. AIS is intermittent
-  // by nature and the show-radius filter runs on the server, so a ship sitting near the range
-  // edge drops out of one snapshot and returns in the next. Removing its row the instant it
-  // missed made it BLINK in and out every 8 s, which is half of what Andy reported
-  // (2026-09-08: "The entire AIS traffic card blinks and resets data with each update").
-  // Reproduced with a synthetic feed dropping one contact on alternate polls.
-  //
-  // It is held for ONE update, DIMMED and saying so in its title, then removed on the second
-  // consecutive miss. Held - not refreshed: its numbers are the ones it last reported and the
-  // row is visibly faded, so this never shows stale data as though it were live. One update of
-  // grace is the smallest thing that stops the flicker; two consecutive misses is a contact
-  // that really has stopped reporting, and it goes.
-  for(const tr of existing.values()){
-    const miss = (parseInt(tr.dataset.miss || "0", 10) || 0) + 1;
-    if(miss >= 2){ tr.remove(); continue; }
-    tr.dataset.miss = String(miss);
-    tr.style.opacity = "0.45";
-    const base = (tr.title || "").split(" · no report")[0];
-    tr.title = base + " · no report in this update — holding the last one";
-  }
+  // Only a row the operator removed is not in the list.
+  for(const tr of existing.values()) tr.remove();
 }
+// One red line through a row's every cell, 2 px, across its middle (the out-of-range rows).
+const AIS_OUT_LINE = "linear-gradient(transparent calc(50% - 1px), #d9534f calc(50% - 1px), #d9534f calc(50% + 1px), transparent calc(50% + 1px))";
 // The card's fixed furniture, built once. Everything below it is patched, never replaced.
 function ensureAisSkeleton(el){
   if(el.querySelector("#aisRowsBody")) return;
@@ -10937,6 +11025,41 @@ function ensureAisSkeleton(el){
     +`<tbody id="aisRowsBody"></tbody></table>`;
   aisRebuildHead = true;
   aisPaintHead(el);
+  // THE OPERATOR'S HANDS ON THE LIST (2026-10-10), delegated on the body and bound once with it: the x removes a contact,
+  // and a row's GRIP drags it (only the grip, so text in the rest of the row can still be selected to copy an MMSI). The
+  // drop line shows where it will land - above the row under the pointer, or below the last.
+  const body = el.querySelector("#aisRowsBody");
+  let dragKey = null, mark = null;
+  const unmark = () => { if(mark){ mark.style.boxShadow = ""; mark = null; } };
+  body.addEventListener("click", (e) => {
+    const x = e.target.closest(".aisDel"); if(!x) return;
+    const tr = x.closest("tr"); if(tr && tr.dataset.mmsi) aisRemove(tr.dataset.mmsi);
+  });
+  body.addEventListener("dragstart", (e) => {
+    const g = e.target.closest && e.target.closest(".aisGrip"), tr = g && g.closest("tr");
+    if(!tr){ e.preventDefault(); return; }
+    dragKey = tr.dataset.mmsi;
+    try{ e.dataTransfer.setData("text/plain", dragKey); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setDragImage(tr, 8, 8); }catch(err){}
+  });
+  const target = (e) => {
+    const tr = e.target.closest && e.target.closest("tr"); if(!tr || !tr.dataset.mmsi) return null;
+    const b = tr.getBoundingClientRect(), below = e.clientY > b.top + b.height / 2;
+    return {tr, before: below ? (tr.nextElementSibling ? tr.nextElementSibling.dataset.mmsi : null) : tr.dataset.mmsi, below};
+  };
+  body.addEventListener("dragover", (e) => {
+    if(dragKey == null) return;
+    e.preventDefault();
+    const t = target(e); if(!t) return;
+    if(mark !== t.tr){ unmark(); mark = t.tr; }
+    mark.style.boxShadow = t.below ? "inset 0 -2px 0 #39c0ff" : "inset 0 2px 0 #39c0ff";
+  });
+  body.addEventListener("drop", (e) => {
+    if(dragKey == null) return;
+    e.preventDefault();
+    const t = target(e), k = dragKey; dragKey = null; unmark();
+    if(t) aisMoveTo(k, t.before);
+  });
+  body.addEventListener("dragend", () => { dragKey = null; unmark(); });
 }
 // The header, repainted only when the sort MOVES. It is the one part of the card that is
 // rebuilt rather than patched, and that is safe because nothing in it is scrollable or
@@ -10948,16 +11071,17 @@ function aisPaintHead(el){
   const row = el.querySelector("#aisHeadRow"); if(!row || !aisRebuildHead) return;
   aisRebuildHead = false;
   const head = "padding:2px 5px;color:var(--ink-faint);cursor:pointer;user-select:none";
+  // (no arrow: a click sorts the list ONCE and it then stays in the order shown - new contacts join at the bottom - so
+  // an arrow would claim an order the list is not kept in)
   row.innerHTML = AIS_HEAD_COLS.map(([k, label, align]) => {
-    const on = aisSort.key === k;
-    const arrow = on ? (aisSort.dir === 1 ? " ▴" : " ▾") : "";
-    const style = head + ";text-align:" + align + (on ? ";color:var(--ink)" : "");
+    const style = head + ";text-align:" + align;
+    const once = " - once: the list then stays in that order, new contacts joining at the bottom; click again to reverse";
     const title = k === "cpa"
-      ? "Closest point of approach. Sorts CLOSING contacts first (nearest miss, then "
-        + "soonest), then those holding station, then those already opening."
-      : "Sort by " + label;
-    return `<td data-sort="${k}" style="${style}" title="${title}">${label}${arrow}</td>`;
-  }).join("");
+      ? "Sort by closest point of approach: CLOSING contacts first (nearest miss, then "
+        + "soonest), then those holding station, then those already opening" + once
+      : "Sort by " + label + once;
+    return `<td data-sort="${k}" style="${style}" title="${title}">${label}</td>`;
+  }).join("") + `<td style="${head}"></td>`;
   // ONE delegated listener on the row, bound once - a listener per cell would be
   // re-attached on every repaint and leak.
   if(!row.dataset.bound){
@@ -10971,12 +11095,16 @@ function aisPaintHead(el){
 function aisMakeRow(){
   const cell = "padding:2px 5px;white-space:nowrap";
   const tr = document.createElement("tr");
-  tr.innerHTML = `<td style="${cell}"><span class="aisMk">&#9650;</span> <span class="aisNm"></span></td>`
+  tr.innerHTML = `<td style="${cell}"><span class="aisGrip" draggable="true" title="Drag to move this contact up or down the list" `
+    +`style="cursor:grab;color:var(--ink-faint);padding-right:3px">&#10303;</span>`
+    +`<span class="aisMk">&#9650;</span> <span class="aisNm"></span></td>`
     +`<td style="${cell};text-align:right"></td>`
     +`<td style="${cell};text-align:right"></td>`
     +`<td style="${cell};text-align:right"></td>`
     +`<td style="${cell};text-align:right"></td>`
-    +`<td style="${cell};text-align:right"></td>`;
+    +`<td style="${cell};text-align:right"></td>`
+    +`<td class="aisDel" title="Remove from the list - it comes back if it comes back into range" `
+    +`style="${cell};text-align:center;cursor:pointer;color:var(--ink-faint)">&#215;</td>`;
   return tr;
 }
 // Writing an identical string still collapses a selection inside that node, so check first.

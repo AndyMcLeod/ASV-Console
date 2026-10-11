@@ -61,6 +61,35 @@
 //     TCPA placed BEFORE cpa                                      -> 17d
 //     a PAST cpa printed as a countdown                           -> 17e
 //     holding station given an invented time of zero              -> 17f
+//
+// AND FOR THE LIST'S OWN ORDER (2026-10-10: "Structure this cards contacts by order of acquisition then do not
+// reshuffle..."), twenty-five more mutations RUN on scratch copies, all twenty-five killed. They retired 6-6e (the
+// grace sweep: dim on one miss, remove on two) and 21-22b (the 60-row cap), which pinned what he asked to be changed:
+//     the server's reports beyond the range are ignored           -> 6l
+//     the held query names every contact                          -> 6l
+//     the poll does not name the held contacts                    -> 6m
+//     the renderer drops the beyond reports                       -> 21
+//     a hidden card drops the beyond reports                      -> 6i
+//     a removed contact's return asks only whether she reports    -> 6k
+//     the x arms her on reporting only, not on being in range     -> 6k
+//     newcomers go to the TOP                                     -> 6, 6b, 6d, 6e, 6i, 6f
+//     the list re-sorted by range on every update                 -> 6, 6b, 6d, 6i, 6f
+//     a contact the feed no longer sends is dropped               -> 6b, 6c, 6j
+//     out of range and not reporting swapped                      -> 6b, 6j
+//     a live (test) contact beyond the range is not struck        -> 6j
+//     the headline counts every live row as in range              -> 21b
+//     a removed contact never comes back                          -> 6d, 6e, 6h
+//     a removed contact comes back at once, still in range        -> 6d, 6h
+//     a drop lands AFTER the row, not before it                   -> 6f
+//     the order is not saved                                      -> 6g
+//     the renderer sorts the list again                           -> 21
+//     a row cap again (first draft of 21 missed it: fixed)        -> 21
+//     no red line out of range                                    -> 22b
+//     the whole row is draggable                                  -> 22c
+//     a hidden card acquires nothing (the FIRST build did this)   -> 6i
+//     a poll the feed did not answer arms a removed contact       -> 6h
+//     an x pressed while the feed is down arms her                -> 6h
+//     any feed state counts as answered                           -> 6h
 //     the row template loses a cell (last column silently blank)  -> 19
 //
 // ⚠⚠ AND THE FIRST RUN OF THOSE TWELVE REPORTED 0 KILLED, WHICH WAS THE RUNNER AND NOT THE
@@ -203,78 +232,226 @@ check("5. re-sorting MOVES the existing node rather than rebuilding it",
       () => /insertBefore\(tr,\s*body\.children\[i\]/.test(RENDER),
       "insertBefore on a node already in the tree is a move, not a copy");
 
-// 6. The other half of a patch: rows for contacts that are gone must go, or the list grows
-// forever and shows traffic that is no longer there.
-//
-// ⚠ BUT NOT ON THE FIRST MISS, since 2026-09-08. AIS is intermittent and the show-radius
-// filter runs on the server, so a ship near the range edge drops out of one snapshot and is
-// back in the next; removing its row the instant it missed made it BLINK in and out every
-// 8 s. Reproduced with a feed dropping one contact on alternate polls. It is held for ONE
-// update - dimmed, and saying so in its title, so stale data is never shown as live - and
-// removed on the SECOND consecutive miss. Both halves are asserted: a list that never
-// forgets is the fault this check was written for in the first place.
-check("6. a contact gone for two updates is removed...",
-      () => /if\(miss >= 2\)\{\s*tr\.remove\(\); continue; \}/.test(RENDER),
-      "whatever has stopped reporting is stale, and must not sit there looking live");
-
-check("6b. ...but ONE missed update only dims it, keeping the row and its node",
-      () => /tr\.dataset\.miss = String\(miss\)/.test(RENDER)
-            && /tr\.style\.opacity = "0\.45"/.test(RENDER)
-            && /no report in this update/.test(RENDER),
-      "AIS is intermittent: a single gap is not a contact that has gone");
-
-check("6c. ...and a contact that reports again is un-dimmed in the same pass",
-      () => /if\(tr\.dataset\.miss !== "0"\)\{ tr\.dataset\.miss = "0"; tr\.style\.opacity = ""; \}/.test(RENDER),
-      "or the first gap would leave it faded for the rest of the session");
-
-// 6d. BEHAVIOURAL, AND IT IS THE ONE THAT GUARDS THE REPORTED FAULT. 6-6c are source shape,
-// and a mutation that simply set `miss = 2` walked straight past all three: every line they
-// look for was still there, doing the wrong thing. So the real sweep is lifted out of
-// renderAisTable and driven over two updates against fake rows.
+// 6-6g. THE LIST IS THE LIST'S, NOT THE FEED'S (Andy, 2026-10-10: "The jumpy characteristic of the AIS card has
+// returned. Structure this cards contacts by order of acquisition then do not reshuffle. Once a vessel is out of
+// selected range, one line through it in red. allow the user to scroll contacts. Allow the user to drag contacts to
+// selected position. Like the top position. Allow the user to delete a contact, but bring it back if it comes back
+// into range."). It retired the grace sweep these checks used to pin - dim on one missed update, remove on two - and the
+// sort re-applied on every update: a contact that leaves the feed now STAYS, struck through in red where its last
+// report puts it out of range and dimmed where it does not, until the operator removes it.
+//   DRIVEN: the page's own aisListUpdate, aisRemove, aisMoveTo, aisSortOnce, saveAisList and the list's state are lifted
+// out and fed a sequence of updates, with a stub store, a flat distance (111 km a degree) and a 5 km range. Positions are
+// due north of the boat at (0, 0); 0.01 degrees is 1,110 m.
+const LIST = (() => {
+  const a = H.indexOf("const AIS_LIST_KEY"), b = H.indexOf("})();", H.indexOf("const aisList = (function(){"));
+  if (a < 0 || b < 0) throw new Error("anchor gone: the AIS list's state (AIS_LIST_KEY / aisList)");
+  return H.slice(a, b + 5);
+})();
+const listSandbox = (store) => new Function("store", [
+  "let aisVessels = [], aisArea = {mode: 'sea', show_km: 5}, renders = 0, aisSort = {key: 'rng', dir: 1}, aisState = 'ok';",
+  "let aisBeyondRpts = [];",
+  "const lsGet = (k, f) => (k in store ? JSON.parse(store[k]) : f), lsSet = (k, v) => { store[k] = JSON.stringify(v); };",
+  "const renderAisTable = () => { renders++; }, aisCenter = () => ({lat: 0, lon: 0}), azTo = () => 0, aisCpa = () => null;",
+  "const distTo = (a, b) => Math.hypot(b.lat - a.lat, b.lon - a.lon) * 111000;",
+  // the page's renderer, renamed, with its card hidden: what a poll does while the operator has the card closed
+  "const $ = (s) => (s === '#aisTablePanel' ? {style: {display: 'none'}} : null);",
+  grab("renderAisTable").replace("function renderAisTable(", "function renderHidden("),
+  grab("nullLast"), grab("cpaRank"), grab("aisRowCmp"), LIST, grab("aisHeard"), grab("aisBeyond"),
+  grab("saveAisList"), grab("aisListUpdate"), grab("aisRemove"), grab("aisMoveTo"), grab("aisSortOnce"),
+  grab("aisHeldQuery"),
+  "return {",
+  // st: the feed's state after the poll (pollAIS): 'ok'/'empty' answered; 'offline', 'error', 'connecting' did not.
+  // far: the server's `beyond` - its reports of held contacts it still collects beyond the range
+  "  feed: (vs, c = {lat: 0, lon: 0}, st = 'ok', far = []) => { aisVessels = vs; aisState = st; aisBeyondRpts = far;",
+  "    return aisListUpdate(vs.map((v) => ({v, rng: distTo(c, v), brg: 0, cpa: null})), c, aisHeard(), aisBeyondRpts); },",
+  "  heldQuery: () => aisHeldQuery(),",
+  "  hidden: (vs, far = []) => { aisVessels = vs; aisBeyondRpts = far; aisState = 'ok'; renderHidden(); },",
+  "  range: (km) => { aisArea = {mode: 'sea', show_km: km}; },",
+  "  order: () => aisList.order.slice(), removed: () => [...aisList.removed], remove: aisRemove, move: aisMoveTo,",
+  "  sortOnce: () => { aisSort = {key: 'rng', dir: 1}; aisSortOnce(); }, renders: () => renders };",
+].join("\n"))(store);
+const ship = (mmsi, km) => ({ mmsi, lat: km / 111, lon: 0, name: "SHIP " + mmsi });
+const states = (rows) => rows.map((x) => x.k + ":" + x.state).join(" ");
 {
-  const at = RENDER.indexOf("for(const tr of existing.values()){");
-  if (at < 0) throw new Error("anchor gone: the stale-row sweep in renderAisTable");
-  let k = RENDER.indexOf("{", at), depth = 0, end = -1;
-  for (;;) { const c = RENDER[k];
-    if (c === "{") depth++; else if (c === "}") { depth--; if (!depth) { end = k + 1; break; } } k++; }
-  const sweep = new Function("existing", RENDER.slice(at, end));
-  const mkRow = () => ({ dataset: {}, style: {}, title: "DELTA · tug",
-                         gone: false, remove() { this.gone = true; } });
-
-  const tr = mkRow();
-  sweep(new Map([["444", tr]]));                       // update 1: no report
-  const afterOne = { gone: tr.gone, miss: tr.dataset.miss, opacity: tr.style.opacity,
-                     saysSo: /no report/.test(tr.title) };
-  sweep(new Map([["444", tr]]));                       // update 2: still no report
-  const afterTwo = { gone: tr.gone };
-
-  check("6d. DRIVEN: one missed update holds the row, two removes it",
-        () => afterOne.gone === false && afterOne.miss === "1"
-              && afterOne.opacity === "0.45" && afterOne.saysSo && afterTwo.gone === true,
-        () => "after 1 miss " + JSON.stringify(afterOne) + ", after 2 gone=" + afterTwo.gone);
+  const L = listSandbox({});
+  L.feed([ship(1, 3), ship(2, 1)]);                                  // two first seen together: nearest first
+  const first = L.order().join(",");
+  L.feed([ship(3, 0.5), ship(1, 3), ship(2, 1)]);                    // a third, NEARER than both: still at the bottom
+  const second = L.order().join(",");
+  L.feed([ship(2, 1), ship(1, 3.2), ship(3, 0.4)]);                  // every range moves: nothing moves in the list
+  const third = L.order().join(",");
+  check("6. CONTACTS STAND IN THE ORDER THEY WERE ACQUIRED, AND NOTHING THE FEED DOES RESHUFFLES THEM: two first seen "
+        + "together go nearest first, a third goes to the bottom however near it is, and moving ranges move no row",
+        () => first === "2,1" && second === "2,1,3" && third === "2,1,3",
+        () => "after the first update " + first + ", the second " + second + ", the third " + third
+            + " (the shipped card sorted by range on every update: 3,2,1)");
+  // a contact missing from the feed: held on its last report - OUT OF RANGE where that report puts it beyond 5 km from
+  // the boat, NOT REPORTING where it does not
+  const held = L.feed([ship(2, 1)], { lat: -2.5 / 111, lon: 0 });    // the boat 2.5 km south: 1 at 5.7 km, 3 at 2.9 km
+  check("6b. A CONTACT THE FEED NO LONGER SENDS STAYS ON ITS LAST REPORT, IN ITS PLACE: struck out of range where that "
+        + "report is beyond the range, dimmed as not reporting where it is not - and removed by nothing but the operator",
+        () => states(held) === "2:live 1:out 3:lost" && L.order().join(",") === "2,1,3",
+        () => states(held) + " (want 2:live 1:out 3:lost; the shipped card dimmed both and removed them on the next update)");
+  const empty = L.feed([]);
+  check("6c. ... and an EMPTY update (the feeder empties the list on any throw) keeps every row on its last report",
+        () => empty.length === 3 && empty.every((x) => x.state !== "live"),
+        () => states(empty));
 }
-
-// ⚠⚠ 6e. AND AN EMPTY UPDATE IS EVERY CONTACT MISSING AT ONCE. The per-contact grace 6d
-// drives was unreachable for it: `if(!rows.length){ body.textContent = ""; return; }` sat
-// ABOVE the sweep, so one empty snapshot wiped the whole body instantly - scroll position,
-// selection and all - while a single missing contact got a dimmed row and an update of grace.
-// The feeder empties the list on ANY throw, so one bad poll did it. That is the rest of what
-// was reported: "The entire AIS traffic card blinks and resets data with each update."
-// ⚠ 6d IS THE PAIR. It proves what the sweep DOES; this proves the empty path reaches it.
-// Neither is worth much alone: a gate that lets an empty update through to a sweep that did
-// not hold would still blink, and a sweep that holds but is never reached is dead code.
 {
-  const R = RENDER.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
-  const gated = /if\(!rows\.length && !holding\)\{ body\.textContent = ""; return; \}/.test(R);
-  const shows = /table\.style\.display = \(rows\.length \|\| holding\)/.test(R);
-  const bare = /if\(!rows\.length\)\{ body\.textContent = ""; return; \}/.test(R);
-  check("6e. an EMPTY update falls through to the grace sweep instead of wiping the body - "
-        + "and the table stays visible while rows are held, or the grace would be invisible",
-        () => gated && shows && !bare,
-        () => "empty-path return gated on held rows: " + gated
-            + "; table visible while holding: " + shows
-            + "; the old unconditional wipe still present: " + bare
-            + " (asserted on comment-stripped source)");
+  // REMOVED, AND BACK WHEN IT COMES BACK INTO RANGE - both ways round
+  const L = listSandbox({});
+  L.feed([ship(1, 1), ship(2, 2), ship(3, 3)]);
+  L.remove("2");                                                     // removed while IN range
+  const gone = L.feed([ship(1, 1), ship(2, 2), ship(3, 3)]);         // still in range: stays removed
+  const left = L.feed([ship(1, 1), ship(3, 3)]);                     // out of the feed: now it may come back
+  const back = L.feed([ship(1, 1), ship(2, 2), ship(3, 3)]);         // back in range: back, at the bottom
+  check("6d. A CONTACT THE OPERATOR REMOVES WHILE IN RANGE STAYS OFF THE LIST WHILE IT STAYS IN RANGE, and comes back - "
+        + "at the bottom, as a contact acquired again - when it has left the range and come back into it",
+        () => !gone.some((x) => x.k === "2") && !left.some((x) => x.k === "2") && L.order().join(",") === "1,3,2"
+              && back.some((x) => x.k === "2" && x.state === "live"),
+        () => "while in range: " + states(gone) + "; once gone: " + states(left) + "; back: " + states(back));
+  L.feed([ship(1, 1), ship(2, 2)]);                                  // 3 leaves the feed: held, not reporting
+  L.remove("3");                                                     // removed while NOT in range
+  const stillOut = L.feed([ship(1, 1), ship(2, 2)]);
+  const reports = L.feed([ship(1, 1), ship(2, 2), ship(3, 3)]);
+  check("6e. ... and one removed while out of range (or not reporting) comes back the next time it reports in range",
+        () => !stillOut.some((x) => x.k === "3") && reports.some((x) => x.k === "3" && x.state === "live")
+              && L.order().join(",") === "1,2,3",
+        () => "removed, still out: " + states(stillOut) + "; reporting in range: " + states(reports));
+}
+{
+  // ONLY AN ANSWERED POLL IS NEWS. A failed poll, an erroring feed and the warm-up after the layer comes back on all
+  // arrive EMPTY; a contact removed in range has not left it, and must not come back on the next good poll.
+  const L = listSandbox({});
+  L.feed([ship(1, 1), ship(2, 2)]);
+  L.remove("2");
+  for (const st of ["offline", "error", "connecting"]) L.feed([], undefined, st);
+  const after = L.feed([ship(1, 1), ship(2, 2)]);
+  // the acceptance case: a poll the feed DID answer, with her absent, is her leaving - and she comes back
+  const M = listSandbox({});
+  M.feed([ship(1, 1), ship(2, 2)]);
+  M.remove("2");
+  M.feed([ship(1, 1)], undefined, "ok");
+  const back = M.feed([ship(1, 1), ship(2, 2)]);
+  // and an x pressed WHILE the feed is down: her absence from an empty model is not her leaving either
+  const N = listSandbox({});
+  N.feed([ship(1, 1), ship(2, 2)]);
+  N.feed([], undefined, "offline");
+  N.remove("2");
+  const downX = N.feed([ship(1, 1), ship(2, 2)]);
+  check("6h. A REMOVED CONTACT IS NOT BROUGHT BACK BY A POLL THE FEED DID NOT ANSWER (offline, error, warming up: all "
+        + "empty), nor when the x was pressed while it was down - and IS by an answered poll with her absent, once she "
+        + "reports again",
+        () => !after.some((x) => x.k === "2") && !downX.some((x) => x.k === "2")
+              && back.some((x) => x.k === "2" && x.state === "live"),
+        () => "after failed polls: " + states(after) + " (want no 2); removed while down, then reporting: " + states(downX)
+            + " (want no 2); after an answered poll without her: " + states(back));
+}
+{
+  // THE ORDER OF ACQUISITION IS THE CONSOLE'S, NOT THE CARD'S: polls with the card closed still acquire, in order
+  const L = listSandbox({});
+  L.hidden([ship(1, 3), ship(2, 1)]);
+  L.hidden([ship(3, 0.5), ship(1, 3), ship(2, 1)]);
+  const order = L.order().join(",");
+  // ... and the server's report of one that sailed out while it was closed: struck when it opens
+  L.hidden([ship(3, 0.5), ship(2, 1)], [ship(1, 6)]);
+  const opened = (L.feed([ship(3, 0.5), ship(2, 1)]).find((x) => x.k === "1") || {}).state;
+  check("6i. CONTACTS ACQUIRED WHILE THE CARD IS CLOSED TAKE THEIR PLACE IN THE ORDER OF ACQUISITION (the page's own "
+        + "renderer, card hidden): the first two nearest first, the later one below them - and one that sailed out of "
+        + "range meanwhile is out of range when the card opens",
+        () => order === "2,1,3" && opened === "out",
+        () => "order after two polls with the card closed: '" + order + "' (want 2,1,3; the first build acquired only "
+            + "while the card was drawing); the one that sailed out, on opening: " + opened + " (want out)");
+}
+{
+  // BEYOND THE RANGE, STILL REPORTING: the server serves the simulator's test contacts wherever they are placed, so a
+  // live row CAN be past the range - and it is struck like any other
+  const L = listSandbox({});
+  L.feed([ship(1, 1), ship(2, 2)]);
+  const rows = L.feed([ship(1, 1), ship(990000001, 7)]);            // 2 held at 2 km; a test contact live at 7 km
+  const by = (k) => rows.find((x) => x.k === String(k)) || {};
+  check("6j. A CONTACT REPORTING FROM BEYOND THE RANGE IS STRUCK TOO (a test contact, which the server serves wherever it "
+        + "is placed) - live, with its CPA, but beyond; one in range is not, and one held inside the range is not",
+        () => by(990000001).state === "live" && by(990000001).beyond === true && by(1).beyond === false
+              && by(2).state === "lost" && by(2).beyond === false,
+        () => rows.map((x) => x.k + ":" + x.state + (x.beyond ? "+beyond" : "")).join(" ")
+            + " (want 1:live 2:lost 990000001:live+beyond)");
+  // and REMOVED there, she is out of range though still reporting: widening the range past her brings her back, while
+  // one removed INSIDE the range stays removed through the same widening - she never left it
+  L.remove("990000001");
+  L.remove("1");
+  const still = L.feed([ship(1, 1), ship(990000001, 7)]);
+  L.range(10);
+  const wide = L.feed([ship(1, 1), ship(990000001, 7)]);
+  const bw = (k) => wide.find((x) => x.k === String(k));
+  // the x itself knows she is beyond: the range widened before the next poll still brings her back
+  const M = listSandbox({});
+  M.feed([ship(1, 1), ship(990000001, 7)]);
+  M.remove("990000001");
+  M.range(10);
+  const quick = M.feed([ship(1, 1), ship(990000001, 7)]);
+  check("6k. ... and a contact removed while reporting from BEYOND the range comes back when the range is widened past "
+        + "her - she has come into range - while one removed inside the range stays removed through the same widening",
+        () => !still.some((x) => x.k === "990000001") && !!bw(990000001) && bw(990000001).beyond === false && !bw(1)
+              && quick.some((x) => x.k === "990000001"),
+        () => "removed, range 5 km: " + states(still) + "; widened to 10 km: " + states(wide)
+            + " (want 990000001 back and in range, 1 still removed); widened before the next poll: " + states(quick));
+}
+{
+  // ONE THAT SAILS OUT OF RANGE. The server stops sending her in `vessels` the moment she crosses the line, so the
+  // card's last report of her is from just INSIDE it - 4.9 km of a 5 km range. Named in `held`, the server reports
+  // her beyond it (`beyond`), and she is struck there; without that report she could only read as not reporting.
+  const L = listSandbox({});
+  L.feed([ship(1, 1), ship(2, 4.9)]);
+  L.feed([ship(1, 1)]);                                              // she has crossed: gone from the live set
+  const q = L.heldQuery();
+  const out = L.feed([ship(1, 1)], undefined, "ok", [ship(2, 5.4)]); // the server's report of her, beyond
+  const two = out.find((x) => x.k === "2") || {};
+  const back = L.feed([ship(1, 1), ship(2, 4.8)]);                   // and she turns back in: live, in her place
+  // the control: no report of her beyond the range (she stopped transmitting) - held where she was, not reporting
+  const M = listSandbox({});
+  M.feed([ship(1, 1), ship(2, 4.9)]);
+  const silent = (M.feed([ship(1, 1)]).find((x) => x.k === "2") || {}).state;
+  check("6l. A CONTACT THAT SAILS OUT OF RANGE IS STRUCK WHERE SHE IS NOW, not dimmed on her last report from just "
+        + "inside the line: the card names her in `held`, the server's `beyond` report of her puts her out of range, "
+        + "and she is live in her place again when she turns back in - while one that falls silent inside is not reporting",
+        () => q === "&held=2" && two.state === "out" && two.beyond === true && Math.abs(two.r.rng - 5400) < 1
+              && back.map((x) => x.k + ":" + x.state).join(" ") === "1:live 2:live" && silent === "lost",
+        () => "held query '" + q + "' (want &held=2); her row with the server's report: " + two.state
+            + (two.beyond ? "+beyond" : "") + " at " + (two.r && Math.round(two.r.rng)) + " m (want out+beyond at 5400); "
+            + "turned back in: " + states(back) + "; silent inside: " + silent + " (want lost)");
+  // the poll is what carries it: `held` on the request, `beyond` off the answer, and nothing left over from a failure
+  const POLL = grab("pollAIS");
+  check("6m. ... and the poll is what carries it: the request names the held contacts (aisHeldQuery), the answer's "
+        + "`beyond` is kept apart from aisVessels (the guard's model), and a failed poll clears it",
+        () => /\/api\/ais\?center=[^`]*\$\{aisHeldQuery\(\)\}`/.test(POLL)
+              && /aisBeyondRpts = \(d && Array\.isArray\(d\.beyond\)\) \? d\.beyond : \[\];/.test(POLL)
+              && /catch\(e\)\{[^}]*aisBeyondRpts=\[\];/.test(POLL) && !/aisVessels[^;\n]*d\.beyond/.test(POLL),
+        "pollAIS: " + POLL.slice(POLL.indexOf("const r=await fetch"), POLL.indexOf("const r=await fetch") + 110));
+}
+{
+  // THE OPERATOR'S ORDER: dragged to the top, and once by a header click - and kept across a reload
+  const store = {}, L = listSandbox(store);
+  L.feed([ship(1, 1), ship(2, 2), ship(3, 3)]);
+  L.move("3", "1");                                                  // dragged above the first: to the top
+  const dragged = L.order().join(",");
+  L.move("1", null);                                                 // dropped below the last
+  const bottom = L.order().join(",");
+  L.feed([ship(1, 1), ship(2, 2), ship(3, 3)]);
+  const held = L.order().join(",");
+  L.sortOnce();                                                      // a header click (range, ascending)
+  const sorted = L.order().join(",");
+  L.feed([ship(4, 0.2), ship(1, 1), ship(2, 2), ship(3, 3)]);        // a new and nearest contact: NOT sorted in
+  const after = L.order().join(",");
+  const reloaded = listSandbox(store).order().join(",");
+  check("6f. THE OPERATOR SETS THE ORDER: a contact dragged to the top stays there, and to the bottom stays there; a "
+        + "header click sorts the list ONCE - a newer, nearer contact still joins at the bottom",
+        () => dragged === "3,1,2" && bottom === "3,2,1" && held === "3,2,1" && sorted === "1,2,3" && after === "1,2,3,4",
+        () => "dragged to the top " + dragged + ", one to the bottom " + bottom + ", after an update " + held
+            + ", sorted by range once " + sorted + ", then a nearer newcomer " + after);
+  check("6g. ... and the order and the removals are the operator's across a reload (lsGet/lsSet, not the page's memory)",
+        () => reloaded === after,
+        () => "after a reload: " + reloaded + " (before it: " + after + ")");
 }
 
 // 7. BEHAVIOURAL. Writing an identical string to a text node still collapses a selection
@@ -528,8 +705,9 @@ check("8. the row template provides the marker and name spans the patch writes t
   const written = [];
   for (let i = 1; i < declared; i++)
     if (new RegExp("setCellText\\(tr\\.cells\\[" + i + "\\]").test(RENDER)) written.push(i);
+  // (the template has one cell more than the header declares: the x that removes a contact, 2026-10-10)
   check("19. the row template, the header and the renderer agree on the columns",
-        () => cells === declared && written.length === declared - 1,
+        () => cells === declared + 1 && /class="aisDel"/.test(MAKEROW) && written.length === declared - 1,
         declared + " columns declared, " + cells + " cells in the template, renderer writes "
           + (written.length ? "cells[" + written.join("], cells[") + "]" : "none")
           + "  (cell 0 is the name, written through .aisNm)");
@@ -539,101 +717,61 @@ check("8. the row template provides the marker and name spans the patch writes t
   const HEAD = grab("aisPaintHead");
   check("20. the header is repainted only when the sort MOVES, not on every poll",
         () => /!aisRebuildHead\) return;/.test(HEAD) && /aisRebuildHead = false;/.test(HEAD),
-        "gated on aisRebuildHead, which setAisSort and the skeleton builder set");
+        "gated on aisRebuildHead, which only the skeleton builder sets now - a click sorts the list once and the "
+          + "header carries no arrow claiming an order the list is not kept in");
   check("20b. ... and its click listener is bound ONCE, not re-attached on every repaint",
         () => /row\.dataset\.bound/.test(HEAD),
         "a listener attached per repaint leaks one handler per sort click");
 }
 
 
-// ── 21-22. THE ROW CAP: what the headline counts, and who falls into the grace sweep ──
+// ── 21-22. NO CAP, NO SORT ON AN UPDATE, AND A HEADLINE THAT COUNTS WHAT IT SHOWS (2026-10-10) ──
 //
-// The table draws at most AIS_MAX_ROWS rows. The cap used to be applied at the forEach
-// alone, which left two faults in the same three lines.
-//
-// 21 - THE COUNT. The status line read `${rows.length} vessels` over sixty rows, with the
-// range note underneath reading "whole lake - all contacts". Driven on the 94-contact feed
-// the page's own comment cites from Lewes: "94 vessels · Lake Erie", sixty rows drawn, and
-// nothing anywhere saying 60 of 94. A count the operator cannot reconcile with what they
-// can see reads as a fault in the feed.
+// The card drew at most AIS_MAX_ROWS (60) rows of a list re-sorted on every update. In the order of acquisition a cap cuts
+// the NEWEST contact, and the re-sort was the jump Andy reported ("The jumpy characteristic of the AIS card has
+// returned"); the list scrolls instead (#aisTableBody, max-height:46vh). The headline counts the rows by what they are.
 {
-  // The headline expression itself, lifted out rather than retyped - a check that retyped
-  // it would keep passing with the page's copy deleted.
-  const at = RENDER.indexOf("stMain=(shown.length < rows.length");
-  const end = RENDER.indexOf("stNote=", at);
-  const src = at < 0 ? "" : RENDER.slice(at, end).replace(/^stMain=/, "").replace(/;\s*$/, "");
-  const headline = (nShown, nRows) => {
-    if (!src) return null;
-    return new Function("shown", "rows", "aisAreaLabel",
-                        "return " + src)({ length: nShown }, { length: nRows },
-                                         () => "Lake Erie");
-  };
-  const capped = headline(60, 94), uncapped = headline(55, 55), one = headline(1, 1);
-  check("21. the AIS headline counts the rows the operator can SEE, and says so when the "
-        + "table is capped",
-        () => capped === "60 of 94 vessels · Lake Erie"
-              && uncapped === "55 vessels · Lake Erie"
-              && one === "1 vessel · Lake Erie",
-        () => "94 in the feed -> \"" + capped + "\"; 55 -> \"" + uncapped + "\"; 1 -> \""
-            + one + "\". It read \"94 vessels\" over sixty rows, with the range note "
-            + "underneath saying \"whole lake - all contacts\"");
-  check("21b. ... and the cap is applied ONCE, so the count and the rows cannot disagree",
-        () => /const AIS_MAX_ROWS = 60;/.test(RENDER)
-              && /const shown = rows\.slice\(0, AIS_MAX_ROWS\);/.test(RENDER)
-              && /shown\.forEach\(\(r, i\) =>/.test(RENDER)
-              && !/rows\.slice\(0, 60\)/.test(RENDER),
-        "two slices is how the headline and the table came to be counting different things");
-}
-
-// 22 - THE FALSE "NO REPORT". `existing` is built from the DOM and emptied only by the
-// forEach, so a ship that had a row last poll and merely steamed out to rank 61st fell into
-// the grace sweep: dimmed to 0.45, stamped data-miss=1, and titled "no report in this
-// update" - with its LAST numbers frozen under a label asserting the opposite of the truth.
-// Driven on the same feed: the contact reported 3 s ago at 12 kn, its row still showed
-// 7.2 nm while it was at 17 nm, and on the next poll - still reporting - it vanished.
-//
-// ⚠ DRIVEN, LIKE 6d, because this is a loop over live state and a source grep passes just
-// as happily with the rows left in `existing`.
-{
-  const at = RENDER.indexOf("for(const r of rows.slice(AIS_MAX_ROWS)){");
-  check("22. a contact CUT BY THE CAP is dropped from the grace sweep, not dimmed as "
-        + "missing",
-        () => {
-          if (at < 0) return false;
-          let k = RENDER.indexOf("{", at), depth = 0, end = -1;
-          for (;;) { const c = RENDER[k];
-            if (c === "{") depth++; else if (c === "}") { depth--; if (!depth) { end = k + 1; break; } } k++; }
-          const cut = new Function("rows", "existing", "AIS_MAX_ROWS", RENDER.slice(at, end));
-          const mk = () => ({ dataset: {}, style: {}, title: "VESSEL 30 · passenger",
-                              gone: false, remove() { this.gone = true; } });
-          const kept = mk(), dropped = mk();
-          const rows = [{ v: { mmsi: 111 } }, { v: { mmsi: 222 } }];
-          const existing = new Map([["111", kept], ["222", dropped]]);
-          cut(rows, existing, 1);                       // cap of 1: row 222 is cut
-          // the cut row is GONE and out of `existing`, so the sweep below never sees it;
-          // the kept one is untouched and still there for the sweep to judge
-          return dropped.gone === true && existing.has("222") === false
-                 && kept.gone === false && existing.has("111") === true
-                 && kept.style.opacity === undefined && dropped.dataset.miss === undefined;
-        },
-        "it reported in THIS update - it is simply not in the top rows. Left in `existing` "
-        + "it was dimmed and told the operator it had stopped reporting, with stale numbers "
-        + "underneath, and removed on the NEXT poll while still reporting");
-  check("22b. ... and a feed at or under the cap never enters that loop at all",
-        () => {
-          if (at < 0) return false;
-          let k = RENDER.indexOf("{", at), depth = 0, end = -1;
-          for (;;) { const c = RENDER[k];
-            if (c === "{") depth++; else if (c === "}") { depth--; if (!depth) { end = k + 1; break; } } k++; }
-          const cut = new Function("rows", "existing", "AIS_MAX_ROWS", RENDER.slice(at, end));
-          const tr = { dataset: {}, style: {}, title: "x", gone: false,
-                       remove() { this.gone = true; } };
-          const existing = new Map([["111", tr]]);
-          cut([{ v: { mmsi: 111 } }], existing, 60);
-          return tr.gone === false && existing.has("111") === true;
-        },
-        "the ordinary case is every feed Andy has ever run: below the cap this must be a "
-        + "no-op, or 6-6d's grace is gone with it");
+  const R = RENDER.split("\n").map((l) => l.replace(/\/\/[^\n]*/, "")).join("\n");
+  check("21. THE LIST IS NOT SORTED ON AN UPDATE AND NOT CUT: no comparator, no row cap - the rows are the list's, "
+        + "drawn in its own order",
+        () => !/\.sort\(/.test(R) && !/AIS_MAX_ROWS|(?<!nm)\.slice\(0,/.test(R) && /aisListUpdate\(live, c, aisHeard\(\), aisBeyondRpts\)/.test(R)
+              && /list\.forEach\(\(x, i\) =>/.test(R) && /max-height:46vh;overflow:auto/.test(H),
+        "a sort on every update is the jump; a cap cuts the newest contact in the order of acquisition");
+  const at = R.indexOf("const nIn = "), end = R.indexOf("// STATUS LINE", at);
+  const heldSrc = RENDER.slice(RENDER.indexOf("const nIn = "), RENDER.indexOf("const held = "))
+                + RENDER.slice(RENDER.indexOf("const held = "), RENDER.indexOf("\n", RENDER.indexOf("const held = ")));
+  const main = RENDER.slice(RENDER.indexOf("stMain=`${nIn}"), RENDER.indexOf("stNote=[srcLbl, nearest"));
+  const headline = (list) => new Function("list", "aisAreaLabel",
+    heldSrc + "\nlet stMain;" + main + "return stMain;")(list, () => "5 nm");
+  // two live in range, two held out of range, one not reporting, and a TEST contact reporting from beyond the range
+  const L = [{ state: "live" }, { state: "live" }, { state: "out", beyond: true }, { state: "lost" },
+             { state: "out", beyond: true }, { state: "live", beyond: true }];
+  const h = at < 0 ? null : headline(L), one = at < 0 ? null : headline([{ state: "live" }]);
+  check("21b. ... and the headline counts what is drawn, by what it is: in range, out of range (reporting or not), not "
+        + "reporting",
+        () => h === "2 vessels in 5 nm · 3 out of range · 1 not reporting" && one === "1 vessel in 5 nm",
+        () => "two live, two struck held, one dimmed, one struck still reporting -> \"" + h + "\"; one live -> \""
+            + one + "\" (want 2 in / 3 out / 1 not reporting)");
+  // 22. ONLY A ROW THE OPERATOR REMOVED IS REMOVED - the one removal left in the renderer is of rows not in the list,
+  // and the list keeps every contact it has seen until the operator removes it (6b-6e)
+  check("22. the only row the renderer removes is one no longer in the list - which only the operator's x does",
+        () => /for\(const tr of existing\.values\(\)\) tr\.remove\(\);/.test(R)
+              && (R.match(/\.remove\(\)/g) || []).length === 1,
+        "the shipped card removed a row on its second missed update");
+  // 22b. THE RED LINE AND THE DIM, written on a change of state only (an unchanged row is not touched)
+  check("22b. ... out of range is ONE red line through the row - a stripe across every cell - and not reporting is dimmed; "
+        + "each written only when the row's state changes",
+        () => /const look = x\.state \+ \(x\.beyond \? "\+beyond" : ""\);/.test(R) && /if\(tr\.dataset\.state !== look\)\{/.test(R)
+              && /td\.style\.backgroundImage = x\.beyond \? AIS_OUT_LINE : ""/.test(R)
+              && /tr\.style\.opacity = x\.state === "lost" \? "0\.45" : ""/.test(R) && /#d9534f/.test(H.slice(H.indexOf("const AIS_OUT_LINE"), H.indexOf("const AIS_OUT_LINE") + 200)),
+        "a text-decoration would break between the cells; the stripe runs unbroken across them");
+  // 22c. THE OPERATOR'S HANDS: bound ONCE, in the skeleton builder behind its early return
+  check("22c. the x and the drag are delegated on the list body and bound once, with the skeleton - and only a row's "
+        + "GRIP drags, so the rest of the row stays selectable",
+        () => /addEventListener\("click"/.test(SKELETON) && /\.aisDel/.test(SKELETON) && /addEventListener\("dragstart"/.test(SKELETON)
+              && /addEventListener\("drop"/.test(SKELETON) && /\.aisGrip/.test(SKELETON)
+              && /class="aisGrip" draggable="true"/.test(MAKEROW) && !/<tr[^>]*draggable/.test(MAKEROW),
+        "a listener per repaint would leak one handler per update; a draggable row cannot have its text selected");
 }
 
 // ── 23. WHICH WAY THE LAYER DRAWS A SHIP: THE KEEP-OUT'S RULE, NOT HER COURSE (Andy, 2026-09-30, at the Port of Los

@@ -32,7 +32,10 @@ requested radius exceed what was collected and 7 fails, which would show nothing
 implying the sea beyond is empty. Put the shipped default back to 50 km - or to the 5 km one
 commit set on a misread of "5km" - and 11 and 8c fail; author the field at anything but the
 5 the default reads and 8c fails; fall back to a literal rather than the field's own default
-and 8h fails.
+and 8h fails. For the card's `held`/`beyond` (2026-10-10), three mutations RUN on scratch copies:
+stop reporting the held contacts beyond the range and 12 fails; put them in `vessels` (the
+guard's model) and 12 fails; report every contact beyond the range, named or not, and 12 and
+12b fail.
 """
 
 import io
@@ -320,6 +323,24 @@ try:
     bad = api(port, "/api/ais/test", {"lat": "x", "lon": None})
     check("10d. a contact with no position is refused in words, and nothing is placed",
           "error" in bad and not [v for v in api(port, sea)["vessels"] if v.get("src") == "test"], json.dumps(bad))
+
+    # 12. THE CARD'S HELD CONTACTS (2026-10-10). The AIS card keeps a contact until the operator removes her and strikes
+    # one out of range - but one that sails out stops arriving in `vessels`, so the page's last report of her is from
+    # just inside the line. Named in `held`, the ones COLLECTED beyond the range come back in `beyond`, ranged, apart
+    # from `vessels` (which the guard reads, and which must not change). 102 is inside 50 km, 104/105 beyond it, 7777
+    # was never collected.
+    dh = api(port, sea + "&held=102,104,105,7777")
+    bmm = sorted(v["mmsi"] for v in dh.get("beyond") or [])
+    vnames = sorted(v["name"] for v in dh["vessels"])
+    b104 = [v for v in dh.get("beyond") or [] if v["mmsi"] == 104]
+    check("12. contacts the card names in `held` are reported in `beyond` when collected past the range - ranged, and "
+          "apart from `vessels`, which is unchanged; one inside the range or never collected is not in it",
+          bmm == [104, 105] and vnames == ["SEA20", "SEA49", "SEA5"] and b104 and abs(b104[0]["range_m"] - 90000) < 500
+          and dh["area"]["shown"] == 3 and dh["count"] == 3,
+          json.dumps({"beyond": bmm, "vessels": vnames, "range_104": b104[0]["range_m"] if b104 else None}))
+    d_nh = api(port, sea)
+    check("12b. ... and nothing is reported beyond the range unless the card names it",
+          d_nh.get("beyond") == [], json.dumps({"beyond": d_nh.get("beyond")}))
 
 finally:
     try:
