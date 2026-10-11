@@ -22,6 +22,13 @@
 // own critical band (20 V) and its factory low-voltage alarm (23 V, `battery_v.warn`). So a battery's usable
 // span for this purpose runs down to `warn`, the alarm, and the 20% is of full - warn. An estimate, like the drain law.
 //
+// ⚠ ONLY WHILE HOME IS IN RANGE (Andy, 2026-10-11: "automatic RTH only when home is in range, otherwise an alert at 20%
+// with no automatic action"). From a visiting harbor with home the far end of a passage, the fuel home plus the reserve
+// is more than a full tank, so the RTH point stood above anything she could hold: the monitor read REACHED the moment
+// she was armed and sent an RTH the console then refused (doRTH certifies a return of 50 km at most). fuelWatch decides
+// which rule a point is under; out of range the monitor watches the reserve itself and only alerts. A DIESEL hull's rule
+// only ("Long range missions are not to be undertaken by the battery powered units"): a battery hull keeps the RTH point.
+//
 // Every function here is PURE: the page hands in the vessel, the speeds, the route and the distance home, and nothing
 // in this file commands anything.
 
@@ -114,6 +121,33 @@ export function rthLevel(model, need) {
 }
 
 /**
+ * WHICH RULE THE MONITOR WATCHES BY, FROM A POINT (Andy, 2026-10-11: "automatic RTH only when home is in range,
+ * otherwise an alert at 20% with no automatic action"). Home is IN RANGE when the console would route a return there
+ * (`farM` null - the page's rthTooFar, the test doRTH refuses by) and a FULL tank gets her there with the reserve (the
+ * RTH point is not above `full`). Then she is watched against the RTH point and sent home at it, as before. Otherwise -
+ * further than a return the console will route, beyond a full tank, or no home known - she is watched against the
+ * reserve itself (floor + reserve: 20% of the tank) and the console only alerts, for the operator to find a port.
+ *
+ * ⚠ A DIESEL HULL'S RULE ONLY (Andy, the same day: "Long range missions are not to be undertaken by the battery powered
+ * units. Consider this only for the diesel powered ASV"). A battery hull is ALWAYS watched against the RTH point and sent
+ * home at it, as before, however far home is: a battery boat out of range of home is set up wrong, and the loud REACHED
+ * (and doRTH's refusal past 50 km, "Set Home where she is") is the right thing to say. No home known: `level` null, not
+ * monitored, as before.
+ *
+ *   { mode: "rth" | "alert", level, why: null | "far" | "fuel" | "unknown" }   - `level` the one she is watched against
+ */
+export function fuelWatch(model, need, farM) {
+  if (!model) return null;
+  if (model.kind !== "fuel") return { mode: "rth", level: rthLevel(model, need), why: null };
+  const reserveLevel = model.floor + model.reserve;
+  if (Number.isFinite(farM)) return { mode: "alert", level: reserveLevel, why: "far" };
+  const rth = rthLevel(model, need);
+  if (rth == null) return { mode: "alert", level: reserveLevel, why: "unknown" };
+  if (rth > model.full) return { mode: "alert", level: reserveLevel, why: "fuel" };
+  return { mode: "rth", level: rth, why: null };
+}
+
+/**
  * THE MISSION AHEAD, WALKED: `legs` [{a: {e, n}, b: {e, n}, twKn, idx}] in a plane, from where she is now, each flown at
  * twKn through the water in the set `drift`; `level0` her level now (or null: the usage is still projected);
  * `homeNeedAt(p)` the energy home from a point (or null where it is unknown). Returns
@@ -166,6 +200,11 @@ export function projectMission(model, legs, drift, level0, homeNeedAt) {
  *   latch - the crossing is answered: sent now, or already on her way home.
  *   rearm - back above the RTH point by FUEL_REARM_FRAC of the span (refuelled, an override, a nearer home): the next
  *           crossing is acted on again.
+ *
+ * `o.alertOnly` (fuelWatch's "alert": home out of range, `rth` the reserve itself): reached, it is never a send - the
+ * alert IS the answer, so it latches at once and re-arms as above. The latch is not dropped when the rule changes: a
+ * boat alerted at 20% out of range that then comes into range is already below the RTH point, and the console does not
+ * override the port the operator chose with an RTH of its own; refueled, she re-arms.
  */
 export function rthDecision(o) {
   const res = { state: "unknown", send: false, latch: false, rearm: false };
@@ -179,6 +218,7 @@ export function rthDecision(o) {
   }
   res.state = "reached";
   if (o.acted) return res;
+  if (o.alertOnly) { res.latch = true; return res; }
   if (o.behavior === "rth") { res.latch = true; return res; }
   res.send = !!o.armed && !o.estop && !o.atHome && o.behavior !== "escape";
   res.latch = res.send;

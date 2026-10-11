@@ -20,6 +20,12 @@
 //         change after it stands, a point reached while she cannot be sent is sent the frame she can be;
 //   9     the wiring: one estimate of the way home for monitor and card, the monitor caught inside the frame handler,
 //         the build off the page's thread, the rows and the rehearsal row in the markup.
+//   HOME OUT OF RANGE (2026-10-11, Andy: "automatic RTH only when home is in range, otherwise an alert at 20% with no
+//   automatic action"): 6b-6c the decision and the rule (fuel.js fuelWatch: in range = a return doRTH would route AND
+//   a full tank reaching home with the reserve); 8e-8i the page's monitor - home 900 km off, past a full tank, across
+//   the change of rule, disarmed, no home: one alert at the reserve, nothing ever commanded; 9 one answer for monitor,
+//   projection and doRTH; 9e the row and the pill say which rule she is under. DIESEL HULLS ONLY (Andy: "Long range
+//   missions are not to be undertaken by the battery powered units"): 6d, 8j a battery hull keeps the RTH point.
 //   (The server's sim-only `level` on /api/cmd/energy is tests/energy_chartinfo.py 13-13c.)
 //
 // TEETH - twenty-one mutations RUN, each on a scratch copy of static/, tests/, vessels/ and asv_console.py, all caught:
@@ -44,6 +50,23 @@
 //   the card projecting with its own straight line home        -> 9
 //   the raster back on the page's thread                       -> 9c
 //   the sim's tick burning by another law than state() reports -> 0 (the line count: both copies, identical)
+// and fifteen more for the out-of-range rule (scratchpad mutate_fuelrange.py), all caught - the 15th SURVIVED the first
+// cut, because with her armed the page's own alert branch masks it; 8i (disarmed) was written for it:
+//   out of range still sends (alertOnly ignored in fuel.js)    -> 6b, 8i (armed, the page's alert branch masks it)
+//   the alert does not latch                                   -> 6b, 8e, 8g, 8i
+//   the distance test ignored                                  -> 6c, 8e, 8g, 8i, 9e
+//   past a full tank still in range                            -> 6c, 8f
+//   exactly a full tank counted out of range                   -> 6c
+//   no home: not watched at all                                -> 6c, 8h
+//   the alert at the floor, not the reserve                    -> 6c, 8e, 8f, 8g, 8h, 8i, 9e
+//   the page never asks the distance                           -> 8e, 8g, 8i, 9
+//   the monitor not told it is alert-only                      -> 8i
+//   the alert said on every frame                              -> 8e, 8i
+//   the latch dropped when the rule changes                    -> 8g
+//   the projection keeps the RTH point out of range            -> 9
+//   the row's label not switched / 'RTH due' out of range      -> 9e
+//   the pill keeps the RTH point out of range                  -> 9e
+//   a battery hull put under the long-range rule (a 16th)      -> 6d, 8j
 
 function __crash(e) {
   console.log("  FAIL 0. the suite itself CRASHED before finishing - " +
@@ -224,6 +247,38 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
               && t.near.state === "near" && t.ok.state === "ok" && !t.rearmLow.rearm && t.rearm.rearm
               && t.unknown.state === "unknown" && !t.unknown.send,
         () => Object.entries(t).map(([k, x]) => k + ":" + x.state + (x.send ? "+send" : "") + (x.latch ? "+latch" : "") + (x.rearm ? "+rearm" : "")).join(" "));
+  // HOME OUT OF RANGE (2026-10-11, Andy: "automatic RTH only when home is in range, otherwise an alert at 20% with no
+  // automatic action"): reached is never a send, armed and under way or not, and the alert latches at once.
+  const A = (o) => D({ alertOnly: true, ...o });
+  const a = { armed: A({}), going: A({ behavior: "rth" }), acted: A({ acted: true }), near: A({ level: 70 }),
+              rearmLow: A({ level: 63, acted: true }), rearm: A({ level: 67, acted: true }) };
+  check("6b. ... and OUT OF RANGE (alertOnly): reached is NEVER a send - armed and under way included - and latches at "
+        + "once (the alert is the answer); near and the re-arm as in range",
+        () => [a.armed, a.going].every((x) => x.state === "reached" && !x.send && x.latch) && !a.acted.send && !a.acted.latch
+              && a.near.state === "near" && !a.rearmLow.rearm && a.rearm.rearm,
+        () => Object.entries(a).map(([k, x]) => k + ":" + x.state + (x.send ? "+send" : "") + (x.latch ? "+latch" : "") + (x.rearm ? "+rearm" : "")).join(" "));
+  // WHICH RULE A POINT IS UNDER (fuel.js fuelWatch). The DriX's tank is 250 L: the reserve 50 L, the floor 0.
+  const W = (need, far) => F.fuelWatch(model, need, far);
+  const w = { inRange: W(11, null), atFull: W(200, null), pastFull: W(200.5, null), far: W(11, 60000), none: W(null, null) };
+  check("6c. HOME IN RANGE is a return the console would route (no `farM`) AND a full tank reaching it with the reserve: "
+        + "then the RTH point (floor + reserve + the fuel home); otherwise - too far, past a full tank, or no home known - "
+        + "the reserve itself (20% of the tank) and the alert",
+        () => w.inRange.mode === "rth" && near(w.inRange.level, 61, 1e-9) && w.atFull.mode === "rth" && near(w.atFull.level, 250, 1e-9)
+              && w.pastFull.mode === "alert" && w.pastFull.why === "fuel" && near(w.pastFull.level, 50, 1e-9)
+              && w.far.mode === "alert" && w.far.why === "far" && near(w.far.level, 50, 1e-9)
+              && w.none.mode === "alert" && w.none.why === "unknown" && F.fuelWatch(null, 11, null) === null,
+        () => Object.entries(w).map(([k, x]) => k + ":" + x.mode + "@" + x.level + (x.why ? "(" + x.why + ")" : "")).join(" "));
+  // ... A DIESEL HULL'S RULE ONLY (Andy: "Long range missions are not to be undertaken by the battery powered units.
+  // Consider this only for the diesel powered ASV"). The small-class boat's pack: full 26.5 V, alarm 23, reserve 0.7.
+  const zv = vessel("zboat_1800hs"), zm = F.energyModel(zv, zv.propulsion.speeds_kn.high);
+  const Z = (need, far) => F.fuelWatch(zm, need, far);
+  const z = { far: Z(0.5, 900000), pastFull: Z(5, null), none: Z(null, null), inRange: Z(0.5, null) };
+  check("6d. ... and a BATTERY hull is never under it: too far, past a full pack, or in range, she is watched against the "
+        + "RTH point (the fuel home + the reserve) as before; no home known, nothing is watched (as before)",
+        () => zm.kind === "battery" && ["far", "pastFull", "inRange"].every((k) => z[k].mode === "rth")
+              && near(z.far.level, F.rthLevel(zm, 0.5), 1e-9) && near(z.pastFull.level, F.rthLevel(zm, 5), 1e-9)
+              && z.pastFull.level > zm.full && z.none.mode === "rth" && z.none.level === null,
+        () => Object.entries(z).map(([k, x]) => k + ":" + x.mode + "@" + x.level).join(" "));
 }
 
 // ── 7. THE WATER DISTANCE HOME ────────────────────────────────────────────────────────────────────────────────────
@@ -273,17 +328,26 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
 {
   const v = vessel("drix08_em712"), model = F.energyModel(v, v.propulsion.speeds_kn.high);
   const AT_HOME = +(/const FUEL_AT_HOME_M = ([\d.]+);/.exec(H) || [])[1];
-  const world = () => {
-    const w = { banners: [], logs: [], sent: [], sup: true, need: 11 };
-    const mk = new Function("S", "asv", "fuelModel", "energyLevel", "fuelHomeNeed", "rthLevel", "rthDecision", "homeFieldTick",
-      "supervising", "showBanner", "logClient", "doRTH", "fuelSay", "fuelFmt", "FUEL_AT_HOME_M",
+  const RTH_MAX = 10 * +(/const NOGO_RADIUS_M = ([\d.]+);/.exec(H) || [])[1];
+  // The page's own fuelTick, fuelWatchAt (is home in range) and the out-of-range sentence, with the world stubbed:
+  // `need` the fuel home, `far` the distance rthTooFar refuses a return by (null: within it), `S.home` null for none.
+  const world = (mdl) => {
+    const m0 = mdl || model;
+    const w = { banners: [], logs: [], sent: [], sup: true, need: 11, far: null, S: { home: { lat: 0, lon: 0 } } };
+    const mk = new Function("S", "asv", "fuelModel", "energyLevel", "fuelHomeNeed", "rthTooFar", "fuelWatch", "rthLevel", "rthDecision",
+      "homeFieldTick", "supervising", "showBanner", "logClient", "doRTH", "fuelSay", "fuelFmt", "fmtDist", "FUEL_AT_HOME_M",
+      "FUEL_RESERVE_FRAC", "RTH_MAX_M",
       "let fuelRth = {acted: false, alerted: false};\nlet fuelNow = null, fuelErrSaid = false;\n" + grab("fuelTick")
+      + "\n" + grab("fuelWatchAt") + "\n" + grab("fuelOutOfRangeSay") + "\n" + grab("fuelReserveOf")
       + "\nreturn {tick: fuelTick, latch: () => ({...fuelRth}), now: () => fuelNow};");
-    w.api = mk({ home: { lat: 0, lon: 0 } }, { lat: 0.01, lon: 0 }, () => model, F.energyLevel,
-      () => ({ need: w.need, m: 5000, water: true, twKn: 8 }), F.rthLevel, F.rthDecision, () => {}, () => w.sup,
+    w.api = mk(w.S, { lat: 0.01, lon: 0 }, () => m0, F.energyLevel,
+      () => ({ need: w.need, m: 5000, water: true, twKn: 8 }), () => (w.far == null ? null : { m: w.far }), F.fuelWatch,
+      F.rthLevel, F.rthDecision, () => {}, () => w.sup,
       (t) => w.banners.push(t), (k, d) => w.logs.push([k, d]),
-      (o) => { w.sent.push(o); return Promise.resolve(); }, () => "the sentence", (m, x) => x.toFixed(1) + " L", AT_HOME);
-    w.frame = (fuel, o) => w.api.tick({ armed: true, estop: false, behavior: "survey", status: { fuel_l: fuel }, ...(o || {}) });
+      (o) => { w.sent.push(o); return Promise.resolve(); }, () => "the sentence", (m, x) => x.toFixed(1) + " L",
+      (m) => (m / 1000).toFixed(1) + " km", AT_HOME, F.FUEL_RESERVE_FRAC, RTH_MAX);
+    w.frame = (fuel, o) => w.api.tick({ armed: true, estop: false, behavior: "survey",
+      status: m0.kind === "fuel" ? { fuel_l: fuel } : { battery_v: fuel }, ...(o || {}) });
     return w;
   };
   // she runs down through the point (61 L) on a survey
@@ -325,17 +389,83 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
         () => C.sent.length === 0 && /already returning home/.test(C.banners[0] || "") && Dw.sent.length === 0
               && /supervising window/.test(Dw.banners[0] || ""),
         () => "going home: " + C.sent.length + " sent, '" + (C.banners[0] || "").slice(-40) + "'; viewer: " + Dw.sent.length + " sent");
+  // ── HOME OUT OF RANGE (2026-10-11, Andy: "automatic RTH only when home is in range, otherwise an alert at 20% with no
+  // automatic action"). The tank is 250 L, so the reserve is 50 L; in range the RTH point here would be 61 L.
+  const E = world(); E.far = 900000;
+  for (const l of [70, 61, 60, 55, 50.5]) E.frame(l);
+  const quietAbove = E.banners.length === 0 && E.sent.length === 0;
+  E.frame(49.9); E.frame(49); E.frame(45);
+  const alertOnce = E.banners.length === 1 && E.sent.length === 0 && /AT THE 20% RESERVE/.test(E.banners[0])
+                   && /900\.0 km away, further than the 50\.0 km/.test(E.banners[0]) && /NOT being sent home: find a port/.test(E.banners[0])
+                   && E.logs.length === 1 && E.logs[0][1].sent === false && E.logs[0][1].watch === "alert" && E.logs[0][1].out_of_range === "far";
+  E.frame(100); E.frame(49.8);
+  check("8e. HOME OUT OF RANGE (900 km, past the " + (RTH_MAX / 1000) + " km a return is routed): nothing at 61 L - where the "
+        + "old rule sent an RTH the console then refused - nor anywhere above the 50 L reserve; at it ONE alert, naming the "
+        + "distance and 'find a port', logged sent: false, and NOTHING commanded on any frame; refueled, the next crossing "
+        + "alerts again",
+        () => quietAbove && alertOnce && E.banners.length === 2 && E.sent.length === 0,
+        () => "above: " + (quietAbove ? "quiet" : E.banners.length + " banner(s) / " + E.sent.length + " sent") + "; banners "
+            + E.banners.length + ", sent " + E.sent.length + "; " + JSON.stringify((E.banners[0] || "").slice(0, 160)));
+  const Fw = world(); Fw.need = 210;     // within the distance, but the RTH point would be 260 L, past a full tank
+  Fw.frame(60); Fw.frame(55); const fQuiet = Fw.banners.length === 0;
+  Fw.frame(49.9);
+  check("8f. ... and PAST A FULL TANK (the fuel home 210 L, the RTH point 260 L of a 250 L tank): out of range too - the "
+        + "alert at the reserve, its words saying a full tank does not reach home, nothing sent",
+        () => fQuiet && Fw.banners.length === 1 && /even a full tank does not get her there/.test(Fw.banners[0]) && Fw.sent.length === 0,
+        () => "banners " + JSON.stringify(Fw.banners.map((t) => t.slice(0, 140))) + ", sent " + Fw.sent.length);
+  const G = world(); G.far = 900000;
+  G.frame(49.9);                          // alerted out of range...
+  G.far = null; G.frame(49.5); G.frame(49);   // ...then home comes into range, she is below its RTH point (61 L)
+  const noOverride = G.sent.length === 0 && G.banners.length === 1;
+  G.frame(100); G.frame(60.9);            // refueled, in range: the RTH point acts as before
+  check("8g. ACROSS THE CHANGE OF RULE: alerted out of range, then home in range with her already below its RTH point - "
+        + "nothing is sent (the port the operator chose is not overridden); refueled, the in-range crossing sends her home",
+        () => noOverride && G.sent.length === 1 && /LOW FUEL/.test(G.sent[0].why),
+        () => "after coming into range: " + (noOverride ? "nothing" : G.sent.length + " sent") + "; after the refuel: " + G.sent.length + " sent");
+  // DISARMED (alongside at the visiting harbor, say): the alert must latch on its own - with the in-range decision a
+  // disarmed boat is never latched, so a refuel could never re-arm it and the next crossing would pass unsaid.
+  const I = world(); I.far = 900000;
+  I.frame(49.9, { armed: false }); I.frame(49, { armed: false });
+  const iOnce = I.banners.length === 1 && I.sent.length === 0;
+  I.frame(100, { armed: false }); I.frame(49.8, { armed: false });
+  check("8i. ... out of range and DISARMED: one alert, nothing sent - and refueled, the next crossing is alerted again "
+        + "(the alert latches by itself; it does not wait on a send that out of range never comes)",
+        () => iOnce && I.banners.length === 2 && I.sent.length === 0,
+        () => "banners " + I.banners.length + " (want 2: one per crossing), sent " + I.sent.length);
+  const Hn = world(); Hn.S.home = null;
+  Hn.frame(60); Hn.frame(49.9);
+  check("8h. NO HOME SET: out of range as well - watched at the reserve and alerted there, nothing sent (it was not "
+        + "monitored at all)",
+        () => Hn.banners.length === 1 && /No home is set/.test(Hn.banners[0]) && Hn.sent.length === 0,
+        () => "banners " + JSON.stringify(Hn.banners.map((t) => t.slice(0, 140))) + ", sent " + Hn.sent.length);
+  // A BATTERY HULL, home 900 km off: the RTH point as before - she is sent home (doRTH then refuses past 50 km, in words:
+  // "Set Home where she is"), never left to an alert; and with no home, nothing is watched, as before.
+  const zv = vessel("zboat_1800hs"), zm = F.energyModel(zv, zv.propulsion.speeds_kn.high);
+  const Jb = world(zm); Jb.far = 900000; Jb.need = 0.5;
+  Jb.frame(24.0); Jb.frame(23.9);       // the RTH point is 23.0 + 0.7 + 0.5 = 24.2 V
+  const Kb = world(zm); Kb.S.home = null; Kb.frame(24.0); Kb.frame(23.6);
+  check("8j. A BATTERY HULL OUT OF RANGE keeps the RTH point - sent home ONCE at it (no 'find a port'), however far home "
+        + "is; with no home set, nothing is watched (the long-range rule is the diesel hulls' alone)",
+        () => Jb.sent.length === 1 && /LOW FUEL/.test(Jb.sent[0].why) && !Jb.banners.some((t) => /find a port/.test(t))
+              && Kb.banners.length === 0 && Kb.sent.length === 0,
+        () => "out of range: " + Jb.sent.length + " sent, banners " + JSON.stringify(Jb.banners.map((t) => t.slice(0, 60)))
+            + "; no home: " + Kb.banners.length + " banner(s), " + Kb.sent.length + " sent");
 }
 
 // ── 9. THE WIRING ─────────────────────────────────────────────────────────────────────────────────────────────────
 {
   const PROJ = grab("fuelProjection"), TICK = grab("fuelTick"), NEED = grab("fuelHomeNeed"), BUILD = grab("homeFieldTick");
-  check("9. ONE ESTIMATE OF THE WAY HOME: the monitor and every step of the card's projection both ask fuelHomeNeed - water "
-        + "distance at the TRANSIT speed (an RTH flies the transit role) - so the card cannot promise a mission the monitor "
-        + "will cut short",
-        () => /fuelHomeNeed\(model, \{lat: asv\.lat, lon: asv\.lon\}\)/.test(TICK) && /fuelHomeNeed\(model, fr\.fromEN\(q\.e, q\.n\)\)/.test(PROJ)
+  const WATCH = grab("fuelWatchAt");
+  check("9. ONE ESTIMATE OF THE WAY HOME AND ONE ANSWER TO 'IN RANGE': the monitor and every step of the card's projection "
+        + "both ask fuelWatchAt - fuelHomeNeed (water distance at the TRANSIT speed: an RTH flies the transit role) and "
+        + "rthTooFar, the test doRTH refuses a return by - so the card cannot promise a mission the monitor will cut short, "
+        + "and the monitor cannot send an RTH doRTH would refuse; out of range a step's level is the reserve itself",
+        () => /fuelWatchAt\(model, \{lat: asv\.lat, lon: asv\.lon\}\)/.test(TICK) && /fuelWatchAt\(model, fr\.fromEN\(q\.e, q\.n\)\)/.test(PROJ)
+              && /w\.mode === "rth" \? \(w\.h \? w\.h\.need : null\) : 0/.test(PROJ)
+              && /fuelHomeNeed\(model, ll\)/.test(WATCH) && /rthTooFar\(ll, S\.home\)/.test(WATCH) && /fuelWatch\(model, /.test(WATCH)
+              && /rthTooFar\(\{lat:asv\.lat,lon:asv\.lon\}, S\.home\)/.test(grab("doRTH"))
               && /roleSpeed\("transit"\)/.test(NEED) && /homeDistFrom\(ll\)/.test(NEED),
-        "fuelTick / fuelProjection / fuelHomeNeed");
+        "fuelTick / fuelProjection / fuelWatchAt / doRTH / fuelHomeNeed");
   check("9b. the monitor is CAUGHT inside the frame handler (a fault in it must not take the guard's frame down, and is said "
         + "once), the card's rows likewise, and the send is caught too",
         () => /try\{ fuelTick\(s\); \}catch\(e\)\{ if\(!fuelErrSaid\)/.test(grab("onState"))
@@ -352,6 +482,39 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
         () => /id="mi_fuel"/.test(mission) && /id="mi_rthpt"/.test(mission) && /showBanner\(why\+"RTH: "\+\(plan\.routed/.test(grab("doRTH"))
               && /id="cmFuelRth"/.test(H) && /cmGate\("#cmFuelRth",\s+canSpawn\(\)/.test(H) && /cmRow\("#cmFuelRth"/.test(H),
         "markup / doRTH / chart menu");
+}
+
+// ── 9e. THE ROW AND THE PILL OUT OF RANGE (the page's renderFuelRows and fuelPillLine, the DOM stubbed) ──────────────
+{
+  const v = vessel("drix08_em712"), model = F.energyModel(v, v.propulsion.speeds_kn.high);
+  const RTH_MAX = 10 * +(/const NOGO_RADIUS_M = ([\d.]+);/.exec(H) || [])[1];
+  const mk = new Function("$", "fuelModel", "setCellText", "setTip", "fuelProjection", "fuelFmt", "fuelPct", "fmtMS", "fmtDist",
+    "fuelSay", "S", "RTH_MAX_M", "FUEL_RESERVE_FRAC", "N0",
+    "let fuelNow = N0;\n" + grab("renderFuelRows") + "\n" + grab("fuelPillLine") + "\n" + grab("fuelOutOfRangeSay") + "\n"
+    + grab("fuelReserveOf") + "\nreturn {rows: renderFuelRows, pill: fuelPillLine};");
+  const run = (N) => {
+    const els = {}, $ = (s) => (els[s] = els[s] || { className: "vv", text: "", tip: "" });
+    const api = mk($, () => model, (e, t) => { e.text = t; }, (e, t) => { e.tip = t; }, () => null, (m, x) => x.toFixed(1) + " L",
+      (m, x) => Math.round(100 * (x - m.floor) / (m.full - m.floor)), (s) => s + " s", (m) => (m / 1000).toFixed(1) + " km",
+      () => "the sentence", { home: { lat: 0, lon: 0 }, behavior: "survey" }, RTH_MAX, F.FUEL_RESERVE_FRAC, N);
+    api.rows();
+    const r = $("#mi_rthpt");
+    return { label: $("#mi_rthpt_k").text, row: r.text, cls: r.className, tip: r.tip, pill: api.pill() };
+  };
+  const hFar = { need: 11, m: 900000, water: false, twKn: 8 }, hNear = { need: 11, m: 5000, water: true, twKn: 8 };
+  const far = F.fuelWatch(model, 11, 900000), inr = F.fuelWatch(model, 11, null);
+  const out = run({ model, level: 60, rth: far.level, h: hFar, w: { ...far, h: hFar, farM: 900000 }, state: "ok" });
+  const hit = run({ model, level: 49, rth: far.level, h: hFar, w: { ...far, h: hFar, farM: 900000 }, state: "reached" });
+  const inR = run({ model, level: 70, rth: inr.level, h: hNear, w: { ...inr, h: hNear, farM: null }, state: "ok" });
+  check("9e. OUT OF RANGE THE ROW IS THE LOW-FUEL ALERT, and says so: its label, the reserve and how far above it she is, "
+        + "REACHED with 'find a port' (no 'RTH due'), a tip naming why home is out of range and that nothing will be "
+        + "commanded, and the pill likewise; in range it is the RTH point, unchanged",
+        () => out.label === "Low fuel" && out.row === "50.0 L · 10.0 L above" && /will NOT send her home/.test(out.tip)
+              && /900\.0 km away, further than the 50\.0 km/.test(out.tip) && /Low-fuel alert: 50\.0 L/.test(out.pill)
+              && /does not send her home/.test(out.pill)
+              && hit.row === "REACHED · 50.0 L · find a port" && hit.cls === "vv critical"
+              && inR.label === "RTH point" && inR.row === "61.0 L · 9.0 L above" && /^\nRTH point: 61\.0 L/.test(inR.pill),
+        () => JSON.stringify({ out: [out.label, out.row], hit: [hit.row, hit.cls], inR: [inR.label, inR.row], pill: out.pill.slice(0, 90) }));
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");

@@ -2791,6 +2791,23 @@ of the operator.
    simulator, the chart menu's **Set fuel to the RTH point** puts the tank just below it,
    to rehearse the alert and the shift home (`/api/cmd/energy {level}`, sim only).
 
+   **Home out of range: an alert at 20%, nothing commanded (2026-10-11, diesel hulls only).** On a
+   diesel hull the automatic RTH applies only while home is **in range**: within the 50 km the console
+   will route a return, and near enough that a full tank gets her there with the 20% reserve.
+   Otherwise (a passage, work from a visiting harbor with home the far end of one, or no home set)
+   the second row is labeled **Low fuel** and watches 20% of the tank itself: when she comes down to
+   it the console alerts once (banner, alerts card, history, `fuel_rth` with `watch: "alert"`) so you
+   can find a port to refuel, and commands nothing; she carries on with what she was doing. The rule
+   is decided from where she is, for the monitor and for every step of the card's projection alike. A
+   boat alerted out of range that then comes into range already below its RTH point is not sent home
+   on top of the port you chose; once refueled, the RTH point applies again. Before this the RTH point
+   applied at any range: with home at the far end of a passage it sits near or above a full tank, so
+   the console read LOW FUEL at or soon after the start and sent an RTH that it then refused past
+   50 km. The chart menu's rehearsal row reads **Set fuel to the low-fuel alert** while home is out
+   of range. **A battery-powered hull is not for long-range work** (Andy's call) and keeps the RTH
+   point at any range: with home out of its reach the console reads LOW FUEL and sends her home, and
+   an RTH past 50 km is refused with "Set Home where she is".
+
    **A survey broken off for a return home, and Continue (2026-10-11).** When an RTH takes her
    off a survey under way (the fuel RTH above, or your own RTH press) the console records where
    she broke off: the survey, the line, how far along it and which way she was running it, the

@@ -366,7 +366,7 @@
     <div class="cmi" id="cmAisClear"><span>Clear test contacts</span><span class="cmk" id="cmAisClearK"></span></div>
     <!-- THE FUEL RTH REHEARSAL (2026-10-11, simulator only): the sim's tank (or pack) put at the RTH point, so the alert
          and the shift to RTH can be seen in a minute rather than after hours of running. -->
-    <div class="cmi" id="cmFuelRth"><span>Set fuel to the RTH point</span><span class="cmk" id="cmFuelRthK"></span></div>
+    <div class="cmi" id="cmFuelRth"><span id="cmFuelRthT">Set fuel to the RTH point</span><span class="cmk" id="cmFuelRthK"></span></div>
     <div class="cmsep"></div>
     <div class="cmi" id="cmCopy"><span>Copy position</span><span class="cmk" id="cmCopyK"></span></div>
   </div>
@@ -854,7 +854,7 @@
         <div class="vrow"><span class="vk">Length</span><span class="vv" id="mi_len" title="Total routed run length (ENC-routed path, incl. the approach)">--</span></div>
         <div class="vrow"><span class="vk">To end</span><span class="vv" id="mi_toend" title="Remaining distance and ~time to the end of the plan (live SOG when moving, else the plan speed)">--</span></div>
         <div class="vrow"><span class="vk" id="mi_fuel_k">Fuel</span><span class="vv" id="mi_fuel" title="Projected fuel for the rest of the mission: what it takes to the end of the plan (and home, when the run ends in an RTH), and what she has left there. Each leg at the speed the plan flies it, in the set.">--</span></div>
-        <div class="vrow"><span class="vk">RTH point</span><span class="vv" id="mi_rthpt" title="The level at which she must turn for home to arrive with 20% of her tank: the fuel home from where she is, by water, at the transit speed, plus the 20% reserve. When she reaches it the console alerts and sends her home.">--</span></div>
+        <div class="vrow"><span class="vk" id="mi_rthpt_k">RTH point</span><span class="vv" id="mi_rthpt" title="The level at which she must turn for home to arrive with 20% of her tank: the fuel home from where she is, by water, at the transit speed, plus the 20% reserve. When she reaches it the console alerts and sends her home. With home out of range the row is the low-fuel alert: 20% of the tank, alerted once, nothing commanded.">--</span></div>
         <div class="vrow"><span class="vk">End mode</span><span class="vv" id="mi_endmode" style="text-transform:uppercase;" title="Where this run leaves the boat. Reads RTH whenever an end-of-plan Return-to-Home will chain — a Go-To, Transit or Survey under End of Plan = RTH ends at HOME, not at its last waypoint.">--</span></div>
         <div class="vrow"><span class="vk">Run time</span><span class="vv" id="v_runtime" title="Live once Started: time elapsed, estimated time remaining to finish the whole run, and percent complete. Ticks from Start, including the approach to the survey.">--</span></div>
         <div class="vrow"><span class="vk">Survey</span><span class="vv" id="v_surveydur" title="Estimated survey run time (coverage lines + inter-line transits) at the plan speed, from the last Punch Out">--</span></div>
@@ -962,7 +962,7 @@ import { V, NOGO_ENF, nogo, sea } from "/static/js/state.js";
 import { cpa as cpaOf, cpaAlong, routeTrack, legGroundMs, hullBox, KN_TO_MS } from "/static/js/targets.js";
 // THE MISSION'S FUEL, AND THE POINT SHE MUST TURN FOR HOME (2026-10-11). Pure: the burn law, the walk of the mission and
 // the monitor's decision (fuel.js), and her WATER distance home (home_field.js, built in a worker). The page acts on them.
-import { energyModel, energyLevel, homeEnergy, rthLevel, projectMission, rthDecision,
+import { energyModel, energyLevel, homeEnergy, rthLevel, projectMission, rthDecision, fuelWatch,
          FUEL_RESERVE_FRAC, FUEL_REARM_FRAC } from "/static/js/fuel.js";
 import { homeGrid, fieldDistM, cellOf } from "/static/js/home_field.js";
 // AIS CONTACTS AS KEEP-OUTS (2026-09-25): the hull box each broadcasts (20 x 8 m assumed where it
@@ -7965,6 +7965,13 @@ function updateRunTime(){
 // state frame (they reach a hidden page when its timers barely do) and alerts and sends her home at the point.
 //   ⚠ ONE ESTIMATE OF THE WAY HOME, `fuelHomeNeed`, for the monitor and for every step of the projection - so the card
 // cannot promise a mission the monitor will then cut short.
+//   ⚠ AND ONE ANSWER TO "IS HOME IN RANGE", `fuelWatchAt` (Andy, 2026-10-11: "automatic RTH only when home is in range,
+// otherwise an alert at 20% with no automatic action"), for the monitor, the projection and the rows alike. In range:
+// the RTH point and the send home. Out of range - further than doRTH will route a return, or beyond a full tank - the
+// monitor watches 20% of the tank and only ALERTS, for the operator to find a port: a passage, or a visiting harbor
+// with home the far end of one, where the old rule read REACHED on arming and sent an RTH that was then refused.
+// DIESEL HULLS ONLY ("Long range missions are not to be undertaken by the battery powered units"): fuel.js fuelWatch
+// keeps a battery hull on the RTH point whatever the range.
 const HOME_FIELD_PAD_M = 1500, HOME_FIELD_MIN_CELL_M = 5, HOME_FIELD_MAX_CELLS = 1.5e6;
 const HOME_FIELD_REACH_M = 300;      // a home at a berth, or a boat alongside, reaches clear water within this
 const HOME_FIELD_RETRY_MS = 30000;   // a field that could not be built is tried again after this, not every frame
@@ -8052,6 +8059,15 @@ function fuelHomeNeed(model, ll){
   const h = planeFrame(ll).toEN(S.home), L = Math.hypot(h.e, h.n), u = L > 0 ? {e: h.e / L, n: h.n / L} : {e: 0, n: 0};
   return {need: homeEnergy(model, hd.m, twKn, drift, u), m: hd.m, water: hd.water, why: hd.why, twKn};
 }
+// IS HOME IN RANGE FROM A POINT, and so which level she is watched against there (fuel.js fuelWatch): the energy home
+// (fuelHomeNeed) and the distance doRTH refuses a return by (rthTooFar) - the one test, so the monitor can never send an
+// RTH that doRTH would refuse. {mode, level, why, h, farM}, or null with no model.
+function fuelWatchAt(model, ll){
+  const home = !!(ll && S && S.home);
+  const h = home ? fuelHomeNeed(model, ll) : null, far = home ? rthTooFar(ll, S.home) : null;
+  const w = fuelWatch(model, h ? h.need : null, far ? far.m : null);
+  return w && {...w, h, farM: far ? far.m : null};
+}
 // THE MISSION AHEAD, WALKED (fuel.js projectMission): from her position along the route the index counts into, each leg
 // at the key the governor will command on it, in the set; and home from its end when the run ends in an RTH.
 let fuelProj = {at: 0, route: null, idx: -1, val: null};
@@ -8068,8 +8084,11 @@ function fuelProjection(){
       legs.push({a: fr.toEN(pts[k]), b: fr.toEN(pts[k + 1]), twKn: V.SPEED_KN[keys(i0 + k) || roleSpeed(speedRole())] || 0, idx: i0 + k});
     end = rr[rr.length - 1];
   }
+  // Each step asks the rule the monitor will ask when she is there: in range, the energy home (her RTH point); out of
+  // range, none - she is watched against the reserve itself, so `turn` is where she will come down to 20%.
   const P = projectMission(model, legs, drift, energyLevel(model, st), (q) => {
-    const r = fuelHomeNeed(model, fr.fromEN(q.e, q.n)); return r ? r.need : null; });
+    const w = fuelWatchAt(model, fr.fromEN(q.e, q.n));
+    return !w ? null : w.mode === "rth" ? (w.h ? w.h.need : null) : 0; });
   P.legs = legs.length;
   P.home = (legs.length && endAction() === "rth") ? fuelHomeNeed(model, end) : null;
   fuelProj = {at: Date.now(), route: rr, idx, val: P};
@@ -8089,8 +8108,22 @@ function fuelSay(model, level, rth, h){
     + " at " + h.twKn + " kn, which leaves the " + f(model.reserve) + " reserve (" + Math.round(FUEL_RESERVE_FRAC * 100)
     + "% of " + (model.kind === "fuel" ? "the tank" : "the pack above its " + model.floor + " V alarm") + ") on arrival.";
 }
+// What the reserve is a fraction of, in words: the tank, or a pack down to its alarm (fuel.js header).
+function fuelReserveOf(model){
+  return Math.round(FUEL_RESERVE_FRAC * 100) + "% of " + (model.kind === "fuel" ? "the tank" : "the pack above its " + model.floor + " V alarm");
+}
+// WHY HOME IS OUT OF RANGE, in words (fuelWatch's `why`) - for the alert, the row's tip and the pill alike.
+function fuelOutOfRangeSay(model, w){
+  const h = w.h;
+  return w.why === "far" ? "home is " + fmtDist(w.farM) + " away, further than the " + fmtDist(RTH_MAX_M) + " the console will route a return"
+    : w.why === "fuel" ? "home is " + fmtDist(h.m) + (h.water ? " by water" : " in a straight line") + " and takes " + fuelFmt(model, h.need)
+                         + ", so even a full " + (model.kind === "fuel" ? "tank" : "pack") + " does not get her there with the "
+                         + Math.round(FUEL_RESERVE_FRAC * 100) + "% reserve"
+    : (S && S.home) ? "the way home is not known" : "no home is set";
+}
 // THE MONITOR, on every state frame: the RTH point now, and - once she has come down to it - the alert and the shift
 // to RTH, ONCE per crossing (fuel.js rthDecision). The send is the supervising window's alone; every window alerts.
+// Out of range (fuelWatchAt) the level is the reserve itself, and reaching it is the alert alone, once per crossing.
 let fuelRth = {acted: false, alerted: false};
 let fuelNow = null, fuelErrSaid = false;
 function fuelTick(s){
@@ -8098,14 +8131,30 @@ function fuelTick(s){
   const model = fuelModel(), st = (s && s.status) || {};
   if(!model){ fuelNow = null; return; }
   const level = energyLevel(model, st);
-  const h = (asv && S && S.home) ? fuelHomeNeed(model, {lat: asv.lat, lon: asv.lon}) : null;
-  const rth = h ? rthLevel(model, h.need) : null;
+  const w = asv ? fuelWatchAt(model, {lat: asv.lat, lon: asv.lon}) : null;
+  const h = w ? w.h : null, rth = w ? w.level : null, alertOnly = !!w && w.mode === "alert";
   const atHome = !!(h && h.m <= FUEL_AT_HOME_M);
-  const dec = rthDecision({model, level, rth, armed: s.armed, estop: s.estop, behavior: s.behavior, atHome, acted: fuelRth.acted});
-  fuelNow = {model, level, rth, h, state: dec.state, override: !!st.unlimited_energy};
+  const dec = rthDecision({model, level, rth, alertOnly, armed: s.armed, estop: s.estop, behavior: s.behavior, atHome, acted: fuelRth.acted});
+  fuelNow = {model, level, rth, h, w, state: dec.state, override: !!st.unlimited_energy};
   if(dec.rearm) fuelRth = {acted: false, alerted: false};
   if(dec.state !== "reached") return;
   if(dec.latch) fuelRth.acted = true;
+  // OUT OF RANGE: said once, in every window, and NOTHING commanded - "an alert at 20% with no automatic action".
+  if(alertOnly){
+    if(fuelRth.alerted) return;
+    fuelRth.alerted = true;
+    const out = fuelOutOfRangeSay(model, w);
+    // To a tenth of a liter: the card's whole liters put 49.5 aboard as "50 L" beside a 50 L reserve - an alert whose
+    // two numbers read equal (seen on the live check).
+    const fine = (x) => model.kind === "fuel" ? x.toFixed(1) + " L" : fuelFmt(model, x);
+    showBanner("⚠ LOW FUEL — AT THE " + Math.round(FUEL_RESERVE_FRAC * 100) + "% RESERVE: " + fine(level)
+      + (model.kind === "fuel" ? " aboard" : " on the pack") + " (" + fuelReserveOf(model) + " is " + fine(rth) + "). "
+      + out.charAt(0).toUpperCase() + out.slice(1) + ", so she is NOT being sent home: find a port to refuel.");
+    logClient("fuel_rth", {unit: model.unit, level: +level.toFixed(2), rth: +rth.toFixed(2), reserve: +model.reserve.toFixed(2),
+              watch: "alert", out_of_range: w.why, home_m: h ? Math.round(h.m) : null, far_m: w.farM != null ? Math.round(w.farM) : null,
+              behavior: s.behavior, sent: false, why: "home out of range"});
+    return;
+  }
   const say = fuelSay(model, level, rth, h);
   const rec = {unit: model.unit, level: +level.toFixed(2), rth: +rth.toFixed(2), need: +h.need.toFixed(2), home_m: Math.round(h.m),
                water: h.water, reserve: +model.reserve.toFixed(2), behavior: s.behavior};
@@ -8165,31 +8214,49 @@ function renderFuelRows(){
     + "home by water at the transit speed. Station-keeping at the end is not included. The percentage is of "
     + (model.kind === "fuel" ? "the tank." : "the pack above its " + model.floor + " V alarm.") + "\n" + lawTip);
   // 2. THE RTH POINT - in the row, the level and how far above it she is (or where on this plan she reaches it); in the
-  // tip, the sentence the alert says.
+  // tip, the sentence the alert says. OUT OF RANGE the row is the LOW-FUEL ALERT instead (its label says so): the
+  // reserve itself, and nothing the console will command at it.
+  const alertOnly = !!(N.w && N.w.mode === "alert"), rk = $("#mi_rthpt_k");
+  if(rk) setCellText(rk, alertOnly ? (model.kind === "fuel" ? "Low fuel" : "Low battery") : "RTH point");
   let r = "--", rc = "vv";
   if(N.level == null) r = "no " + what + " reading";
-  else if(N.rth == null) r = "no home set";
-  else if(N.state === "reached"){ r = "REACHED · " + f(N.rth) + (S.behavior === "rth" ? " · going home" : " · RTH due"); rc = "vv critical"; }
+  else if(N.rth == null) r = asv ? "no home set" : "no position fix";
+  else if(N.state === "reached"){
+    r = "REACHED · " + f(N.rth) + (alertOnly ? " · find a port" : S.behavior === "rth" ? " · going home" : " · RTH due"); rc = "vv critical"; }
   else {
     r = f(N.rth) + " · " + f(N.level - N.rth) + " above";
     if(N.state === "near") rc = "vv warn";
     if(P && P.turn){ r = f(N.rth) + " · reached in " + fmtDist(P.turn.alongM); rc = "vv warn"; }
   }
-  if(N.h && N.rth != null && !N.h.water){ r += " · straight line"; if(rc === "vv") rc = "vv warn"; }
+  if(!alertOnly && N.h && N.rth != null && !N.h.water){ r += " · straight line"; if(rc === "vv") rc = "vv warn"; }
   setCellText(re, r); if(re.className !== rc) re.className = rc;
-  setTip(re, N.h && N.level != null && N.rth != null
+  setTip(re, alertOnly && N.level != null
+    ? "THE LOW-" + what.toUpperCase() + " ALERT: " + fuelOutOfRangeSay(model, N.w) + ", so the console will NOT send her home. "
+      + "It alerts once when she comes down to " + fuelReserveOf(model) + " (" + f(N.rth) + "), for you to find a port to "
+      + "refuel. She has " + f(N.level) + " now."
+      + (P && P.turn ? "\nON THIS PLAN SHE REACHES IT " + fmtDist(P.turn.alongM) + " AHEAD, before waypoint " + (P.turn.idx + 1)
+        + ": the console will alert there." : "")
+      + "\nWith home in range (within " + fmtDist(RTH_MAX_M) + ", and a full " + (model.kind === "fuel" ? "tank" : "pack")
+      + " reaching it with the reserve) this row is the RTH point, and the console sends her home at it.\n" + lawTip
+    : N.h && N.level != null && N.rth != null
     ? "THE RTH POINT: " + fuelSay(model, N.rth, N.rth, N.h) + " She has " + f(N.level) + " now."
       + (P && P.turn ? "\nON THIS PLAN SHE REACHES IT " + fmtDist(P.turn.alongM) + " AHEAD, before waypoint " + (P.turn.idx + 1)
         + ": the mission will be cut short there and she will be sent home." : "")
       + "\nWhen she comes down to it the console alerts and sends her home (RTH), once; an RTH you then change stands.\n" + lawTip
-    : (N.level == null ? "The vessel reports no " + what + " level, so the RTH point is NOT MONITORED." : "No home is set, so the RTH point is NOT MONITORED.")
+    : (N.level == null ? "The vessel reports no " + what + " level, so the RTH point is NOT MONITORED."
+       : (asv ? "No home is set" : "No position fix") + ", so the RTH point is NOT MONITORED.")
       + "\n" + lawTip);
 }
-// The pill's tip carries the RTH point when there is one (the Run block is hidden without a plan).
+// The pill's tip carries the RTH point when there is one (the Run block is hidden without a plan) - or, out of range,
+// the low-fuel alert.
 function fuelPillLine(){
   const N = fuelNow;
   if(!N || N.level == null || N.rth == null) return "";
-  return "\nRTH point: " + fuelFmt(N.model, N.rth) + (N.state === "reached" ? " - REACHED" : " (" + fuelFmt(N.model, N.level - N.rth) + " above it)")
+  const at = fuelFmt(N.model, N.rth) + (N.state === "reached" ? " - REACHED" : " (" + fuelFmt(N.model, N.level - N.rth) + " above it)");
+  if(N.w && N.w.mode === "alert")
+    return "\nLow-" + (N.model.kind === "fuel" ? "fuel" : "battery") + " alert: " + at + ", " + fuelReserveOf(N.model) + " - "
+      + fuelOutOfRangeSay(N.model, N.w) + ", so the console alerts and does not send her home.";
+  return "\nRTH point: " + at
     + " - home " + fmtDist(N.h.m) + (N.h.water ? " by water" : " in a STRAIGHT LINE (" + (N.h.why || "no water distance") + ")") + ", arriving with the " + Math.round(FUEL_RESERVE_FRAC * 100) + "% reserve.";
 }
 // THE REHEARSAL (sim only): the tank (or pack) put just below the RTH point, so the alert and the shift to RTH follow on
@@ -8201,8 +8268,10 @@ async function setFuelToRthPoint(){
   const span = N.model.full - N.model.floor, lv = Math.max(N.model.kind === "fuel" ? 0 : N.model.floor - 0.5, N.rth - 0.002 * span);
   const r = await cmd("/api/cmd/energy", {level: lv});
   if(!took(r)){ flashNote("Fuel not set — " + ((r && r.error) || "no answer") + "."); return; }
-  flashNote("Sim " + (N.model.kind === "fuel" ? "fuel" : "battery") + " set to " + fuelFmt(N.model, lv) + ", just below the RTH point ("
-    + fuelFmt(N.model, N.rth) + "). The monitor alerts and sends her home on the next frame if she is armed and running.");
+  flashNote("Sim " + (N.model.kind === "fuel" ? "fuel" : "battery") + " set to " + fuelFmt(N.model, lv) + (N.w && N.w.mode === "alert"
+    ? ", just below the low-" + (N.model.kind === "fuel" ? "fuel" : "battery") + " alert (" + fuelFmt(N.model, N.rth)
+      + "). Home is out of range: the monitor alerts on the next frame and commands nothing."
+    : ", just below the RTH point (" + fuelFmt(N.model, N.rth) + "). The monitor alerts and sends her home on the next frame if she is armed and running."));
 }
 
 // --- survey-pattern rendering + editing ---------------------------------- //
@@ -13619,6 +13688,8 @@ function openChartMenu(clientX, clientY, ll){
   cmGate("#cmAisTest",  canSpawn(), "sim only");        // the rehearsal's moored hull (2026-09-27)
   cmGate("#cmAisClear", canSpawn(), "sim only");
   cmGate("#cmFuelRth",  canSpawn() && !!(fuelNow && fuelNow.rth != null), canSpawn() ? "no RTH point" : "sim only");   // 2026-10-11
+  { const t = $("#cmFuelRthT"); if(t) t.textContent = (fuelNow && fuelNow.w && fuelNow.w.mode === "alert")   // home out of range
+      ? "Set fuel to the low-fuel alert" : "Set fuel to the RTH point"; }
   cmenuEl.style.display = "block";
   // clamp into the viewport, flipping at the right/bottom edges — same discipline as the
   // hover tips and the pop-out panels: a menu opened near a corner must stay reachable.
