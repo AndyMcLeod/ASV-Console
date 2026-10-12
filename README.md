@@ -2482,7 +2482,12 @@ of the operator.
      behind it (NOAA corrects its charts week by week); one written by an older reader is read again
      first, and only if that fails is the older copy served, the row saying **old chart**. The layer
      lists are asked for again monthly, the chart-source card weekly, and a card answer with a failed
-     query is never kept. The row's tooltip gives the oldest tile's date.
+     query is never kept. The row's tooltip gives the oldest tile's date. **On an old chart, nothing
+     overhead is judged**: the older reader kept no clearances, so its bridges are not treated as too low
+     (they were, for a few hours on 12 October, and every bridge on the Piscataqua was a wall to the DriX
+     while his console sat on the older copy - his Go-To to Adams Point was refused). A fresh read that
+     failed only on layers the model does not act on is used rather than the older copy; anything not read
+     whole is held two minutes before it is read again.
    - **Speed.** Every request built its own TLS context, and on Windows that loads the certificate
      store each time: 22 s of a tile's 36 s of CPU. One shared context read the same tile in 21 s
      instead of 45 (616 requests to NOAA).

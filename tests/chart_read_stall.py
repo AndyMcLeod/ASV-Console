@@ -267,9 +267,12 @@ try:
     t5, t6, t7 = [-69.25, 43.0, -69.0, 43.25], [-69.0, 43.0, -68.75, 43.25], [-68.75, 43.0, -68.5, 43.25]
     islet = {"role": "extra", "cls": "Land_Area_point", "props": {}, "oid": 78, "band": "enc_harbour",
              "geometry": {"type": "Point", "coordinates": [-69.15, 43.15]}}
+    # a bridge span as an older reader kept it: no clearance, because that reader kept none (2026-10-12, Adams Point)
+    span = {"role": "bridge_span", "cls": "Bridge_area", "props": {"OBJNAM": "Memorial Bridge"}, "oid": 79, "band": "enc_harbour",
+            "geometry": {"type": "Polygon", "coordinates": [sq(-69.16, 43.12, -69.15, 43.13)]}}
     old = {"tile": t5, "bands": ["enc_coastal"], "unread": [], "unread_failed": [], "partial": [], "complete": True,
            "features": [{"role": "land", "cls": "Land_Area", "props": {}, "oid": 77, "band": "enc_coastal",
-                         "geometry": {"type": "Polygon", "coordinates": [sq(-69.2, 43.1, -69.1, 43.2)]}}, islet]}
+                         "geometry": {"type": "Polygon", "coordinates": [sq(-69.2, 43.1, -69.1, 43.2)]}}, islet, span]}
     json.dump(old, open(A._legacy_tile_path(t5), "w", encoding="utf-8"))
     open(A._legacy_tile_path(t6), "w", encoding="utf-8").write('{"tile": [')     # cut short: not a tile
     v2path = os.path.join(A.ENC_DIR, "tile_v2_%s.jsonl" % A._bbox_key(t7))
@@ -291,10 +294,14 @@ try:
           "set): served by a child with `stale` saying what it lacks, its roles RE-TAGGED by today's table (the islet "
           "stored as `extra` is land_point), not complete, NOT kept as a tile of this reader and NOT removed, and held "
           "from memory with no child inside the retry window; the 2026-10-11 reader's line-per-feature copy the same; "
-          "an old copy that is not a whole tile is not served",
+          "an old copy that is not a whole tile is not served; and its bridge span marked `clr_unread` - that reader kept "
+          "no clearances, so the page judges nothing overhead on it rather than calling every bridge too low",
           lambda: v5.get("stale") and not v5.get("complete") and v5_children == 1 and not kept3 and old_left and held
                   and ("Land_Area_point", "land_point") in roles5 and ("Land_Area", "land") in roles5
-                  and v7.get("stale") and sorted(f["oid"] for f in v7["features"]) == [77, 78]
+                  and v7.get("stale") and sorted(f["oid"] for f in v7["features"]) == [77, 78, 79]
+                  and [f.get("clr_unread") for f in v5["features"] if f["oid"] == 79] == [True]
+                  and not any(f.get("clr_unread") for f in v5["features"] if f["oid"] != 79)
+                  and "nothing overhead is judged" in (v5.get("stale") or "")
                   and not v6.get("stale") and v6.get("unread_failed"),
           lambda: "stale %r complete %s children %d kept %s old left %s held %s roles %s; v2 copy %s; cut-short %r"
                   % ((v5.get("stale") or "")[:60], v5.get("complete"), v5_children, kept3, old_left, held, roles5,
@@ -314,6 +321,36 @@ try:
           lambda: "complete %s stale %s kept %s old left %s read_at %r reader %r"
                   % (v5c.get("complete"), v5c.get("stale"), os.path.exists(A._tile_path(t5)),
                      os.path.exists(A._legacy_tile_path(t5)), v5c.get("read_at"), v5c.get("reader")))
+
+    # ── 3e. a fresh read short of a layer: the older copy only when a layer the model ACTS ON is missing ──────────────
+    # (2026-10-12) Every fresh read that was not whole gave way to the older copy - one building layer failing threw
+    # away the fresh chart, its clearances and its roles with it.
+    t8, t9 = [-68.5, 43.0, -68.25, 43.25], [-68.25, 43.0, -68.0, 43.25]
+    outer3 = [[-68.60, 42.95], [-67.90, 42.95], [-67.90, 43.30], [-68.60, 43.30], [-68.60, 42.95]]
+    for t in (t8, t9):
+        A._write_tile_jsonl(os.path.join(A.ENC_DIR, "tile_v2_%s.jsonl" % A._bbox_key(t)), dict(old, tile=t))
+    fresh = [{"role": "land", "cls": "Land_Area", "props": {}, "oid": 501,
+              "geometry": {"type": "Polygon", "coordinates": [sq(-68.40, 43.10, -68.39, 43.11)]}}]
+    json.dump({"coverage": {"enc_coastal": [[outer3]]}, "features": {"enc_coastal": fresh},
+               "partial": {"enc_coastal": ["Building_Single_point"]}}, open(fake_path, "w", encoding="utf-8"))
+    A._enc_tile_mem.clear()
+    A._enc_down_until = 0.0
+    n8 = len(runs)
+    e8 = A.fetch_enc_tile(t8)
+    e8b = A.fetch_enc_tile(t8)
+    held8 = len(runs) - n8 == 1 and e8b is e8
+    json.dump({"coverage": {"enc_coastal": [[outer3]]}, "features": {"enc_coastal": fresh},
+               "partial": {"enc_coastal": ["Depth_Area"]}}, open(fake_path, "w", encoding="utf-8"))
+    d9 = A.fetch_enc_tile(t9)
+    check("3e. A FRESH READ MISSING ONLY A LAYER NOTHING ACTS ON (a building layer) is SERVED - its own features, not "
+          "the older copy - not kept, and held from memory with no second child inside the retry window; one missing a "
+          "layer the model acts on (the depth areas) gives way to the older copy, said stale",
+          lambda: not e8.get("stale") and [f["oid"] for f in e8["features"]] == [501] and e8.get("partial") == ["Building_Single_point"]
+                  and not e8.get("complete") and not os.path.exists(A._tile_path(t8)) and held8
+                  and d9.get("stale") and sorted(f["oid"] for f in d9["features"]) == [77, 78, 79],
+          lambda: "building layer missing: stale %s oids %s kept %s held %s; depth missing: stale %s oids %s"
+                  % (bool(e8.get("stale")), [f["oid"] for f in e8.get("features") or []], os.path.exists(A._tile_path(t8)),
+                     held8, bool(d9.get("stale")), sorted(f["oid"] for f in d9.get("features") or [])))
 
     # ── 4. the console's cadence while a child builds ─────────────────────────────────────────────────────────────
     HEAVY = dict(FAKE, parse_mb=25)                    # each band's answer as big as NOAA's, parsed as one

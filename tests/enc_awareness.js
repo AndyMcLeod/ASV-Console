@@ -195,6 +195,24 @@ console.log("  hulls: " + HULLS.map((h) => h.id + " floor " + h.floor.toFixed(2)
         () => grid.join("; ") + " (small-class boat, C-Worker, DriX); no air draft: " + none.polys.length + "/" + none.lines.length + "; default need " + need0);
 }
 
+// ── 4c. A CLEARANCE NOT READ IS NOT A CLEARANCE NOT CHARTED (2026-10-12, his Go-To to Adams Point) ────────────
+// His console fell back to a tile an older reader kept - no clearance on any span, because that reader kept none - and
+// every bridge on the Piscataqua became a wall to the DriX. The server marks such spans `clr_unread`.
+{
+  const spans = byCls("Bridge_area"), cables = byCls("Cable_Overhead_line");
+  const em = HULLS.find((h) => h.id === "drix08_em712");
+  const strip = (f) => ({ ...f, props: Object.fromEntries(Object.entries(f.props).filter(([k]) => !/^VERC|^HORCLR/.test(k))) });
+  const older = [...spans, ...cables].map((f) => ({ ...strip(f), clr_unread: true }));
+  const noneCharted = [...spans, ...cables].map(strip);
+  const kOld = asHull(em, older), kNone = asHull(em, noneCharted);
+  const overheadN = (ko) => ko.polys.filter((p) => p.cls === "Bridge_area").length + ko.lines.filter((l) => l.cls === "Cable_Overhead_line").length;
+  check("4c. A SPAN FROM AN OLDER READER'S COPY (clearance not read, `clr_unread`) is NOT a keep-out - nothing overhead is "
+        + "judged on it - while the same span read by this reader with no clearance charted IS: New Castle's spans and "
+        + "cables for the DriX",
+        () => overheadN(kOld) === 0 && overheadN(kNone) === spans.length + cables.length,
+        () => "older copy: " + overheadN(kOld) + " overhead keep-outs; none charted: " + overheadN(kNone) + " of " + (spans.length + cables.length));
+}
+
 // ── 5. THINGS IN THE WATER THAT WERE ONLY `extra` ────────────────────────────────────────────────────────────────────
 {
   const P = [-70.73, 43.07], sq = [[[-70.731, 43.069], [-70.729, 43.069], [-70.729, 43.071], [-70.731, 43.071], [-70.731, 43.069]]];

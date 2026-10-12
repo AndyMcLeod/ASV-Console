@@ -407,6 +407,11 @@ export function overheadClearance(f) {
  */
 export function overheadBlocks(f, airNeedM) {
   if (!(airNeedM > 0)) return false;
+  // ⚠ A CLEARANCE NOT READ IS NOT A CLEARANCE NOT CHARTED (2026-10-12, his Go-To to Adams Point). A span from a tile an
+  // older reader kept carries no clearance because that reader dropped them all; the server marks it `clr_unread`
+  // (asv_console.py _clr_unread) and it is not judged - the answer before overhead was judged at all - where calling it
+  // unknown made every bridge on the Piscataqua a wall to the DriX while the console sat on the older copy.
+  if (f && f.clr_unread) return false;
   const c = overheadClearance(f);
   return c === null || c < airNeedM;
 }

@@ -2167,6 +2167,17 @@ def _enc_retag(ft):
     return dict(ft, role=r) if r and r != ft.get("role") else ft
 
 
+# ⚠ A CLEARANCE AN OLDER READER NEVER KEPT IS NOT READ - IT IS NOT "NONE CHARTED" (2026-10-12, Andy's Go-To to Adams
+# Point). The page holds a span with no charted clearance as too low (keepouts.js overheadBlocks), which is right for a
+# span the CHART gives none. A tile kept before that day carries no clearance on ANY span - the reader dropped them - and
+# served as the fallback it made every bridge on the Piscataqua a wall to the DriX: Memorial, Sarah Mildred Long and
+# I-95 alike, so a Go-To upriver was refused at her own floor while the console sat on the older copy. Such a span is
+# marked `clr_unread`: nothing overhead is judged on it - the answer before overhead was judged at all - and the OLD
+# CHART note says so.
+def _clr_unread(ft):
+    return dict(ft, clr_unread=True) if ft.get("role") in ("bridge_span", "overhead") else ft
+
+
 def _enc_num(value):
     """A numeric ENC attribute as a number, or None if it will not read as one."""
     if isinstance(value, bool):          # True is an int in Python; it is not a depth
@@ -3110,11 +3121,12 @@ def _older_tile(tile):
                 when = os.path.getmtime(p)
             except OSError:
                 when = None
-        got["features"] = [_enc_retag(ft) for ft in got["features"]]
+        got["features"] = [_clr_unread(_enc_retag(ft)) for ft in got["features"]]
         got["read_at"] = when
         got["complete"] = False
-        got["stale"] = ("the chart could not be read again here; a copy read %s by an older reader is used - without "
-                        "bridges' and cables' clearances or the coarse charts' other layers"
+        got["stale"] = ("the chart could not be read again here; a copy read %s by an older reader is used - it holds no "
+                        "bridge or cable clearances, so nothing overhead is judged against her air draft, and it lacks "
+                        "the coarse charts' other layers"
                         % (time.strftime("%Y-%m-%d", time.localtime(when)) if when else "earlier"))
         got["note"] = got["stale"]
         return got
@@ -3284,7 +3296,7 @@ def _enc_tile_worker_main(argv):
     # be read: served with `stale` naming what it lacks (its parse made here, where it stops nothing), never kept.
     # Without the fallback, every area read before the change would have no chart offline until it was read again.
     got = _enc_tile_build(tile)
-    if not got.get("complete"):
+    if _fresh_falls_back(got):
         old = _older_tile(tile)
         if old is not None:
             got = old
@@ -3310,8 +3322,23 @@ def _tile_build_now(tile):
         except OSError as e:
             print("[cache] could not write %s: %s" % (os.path.basename(_tile_path(tile)), e), file=sys.stderr)
         return got
-    old = _older_tile(tile)
+    old = _older_tile(tile) if _fresh_falls_back(got) else None
     return old if old is not None else got
+
+
+def _fresh_falls_back(got):
+    """Does a fresh read give way to an older reader's copy? Only when it is no chart to act on: it failed outright (its
+    squares unread), or a layer the model ACTS ON did not arrive (2026-10-12). It gave way whenever it was not whole, and a
+    read of six bands' every layer - some six hundred queries a tile - loses an `extra` now and then: one building layer
+    failing threw the fresh chart away for the old copy, clearances, roles and coarse layers with it. (Andy's console sat
+    on the old copy from startup on the morning of 12 October until a retry eight minutes later; WHICH layer failed is
+    printed by the console, not kept in the session log, so this is the likely cause, not the measured one.) A fresh read
+    missing only layers nothing acts on is served as it is - not kept, and read again after ENC_TILE_RETRY_S."""
+    if got.get("complete"):
+        return False
+    if got.get("unread_failed") or not got.get("bands"):
+        return True
+    return any(c in _ENC_ACTED_ON for c in (got.get("partial") or []))
 
 
 def _tile_keep(key, got):
@@ -3383,7 +3410,9 @@ def fetch_enc_tile(tile):
         got = _tile_build_now(tile)
         if got.get("complete"):
             _tile_keep(key, got)
-        elif got.get("stale"):
+        elif got.get("stale") or (got.get("bands") and not got.get("unread_failed")):
+            # An older copy, or a fresh read short of a layer, is HELD ENC_TILE_RETRY_S before it is read again: each read
+            # is a child and some six hundred queries, and the page asks for its tiles every time it reads the chart.
             got["retry_at"] = now + ENC_TILE_RETRY_S
             _tile_keep(key, got)
         return got
@@ -3742,8 +3771,8 @@ def _grid_overhead(ft):
     """The clearance under a span or an overhead line, decimeters - 0 when none is charted (keepouts.js: unknown is too
     low) - or None for a feature that is nothing overhead. The LOWER of VERCLR and VERCCL (an opening bridge shut), as
     keepouts.js overheadClearance takes it."""
-    if ft.get("role") not in _GRID_OVERHEAD_ROLES:
-        return None
+    if ft.get("role") not in _GRID_OVERHEAD_ROLES or ft.get("clr_unread"):
+        return None                                # nothing overhead, or a clearance an older reader never kept
     p = ft.get("props") or {}
     vs = [p[k] for k in ("VERCLR", "VERCCL")
           if isinstance(p.get(k), (int, float)) and not isinstance(p.get(k), bool) and math.isfinite(p[k])]

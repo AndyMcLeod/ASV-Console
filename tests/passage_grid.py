@@ -122,6 +122,8 @@ got = {"tile": TILE, "complete": True, "bands": ["enc_harbour"], "unread": [[TIL
            ft("bridge_span", {"type": "Polygon", "coordinates": [sq_cells(220, 10, 229, 19)]}, VERCLR=2.1, VERCCL=9.9),
            ft("overhead", {"type": "LineString", "coordinates": [cell_ll(230, 15), cell_ll(239, 15)]}, VERCLR=4.8),
            ft("bridge_span", {"type": "LineString", "coordinates": [cell_ll(240, 15), cell_ll(249, 15)]}),  # no clearance charted
+           # a span from an older reader's copy: its clearance NOT READ, so nothing overhead is judged (2026-10-12)
+           dict(ft("bridge_span", {"type": "Polygon", "coordinates": [sq_cells(60, 40, 69, 49)]}), clr_unread=True),
        ]}
 C, T, AIR = A._tile_grid(got)
 at = lambda arr, c, r: arr[r * N + c]
@@ -153,6 +155,7 @@ checks1 = {
     "a cable: A 48 along it": all(at(AIR, c, 15) == 48 for c in (230, 235, 239)),
     "a span with no clearance charted: A 0 (too low for anyone)": at(AIR, 245, 15) == 0,
     "nothing overhead: A none": at(AIR, 30, 100) == A.GRID_NONE,
+    "a span whose clearance an older reader never kept: A none (not judged)": at(AIR, 65, 45) == A.GRID_NONE,
 }
 check("1. THE RASTER judges as the page's keep-out model (and v2's: a dredged area by its maintained depth, unsurveyed "
       "water under every floor, an islet HARD, and the A layer the lowest clearance overhead); land HARD inside and on its edges, never outside; a depth area "
