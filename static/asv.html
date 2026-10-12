@@ -975,7 +975,7 @@ import { energyModel, energyLevel, homeEnergy, rthLevel, projectMission, rthDeci
          FUEL_RESERVE_FRAC, FUEL_REARM_FRAC } from "/static/js/fuel.js";
 // THE PASSAGE, PLANNED COARSE (2026-10-12): the circle round each port the console's own planner plans in detail. The
 // plan itself is made in a worker (coarse_worker.js); the page only draws and says it.
-import { PORT_R_M as PASSAGE_PORT_R_M } from "/static/js/coarse.js";
+import { PORT_R_M as PASSAGE_PORT_R_M, homeSections } from "/static/js/coarse.js";
 import { homeGrid, fieldDistM, cellOf } from "/static/js/home_field.js";
 // AIS CONTACTS AS KEEP-OUTS (2026-09-25): the hull box each broadcasts (20 x 8 m assumed where it
 // broadcasts none), dead-reckoned between polls and swept over the guard's look-ahead while she is
@@ -10610,9 +10610,15 @@ async function doRTH(opts){
   // ⚠ ABOVE ensureNogoCovers, which is the line that would otherwise extract half a state.
   const far = rthTooFar({lat:asv.lat,lon:asv.lon}, S.home);
   if(far){
+    // HOME ALONG THE PASSAGE (step 6, 2026-10-12): from a passage's water, with home at one end of it, the operator's
+    // RTH goes home the way the passage runs. Never the chain's, nor the low-fuel monitor's: an automatic RTH is for a
+    // home in range (Andy, 2026-10-11).
+    const H = chained || why ? null : homeRecord();
+    if(H && !H.why) return sailHome(H, brk, far);
     if(chained) rthChainFailed = true;
     showBanner("RTH refused: home is " + fmtDist(far.m) + " away, "
-      + fmtDist(RTH_MAX_M) + " is as far as the console will certify a return. "
+      + fmtDist(RTH_MAX_M) + " is as far as the console will certify a return"
+      + (H && H.why ? ", and she cannot go home along the passage: " + H.why : "") + ". "
       + "Set Home where she is, or pick a home within range.");
     flashNote("RTH refused: home is " + fmtDist(far.m) + " away.");
     updateMissionCard(); render(); return;
@@ -11208,7 +11214,7 @@ function updateSailButton(){
     sb.textContent = sailBusy ? "Sailing…" : "Sail passage";
     sb.dataset.why = swhy || "";
   }
-  if(ss) ss.textContent = mission && mission.passage ? "passage: " + sailLine(mission.passage)
+  if(ss) ss.textContent = mission && mission.passage ? (mission.passage.kind === "rth" ? "" : "passage: ") + sailLine(mission.passage)
                         : passage && swhy ? "not sailed yet: " + swhy : "";
 }
 /** The passage she sails, from a coarse plan (Plan passage's): its points, its sections, where it stands. */
@@ -11276,16 +11282,19 @@ function sailLeftM(){
  * was planned after. {ok, route} or {error} - or {soft} when it should simply be tried on the next frame.
  */
 async function sailSend(P, k, from, bo, append){
-  const c = P.sections[k];
+  const c = P.sections[k], home = P.kind === "rth";
   const pts = bo ? [bo.at, ...sectionRest(c, bo.at), c.to] : [...c.via, c.to];
   const wasGen = planGen, rrWas = runRoute;
   await ensureNogoCovers([from, ...pts]);
+  // AT THE WATER IT WILL HAVE (step 6): the lowest predicted along it while she sails it - not the boat's level now,
+  // which the guard's own chart keeps (sectionWater, atWaterLevel).
+  const lv = await sectionWater(P, from, pts, append);
   let ht = null;
-  const plan = await planInsideChart([from, ...pts], undefined, () => {
+  const plan = await planInsideChart([from, ...pts], undefined, () => atWaterLevel(lv.m, () => {
     ht = holdTarget(c.to, holdOpts());
     if(ht.error) return null;
     return routePlan(from, [...pts.slice(0, -1), ht.to], true, transitStandoffM());
-  }, "Passage section " + (k + 1));
+  }), (home ? "Home along the passage, section " : "Passage section ") + (k + 1));
   if(ht !== null && ht.error) return {error: "the end of section " + (k + 1) + " is not clear water to hold at"};
   if(!plan) return {error: "no plan"};
   if(plan.error) return {error: plan.error};
@@ -11303,16 +11312,19 @@ async function sailSend(P, k, from, bo, append){
   if(routeTooLong(route.length)) return {error: "too many waypoints"};
   const whole = {...plan, route};
   const coast = solveCoastFor(whole);
-  const r = await routeCmd("/api/cmd/transit", {route, hold_clear_m: whole.holdClear, coast_from_m: coast ? coast.groundM : null});
-  if(!took(r)) return {error: notTookSay(r, "PASSAGE") || "the vessel did not take it"};
+  // THE WAY HOME is sent as an RTH (step 6): she is going home - the cards say so, the fuel monitor sends no second
+  // one, and the end-of-plan chain never fires on an RTH's hold.
+  const r = await routeCmd(home ? "/api/cmd/rth" : "/api/cmd/transit", {route, hold_clear_m: whole.holdClear, coast_from_m: coast ? coast.groundM : null});
+  if(!took(r)) return {error: notTookSay(r, home ? "RTH" : "PASSAGE") || "the vessel did not take it"};
   if(planGen === wasGen) releaseEscapeClaim("the passage's section replaced it");
   whole.coast = coast;
-  runRoute = route; runUnsafe = []; setPlanIntent("transit", whole, route); updateMissionCard();
-  planIntent.why.push("the passage's section " + (k + 1) + " of " + P.sections.length);
+  runRoute = route; runUnsafe = []; setPlanIntent(home ? "rth" : "transit", whole, route); updateMissionCard();
+  planIntent.why.push((home ? "home along the passage, section " : "the passage's section ") + (k + 1) + " of " + P.sections.length);
   legStartsHere(0, r);
   P.sent = k; P.base = prefix.length; P.end = route[route.length - 1]; P.route = route; P.note = "";
+  c.water_m = lv.m; c.water = lv.say;
   if(!append) P.sec = k;
-  return {ok: true, route};
+  return {ok: true, route, water: lv};
 }
 /** SAIL PASSAGE: the coarse plan becomes the passage she sails, and its first section is sent from where she is. */
 async function sailPassage(){
@@ -11333,7 +11345,8 @@ async function sailPassage(){
     P.state = "running";
     mission.passage = P; saveMission();
     passage = null;                              // the plan is the passage now: drawn and said from it
-    showBanner("PASSAGE UNDER WAY: section 1 of " + P.sections.length + " sent (" + r.route.length + " waypoints). Each next "
+    showBanner("PASSAGE UNDER WAY: section 1 of " + P.sections.length + " sent (" + r.route.length + " waypoints, planned at "
+      + r.water.say + "). Each next "
       + "section is planned by the console against its own chart and sent as she nears the end of the last; at a fuel stop "
       + "or wherever the next could not be sent, she HOLDS and waits for Continue passage.");
     logClient("passage_sail", {id: P.id, ok: true, sections: P.sections.length, wpts: r.route.length});
@@ -11357,19 +11370,22 @@ async function sailAppend(P, k){
       saveMission(); return;
     }
     saveMission();
-    flashNote("Passage: section " + (k + 1) + " of " + P.sections.length + " planned and sent ahead of her.");
-    logClient("passage_section", {id: P.id, k, ok: true, wpts: r.route.length});
+    flashNote((P.kind === "rth" ? "Home along the passage" : "Passage") + ": section " + (k + 1) + " of " + P.sections.length
+      + " planned at " + r.water.say + ", and sent ahead of her.");
+    logClient("passage_section", {id: P.id, k, ok: true, wpts: r.route.length, water_m: r.water.m});
   }catch(e){ P.note = "section " + (k + 1) + ": " + ((e && e.message) || e); }
   finally{ sailBusy = false; updateTransitPanel(); }
 }
 /** She holds at the end of the last section sent: a fuel stop, the arrival, or the end she waits at for Continue. */
 function sailAtEnd(P){
   const c = P.sections[P.sent], last = P.sent === P.sections.length - 1;
-  P.state = c.end === "port" ? (last ? "done" : "at_port") : "holding";
+  P.state = c.end === "port" || c.end === "home" ? (last ? "done" : "at_port") : "holding";
   P.sec = P.sent;
   saveMission();
   const port = c.port != null ? sailPortName(P, c.port) : null;
-  showBanner(P.state === "done" ? "PASSAGE ARRIVED at " + port + ": all " + P.sections.length + " sections sailed. She holds there."
+  showBanner(P.state === "done" && c.end === "home" ? "HOME ALONG THE PASSAGE: she is home, all " + P.sections.length
+      + " sections sailed. She holds there."
+    : P.state === "done" ? "PASSAGE ARRIVED at " + port + ": all " + P.sections.length + " sections sailed. She holds there."
     : P.state === "at_port" ? "PASSAGE AT FUEL STOP " + port + " (end of section " + (P.sent + 1) + " of " + P.sections.length
       + "): refuel her, then CONTINUE PASSAGE, beside Start."
     : "PASSAGE HOLDING at the end of section " + (P.sent + 1) + " of " + P.sections.length + ": the next section was not sent"
@@ -11395,7 +11411,8 @@ function passageTick(s){
   if(!sailOwns(P, s)){
     const k = planIntent && planIntent.kind;
     if(s.run === "stopped" || s.run === "idle" || s.run === "complete" || ((k === "goto" || k === "rth" || k === "hold") && !guardActedAt))
-      sailBreakOff(P, s.run === "running" ? "a " + (k === "goto" ? "Go-To" : k === "rth" ? "Return-to-Home" : "Hold") : "a " + s.run);
+      sailBreakOff(P, s.run === "running" ? "a " + (k === "goto" ? "Go-To" : k === "rth" ? "Return-to-Home" : "Hold")
+                      : s.run === "stopped" ? "a Stop" : "her run ending (" + s.run + ")");
     return;                                      // otherwise the guard has it: the passage waits for its route back
   }
   if(s.run !== "running") return;                // paused: it waits
@@ -11422,7 +11439,7 @@ function sailFuelShort(P, k, bo){
   while(P.sections[j].end !== "port" && j + 1 < P.sections.length){ j++; L += P.sections[j].lengthM; }
   const x = passageFuel(model, [{lengthM: L}], P.kn || V.SPEED_KN[roleSpeed("transit")], lv);
   if(!x || x[0].ok) return null;
-  const to = P.sections[j].port != null ? sailPortName(P, P.sections[j].port) : "the end";
+  const to = P.sections[j].port != null ? sailPortName(P, P.sections[j].port) : P.sections[j].end === "home" ? "home" : "the end";
   return "refuel first: " + fuelFmt(model, lv) + " aboard, and " + to + " is " + fmtDist(L) + " on - she needs "
     + fuelFmt(model, x[0].used + model.floor + model.reserve) + " to arrive with " + Math.round(FUEL_RESERVE_FRAC * 100) + "% of the tank";
 }
@@ -11455,7 +11472,8 @@ async function continuePassage(){
       return;
     }
     P.state = "running"; P.breakoff = null; saveMission();
-    showBanner("PASSAGE CONTINUED: section " + (k + 1) + " of " + P.sections.length + " sent" + (bo ? ", rejoining where she left it" : "") + ".");
+    showBanner((P.kind === "rth" ? "HOME ALONG THE PASSAGE" : "PASSAGE") + " CONTINUED: section " + (k + 1) + " of " + P.sections.length
+      + " sent" + (bo ? ", rejoining where she left it" : "") + ", planned at " + r.water.say + ".");
     logClient("passage_continue", {id: P.id, k, ok: true, rejoin: !!bo, wpts: r.route.length});
   }catch(e){ showBanner("Passage NOT continued: " + ((e && e.message) || e) + "."); }
   finally{ sailBusy = false; applyCmdState(S); updateTransitPanel(); render(); }
@@ -11507,14 +11525,15 @@ function renderPassageControls(armed, estop, underWay){
 /** Where the passage stands, in a line. */
 function sailLine(P){
   if(!P) return "";
-  const n = P.sections.length, k = Math.max(0, P.sec);
-  return P.state === "running" ? "sailing section " + (k + 1) + " of " + n + (P.sent > k ? " (the next one sent)" : "")
-    + (P.note ? " · " + P.note : "")
+  const n = P.sections.length, k = Math.max(0, P.sec), c = P.sections[k];
+  return (P.kind === "rth" ? "home along the passage: " : "")
+    + (P.state === "running" ? "sailing section " + (k + 1) + " of " + n + (P.sent > k ? " (the next one sent)" : "")
+    + (c && c.water ? " · planned at " + c.water : "") + (P.note ? " · " + P.note : "")
     : P.state === "holding" ? "holding at the end of section " + (P.sent + 1) + " of " + n
     : P.state === "at_port" ? "at fuel stop " + sailPortName(P, P.sections[P.sent].port) + " - refuel, then Continue"
     : P.state === "diverted" ? "diverted from section " + (P.breakoff.sec + 1) + " - Continue rejoins it there"
     : P.state === "stopped" ? "left in section " + (P.breakoff.sec + 1) + " for " + P.breakoff.why + " - Continue rejoins it there"
-    : P.state === "done" ? "arrived: all " + n + " sections sailed" : P.state;
+    : P.state === "done" ? (P.kind === "rth" ? "she is home, all " : "arrived: all ") + n + " sections sailed" : P.state);
 }
 /** The passage being sailed on the chart: its sections (sent solid, to come dashed), their ends, where she left it. */
 function drawSail(toScreen){
@@ -11547,6 +11566,161 @@ function sailOwnsHold(){
   // ⚠ AND THE PORT IT WAS DIVERTED TO (FOUND LIVE, 2026-10-12): she reached the divert point, held, and End of plan RTH
   // chained her home from the port she had been sent to refuel in. There she waits for the refuel and Continue passage.
   return !!(P.state === "diverted" && P.breakoff && P.breakoff.to && distTo(end, P.breakoff.to) <= PASSAGE_END_M);
+}
+// ── HOME ALONG THE PASSAGE (2026-10-12, step 6 of the long-transit plan) ─────────────────────────────────────────
+// An RTH with home beyond RTH_MAX_M is refused (doRTH): no chart box holds the water between. But from a passage's
+// water, with home at one end of it, the way home is the passage's own (coarse.js homeSections): the water its chart
+// was read along and its sections were cut on, the other way round when home is where it left from. So there the RTH
+// button sails her home ALONG THE PASSAGE, a section at a time, exactly as a passage is sailed (sailSend: each section
+// planned in detail as she comes to it, at its own water, sent ahead of her; she holds at the end of the last one
+// sent, and waits at a port for Continue passage) - but each SENT AS AN RTH. The way home is a passage record of its
+// own (kind "rth": its sections home, the passage it runs along as `path`, home, and where it left it), so a reload,
+// a Go-To, Divert and Continue treat it as they treat any passage. Only the operator's RTH: the end-of-plan chain and
+// the low-fuel monitor send one only with home in range. Never to a ROC's home, which moves: the server drives
+// straight at it, whatever route it is sent. Refused, as Continue is, while what is aboard does not reach the first
+// port on the way with 20% of the tank.
+/** The way home along the passage on the plan: a passage record of kind "rth" - or {why} when there is a passage but
+ *  she cannot go home along it, or null when there is none. */
+function homeRecord(){
+  const P = mission && mission.passage;
+  if(!P || !asv || !S.home) return null;
+  if(S.home_source != null) return {why: "home is the ROC's, and it moves"};
+  const G = P.kind === "rth" ? P.path : P.sections;
+  const h = homeSections(G, {lat: asv.lat, lon: asv.lon}, S.home);
+  if(h.why === "far") return {why: "she is " + fmtDist(h.offM) + " off it"};
+  if(h.why) return {why: "home is at neither end of it"};
+  return {id: "H" + Date.now().toString(36), t: Date.now(), kind: "rth", kn: P.kn, floor_m: P.floor_m, points: P.points,
+          sections: h.sections, path: G, home: {lat: S.home.lat, lon: S.home.lon}, homeEnd: h.homeEnd,
+          from: {id: P.kind === "rth" && P.from ? P.from.id : P.id, sec: h.rejoin.sec},
+          state: "ready", sent: -1, sec: 0, base: 0, end: null, route: null, breakoff: null, note: ""};
+}
+/** RTH ALONG THE PASSAGE (doRTH, home beyond RTH_MAX_M): the way home's first section sent from where she is. */
+async function sailHome(H, brk, far){
+  if(sailBusy){ flashNote("RTH: the passage is sending a section - press RTH again in a moment."); return; }
+  const f = sailFuelShort(H, 0, null);
+  if(f){ showBanner("RTH refused: home is " + fmtDist(far.m) + " away, along the passage - " + f + "."); return; }
+  sailBusy = true; applyCmdState(S); updateTransitPanel();
+  showBanner("Routing home along the passage… home is " + fmtDist(far.m) + " away, past the " + fmtDist(RTH_MAX_M)
+    + " a straight return is certified for.");
+  try{
+    const r = await sailSend(H, 0, {lat: asv.lat, lon: asv.lon}, null, false);
+    if(r.error || r.soft){
+      showBanner("RTH refused: home is " + fmtDist(far.m) + " away, and the first section of the way home along the passage "
+        + "could not be sent - " + (r.error || "try again") + ".");
+      logClient("passage_rth", {id: H.id, ok: false, why: r.error || "soft"});
+      return;
+    }
+    if(brk) bankBreak(brk);                      // the survey she has left: Continue picks it up (as doRTH banks it)
+    H.state = "running";
+    mission.passage = H; saveMission();          // the passage she was on is the way home now: Continue sails THIS
+    passage = null;
+    showBanner("RTH ALONG THE PASSAGE: home is " + fmtDist(far.m) + " away, so she goes home the way the passage runs - "
+      + H.sections.length + " section" + (H.sections.length === 1 ? "" : "s") + ", the first sent (" + r.route.length
+      + " waypoints, planned at " + r.water.say + "). Each next is planned and sent as she nears the end of the last; at a "
+      + "port, or wherever the next could not be sent, she HOLDS for Continue passage.");
+    logClient("passage_rth", {id: H.id, ok: true, from: H.from, homeEnd: H.homeEnd, sections: H.sections.length,
+                              wpts: r.route.length, water_m: r.water.m});
+  }catch(e){ showBanner("RTH refused: " + ((e && e.message) || e) + "."); }
+  finally{ sailBusy = false; applyCmdState(S); updateTransitPanel(); render(); }
+}
+// ── THE WATER A SECTION IS PLANNED AT (2026-10-12, step 6 of the long-transit plan) ─────────────────────────────────
+// The guard's chart (nogo.ko) is built at the level at the BOAT, NOW (applyWaterOffset: the stations nearest her). A
+// passage's section is planned ahead of her and sailed over the hours after, along water that can be tens of km from
+// those stations and at another state of the tide: planned at the boat's level, a section sent at high water could be
+// routed over a flat that is dry by the time she reaches it. So each section is planned at ITS OWN level - the lowest
+// predicted along it over the hours she is expected in it (the server's fetch_water_along: the stations nearest each of
+// its points, blended as hers are) - at CHART DATUM wherever no station is within WATER_REMOTE_KM of a point (the
+// boat's own level is not applied past it either) or nothing could be read, and never above an operator's manual
+// level. The chart is built at that level for the planning alone (atWaterLevel); the guard's own is not touched and
+// goes on judging the water she is in, at the level she is in. The coarse plan stays at chart datum.
+const WATER_SAMPLE_M = 5000;           // a section's water is read at points this far apart along it, and at its ends
+const WATER_ALONG_MAX_PTS = 60;        // ... at most this many (asv_console.py WATER_ALONG_MAX_PTS)
+const WATER_ETA_SLACK = 1.5;           // her time to the end of it, stretched by this (the guard slows her, she waits)
+const WATER_WINDOW_PAD_S = 3600;       // ... and this after
+const WATER_ALONG_TIMEOUT_MS = 20000;
+/** Points along a line every `stepM` (stretched to keep to `max`), its two ends included. */
+function samplePts(line, stepM, max){
+  let L = 0;
+  for(let i = 1; i < line.length; i++) L += distTo(line[i - 1], line[i]);
+  const step = Math.max(stepM, L / Math.max(1, max - 2));
+  const out = [line[0]];
+  let next = step, along = 0;
+  for(let i = 1; i < line.length; i++){
+    const a = line[i - 1], b = line[i], d = distTo(a, b);
+    while(d > 0 && next < along + d){
+      const t = (next - along) / d;
+      out.push({lat: a.lat + (b.lat - a.lat) * t, lon: a.lon + (b.lon - a.lon) * t});
+      next += step;
+    }
+    along += d;
+  }
+  const z = line[line.length - 1];
+  if(out.length > 1 && distTo(out[out.length - 1], z) < 1) out.pop();     // a step landing on the end is the end
+  out.push(z);
+  return out;
+}
+/** The level a section is planned at, from the server's read along it (`r`) and the boat's own (`wl`, for a manual
+ *  level), over `hours`: {m, say}. A point counts at its lowest level only with a station within WATER_REMOTE_KM;
+ *  otherwise at chart datum. */
+function sectionLevel(r, wl, hours){
+  const pts = r && Array.isArray(r.points) ? r.points : [];
+  const lvl = (v) => (v >= 0 ? "+" : "") + v.toFixed(2) + " m";
+  let m = null, at = null, far = 0, unread = 0;
+  for(const p of pts){
+    if(!Number.isFinite(p.low_m)) unread++;
+    else if(!(Number.isFinite(p.km) && p.km <= WATER_REMOTE_KM)) far++;
+    const trusted = Number.isFinite(p.low_m) && Number.isFinite(p.km) && p.km <= WATER_REMOTE_KM;
+    const v = trusted ? p.low_m : 0;
+    if(m === null || v < m){ m = v; at = trusted ? p : null; }
+  }
+  const n = pts.length;
+  let say;
+  if(m === null){ m = 0; say = "chart datum - no level could be read along it" + (r && r.note ? " (" + r.note + ")" : ""); }
+  else if(at) say = lvl(m) + ", the lowest " + (at.kind === "observed" ? "observed" : "predicted") + " along it over the next "
+    + hours.toFixed(1) + " h (" + (at.name || (at.stations || [])[0] || "a station") + ", " + Math.round(at.km) + " km off)";
+  else say = "chart datum - " + [far ? far + " of its " + n + " points have no station within " + WATER_REMOTE_KM + " km" : "",
+                                 unread ? "no station gave a level at " + unread + " of its " + n + " points" : ""].filter(Boolean).join("; ");
+  const man = wl && wl.source === "manual" && Number.isFinite(wl.offset_m) ? wl.offset_m : null;
+  if(man !== null && man < m){ say = lvl(man) + ", the manual water level (along it: " + say + ")"; m = man; }
+  return {m: Math.round(m * 100) / 100, say};
+}
+/** The water a section is planned at, read along it over the hours she is expected in it: from now to her time to its
+ *  end (what she has left first, when it is sent ahead of her) stretched by WATER_ETA_SLACK, and WATER_WINDOW_PAD_S
+ *  after. {m, say} - chart datum when nothing could be read. */
+async function sectionWater(P, from, pts, append){
+  const line = [from, ...pts];
+  let L = append ? sailLeftM() : 0;
+  for(let i = 1; i < line.length; i++) L += distTo(line[i - 1], line[i]);
+  const ms = (P.kn || V.SPEED_KN[roleSpeed("transit")] || 5) * 1852 / 3600;
+  const t0 = Date.now() / 1000, t1 = t0 + L / ms * WATER_ETA_SLACK + WATER_WINDOW_PAD_S;
+  const q = samplePts(line, WATER_SAMPLE_M, WATER_ALONG_MAX_PTS).map(p => p.lat.toFixed(5) + "," + p.lon.toFixed(5)).join(";");
+  let r = null;
+  const ac = typeof AbortController === "function" ? new AbortController() : null;
+  const t = ac ? setTimeout(() => ac.abort(), WATER_ALONG_TIMEOUT_MS) : null;
+  try{
+    const res = await fetch("/api/water/along?pts=" + q + "&t0=" + Math.floor(t0) + "&t1=" + Math.ceil(t1), ac ? {signal: ac.signal} : undefined);
+    r = await res.json();
+    if(!res.ok) r = {note: (r && r.error) || "HTTP " + res.status, points: []};
+  }catch(e){ r = {note: "the read failed: " + ((e && e.message) || e), points: []}; }
+  finally{ if(t) clearTimeout(t); }
+  return sectionLevel(r, water, (t1 - t0) / 3600);
+}
+/** The guard's chart built at another water level (chart.js buildKeepouts' `waterOffsetM`: the live level keeps its
+ *  one writer), the structures read off the chart image folded in as rebuildNogo folds them, and Punch Out its own. */
+function nogoModelAt(m){
+  const ko = buildKeepouts(nogo.frame, nogo.enf, nogoDR(), nogo.features || sea.enc.features || [], m);
+  foldChartInk(ko, nogo.frame);
+  return ko;
+}
+/** `fn` run on the guard's chart as built at the level `m`, and the chart put back. SYNCHRONOUS, so no frame - and no
+ *  guard pass - runs between; the planner reads no level but the chart's (passage.js, routing.js, hold.js). Within
+ *  TIDE_REBUILD_M of the level the chart was built at, on the chart itself. */
+function atWaterLevel(m, fn){
+  if(!nogo.ready || !nogo.frame || nogo.builtOffset == null || Math.abs(m - nogo.builtOffset) < TIDE_REBUILD_M - 1e-9) return fn();
+  const keep = nogo.ko;
+  nogo.ko = nogoModelAt(m);
+  try{ return fn(); }
+  finally{ nogo.ko = keep; }
 }
 async function doTransit(){
   if(transit.length<1){ flashNote("Draw a transit line first (click the chart)."); return; }

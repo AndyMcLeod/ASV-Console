@@ -2460,6 +2460,36 @@ of the operator.
    her back to where she left the passage. **One tile is built from NOAA at a time** (`ENC_TILE_BUILDS`): with
    every layer read, three at once lost layers on the same tiles on every read. `tests/passage_sail.js`.
 
+   **Home along the passage, and each section at its own water (2026-10-12, step 6, diesel hulls).**
+   An RTH with home more than 50 km away is refused: no chart box holds the water between. From a
+   passage's water, with home at one end of it, **RTH now goes home along the passage**. If home is
+   where the passage left from, she goes back the way it came; if home is where it arrives (she left
+   from a visiting harbor), she carries on. A passage that comes back to its start goes home whichever
+   way is shorter. She rejoins the passage where she is (at a section's end, the whole next section
+   home), sails its own sections in their turn, and the last ends at home. Each is planned in detail
+   as she comes to it, sent ahead of her **as an RTH**, and she holds at the end of the last one
+   sent, or waits at a port for Continue passage, exactly as a passage is sailed. The way home is
+   kept on the plan as a passage of its own (`kind: "rth"`, with the passage it runs along), so a
+   reload, a Go-To, Divert and Continue treat it as any passage. Only the operator's RTH goes this
+   way. The end-of-plan chain and the low-fuel monitor still send an RTH only with home in range
+   (Andy, 2026-10-11). A ROC's home moves, so it is refused, and so is a way home that does not reach the
+   first port on it with 20% of the tank. **Each section is planned at its own water.** The
+   live water level follows the boat: the stations nearest her, now. A section is planned ahead of
+   her and sailed over the hours after, often tens of km from those stations. So each section is
+   planned at the **lowest level predicted along it over the hours she is expected in it**, from
+   the stations nearest each of its points (`GET /api/water/along`; the Great Lakes on their observed
+   level), at chart datum where no station is within 75 km or nothing could be read, and never
+   above a manual water level. The chart it is planned on is built at that level for the planning
+   alone. The guard's own chart is not touched and goes on judging the water she is in. The level
+   is said on the passage's line and banners, and kept on the section. The coarse plan stays at
+   chart datum. Live (scratch console, DriX, 2026-10-12, 16:4x EDT): the boat's level read
+   +1.35 m (Seavey Island, observed) with low water predicted at -0.07 m three hours on. A 69 km
+   passage offshore of New Castle had its first section planned at -0.07 m. She was spawned 62 km
+   out and RTH pressed. She went home along the passage: the first 3 km section home was planned at
+   +0.19 m (its 1.3 h window), and the next 20 km section was sent ahead at once, at -0.07 m. Both
+   were sent as RTHs (the console: behavior rth, a 295 m hold disc). A reload kept the way home.
+   `tests/passage_sail.js` 12-14e, `tests/water_along.py`, `tests/mission_store.py` 17e-17f.
+
    **Every layer read, and what each charted thing means to each hull (2026-10-12).** A review of
    how the console reads the chart and what its keep-out model makes of it found charted things that
    reached the model as nothing - each measured on the cached Portsmouth tiles with the code as it

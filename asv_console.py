@@ -1289,8 +1289,8 @@ def _check_passage(m):
     """THE PASSAGE BEING SAILED (Andy, 2026-10-12: "Step 5" of the long-transit plan). The page keeps the passage it is
     sailing on the PLAN - so a page reloaded, or a console restarted, mid-passage still knows which section she is on,
     where she left it, and what Continue does - as {id, t, kn, floor_m, points: [{lat, lon, port, t}], sections:
-    [{from, to, via, end, port, lengthM}], state, sent, sec, base, end, route, breakoff: {sec, at, t, why, port} or
-    null, note}.
+    [{from, to, via, end, port, lengthM, water_m, water}], state, sent, sec, base, end, route, breakoff: {sec, at, t,
+    why, port} or null, note}; the way home along one (step 6) adds kind "rth", path, home, homeEnd and from.
 
     TYPES ONLY, as the break-offs are checked: positions positions, numbers finite, text short, the lists bounded, the
     state one the page knows. What the page does with it is the page's."""
@@ -1306,20 +1306,36 @@ def _check_passage(m):
     pts = P.get("points")
     if not (isinstance(pts, list) and 1 < len(pts) <= PASSAGE_POINTS_MAX and all(_is_position(q) for q in pts)):
         bad("its points must be 2 to %d positions" % PASSAGE_POINTS_MAX)
-    secs = P.get("sections")
-    if not (isinstance(secs, list) and 0 < len(secs) <= PASSAGE_SECTIONS_MAX):
-        bad("its sections must be a list of 1 to %d" % PASSAGE_SECTIONS_MAX)
-    for i, c in enumerate(secs):
-        if not (isinstance(c, dict) and _is_position(c.get("from")) and _is_position(c.get("to"))):
-            bad("section %d has no from and to" % (i + 1))
-        via = c.get("via")
-        if not (isinstance(via, list) and len(via) <= PASSAGE_VIA_MAX and all(_is_position(q) for q in via)):
-            bad("section %d's turning points are not a list of at most %d positions" % (i + 1, PASSAGE_VIA_MAX))
-        if c.get("end") not in ("hold", "port"):
-            bad("section %d must end at a hold or a port" % (i + 1))
-        for k in ("port", "lengthM"):
-            if c.get(k) is not None and not _finite_num(c.get(k)):
-                bad("section %d's %s must be a finite number" % (i + 1, k))
+    def sections(secs, what, ends):
+        if not (isinstance(secs, list) and 0 < len(secs) <= PASSAGE_SECTIONS_MAX):
+            bad("its %ss must be a list of 1 to %d" % (what, PASSAGE_SECTIONS_MAX))
+        for i, c in enumerate(secs):
+            if not (isinstance(c, dict) and _is_position(c.get("from")) and _is_position(c.get("to"))):
+                bad("%s %d has no from and to" % (what, i + 1))
+            via = c.get("via")
+            if not (isinstance(via, list) and len(via) <= PASSAGE_VIA_MAX and all(_is_position(q) for q in via)):
+                bad("%s %d's turning points are not a list of at most %d positions" % (what, i + 1, PASSAGE_VIA_MAX))
+            if c.get("end") not in ends:
+                bad("%s %d must end at %s" % (what, i + 1, " or ".join("a " + e for e in ends)))
+            for k in ("port", "lengthM", "water_m"):
+                if c.get(k) is not None and not _finite_num(c.get(k)):
+                    bad("%s %d's %s must be a finite number" % (what, i + 1, k))
+            if c.get("water") is not None and not (isinstance(c.get("water"), str) and len(c.get("water")) <= 400):
+                bad("%s %d's water must be text of at most 400 characters" % (what, i + 1))
+    # THE WAY HOME ALONG A PASSAGE (step 6, 2026-10-12): kind "rth", its sections home ending at "home", the passage
+    # it goes home along (`path`, that passage's own sections), home, which end of it home is at, and where it left it.
+    if P.get("kind") not in (None, "rth"):
+        bad("its kind must be rth or none")
+    sections(P.get("sections"), "section", ("hold", "port", "home") if P.get("kind") == "rth" else ("hold", "port"))
+    if P.get("kind") == "rth":
+        sections(P.get("path"), "passage section", ("hold", "port"))
+        if not _is_position(P.get("home")):
+            bad("its home is not a position")
+        if P.get("homeEnd") not in ("start", "end"):
+            bad("its homeEnd must be start or end")
+        fr = P.get("from")
+        if not (isinstance(fr, dict) and isinstance(fr.get("id"), str) and len(fr["id"]) <= 400 and _finite_num(fr.get("sec"))):
+            bad("its from must name the passage it left and the section")
     route = P.get("route")
     if route is not None and not (isinstance(route, list) and len(route) <= ROUTE_MAX_WPTS
                                   and all(_is_position(w) for w in route)):
@@ -4414,6 +4430,25 @@ def _fetch_station_level(station_id, datum, timeout=15.0):
     return {"ok": False, "note": r.get("note") or p.get("note")}
 
 
+def _water_pool(sts, lat, lon):
+    """The stations a level at (lat, lon) is blended from: (nearest, datum, lake, [up to WATER_K stations]) - the
+    nearest's datum region, within WATER_MAX_KM, in the same lake in the Great Lakes, nearest first; the nearest alone
+    when none is within the cap."""
+    def dist(s):
+        return _haversine_km(lat, lon, s["lat"], s["lng"])
+
+    nearest = min(sts, key=dist)
+    datum = "LWD" if nearest["gl"] else "MLLW"
+    lake = _lake_of(nearest["lat"], nearest["lng"]) if nearest["gl"] else None
+
+    # candidate pool: same datum region, within the distance cap, same lake if GL
+    cand = [s for s in sts if bool(s["gl"]) == bool(nearest["gl"]) and dist(s) <= WATER_MAX_KM]
+    if lake is not None:
+        cand = [s for s in cand if _lake_of(s["lat"], s["lng"]) == lake]
+    cand.sort(key=dist)
+    return nearest, datum, lake, cand[:WATER_K] or [nearest]
+
+
 def fetch_water_level(lat, lon, timeout=15.0):
     """Water level above the CHART datum (LWD in the Great Lakes, MLLW elsewhere),
     INTERPOLATED from the nearest CO-OPS stations by inverse-distance weighting, to
@@ -4428,16 +4463,7 @@ def fetch_water_level(lat, lon, timeout=15.0):
     def dist(s):
         return _haversine_km(lat, lon, s["lat"], s["lng"])
 
-    nearest = min(sts, key=dist)
-    datum = "LWD" if nearest["gl"] else "MLLW"
-    lake = _lake_of(nearest["lat"], nearest["lng"]) if nearest["gl"] else None
-
-    # candidate pool: same datum region, within the distance cap, same lake if GL
-    cand = [s for s in sts if bool(s["gl"]) == bool(nearest["gl"]) and dist(s) <= WATER_MAX_KM]
-    if lake is not None:
-        cand = [s for s in cand if _lake_of(s["lat"], s["lng"]) == lake]
-    cand.sort(key=dist)
-    cand = cand[:WATER_K] or [nearest]
+    nearest, datum, lake, cand = _water_pool(sts, lat, lon)
 
     def _job(s):
         r = _fetch_station_level(s["id"], datum, timeout=timeout)
@@ -4477,6 +4503,123 @@ def fetch_water_level(lat, lon, timeout=15.0):
     return {"ok": True, "offset_m": round(offset, 3), "datum": datum, "method": method,
             "data_kind": data_kind, "station": prim["id"], "name": prim["name"],
             "dist_km": prim["dist_km"], "t": prim["t"], "lake": lake, "stations": use}
+
+
+# ── THE WATER ALONG A PASSAGE'S SECTION (2026-10-12, step 6 of the long-transit plan) ─────────────────────────────
+# WATER (below) follows HER: the level at the stations nearest the boat, now. A passage's section is planned ahead of
+# her and sailed over the hours after, along water that can be 30 km from the boat's stations - so it is planned at
+# the level THERE, WHILE SHE SAILS IT: at each of its points, the LOWEST PREDICTED level over the window, blended from
+# the stations nearest THAT point as fetch_water_level blends them for her (_water_pool: the same K, the same cap, the
+# same lake). The Great Lakes have no tide predictions: there the latest observed level stands for the window. Each
+# point carries its nearest station's distance; the PAGE judges the trust (chart.js WATER_REMOTE_KM) and takes the
+# lowest (asv.html sectionWater). /api/water/along serves it.
+WATER_ALONG_MAX_PTS = 60
+WATER_WINDOW_MAX_S = 24 * 3600         # the window is clipped to this (a section is hours)
+WATER_PRED_TTL_S = 6 * 3600            # a station's predictions are read again after this (a failed read after a minute)
+WATER_PRED_SLOT_S = 360                # CO-OPS' 6-minute predictions
+_water_pred = {}                       # (station, datum, utc day) -> (read at, [(epoch, m)] or None)
+_water_pred_lock = threading.Lock()
+
+
+def _station_predictions(sid, datum, t0, timeout=15.0):
+    """One station's predicted levels every 6 minutes from the start of t0's UTC day, for two days - [(epoch, m)] - or
+    None. Kept WATER_PRED_TTL_S."""
+    day = int(t0 // 86400) * 86400
+    key = (sid, datum, day)
+    now = time.time()
+    with _water_pred_lock:
+        hit = _water_pred.get(key)
+        if hit and now - hit[0] < (WATER_PRED_TTL_S if hit[1] is not None else 60):
+            return hit[1]
+    r = _coops_series(sid, datum, "predictions", time.strftime("%Y%m%d %H:%M", time.gmtime(day)),
+                      time.strftime("%Y%m%d %H:%M", time.gmtime(day + 2 * 86400)), interval="6", timeout=timeout)
+    ser = None
+    if r.get("ok"):
+        ser = [(e, p["v"]) for p in r["series"] for e in [_coops_epoch(p.get("t"))] if e is not None] or None
+    with _water_pred_lock:
+        if len(_water_pred) > 2000:
+            _water_pred.clear()
+        _water_pred[key] = (now, ser)
+    return ser
+
+
+def fetch_water_along(points, t0, t1, timeout=15.0):
+    """The lowest water above chart datum at each of `points` [(lat, lon)] between epochs t0 and t1 (a passage's
+    section, while she sails it): {ok, low_m, at, t, points: [{lat, lon, km, low_m, t, kind, datum, stations}], note}.
+    A point no station gives a level at has low_m None; `km` is its nearest station's distance. Never raises."""
+    sts = _load_water_stations()
+    if not sts:
+        return {"ok": False, "note": "CO-OPS station list unavailable (offline?)", "points": []}
+    t1 = max(t0, min(t1, t0 + WATER_WINDOW_MAX_S))
+    pools, need = [], {}
+    for lat, lon in points:
+        _n, datum, _l, cand = _water_pool(sts, lat, lon)
+        pools.append((lat, lon, datum, [(s, _haversine_km(lat, lon, s["lat"], s["lng"])) for s in cand]))
+        for s in cand:
+            need[(s["id"], datum, bool(s["gl"]))] = s
+
+    def _job(k):
+        sid, datum, gl = k
+        if gl:                                # no tide to predict: the level now stands for the window
+            r = _coops_get(sid, datum, "water_level", timeout=timeout)
+            return k, ([(t0, r["offset_m"])] if r.get("ok") else None)
+        return k, _station_predictions(sid, datum, t0, timeout=timeout)
+
+    got = {}
+    if need:
+        with ThreadPoolExecutor(max_workers=min(6, len(need))) as ex:
+            for k, ser in ex.map(_job, list(need)):
+                got[k] = ser
+    out = []
+    for lat, lon, datum, cand in pools:
+        row = {"lat": lat, "lon": lon, "km": round(cand[0][1], 1), "low_m": None, "t": None, "kind": None,
+               "datum": datum, "stations": []}
+        use = [(s, km, got.get((s["id"], datum, bool(s["gl"])))) for s, km in cand]
+        use = [(s, km, ser) for s, km, ser in use if ser]
+        if use:
+            gl = bool(use[0][0]["gl"])
+            # the window's slots, and the one either side of it: a low between two slots is not missed at an edge
+            vals = [{e: v for e, v in ser if t0 - WATER_PRED_SLOT_S <= e <= t1 + WATER_PRED_SLOT_S} for _s, _k, ser in use]
+            slots = [t0] if gl else sorted(set().union(*[set(v) for v in vals]))
+            low = None
+            for e in slots:
+                num = den = 0.0
+                for (_s, km, ser), v in zip(use, vals):
+                    x = ser[0][1] if gl else v.get(e)
+                    if x is None:
+                        continue
+                    w = 1.0 / max(km, 0.01) ** WATER_IDW_POWER
+                    num += w * x
+                    den += w
+                if den > 0 and (low is None or num / den < low[0]):
+                    low = (num / den, e)
+            if low is not None:
+                row.update(low_m=round(low[0], 3), t=low[1], kind="observed" if gl else "predicted",
+                           km=round(use[0][1], 1), name=use[0][0]["name"], stations=[s["id"] for s, _k, _v in use])
+        out.append(row)
+    have = [r for r in out if r["low_m"] is not None]
+    if not have:
+        return {"ok": False, "note": "no station gave a level along it", "points": out}
+    lo = min(have, key=lambda r: r["low_m"])
+    return {"ok": True, "low_m": lo["low_m"], "at": {"lat": lo["lat"], "lon": lo["lon"]}, "t": lo["t"], "points": out}
+
+
+def _water_along_query(path):
+    """/api/water/along?pts=LAT,LON;LAT,LON...&t0=EPOCH&t1=EPOCH -> (points, t0, t1); ValueError in words."""
+    q = urllib.parse.parse_qs(urllib.parse.urlparse(path).query)
+    try:
+        pts = [tuple(float(v) for v in p.split(",")) for p in q["pts"][0].split(";") if p.strip()]
+        t0, t1 = float(q["t0"][0]), float(q["t1"][0])
+    except (KeyError, ValueError, IndexError):
+        raise ValueError("usage: /api/water/along?pts=LAT,LON;LAT,LON...&t0=EPOCH&t1=EPOCH")
+    if not 0 < len(pts) <= WATER_ALONG_MAX_PTS:
+        raise ValueError("1 to %d points" % WATER_ALONG_MAX_PTS)
+    for p in pts:
+        if len(p) != 2 or not all(math.isfinite(v) for v in p) or not (-90 <= p[0] <= 90 and -180 <= p[1] <= 180):
+            raise ValueError("each point LAT,LON, in range")
+    if not (math.isfinite(t0) and math.isfinite(t1) and t1 >= t0):
+        raise ValueError("t0 and t1 epochs, t1 not before t0")
+    return pts, t0, t1
 
 
 def _monitor_pass(mon, name, body):
@@ -8506,6 +8649,12 @@ class Handler(BaseHTTPRequestHandler):
             self._serve_enc()
         elif self.path.startswith("/api/chartinfo"):
             self._serve_chartinfo()
+        elif self.path.startswith("/api/water/along"):       # a passage's section, while she sails it (step 6)
+            try:
+                pts, t0, t1 = _water_along_query(self.path)
+            except ValueError as e:
+                return self._send(400, json.dumps({"error": str(e)}))
+            self._send(200, json.dumps(finite_only(fetch_water_along(pts, t0, t1))))
         elif self.path.startswith("/api/waterlevel"):
             self._send(200, json.dumps(WATER.snapshot()))
         elif self.path.startswith("/api/tide"):     # tide-chart series (ENV card)

@@ -690,6 +690,36 @@ check("17d. a passage that is not what it claims is REFUSED in words and nothing
       all(p_said.values()) and open(_C.MISSION_PATH, "rb").read() == p_before,
       "; ".join("%s: %s" % (k, (v or "NOT REFUSED")[:36]) for k, v in p_said.items()))
 
+# 17e-17f. THE WAY HOME ALONG A PASSAGE (2026-10-12, step 6): a passage record of kind "rth" - its sections home, the
+# last ending at "home", the passage it runs along (`path`), home, which end home is at, where it left it - and each
+# section's water level, kept on the plan the same way.
+HOME = dict(PSG, id="Hk1", kind="rth", state="running", breakoff=None, home=SV_WPS[0], homeEnd="start",
+            **{"from": {"id": "Pk1", "sec": 1}},
+            path=PSG["sections"],
+            sections=[{"from": SV_WPS[3], "to": SV_WPS[2], "via": [], "end": "hold", "port": None, "lengthM": 9000,
+                       "water_m": -0.21, "water": "-0.21 m, the lowest predicted along it over the next 4.0 h"},
+                      {"from": SV_WPS[2], "to": SV_WPS[0], "via": [SV_WPS[1]], "end": "home", "port": None, "lengthM": 20000}])
+_, h_err = attempt(_C.save_mission, sv_plan(passage=HOME))
+h_back = _C.load_mission().get("passage")
+check("17e. the WAY HOME ALONG A PASSAGE - its sections home to home, the passage it runs along, home, where it left "
+      "it - and a section's water level are saved and loaded as they were",
+      h_err is None and h_back == HOME,
+      "save: %s; loaded %s" % (h_err or "ok", json.dumps(h_back)[:120]))
+h_before = open(_C.MISSION_PATH, "rb").read()
+h_bad = {"a kind the page does not know": sv_plan(passage=dict(HOME, kind="return")),
+         "an outbound section ending at home": sv_plan(passage=dict(PSG, sections=[dict(PSG["sections"][0], end="home")])),
+         "no home": sv_plan(passage=dict(HOME, home=None)),
+         "home at neither end": sv_plan(passage=dict(HOME, homeEnd="middle")),
+         "no passage it left": sv_plan(passage=dict(HOME, **{"from": None})),
+         "no path": sv_plan(passage=dict(HOME, path=None)),
+         "a path section ending at home": sv_plan(passage=dict(HOME, path=[dict(PSG["sections"][0], end="home")])),
+         "a water level not a number": sv_plan(passage=dict(HOME, sections=[dict(HOME["sections"][0], water_m=float("nan"))])),
+         "a water note too long": sv_plan(passage=dict(HOME, sections=[dict(HOME["sections"][0], water="x" * 500)]))}
+h_said = {k: refused(v) for k, v in h_bad.items()}
+check("17f. a way home that is not what it claims is REFUSED in words and nothing is written",
+      all(h_said.values()) and open(_C.MISSION_PATH, "rb").read() == h_before,
+      "; ".join("%s: %s" % (k, (v or "NOT REFUSED")[:36]) for k, v in h_said.items()))
+
 # 10. None of it touched the operator's own plan.
 check("10. nothing in this suite wrote, replaced or removed the app directory's own plan files",
       not _WRITES_TO_APP, "; ".join(_WRITES_TO_APP[:3]) or "no write named them")

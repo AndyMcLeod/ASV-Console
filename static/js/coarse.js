@@ -476,3 +476,105 @@ export function cutSections(field, legs, points, sectionM = SECTION_M) {
 function flatM(a, b) {
   return Math.hypot((b.lat - a.lat) * M_PER_DEG, (b.lon - a.lon) * M_PER_DEG * Math.cos((a.lat + b.lat) / 2 * Math.PI / 180));
 }
+
+// ── HOME ALONG THE PASSAGE (2026-10-12, step 6 of the long-transit plan) ─────────────────────────────────────────
+// An RTH from a passage's water, with home at one end of it (where it left from, or where it arrives), goes home the
+// way the passage runs: over the water its chart was read along and its sections were cut on, a section at a time,
+// each planned in detail as she comes to it (asv.html sailSend) - not on the straight line no chart box can hold
+// (asv.html RTH_MAX_M). The sections home ARE the passage's, the other way round when home is where it left from, so
+// each still ends at water clear all round to hold in, or at a port. She rejoins it at the point nearest her (of those
+// within REJOIN_SLACK_M of the nearest, the one nearest home along it); the last section ends at home itself.
+
+/** Home this near an end of the passage is AT that end: the water between is planned in detail, as a port's circle is. */
+export const HOME_AT_END_M = PORT_R_M;
+/** She rejoins the passage from no farther off it than this: one section's planning from wherever she is. */
+export const REJOIN_MAX_M = SECTION_M;
+/** A point of the passage this much farther from her than its nearest is not where she rejoins it. */
+export const REJOIN_SLACK_M = HOLD_SAFE_M;
+
+/** The point of the segment a-b nearest p, flat at p's latitude. */
+function nearestOnSeg(p, a, b) {
+  const k = Math.cos(p.lat * Math.PI / 180);
+  const ax = (a.lon - p.lon) * k, ay = a.lat - p.lat, bx = (b.lon - p.lon) * k, by = b.lat - p.lat;
+  const dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy;
+  const t = L > 0 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / L)) : 0;
+  return { lat: a.lat + (b.lat - a.lat) * t, lon: a.lon + (b.lon - a.lon) * t };
+}
+
+/** The turning points between a line's first and last point, any closer than a meter to the one before dropped. */
+function between(line) {
+  return line.filter((p, i) => i === 0 || flatM(line[i - 1], p) >= 1).slice(1, -1).map((p) => ({ lat: p.lat, lon: p.lon }));
+}
+
+/**
+ * THE SECTIONS HOME, from her position `at` along the passage's `sections` to `home`:
+ *
+ *   {sections: [{from, to, via, end: "hold" | "port" | "home", port, lengthM}], homeEnd: "start" | "end",
+ *    rejoin: {sec, at, offM}, lengthM}
+ *
+ * - or {why: "ends"} when home is at neither end of the passage, {why: "far", offM} when she is farther than
+ * REJOIN_MAX_M from it. A passage that comes back where it left from goes home whichever way is shorter from her.
+ */
+export function homeSections(sections, at, home) {
+  if (!sections || !sections.length || !at || !home) return { why: "ends" };
+  const ends = [];
+  if (flatM(home, sections[0].from) <= HOME_AT_END_M) ends.push("start");
+  if (flatM(home, sections[sections.length - 1].to) <= HOME_AT_END_M) ends.push("end");
+  if (!ends.length) return { why: "ends" };
+  // every stretch of the passage: the point of it nearest her, and how far along the passage that point lies
+  const lines = sections.map((c) => [c.from, ...c.via, c.to]);
+  const starts = [], cand = [];
+  let along = 0;
+  lines.forEach((line, j) => {
+    starts.push(along);
+    for (let s = 1; s < line.length; s++) {
+      const a = line[s - 1], b = line[s], q = nearestOnSeg(at, a, b);
+      cand.push({ j, s, q, d: flatM(at, q), m: along + flatM(a, q) });
+      along += flatM(a, b);
+    }
+  });
+  const total = along;
+  starts.push(total);
+  const offM = Math.min(...cand.map((c) => c.d));
+  if (offM > REJOIN_MAX_M) return { why: "far", offM };
+  // where she rejoins it: off it about as little as she can be, and of those the nearest home along it (her way to it
+  // and its way home) - so at the end of a section she sails the next one home whole, never back into the one she left
+  // nor a few meters to the port she is at. At a section's end the two sections' costs TIE: going home the way it
+  // came, the earlier section wins (the first found); going on, the later one (found after it, and taken).
+  let best = null;
+  for (const e of ends) {
+    for (const c of cand) {
+      if (c.d > offM + REJOIN_SLACK_M) continue;
+      const cost = c.d + (e === "start" ? c.m : total - c.m);
+      if (!best || cost < best.cost - 1e-6 || (e === "end" && best.e === "end" && cost <= best.cost + 1e-6)) best = { ...c, e, cost };
+    }
+  }
+  const { j, s, q, e } = best;
+  const line = lines[j], out = [];
+  if (e === "start") {
+    out.push({ from: { lat: at.lat, lon: at.lon }, to: { lat: line[0].lat, lon: line[0].lon },
+               via: between([at, q, ...line.slice(1, s).reverse(), line[0]]),
+               end: j === 0 ? "home" : sections[j - 1].end, port: j === 0 ? null : sections[j - 1].port,
+               lengthM: best.d + best.m - starts[j] });
+    for (let i = j - 1; i >= 0; i--) {
+      const c = sections[i];
+      out.push({ from: { lat: c.to.lat, lon: c.to.lon }, to: { lat: c.from.lat, lon: c.from.lon },
+                 via: c.via.slice().reverse().map((p) => ({ lat: p.lat, lon: p.lon })),
+                 end: i === 0 ? "home" : sections[i - 1].end, port: i === 0 ? null : sections[i - 1].port, lengthM: c.lengthM });
+    }
+  } else {
+    const z = line[line.length - 1];
+    out.push({ from: { lat: at.lat, lon: at.lon }, to: { lat: z.lat, lon: z.lon }, via: between([at, q, ...line.slice(s)]),
+               end: sections[j].end, port: sections[j].port, lengthM: best.d + starts[j + 1] - best.m });
+    for (let i = j + 1; i < sections.length; i++) {
+      const c = sections[i];
+      out.push({ from: { lat: c.from.lat, lon: c.from.lon }, to: { lat: c.to.lat, lon: c.to.lon },
+                 via: c.via.map((p) => ({ lat: p.lat, lon: p.lon })), end: c.end, port: c.port, lengthM: c.lengthM });
+    }
+  }
+  const last = out[out.length - 1];                // the last ends at home itself, the water between planned in detail
+  last.lengthM += flatM(last.to, home);
+  last.to = { lat: home.lat, lon: home.lon }; last.end = "home"; last.port = null;
+  out.forEach((c) => { c.lengthM = Math.round(c.lengthM); });
+  return { sections: out, homeEnd: e, rejoin: { sec: j, at: q, offM: best.d }, lengthM: out.reduce((a, c) => a + c.lengthM, 0) };
+}

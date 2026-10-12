@@ -253,9 +253,15 @@ export function effectiveWaterOffset(wl){
 // defaults off, because a charted area is advisory) and REFUSES a key that is not one of
 // the four, so WorldView's old `hazard` spelling can no longer be dropped on the floor.
 // Every caller here passes a full {...NOGO_ENF}, so nothing in this console moves.
-export function buildKeepouts(ref, enf, dr, feats){
+//
+// `waterOffsetM` (2026-10-12, step 6 of the long-transit plan): a model at ANOTHER water level than the live one - a
+// passage's section, planned at the level along it while she sails it (asv.html atWaterLevel). Given, it stands in for
+// sea.waterOffset in this one build; sea.waterOffset keeps its one writer (applyWaterOffset).
+export function buildKeepouts(ref, enf, dr, feats, waterOffsetM){
+  const o = koOpts();
+  if(Number.isFinite(waterOffsetM)) o.waterOffsetM = waterOffsetM;
   return coreBuildKeepouts(ref, feats || sea.enc.features,
-                           {...koOpts(), depthRange: dr, enforce: enf});
+                           {...o, depthRange: dr, enforce: enf});
 }
 // --- app-level ENC NOGO: build once, every behavior routes clear of it ---- //
 //

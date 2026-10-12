@@ -24,6 +24,19 @@
 //   10b   the drawing: each section's line, a mark at each end, an X where she left it;
 //   11    THE WIRING: the end-of-plan RTH chain (and the card's prediction) stands down at a passage's hold; the tick on
 //         every frame after the read-ahead; the buttons, the chart's row, the plan's loader, the coarse plan's sections.
+// STEP 6 (Andy's plan: "RTH back along the corridor, the water-level offset per section"):
+//   12-12e THE SECTIONS HOME (coarse.js homeSections): back the way it came when home is where it left from, on when
+//         home is where it arrives, the shorter way round a passage that comes back to its start; rejoined where she
+//         is, at a section's end the whole next section home; turning points reversed; the last ending at home; none
+//         when home is at neither end or she is far off it;
+//   13-13e THE WAY HOME, SAILED (homeRecord, sailHome, doRTH past RTH_MAX_M): the operator's RTH sent home along the
+//         passage as an RTH, the passage on the plan becoming the way home; never the end-of-plan chain's, the low-fuel
+//         monitor's, or to a ROC's home; refused on too little fuel for the first port; each next section sent ahead
+//         of her as an RTH; HOME at the end; a second RTH along the same passage; left and continued;
+//   14-14e THE WATER A SECTION IS PLANNED AT (sectionLevel, sectionWater, atWaterLevel, chart.js buildKeepouts'
+//         waterOffsetM): the lowest trusted level along it, chart datum otherwise, a manual level lowering it only;
+//         read along its own points over the hours she is expected in it; planned on the chart built at that level,
+//         the guard's own put back; the wiring.
 //
 //   node tests/passage_sail.js   # exit 0 = pass
 
@@ -141,7 +154,8 @@ console.log("The passage, sailed:");
     const w = Object.assign({ S: { armed: true, estop: false, run: "idle", status: { fuel_l: 200, holding: false }, wp_total: 0 },
       asv: { ...HERE }, wpIndex: 0, mission: { passage: null }, passage: PLAN(), runRoute: null, cmds: [], banners: [], notes: [],
       logs: [], saves: 0, canCommand: true, sup: true, planned: [], quiet: true, refuse: null, unroutable: 0, ownsKind: null,
-      gotoTakes: true, planIntent: null, planGen: 0 }, o || {});
+      gotoTakes: true, planIntent: null, planGen: 0, waterAsked: [], levels: [], banked: [],
+      level: { m: 0.35, say: "+0.35 m, the lowest predicted along it over the next 4.0 h (Test Harbor, 3 km off)" } }, o || {});
     const src = [
       "let S = w.S, asv = w.asv, mission = w.mission, passage = w.passage, runRoute = w.runRoute, runUnsafe = [], planIntent = w.planIntent, planGen = w.planGen;",
       "const window = {get _wpIndex(){ return w.wpIndex; }};",
@@ -163,6 +177,12 @@ console.log("The passage, sailed:");
       "const took = (r) => !!(r && r.ok), notTookSay = (r) => 'REFUSED: ' + r.error, releaseEscapeClaim = () => {};",
       "const setPlanIntent = (k, p, r) => { planGen++; planIntent = {kind: k, why: [], route: r.length}; };",
       "const legStartsHere = () => {}, setTip = (el, t) => { el.tip = t; };",
+      // step 6: the water a section is planned at (stubbed here; 14 drives the real ones), and doRTH's way home
+      "const sectionWater = async (P, from, pts, append) => { w.waterAsked.push({from, pts, append}); return w.level; };",
+      "const atWaterLevel = (m, fn) => { w.levels.push(m); return fn(); };",
+      "let rthChainFailed = false; const NOGO_RADIUS_M = 5000, homeSections = w.C.homeSections;",
+      "const surveyBreakNow = () => w.brk || null, bankBreak = (b) => w.banked.push(b);",
+      decl("RTH_MAX_M"),
       "const ctx = new Proxy({}, {get: (t, k) => (k in t ? t[k] : (...a) => { w.ops.push([k, ...a]); }), set: (t, k, v) => { t[k] = v; return true; }});",
       "const doGoTo = async (ll) => { w.cmds.push(['goto', ll]); if (w.gotoTakes) { planGen++; planIntent = {kind: 'goto', why: []}; if (w.gotoRoute) runRoute = w.gotoRoute; } };",
       "const $ = (id) => w.dom[id] || (w.dom[id] = {style: {}, classList: {toggle(c, on){ this[c] = on; }}, disabled: false});",
@@ -170,13 +190,14 @@ console.log("The passage, sailed:");
       "let sailBusy = false, sailTriedAt = 0, sailSaid = null;",
       ["sailRecord", "sailPortName", "sailRefusal", "sailSegM", "sectionRest", "sailOwns", "sailGuardQuiet", "sailLeftM", "sailSend",
        "sailPassage", "sailAppend", "sailAtEnd", "sailBreakOff", "passageTick", "sailRestM", "sailFuelShort", "continueRefusal",
-       "continuePassage", "divertPassage", "dropPassage", "renderPassageControls", "sailLine", "sailOwnsHold", "drawSail"].map(grab).join("\n"),
+       "continuePassage", "divertPassage", "dropPassage", "renderPassageControls", "sailLine", "sailOwnsHold", "drawSail",
+       "rthTooFar", "doRTH", "homeRecord", "sailHome"].map(grab).join("\n"),
       "const api = {sailRecord, sailRefusal, sectionRest, sailPassage, passageTick, sailAtEnd, continuePassage, continueRefusal, divertPassage,",
-      "  dropPassage, renderPassageControls, sailOwnsHold, sailLine, drawSail,",
-      "  st: () => ({mission, runRoute, planIntent, planGen, passage, sailBusy}), set: (k, v) => { eval(k + ' = v'); }};",
+      "  dropPassage, renderPassageControls, sailOwnsHold, sailLine, drawSail, doRTH, homeRecord,",
+      "  st: () => ({mission, runRoute, planIntent, planGen, passage, sailBusy, rthChainFailed}), set: (k, v) => { eval(k + ' = v'); }};",
       "return api;",
     ].join("\n");
-    w.dom = {}; w.F = F; w.model = model; w.distTo = distTo;
+    w.dom = {}; w.F = F; w.C = C; w.model = model; w.distTo = distTo;
     w.api = new Function("w", src)(w);
     return w;
   };
@@ -219,7 +240,8 @@ console.log("The passage, sailed:");
         () => W4.planned.length === 1 && distTo(W4.planned[0].from, HERE) < 1 && W4.planned[0].line.length === 2
               && c4 && c4[0] === "/api/cmd/transit" && c4[1].hold_clear_m === 40 && c4[1].coast_from_m === 55 && c4[1].route.length === 2
               && P4 && P4.state === "running" && P4.sent === 0 && P4.base === 0 && distTo(P4.end, P1) < 1 && P4.route.length === 2
-              && W4.saves > 0 && st4.passage === null && /PASSAGE UNDER WAY: section 1 of 3/.test(W4.banners.pop() || "")
+              && W4.saves > 0 && st4.passage === null
+              && /PASSAGE UNDER WAY: section 1 of 3 sent \(2 waypoints, planned at \+0\.35 m, the lowest predicted/.test(W4.banners.pop() || "")
               && W4.logs.some((l) => l[0] === "passage_sail" && l[1].ok),
         () => JSON.stringify({ planned: W4.planned.length, cmd: c4 && [c4[0], c4[1].route.length, c4[1].hold_clear_m], P: P4 && [P4.state, P4.sent] }));
   const W4b = world({ unroutable: 1 });
@@ -244,7 +266,9 @@ console.log("The passage, sailed:");
         + "end of the route she flies and sent after what she has LEFT of it - read when sent - its end the section's port",
         () => W5.planned.length === 1 && distTo(W5.planned[0].from, P1) < 1 && c5 && c5[1].route.length === 1 + 2
               && distTo(c5[1].route[0], P1) < 1 && distTo(c5[1].route[c5[1].route.length - 1], P2) < 1
-              && P5.sent === 1 && P5.base === 1 && distTo(P5.end, P2) < 1 && W5.logs.some((l) => l[0] === "passage_section" && l[1].ok),
+              && P5.sent === 1 && P5.base === 1 && distTo(P5.end, P2) < 1
+              && W5.logs.some((l) => l[0] === "passage_section" && l[1].ok && l[1].water_m === 0.35)
+              && W5.notes.some((n) => /^Passage: section 2 of 3 planned at \+0\.35 m, .*and sent ahead of her\.$/.test(n)),
         () => JSON.stringify({ planned: W5.planned.length, route: c5 && c5[1].route.map((p) => Math.round(distTo(HERE, p) / 1000)), P: [P5.sent, P5.base] }));
   const quietOf = (o, pre) => { const w = running(o); if (pre) pre(w); w.api.passageTick(w.S); return w; };
   const far = quietOf({ asv: east(HERE, 2000), wpIndex: 0 });
@@ -293,7 +317,8 @@ console.log("The passage, sailed:");
         () => g7.mission.passage.state === "stopped" && distTo(g7.mission.passage.breakoff.at, east(HERE, 12000)) < 1
               && g7.mission.passage.breakoff.sec === 0 && /a Go-To/.test(g7.mission.passage.breakoff.why)
               && r7.mission.passage.state === "stopped" && /Return-to-Home/.test(r7.mission.passage.breakoff.why)
-              && s7.mission.passage.state === "stopped" && e7.mission.passage.state === "running" && !e7.mission.passage.breakoff
+              && s7.mission.passage.state === "stopped" && s7.mission.passage.breakoff.why === "a Stop"
+              && e7.mission.passage.state === "running" && !e7.mission.passage.breakoff
               && /PASSAGE LEFT in section 1 of 3/.test(g7.banners[0] || ""),
         () => JSON.stringify([g7, r7, s7, e7].map((w) => [w.mission.passage.state, w.mission.passage.breakoff && w.mission.passage.breakoff.why])));
 
@@ -395,6 +420,245 @@ console.log("The passage, sailed:");
         + "chart's row, the plan's loader, the coarse plan's sections, the drawing",
         () => owns && !notOwn && Object.values(wiring).every(Boolean),
         () => "owns " + owns + "/" + notOwn + "; " + (Object.entries(wiring).filter(([, v]) => !v).map(([k]) => k).join(", ") || "all wired"));
+
+  // ── 12. the sections home (step 6) ──────────────────────────────────────────────────────────────────────────────
+  // the passage of 2-11: P0 (her start, home) -> P1 (turning at 10 km) -> P2, the fuel stop T1 (turning at 30 km) -> P3, T2
+  const OUT = PLAN().sections;
+  const kmOf = (p) => Math.round(distTo(HERE, p) / 1000);
+  const north = (p, m) => ({ lat: p.lat + m / M, lon: p.lon });
+  const shape = (h) => (h.sections || []).map((c) => [kmOf(c.from), ...c.via.map(kmOf), kmOf(c.to)].join(">") + " " + c.end + (c.port != null ? c.port : ""));
+  const h12 = C.homeSections(OUT, north(east(HERE, 35000), 100), HERE);
+  const len12 = (h12.sections || []).reduce((a, c) => a + c.lengthM, 0);
+  check("12. THE SECTIONS HOME (coarse.js homeSections), home where the passage left from: from her, back along the "
+        + "section she is in to its start through its turning points, then each section before it the other way round, "
+        + "each still ending where the passage's did, the last ending at HOME; their lengths the way home",
+        () => h12.homeEnd === "start" && h12.rejoin.sec === 1
+              && JSON.stringify(shape(h12)) === JSON.stringify(["35>35>30>20 hold", "20>10>0 home"]) && Math.abs(len12 - 35100) < 50,
+        () => JSON.stringify(shape(h12)) + ", " + len12 + " m");
+  const atT1 = north(P2, 150);
+  const h12b = C.homeSections(OUT, atT1, HERE), h12c = C.homeSections(OUT, atT1, east(P3, 500));
+  check("12b. AT A SECTION'S END - waiting at the fuel stop T1 - the first section home is the WHOLE section before it, "
+        + "and going on to a home at the far end the WHOLE section after it: never a few meters to the port she is at",
+        () => JSON.stringify(shape(h12b)) === JSON.stringify(["40>40>30>20 hold", "20>10>0 home"])
+              && h12c.homeEnd === "end" && JSON.stringify(shape(h12c)) === JSON.stringify(["40>40>61 home"]),
+        () => JSON.stringify([shape(h12b), shape(h12c)]));
+  const h12d = C.homeSections(OUT, north(east(HERE, 12000), 50), P3);
+  check("12c. HOME WHERE THE PASSAGE ARRIVES (she left from a visiting harbor): the rest of her section, then the ones "
+        + "after it as they are - the fuel stop T1 still a port end - the last ending at home",
+        () => h12d.homeEnd === "end" && JSON.stringify(shape(h12d)) === JSON.stringify(["12>12>20 hold", "20>30>40 port1", "40>60 home"]),
+        () => JSON.stringify(shape(h12d)));
+  const loop = [sec(HERE, east(HERE, 20000)), sec(east(HERE, 20000), north(east(HERE, 20000), 5000)),
+                sec(north(east(HERE, 20000), 5000), north(HERE, 5000)), sec(north(HERE, 5000), HERE, [], "port", 0)];
+  const lA = C.homeSections(loop, north(east(HERE, 5000), 5000), HERE), lB = C.homeSections(loop, east(HERE, 5000), HERE);
+  const nowhere = C.homeSections(OUT, east(HERE, 35000), north(HERE, 9000));
+  const offIt = C.homeSections(OUT, north(east(HERE, 35000), 25000), HERE);
+  check("12d. A PASSAGE THAT COMES BACK where it left from goes home whichever way is shorter from her; home at neither "
+        + "end, or she more than REJOIN_MAX_M off it - no way home along it, and why",
+        () => lA.homeEnd === "end" && lA.sections.length === 2 && lB.homeEnd === "start" && lB.sections.length === 1
+              && nowhere.why === "ends" && offIt.why === "far" && Math.abs(offIt.offM - 25000) < 1,
+        () => JSON.stringify([lA.homeEnd, lA.sections && lA.sections.length, lB.homeEnd, lB.sections && lB.sections.length, nowhere, offIt.why]));
+
+  // a U: 30 km east, 10 km north, 30 km back west - she on the way back, 5 km short of its end; home where it left from
+  const U = [sec(HERE, east(HERE, 30000), [east(HERE, 10000), east(HERE, 20000)]),
+             sec(east(HERE, 30000), north(east(HERE, 30000), 10000)),
+             sec(north(east(HERE, 30000), 10000), north(HERE, 10000), [north(east(HERE, 20000), 10000), north(east(HERE, 10000), 10000)], "port", 1)];
+  const hU = C.homeSections(U, north(east(HERE, 5000), 10000), HERE);
+  const hUlen = (hU.sections || []).reduce((a, c) => a + c.lengthM, 0);
+  const xKm = (p) => Math.round((p.lon - HERE.lon) * M * Math.cos(HERE.lat * Math.PI / 180) / 1000);     // km east of HERE
+  const hUvia = JSON.stringify((hU.sections || []).map((c) => c.via.map(xKm)));
+  check("12e. SHE REJOINS IT WHERE SHE IS, never at a stretch of it farther off that is nearer home along it (on a U, the "
+        + "outward leg 10 km across what the passage went round); each section's turning points in reverse order",
+        () => hU.rejoin.sec === 2 && hU.rejoin.offM < 1 && Math.abs(hUlen - 65000) < 50 && hUvia === JSON.stringify([[10, 20], [], [20, 10]]),
+        () => "rejoined section " + (hU.rejoin && hU.rejoin.sec) + " " + (hU.rejoin && hU.rejoin.offM.toFixed(0)) + " m off; " + hUlen + " m; " + hUvia);
+
+  // ── 13. the way home, sailed (homeRecord, sailHome, doRTH beyond RTH_MAX_M) ─────────────────────────────────────
+  const outbound = (o) => {
+    const route = [east(HERE, 50000), { ...P3 }];
+    const P = { ...world().api.sailRecord(PLAN()), id: "Pout", state: "running", sent: 2, sec: 2, base: 0, end: { ...P3 }, route };
+    return world(Object.assign({ mission: { passage: P }, runRoute: route, wpIndex: 0, asv: east(HERE, 55000),
+      S: { armed: true, estop: false, run: "running", status: { holding: false, fuel_l: 200 }, wp_total: 2, home: { ...HERE }, home_source: null } }, o || {}));
+  };
+  const W13 = outbound();
+  await W13.api.doRTH({});
+  const H13 = W13.api.st().mission.passage, c13 = W13.cmds[0];
+  check("13. RTH WITH HOME BEYOND RTH_MAX_M, ON A PASSAGE WITH HOME WHERE IT LEFT FROM: the way home along it - its first "
+        + "section planned from her position (at its own water) and SENT AS AN RTH with its hold disc and coast; the "
+        + "passage on the plan is now the way home (kind rth: its sections, the passage it runs along, home, where it "
+        + "left it) - running; she is said to be going home along the passage, and it is logged",
+        () => c13 && c13[0] === "/api/cmd/rth" && c13[1].hold_clear_m === 40 && c13[1].coast_from_m === 55
+              && distTo(c13[1].route[c13[1].route.length - 1], P2) < 1 && W13.planned.length === 1 && distTo(W13.planned[0].from, east(HERE, 55000)) < 1
+              && W13.levels[0] === 0.35 && H13.kind === "rth" && H13.state === "running" && H13.sent === 0 && H13.homeEnd === "start"
+              && H13.from.id === "Pout" && H13.from.sec === 2 && H13.path.length === 3 && distTo(H13.home, HERE) < 1
+              && JSON.stringify(H13.sections.map((c) => c.end + (c.port != null ? c.port : ""))) === JSON.stringify(["port1", "hold", "home"])
+              && W13.api.st().planIntent.kind === "rth" && /RTH ALONG THE PASSAGE: home is 55\.0 km away/.test(W13.banners.pop() || "")
+              && W13.logs.some((l) => l[0] === "passage_rth" && l[1].ok && l[1].water_m === 0.35),
+        () => JSON.stringify({ cmd: c13 && c13[0], H: H13 && [H13.kind, H13.state, H13.from], banners: W13.banners.slice(-1) }));
+  const refusedHome = async (o, opts) => { const w = outbound(o); await w.api.doRTH(opts || {}); return w; };
+  const r13 = {
+    chained: await refusedHome({}, { chained: true }), fuelSent: await refusedHome({}, { why: "LOW FUEL" }),
+    none: await refusedHome({ mission: { passage: null } }), off: await refusedHome({ asv: north(east(HERE, 55000), 25000) }),
+    ends: outbound(), roc: outbound(),
+  };
+  r13.ends.S.home = north(HERE, 9000); await r13.ends.api.doRTH({});
+  r13.roc.S.home_source = "roc-1"; await r13.roc.api.doRTH({});
+  const refusal = (w) => w.banners.find((b) => /^RTH refused: home is/.test(b)) || "";
+  check("13b. NOT ALONG THE PASSAGE, refused as before - in words where it is the reason: the END-OF-PLAN chain and the "
+        + "LOW-FUEL monitor (an automatic RTH is for home in range: the chain's refusal recorded); no passage; home at "
+        + "neither end of it; a ROC's home (it moves); she far off the passage",
+        () => Object.values(r13).every((w) => w.cmds.length === 0 && w.api.st().mission.passage === w.mission.passage)
+              && r13.chained.api.st().rthChainFailed && !/along the passage/.test(refusal(r13.chained)) && !/along the passage/.test(refusal(r13.fuelSent))
+              && /certify a return\. Set Home/.test(refusal(r13.none)) && /home is at neither end of it/.test(refusal(r13.ends))
+              && /home is the ROC's/.test(refusal(r13.roc)) && /she is 25\.0 km off it/.test(refusal(r13.off)),
+        () => JSON.stringify(Object.fromEntries(Object.entries(r13).map(([k, w]) => [k, refusal(w).slice(30, 150)]))));
+  const W13c = outbound({ S: { armed: true, estop: false, run: "running", status: { holding: false, fuel_l: 52 }, wp_total: 2, home: { ...HERE }, home_source: null } });
+  await W13c.api.doRTH({});
+  check("13c. REFUSED, AS CONTINUE IS, WHILE WHAT IS ABOARD DOES NOT REACH THE FIRST PORT ON THE WAY HOME WITH 20% - said "
+        + "with the numbers; nothing sent, the passage as it was",
+        () => W13c.cmds.length === 0 && W13c.api.st().mission.passage.id === "Pout"
+              && /RTH refused: home is 55\.0 km away, along the passage - refuel first: 52\.0 L aboard, and T1 is 15\.0 km on/.test(W13c.banners.join(" ")),
+        () => JSON.stringify(W13c.banners));
+  // on the way home: the next section sent ahead of her as an RTH; at home, done; a second RTH goes home along the same passage
+  const homeWorld = (o) => {
+    const w0 = outbound({ asv: north(east(HERE, 35000), 100) }), H = w0.api.homeRecord();
+    const route = [east(HERE, 25000), { ...H.sections[0].to }];
+    Object.assign(H, { state: "running", sent: 0, sec: 0, base: 0, end: { ...H.sections[0].to }, route });
+    return world(Object.assign({ mission: { passage: H }, runRoute: route, wpIndex: 1, asv: east(HERE, 27000),
+      S: { armed: true, estop: false, run: "running", status: { holding: false, fuel_l: 200 }, wp_total: 2, home: { ...HERE }, home_source: null } }, o || {}));
+  };
+  const W13d = homeWorld();
+  W13d.api.passageTick(W13d.S); await settle(); await settle();
+  const c13d = W13d.cmds[0], H13d = W13d.api.st().mission.passage;
+  const W13e = homeWorld(); W13e.mission.passage.sent = 1; W13e.S.status.holding = true; W13e.api.passageTick(W13e.S);
+  const W13f = homeWorld({ asv: east(HERE, 58000) }); await W13f.api.doRTH({});
+  const H13f = W13f.api.st().mission.passage;
+  check("13d. ON THE WAY HOME: the next section planned and sent ahead of her AS AN RTH, after what she has left, ending "
+        + "at home; at home she is HOME (said: done, she holds); a second RTH from further out goes home along the same "
+        + "PASSAGE (not back out along the way home's own sections)",
+        () => c13d && c13d[0] === "/api/cmd/rth" && distTo(c13d[1].route[c13d[1].route.length - 1], HERE) < 1 && H13d.sent === 1
+              && W13d.api.st().planIntent.kind === "rth"
+              && W13e.mission.passage.state === "done" && /HOME ALONG THE PASSAGE: she is home, all 2 sections sailed/.test(W13e.banners[0] || "")
+              && /^home along the passage: she is home/.test(W13e.api.sailLine(W13e.mission.passage))
+              && H13f.kind === "rth" && H13f.from.id === "Pout" && H13f.sections[H13f.sections.length - 1].end === "home"
+              && distTo(H13f.sections[H13f.sections.length - 1].to, HERE) < 1 && W13f.cmds[0][0] === "/api/cmd/rth",
+        () => JSON.stringify({ d: c13d && [c13d[0], H13d.sent], e: [W13e.mission.passage.state, W13e.banners[0]], f: H13f && [H13f.from, shape(H13f)] }));
+  const W13g = homeWorld({ planIntent: { kind: "goto" } });
+  W13g.api.set("runRoute", [{ ...east(HERE, 99999) }]); W13g.api.passageTick(W13g.S);
+  W13g.S.run = "running"; W13g.S.status.holding = true;
+  await W13g.api.continuePassage();
+  check("13e. LEFT FOR A GO-TO on the way home, where she left it is kept - and Continue rejoins it there, sent as an RTH",
+        () => W13g.mission.passage.kind === "rth" && W13g.cmds.some((c) => c[0] === "/api/cmd/rth") && W13g.mission.passage.state === "running"
+              && /^home along the passage: sailing section 1 of 2 · planned at \+0\.35 m/.test(W13g.api.sailLine(W13g.mission.passage)),
+        () => JSON.stringify({ cmds: W13g.cmds.map((c) => c[0]), state: W13g.mission.passage.state, line: W13g.api.sailLine(W13g.mission.passage) }));
+
+  // ── 14. the water a section is planned at ───────────────────────────────────────────────────────────────────────
+  const lv = (() => {
+    const src = ["const WATER_REMOTE_KM = 75;", grab("sectionLevel"), "return sectionLevel;"].join("\n");
+    return new Function(src)();
+  })();
+  const pt = (low_m, km, o) => Object.assign({ low_m, km, kind: "predicted", name: "Stn " + km, stations: ["s" + km] }, o || {});
+  const L14 = {
+    lowest: lv({ points: [pt(0.8, 10), pt(-0.21, 20), pt(0.4, 5)] }, {}, 4),
+    remote: lv({ points: [pt(0.8, 10), pt(0.6, 90)] }, {}, 4),
+    remoteLow: lv({ points: [pt(-0.3, 10), pt(0.6, 90)] }, {}, 4),
+    none: lv({ points: [], note: "the read failed: down" }, {}, 4),
+    unread: lv({ points: [pt(null, 12)] }, {}, 4),
+    manLow: lv({ points: [pt(0.8, 10)] }, { source: "manual", offset_m: 0.1 }, 4),
+    manHigh: lv({ points: [pt(0.8, 10)] }, { source: "manual", offset_m: 2.5 }, 4),
+    lake: lv({ points: [pt(0.42, 30, { kind: "observed" })] }, {}, 2),
+  };
+  check("14. THE LEVEL A SECTION IS PLANNED AT (sectionLevel): the LOWEST along it - a point with no station within "
+        + "WATER_REMOTE_KM counts at chart datum, as the boat's own level is not applied past it; nothing read, chart "
+        + "datum with why; a manual level lowers it, never raises it; below datum it is applied; each said",
+        () => L14.lowest.m === -0.21 && /^-0\.21 m, the lowest predicted along it over the next 4\.0 h \(Stn 20, 20 km off\)/.test(L14.lowest.say)
+              && L14.remote.m === 0 && /^chart datum - 1 of its 2 points have no station within 75 km/.test(L14.remote.say)
+              && L14.remoteLow.m === -0.3 && L14.none.m === 0 && /chart datum - no level could be read along it \(the read failed: down\)/.test(L14.none.say)
+              && L14.unread.m === 0 && /^chart datum - no station gave a level at 1 of its 1 points$/.test(L14.unread.say) && L14.manLow.m === 0.1 && /^\+0\.10 m, the manual water level/.test(L14.manLow.say)
+              && L14.manHigh.m === 0.8 && L14.lake.m === 0.42 && /lowest observed/.test(L14.lake.say),
+        () => JSON.stringify(Object.fromEntries(Object.entries(L14).map(([k, v]) => [k, v.m + " " + v.say.slice(0, 50)]))));
+  // the read: along the section's own points, over the hours she is expected in it
+  const readOf = async (from, pts, append, left) => {
+    const w = { urls: [], reply: { ok: true, low_m: 0.5, points: [pt(0.5, 4)] } };
+    const src = [
+      "const distTo = w.distTo, V = {SPEED_KN: {transit: 7}}, roleSpeed = () => 'transit', WATER_REMOTE_KM = 75, water = {};",
+      "const sailLeftM = () => w.left;",
+      "const fetch = async (u) => { w.urls.push(u); return {ok: true, json: async () => w.reply}; };",
+      decl("WATER_SAMPLE_M"), decl("WATER_ALONG_MAX_PTS"), decl("WATER_ETA_SLACK"), decl("WATER_WINDOW_PAD_S"), decl("WATER_ALONG_TIMEOUT_MS"),
+      grab("samplePts"), grab("sectionLevel"), grab("sectionWater"), "return sectionWater;"].join("\n");
+    w.distTo = distTo; w.left = left;
+    const t = Date.now() / 1000;
+    const r = await new Function("w", src)(w)({ kn: 7 }, from, pts, append);
+    const u = new URL("http://x" + w.urls[0]), q = u.searchParams;
+    const pts2 = q.get("pts").split(";").map((s) => s.split(",").map(Number));
+    return { r, n: pts2.length, first: { lat: pts2[0][0], lon: pts2[0][1] }, last: { lat: pts2[pts2.length - 1][0], lon: pts2[pts2.length - 1][1] },
+             dt0: +q.get("t0") - t, hours: (+q.get("t1") - +q.get("t0")) / 3600, path: u.pathname };
+  };
+  const ms7 = 7 * 1852 / 3600;
+  const rd = await readOf(HERE, [east(HERE, 10000), east(HERE, 20000)], false, 0);
+  const rdA = await readOf(P1, [P2], true, 8000);
+  const rdLong = await readOf(HERE, [east(HERE, 1000000)], false, 0);
+  check("14b. THE READ ALONG IT (sectionWater): /api/water/along at the section's own points - every " + 5 + " km and both "
+        + "ends (at most 60) - from now over her time to its end at its speed, stretched by 1.5, and an hour after; sent "
+        + "ahead of her, what she has left of the route first",
+        () => rd.path === "/api/water/along" && rd.n === 5 && distTo(rd.first, HERE) < 2 && distTo(rd.last, east(HERE, 20000)) < 2
+              && Math.abs(rd.dt0) < 5 && Math.abs(rd.hours - (20000 / ms7 * 1.5 + 3600) / 3600) < 0.01
+              && Math.abs(rdA.hours - (28000 / ms7 * 1.5 + 3600) / 3600) < 0.01 && rdLong.n >= 58 && rdLong.n <= 60 && rd.r.m === 0.5,
+        () => JSON.stringify({ n: [rd.n, rdLong.n], hours: [rd.hours.toFixed(2), rdA.hours.toFixed(2)], dt0: rd.dt0.toFixed(1) }));
+  // the chart it is planned on: built at the section's level, and the guard's put back
+  const atW = (o) => {
+    const w = Object.assign({ builds: [], inked: 0 }, o);
+    const src = [
+      "const nogo = w.nogo, sea = {enc: {features: []}}, TIDE_REBUILD_M = 0.1, nogoDR = () => ({min: 3, max: 0});",
+      "const buildKeepouts = (frame, enf, dr, feats, m) => { w.builds.push(m); return {builtAt: m, polys: [], lines: [], points: []}; };",
+      "const foldChartInk = (ko) => { w.inked++; ko.inked = true; };",
+      grab("nogoModelAt"), grab("atWaterLevel"), "return atWaterLevel;"].join("\n");
+    return { w, at: new Function("w", src)(w) };
+  };
+  const LIVE = { live: true };
+  const A14 = atW({ nogo: { ready: true, frame: {}, ko: LIVE, builtOffset: 1.2, features: [] } });
+  const seen = A14.at(0.2, () => A14.w.nogo.ko);
+  const after = A14.w.nogo.ko;
+  let threw = false; try { A14.at(0.2, () => { throw new Error("x"); }); } catch (e) { threw = true; }
+  const A14b = atW({ nogo: { ready: true, frame: {}, ko: LIVE, builtOffset: 1.2, features: [] } });
+  const same = A14b.at(1.25, () => A14b.w.nogo.ko);
+  check("14c. PLANNED ON THE CHART AT THAT LEVEL (atWaterLevel): the planning runs on the guard's chart built at the "
+        + "section's level, the chart-image structures folded in, and the guard's own chart is put back after - even when "
+        + "the planning throws; within TIDE_REBUILD_M of the level it was built at, on the chart itself (nothing built)",
+        () => seen.builtAt === 0.2 && seen.inked && after === LIVE && threw && A14.w.nogo.ko === LIVE
+              && same === LIVE && A14b.w.builds.length === 0,
+        () => JSON.stringify({ seen, back: after === LIVE, threw, same: same === LIVE, builds: A14b.w.builds }));
+  // the real builder: a 2.5 m depth area at a 3 m floor, the live level +1.0 - open; built at +0.2 - a keep-out
+  const ST = require(path.join(APP, "static", "js", "state.js")), CH = require(path.join(APP, "static", "js", "chart.js"));
+  const GE = require(path.join(APP, "static", "js", "geodesy.js")), K = require(path.join(APP, "static", "js", "keepouts.js"));
+  const FR = GE.planeFrame(HERE), Pq = (e, n) => { const q = FR.fromEN(e, n); return [q.lon, q.lat]; };
+  const flat = [{ role: "depth_area", props: { DRVAL1: 1, DRVAL2: 2.5 },
+                  geometry: { type: "Polygon", coordinates: [[Pq(-50, -50), Pq(50, -50), Pq(50, 50), Pq(-50, 50), Pq(-50, -50)]] } }];
+  const keepLevel = ST.sea.waterOffset;
+  ST.sea.waterOffset = 1.0;
+  const enf = { ...ST.NOGO_ENF };
+  const kLive = CH.buildKeepouts(FR, enf, { min: 3, max: 0 }, flat), kLow = CH.buildKeepouts(FR, enf, { min: 3, max: 0 }, flat, 0.2);
+  const liveAfter = ST.sea.waterOffset;
+  ST.sea.waterOffset = keepLevel;
+  check("14d. THE REAL BUILDER at another level (chart.js buildKeepouts' waterOffsetM): a 2.5 m depth area at a 3 m floor "
+        + "is open water at the live +1.0 m and a keep-out built at a section's +0.2 m - and the live level is not written",
+        () => !K.blocked({ e: 0, n: 0 }, kLive, 0) && K.blocked({ e: 0, n: 0 }, kLow, 0) && liveAfter === 1.0,
+        () => "live " + K.blocked({ e: 0, n: 0 }, kLive, 0) + ", at +0.2 " + K.blocked({ e: 0, n: 0 }, kLow, 0) + ", level after " + liveAfter);
+  const W14 = world();
+  await W14.api.sailPassage();
+  const P14 = W14.api.st().mission.passage;
+  const wiring14 = {
+    asked: W14.waterAsked.length === 1 && distTo(W14.waterAsked[0].from, HERE) < 1 && W14.waterAsked[0].append === false,
+    plannedAt: W14.levels.length === 1 && W14.levels[0] === 0.35,
+    kept: P14 && P14.sections[0].water_m === 0.35 && /^\+0\.35 m, the lowest predicted/.test(P14.sections[0].water),
+    said: P14 && /planned at \+0\.35 m/.test(W14.api.sailLine(P14)),
+    wrapped: /planInsideChart\(\[from, \.\.\.pts\], undefined, \(\) => atWaterLevel\(lv\.m, \(\) => \{\s*\n\s*ht = holdTarget\(c\.to, holdOpts\(\)\);/.test(grab("sailSend")),
+    oneWriter: (H.match(/sea\.waterOffset\s*=(?!=)/g) || []).length === 1,
+    endpoint: /"\/api\/water\/along\?pts="/.test(grab("sectionWater")),
+  };
+  check("14e. THE WIRING: each section's water read before it is planned, the holdTarget and the route both planned "
+        + "inside atWaterLevel at it, the level kept on the section and said on the passage's line; the live level keeps "
+        + "its one writer",
+        () => Object.values(wiring14).every(Boolean),
+        () => Object.entries(wiring14).filter(([, v]) => !v).map(([k]) => k).join(", ") || "all wired");
 
   console.log("\n" + (fails ? fails + " CHECK(S) FAILED (" + ran + " ran)" : "all checks passed (" + ran + ")"));
   process.exit(fails ? 1 : 0);

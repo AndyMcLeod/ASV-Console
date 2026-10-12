@@ -509,10 +509,12 @@ const fresh = () => { banners = []; downs = []; covers = []; aisTaken = 0; cover
         () => rpCalls === 4 && /const raw = routePlan\(\{lat:asv\.lat, lon:asv\.lon\}, wps, false, transitStandoffM\(\)\);/.test(up),
         rpCalls + " routePlan( calls");
   // 6c2. A PASSAGE'S SECTION (2026-10-12, step 5): planned as the Transit is - through planInsideChart, its hold point worked
-  // out inside the plan, an uncharted plan refused before anything is posted or drawn.
+  // out inside the plan, an uncharted plan refused before anything is posted or drawn. (Posted as a Transit, or as an
+  // RTH on the way home along a passage - step 6.)
   const ss = grab("sailSend");
   const iSsPlan = ss.indexOf("await planInsideChart("), iSsHt = ss.indexOf("ht = holdTarget("),
-        iSsUn = ss.indexOf("if(plan.uncharted)"), iSsPost = ss.indexOf('routeCmd("/api/cmd/transit"'), iSsDraw = ss.indexOf("runRoute = route");
+        iSsUn = ss.indexOf("if(plan.uncharted)"), iSsPost = ss.indexOf('const r = await routeCmd(home ? "/api/cmd/rth" : "/api/cmd/transit"'),
+        iSsDraw = ss.indexOf("runRoute = route");
   check("6c2. a passage's section plans as the Transit does: inside planInsideChart, its hold point inside the plan, an "
         + "uncharted plan refused before it posts or draws anything",
         () => iSsPlan > 0 && iSsHt > iSsPlan && iSsUn > iSsPlan && iSsUn < iSsPost && iSsUn < iSsDraw
