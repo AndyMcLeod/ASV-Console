@@ -504,10 +504,20 @@ const fresh = () => { banners = []; downs = []; covers = []; aisTaken = 0; cover
               && iUpUn > iUpPlan && iUpUn < iUpPost && iUpUn < iUpDraw,
         "planInsideChart " + iUpPlan + ", uncharted refusal " + iUpUn + ", post " + iUpPost + ", draw " + iUpDraw);
   const rpCalls = (H.match(/routePlan\(/g) || []).length - (H.match(/function routePlan\(/g) || []).length;
-  check("6e. no other routePlan caller on the page: three calls - the Transit's, the Upload's, and the Upload's "
-        + "degraded one with no model (which routePlan answers before it judges anything)",
-        () => rpCalls === 3 && /const raw = routePlan\(\{lat:asv\.lat, lon:asv\.lon\}, wps, false, transitStandoffM\(\)\);/.test(up),
+  check("6e. no other routePlan caller on the page: four calls - the Transit's, the Upload's, the Upload's degraded one "
+        + "with no model (which routePlan answers before it judges anything), and a passage's section's (6c2)",
+        () => rpCalls === 4 && /const raw = routePlan\(\{lat:asv\.lat, lon:asv\.lon\}, wps, false, transitStandoffM\(\)\);/.test(up),
         rpCalls + " routePlan( calls");
+  // 6c2. A PASSAGE'S SECTION (2026-10-12, step 5): planned as the Transit is - through planInsideChart, its hold point worked
+  // out inside the plan, an uncharted plan refused before anything is posted or drawn.
+  const ss = grab("sailSend");
+  const iSsPlan = ss.indexOf("await planInsideChart("), iSsHt = ss.indexOf("ht = holdTarget("),
+        iSsUn = ss.indexOf("if(plan.uncharted)"), iSsPost = ss.indexOf('routeCmd("/api/cmd/transit"'), iSsDraw = ss.indexOf("runRoute = route");
+  check("6c2. a passage's section plans as the Transit does: inside planInsideChart, its hold point inside the plan, an "
+        + "uncharted plan refused before it posts or draws anything",
+        () => iSsPlan > 0 && iSsHt > iSsPlan && iSsUn > iSsPlan && iSsUn < iSsPost && iSsUn < iSsDraw
+              && /return routePlan\(from, \[\.\.\.pts\.slice\(0, -1\), ht\.to\], true, transitStandoffM\(\)\);/.test(ss),
+        "planInsideChart " + iSsPlan + ", holdTarget " + iSsHt + ", uncharted refusal " + iSsUn + ", post " + iSsPost + ", draw " + iSsDraw);
   const pv = fs.readFileSync(path.join(__dirname, "..", "static", "js", "passage.js"), "utf8").split("\r\n").join("\n");
   // (with the water no chart covers, nogo.unread, since 2026-10-11 - the layered chart; tests/unread_water.js)
   check("6f. planNogoRoute judges the route AS FLOWN - after the lane pass, from the start - and routePlan the whole "

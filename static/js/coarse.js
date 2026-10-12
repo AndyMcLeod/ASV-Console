@@ -350,7 +350,7 @@ export function routeLengthM(pts) {
  * A leg that cannot be planned carries `error` ("unread": an end off the chart read; "blocked": no water way within
  * the tiles read; "too_long") and `at`, the point it is about; the rest are still planned.
  */
-export function planPassage({ grids, floorDm, airDm = 0, points }) {
+export function planPassage({ grids, floorDm, airDm = 0, points, sectionM = SECTION_M }) {
   const field = buildField(grids.map((g) => (g.head ? g : decodeGrid(g))), floorDm, airDm);
   const cells = points.map((p) => ({ ...cellOf(p), port: !!p.port, lat: p.lat, lon: p.lon }));
   const legs = [];
@@ -371,5 +371,108 @@ export function planPassage({ grids, floorDm, airDm = 0, points }) {
                 pts: taut.map((c, k) => (k === 0 ? { lat: a.lat, lon: a.lon } : k === taut.length - 1 ? { lat: b.lat, lon: b.lon } : cellLL(c.gx, c.gy))),
                 narrow: narrowStretches(field, taut, ports) });
   }
-  return { legs, lengthM: total, ports: points.filter((p) => p.port).map((p) => ({ lat: p.lat, lon: p.lon })) };
+  const out = { legs, lengthM: total, ports: points.filter((p) => p.port).map((p) => ({ lat: p.lat, lon: p.lon })) };
+  if (!legs.some((g) => g.error)) out.sections = cutSections(field, legs, points, sectionM);
+  return out;
+}
+
+// ── THE SECTIONS SHE SAILS IN (2026-10-12, step 5 of the long-transit plan) ──────────────────────────────────────
+// The passage is sailed a SECTION at a time: each planned in detail by the console's own planner as she comes to it,
+// against the guard's own chart, and sent ahead of her (asv.html "THE PASSAGE, SAILED"). A section ends at every PORT
+// (a fuel stop, the arrival: there she waits for Continue) and otherwise about every SECTION_M - at a point she can be
+// left HOLDING at safely, because that is where she waits if the next section is not sent in time (Andy, 2026-10-12:
+// "she should hold"): every cell within HOLD_SAFE_M clear water, outside every port's circle. A stretch with no such
+// point makes a longer section; nothing makes one shorter than SECTION_MIN_FRAC of SECTION_M before a port.
+
+/** A section's length, about. */
+export const SECTION_M = 20000;
+/** Water clear all round a section's end, at least this far. */
+export const HOLD_SAFE_M = 250;
+/** How far from the target length an end is looked for, as a fraction of SECTION_M. */
+export const SECTION_SLACK = 0.4;
+/** No section shorter than this fraction of SECTION_M is cut before a port: the remainder joins the last one. */
+export const SECTION_MIN_FRAC = 0.25;
+/** The step at which ends are looked for along the route. */
+const SECTION_STEP_M = 100;
+
+/** Is the water round a point clear for a hold: every cell within HOLD_SAFE_M clear, and no port's circle round it? */
+export function holdSafe(field, ll, ports) {
+  const c = cellOf(ll);
+  const k = CELL_DEG * M_PER_DEG, dy = Math.ceil(HOLD_SAFE_M / k);
+  const dx = Math.ceil(HOLD_SAFE_M / (k * Math.max(0.05, Math.cos(ll.lat * Math.PI / 180))));
+  for (let y = -dy; y <= dy; y++)
+    for (let x = -dx; x <= dx; x++)
+      if (field.level(c.gx + x, c.gy + y) !== LV_CLEAR) return false;
+  for (const p of ports) if (cellDistM(c.gx, c.gy, p.gx, p.gy) <= PORT_R_M) return false;
+  return true;
+}
+
+/**
+ * THE SECTIONS: the planned legs, joined, cut at every port and about every `sectionM` at a hold-safe point. Returns
+ * [{from, to, via: [the route's turning points between], end: "port" | "hold", port: the point's index or null,
+ * lengthM}], or null when the route cannot be cut (no legs).
+ */
+export function cutSections(field, legs, points, sectionM = SECTION_M) {
+  if (!legs.length) return null;
+  // the whole route, with the along-distance of every vertex and where each drawn point falls
+  const verts = [{ ll: legs[0].pts[0], m: 0, pi: 0 }];
+  let m = 0;
+  legs.forEach((g, i) => {
+    for (let k = 1; k < g.pts.length; k++) {
+      m += flatM(g.pts[k - 1], g.pts[k]);
+      verts.push({ ll: g.pts[k], m, pi: k === g.pts.length - 1 ? i + 1 : null });
+    }
+  });
+  const total = m;
+  const ports = points.map((p, i) => ({ ...cellOf(p), i, port: !!p.port })).filter((p) => p.port);
+  const at = (mm) => {                          // the point mm along, and the vertex index it falls after
+    for (let k = 1; k < verts.length; k++) {
+      if (verts[k].m >= mm) {
+        const a = verts[k - 1], b = verts[k], t = b.m > a.m ? (mm - a.m) / (b.m - a.m) : 0;
+        return { ll: { lat: a.ll.lat + (b.ll.lat - a.ll.lat) * t, lon: a.ll.lon + (b.ll.lon - a.ll.lon) * t }, k };
+      }
+    }
+    return { ll: verts[verts.length - 1].ll, k: verts.length - 1 };
+  };
+  // the cuts: each port (after the start), and the hold-safe ends between them
+  const cuts = [];
+  const portStops = verts.filter((v) => v.pi != null && v.pi > 0 && points[v.pi].port);
+  let from = 0;
+  for (const ps of portStops) {
+    let target = from + sectionM;
+    while (target < ps.m - sectionM * SECTION_MIN_FRAC) {
+      let best = null;
+      const lo = Math.max(from + sectionM * SECTION_MIN_FRAC, target - sectionM * SECTION_SLACK);
+      const hi = Math.min(ps.m - sectionM * SECTION_MIN_FRAC, target + sectionM * SECTION_SLACK);
+      for (let d = 0; target - d >= lo || target + d <= hi; d += SECTION_STEP_M) {
+        for (const mm of [target - d, target + d]) {
+          if (mm < lo || mm > hi) continue;
+          if (holdSafe(field, at(mm).ll, ports)) { best = mm; break; }
+        }
+        if (best != null) break;
+      }
+      if (best == null) { target += sectionM * SECTION_SLACK; continue; }    // none near: a longer section
+      cuts.push({ m: best, end: "hold", port: null });
+      from = best;
+      target = from + sectionM;
+    }
+    cuts.push({ m: ps.m, end: "port", port: ps.pi });
+    from = ps.m;
+  }
+  // the sections between the cuts
+  const out = [];
+  let prev = { m: 0, ll: verts[0].ll };
+  for (const c of cuts) {
+    const end = c.end === "port" ? { ll: points[c.port], k: null } : at(c.m);
+    const via = verts.filter((v) => v.m > prev.m + 1 && v.m < c.m - 1).map((v) => ({ lat: v.ll.lat, lon: v.ll.lon }));
+    out.push({ from: { lat: prev.ll.lat, lon: prev.ll.lon }, to: { lat: end.ll.lat, lon: end.ll.lon }, via, end: c.end,
+               port: c.port, lengthM: c.m - prev.m });
+    prev = { m: c.m, ll: end.ll };
+  }
+  return total > 0 ? out : null;
+}
+
+/** Meters between two points, flat at their mean latitude. */
+function flatM(a, b) {
+  return Math.hypot((b.lat - a.lat) * M_PER_DEG, (b.lon - a.lon) * M_PER_DEG * Math.cos((a.lat + b.lat) / 2 * Math.PI / 180));
 }

@@ -2430,6 +2430,36 @@ of the operator.
    corridor read takes `grids: true` (`POST /api/enc/corridor`), and `GET /api/enc/grid?tile=W,S,E,N`
    serves a grid. `tests/passage_grid.py`, `tests/passage_plan.js`.
 
+   **Sail passage: the passage sailed a section at a time (2026-10-12, diesel hulls).** Once a
+   passage is planned (its fuel legs all arriving with 20%), **Sail passage** on the transit panel
+   sails it. The coarse plan is cut into **sections** of about 20 km, each ending at a port (a fuel
+   stop or the arrival) or at a point with water clear all round it to hold in, and never beside a
+   danger or inside a port's 4 km circle. Each section is planned in detail by the console's own
+   planner as a Transit is (lanes, the chart image, moored AIS, against the guard's own chart), and
+   sent as a Transit of what she has left plus the section, so the new end carries its own hold disc
+   and arrival coast. In the supervising window, when she has **10 km** of route left, the next
+   section is planned and sent ahead of her. It is never sent while the guard has something of its
+   own in hand, never to a route that changed while it was being planned, and never to a boat
+   already holding. A section that cannot be planned is said, and tried again every minute.
+   **At the end of the last section sent, she holds** (Andy, 2026-10-12: "she should hold"). That
+   happens when no window is open to plan the next section, or when it could not be planned. At a
+   fuel stop she also holds and waits. Nothing moves her on from a hold but **Continue passage**,
+   beside Start. At a port, Continue passage is refused until the fuel aboard reaches the next port
+   with 20% of the tank, and the refusal says so with the numbers. A Go-To, an RTH, a Hold or a Stop
+   while she sails records where she left the passage, and Continue passage brings her back to that
+   point and sails the rest of the section. A guard escape is not a leaving: the passage waits for
+   the guard to give the route back. **Divert the passage to here** (the chart's right-click menu) is
+   a Go-To to a port with the leaving recorded. The passage is kept on the plan (`passage` in
+   `mission.json`), so a reload or a console restart mid-passage keeps the section she is on and
+   where she left it. The end-of-plan RTH chain stands down at a passage's hold, and at the port
+   it was diverted to: there she waits for the refuel and Continue passage. The × beside Continue
+   passage drops the passage (she is not stopped). Live (scratch console, DriX): New Castle to
+   offshore of Portsmouth, 36 km in 2 sections. Section 1 was sent as 314 waypoints with a 295 m
+   hold disc at its end. With 10 km left, after a reload of the page, section 2 was sent ahead of
+   her and she held 7.2 kn straight through it. A Divert held her at the port, and Continue brought
+   her back to where she left the passage. **One tile is built from NOAA at a time** (`ENC_TILE_BUILDS`): with
+   every layer read, three at once lost layers on the same tiles on every read. `tests/passage_sail.js`.
+
    **Every layer read, and what each charted thing means to each hull (2026-10-12).** A review of
    how the console reads the chart and what its keep-out model makes of it found charted things that
    reached the model as nothing - each measured on the cached Portsmouth tiles with the code as it

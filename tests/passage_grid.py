@@ -326,6 +326,48 @@ finally:
     A.fetch_enc_tile = _fet
     os.environ.pop("ASV_ENC_TILE_FAKE", None)
 
+# ── 5b. one tile built from NOAA at a time ────────────────────────────────────────────────────────────────────────
+# (2026-10-12, found sailing step 5: three children at once - ~24 queries in flight with every layer read - lost layers on
+# the same tiles on every read, so a passage through them could not be planned.)
+import threading as _th                                        # noqa: E402
+live, peak = [0], [0]
+_lk = _th.Lock()
+
+
+def slow_build(t):
+    with _lk:
+        live[0] += 1
+        peak[0] = max(peak[0], live[0])
+    time.sleep(0.4)
+    with _lk:
+        live[0] -= 1
+    return {"tile": t, "features": [], "unread": [], "unread_failed": [t], "bands": [], "partial": []}
+
+
+_child, _inproc = A._enc_tile_build_child, A.ENC_TILE_IN_PROCESS
+A._enc_tile_build_child, A.ENC_TILE_IN_PROCESS = slow_build, False
+try:
+    tiles5b = [[-60.0 - 0.25 * i, 10.0, -59.75 - 0.25 * i, 10.25] for i in range(3)]
+    ths = [_th.Thread(target=A.fetch_enc_tile, args=(t,)) for t in tiles5b]
+    for x in ths:
+        x.start()
+    for x in ths:
+        x.join(10)
+    peak_console = peak[0]
+    live[0] = peak[0] = 0
+    ths = [_th.Thread(target=slow_build, args=(t,)) for t in tiles5b]   # THE CONTROL: the same builds, called at once
+    for x in ths:
+        x.start()
+    for x in ths:
+        x.join(10)
+    peak_direct = peak[0]
+finally:
+    A._enc_tile_build_child, A.ENC_TILE_IN_PROCESS = _child, _inproc
+check("5b. ONE TILE BUILT FROM NOAA AT A TIME: three tiles not on disk, asked for at once, are built one after another "
+      "(ENC_TILE_BUILDS) - where the same three builds called at once (the control) overlap",
+      lambda: A.ENC_TILE_BUILDS == 1 and peak_console == 1 and peak_direct == 3,
+      lambda: "at once through the console %d, called directly %d" % (peak_console, peak_direct))
+
 # ── 6. over HTTP ──────────────────────────────────────────────────────────────────────────────────────────────────
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
 from console_state import ConsoleState                         # noqa: E402

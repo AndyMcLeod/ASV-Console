@@ -655,6 +655,41 @@ check("17b. a break-off that is not what it claims is REFUSED in words and nothi
       all(b_said.values()) and open(_C.MISSION_PATH, "rb").read() == b_before,
       "; ".join("%s: %s" % (k, (v or "NOT REFUSED")[:36]) for k, v in b_said.items()))
 
+# 17c-17d. THE PASSAGE BEING SAILED (2026-10-12, Andy: "Step 5" of the long-transit plan). The page keeps it on the plan
+# - which section she is on, where she left it - so a page reloaded or a console restarted mid-passage keeps it; it rides
+# both dicts and is type-checked like the break-offs.
+PSG = {"id": "Pk1", "t": 1791830000000, "kn": 7, "floor_m": 3.15, "state": "stopped", "sent": 1, "sec": 1, "base": 4,
+       "points": [dict(SV_WPS[0], port=True, t=0), dict(SV_WPS[2], port=False, t=1), dict(SV_WPS[4], port=True, t=2)],
+       "sections": [{"from": SV_WPS[0], "to": SV_WPS[2], "via": [SV_WPS[1]], "end": "hold", "port": None, "lengthM": 20000},
+                    {"from": SV_WPS[2], "to": SV_WPS[4], "via": [], "end": "port", "port": 2, "lengthM": 19000}],
+       "end": SV_WPS[4], "route": SV_WPS[2:5], "note": "",
+       "breakoff": {"sec": 1, "at": SV_WPS[3], "t": 1791830100000, "why": "a Go-To", "port": None}}
+_, p_err = attempt(_C.save_mission, sv_plan(passage=PSG))
+p_back = _C.load_mission().get("passage")
+_, p_err0 = attempt(_C.save_mission, sv_plan(passage=None))
+p_none = _C.load_mission().get("passage")
+check("17c. the plan's PASSAGE BEING SAILED - its sections, where it stands, where she left it - is saved and loaded as "
+      "it was; none is none",
+      p_err is None and p_back == PSG and p_err0 is None and p_none is None,
+      "save: %s; loaded %s; none: %s" % (p_err or "ok", json.dumps(p_back)[:120], p_none))
+p_before = open(_C.MISSION_PATH, "rb").read()
+p_bad = {"not a record": sv_plan(passage=[PSG]),
+         "a state the page does not know": sv_plan(passage=dict(PSG, state="sailing")),
+         "one point": sv_plan(passage=dict(PSG, points=PSG["points"][:1])),
+         "no sections": sv_plan(passage=dict(PSG, sections=[])),
+         "a section with no end": sv_plan(passage=dict(PSG, sections=[dict(PSG["sections"][0], to=None)])),
+         "a section ending neither at a hold nor a port": sv_plan(passage=dict(PSG, sections=[dict(PSG["sections"][0], end="sea")])),
+         "a turning point that is not a position": sv_plan(passage=dict(PSG, sections=[dict(PSG["sections"][0], via=[{"lat": 91, "lon": 0}])])),
+         "a route with a non-position": sv_plan(passage=dict(PSG, route=[{"lat": "x", "lon": 0}])),
+         "a break-off with no position": sv_plan(passage=dict(PSG, breakoff={"sec": 1, "why": "x"})),
+         "a divert's hold point that is not one": sv_plan(passage=dict(PSG, breakoff=dict(PSG["breakoff"], to={"lat": 0}))),
+         "an infinite section index": sv_plan(passage=dict(PSG, sent=float("inf"))),
+         "a note too long": sv_plan(passage=dict(PSG, note="x" * 500))}
+p_said = {k: refused(v) for k, v in p_bad.items()}
+check("17d. a passage that is not what it claims is REFUSED in words and nothing is written",
+      all(p_said.values()) and open(_C.MISSION_PATH, "rb").read() == p_before,
+      "; ".join("%s: %s" % (k, (v or "NOT REFUSED")[:36]) for k, v in p_said.items()))
+
 # 10. None of it touched the operator's own plan.
 check("10. nothing in this suite wrote, replaced or removed the app directory's own plan files",
       not _WRITES_TO_APP, "; ".join(_WRITES_TO_APP[:3]) or "no write named them")

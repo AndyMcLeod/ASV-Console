@@ -345,6 +345,7 @@
     <div class="cmi" id="cmClear"><span>Clear measurements</span><span class="cmk" id="cmClearK"></span></div>
     <div class="cmsep"></div>
     <div class="cmi" id="cmGoto"><span>Go-To here</span><span class="cmk" id="cmGotoK"></span></div>
+    <div class="cmi" id="cmDivert" style="display:none"><span>Divert the passage to here</span><span class="cmk" id="cmDivertK"></span></div>
     <!-- RESUME FROM HERE (Andy, 2026-09-26): shown ONLY while the run is paused. The click is snapped
          to the nearest committed survey line; the vessel is routed to that point and carries on down
          the line the way the plan runs it, then the rest of the plan. gateResumeHere() shows, hides
@@ -615,6 +616,8 @@
     <div class="phint" id="tr_hint">Click the chart to drop transit points (1+). Then Follow.</div>
     <button class="ctl small" id="tr_read" disabled title="Read the chart along the line now - every chart tile within 5 km of the boat and the line's points, at whatever scale charts it - and keep it, so the passage's chart is on hand (offline too). A route through water no chart covers is refused; this shows where that is before you plan. Moves nothing.">Read chart</button>
     <div class="phint" id="tr_read_st"></div>
+    <button class="ctl small punch" id="tr_sail" disabled title="Sail the planned passage: section by section, each planned in detail by the console as she nears it and sent ahead of her. She HOLDS at the end of the last section sent if the next is not, and waits at each fuel stop for Continue passage (beside Start). Requires ARM.">Sail passage</button>
+    <div class="phint" id="tr_sail_st"></div>
     <button class="ctl small" id="tr_plan" disabled title="Plan the line as a PASSAGE (diesel hulls): read the chart along it, plan it coarse over the whole length, and check her fuel leg by leg - each leg between fuel stops must arrive with 20% of the tank. Click a point to make it a fuel stop. The water round each port and the narrow stretches are planned in detail as she comes to them. Moves nothing.">Plan passage</button>
     <div class="phint" id="tr_plan_st"></div>
   </div>
@@ -785,6 +788,8 @@
     <button class="cbtn go" id="b_continue" style="display:none" disabled>Continue</button>
     <select id="b_contSel" style="display:none" title="Which broken-off survey Continue picks up"></select>
     <button class="cbtn" id="b_contDrop" style="display:none" title="Drop this survey break-off: Continue will no longer offer it">&#215;</button>
+    <button class="cbtn go" id="b_passage" style="display:none" disabled>Continue passage</button>
+    <button class="cbtn" id="b_passDrop" style="display:none" title="Drop the passage being sailed: no further section is sent (she is not stopped)">&#215;</button>
     <button class="cbtn" id="b_pause" disabled>Pause</button>
     <button class="cbtn" id="b_stop" disabled>Stop</button>
     <span class="cdiv"></span>
@@ -5769,7 +5774,9 @@ async function loadMission(){
                  // be dropped here and written back as none by the next save, the `speeds` defect again.
                  surveys:Array.isArray(m.surveys) ? m.surveys : [],
                  // ... and THE SURVEY BREAK-OFFS (2026-10-11), for the same reason: Continue's records ride the plan.
-                 breaks:Array.isArray(m.breaks) ? m.breaks : []};
+                 breaks:Array.isArray(m.breaks) ? m.breaks : [],
+                 // ... and THE PASSAGE BEING SAILED (2026-10-12): which section she is on, where she left it.
+                 passage:(m.passage && typeof m.passage === "object" && !Array.isArray(m.passage)) ? m.passage : null};
       // ... and are JUDGED before anything reads the plan: a plan from before surveys were kept becomes one survey,
       // S1, everything in it; one whose grouping does not hold is flown as ONE survey - the plan as it was - and that
       // is SAID, because the operator would otherwise see lines counted and timed as one survey with no reason given.
@@ -6541,6 +6548,7 @@ function render(){
   drawSearch(toScreen);
   drawTransit(toScreen);
   drawPassage(toScreen);
+  drawSail(toScreen);
   // the uploaded ENC-routed run path (approach from the boat + obstacle detours),
   // so the operator sees the real path the ASV will take, clear of land. Only the
   // portion STILL AHEAD of the boat is drawn (from the boat to the next unreached
@@ -10817,6 +10825,7 @@ function updateTransitPanel(){
     if(pwhy) pb.title = "Not for this vessel: " + pwhy + ".";
   }
   if(ps) ps.textContent = passageBusy ? passageStatus : passage ? passageLine(passage) : "";
+  updateSailButton();
   if(rs) rs.textContent = !c ? "" : c.state === "running"
     ? "reading chart: " + c.done + " of " + c.total + " tiles" + (c.eta_s != null ? " · ~" + fmtMS(c.eta_s) + " left" : "")
     : "chart read: " + c.total + " tiles" + (c.unread_n ? " · " + c.unread_n + " unread" : "")
@@ -11043,6 +11052,9 @@ function passageSummary(plan){
   if(plan.missing || plan.failedTiles)
     t += (plan.failedTiles || plan.missing) + " chart tile(s) could not be read - that water counts as unread. ";
   t += "The coarse route runs on ~100 m cells; the route she sails will be a little longer.";
+  if(plan.sections && plan.sections.length)
+    t += " SAIL PASSAGE sails it in " + plan.sections.length + " section" + (plan.sections.length > 1 ? "s" : "")
+      + ", each planned in detail as she nears it and ending at a port or at clear water she can hold in.";
   return t;
 }
 /** The panel's one line for a plan. */
@@ -11113,7 +11125,7 @@ async function planPassageNow(){
     const fuel = (passageFuel(model, fuelLegs, twKn, level0) || []).map((x, k) => fuelLegs[k].whole ? x : null);
     const plan = {points, legs: res.legs, lengthM: res.lengthM, fuelLegs, model, twKn, floorM, level0, fuel,
                   tiles: (st.tiles || []).length, missing: g.missing, failedTiles: (st.failed || []).length, ms: res.ms,
-                  at: Date.now(), gen};
+                  at: Date.now(), gen, sections: res.sections || null};
     plan.reserveAt = fuel.map((x, k) => !x || x.ok ? null : passageAlong(plan, fuelLegs[k], x.reachM));
     passage = plan;
     showBanner(passageSummary(plan));
@@ -11162,6 +11174,379 @@ function drawPassage(toScreen){
     ctx.fillStyle = "#ff4d4d"; ctx.fillText(Math.round(FUEL_RESERVE_FRAC * 100) + "%", s.x + 8, s.y + 4);
   });
   ctx.restore();
+}
+// ── THE PASSAGE, SAILED (2026-10-12, step 5 of the long-transit plan) ──────────────────────────────────────────────
+// Andy: "Step 5" - sail a planned passage; at the end of the last section sent, with no window open to send the next,
+// "she should hold". SAIL PASSAGE turns the coarse plan into the passage she sails (mission.passage, kept on the PLAN
+// so a reload or a restart mid-passage keeps it): its SECTIONS (coarse.js cutSections - ~20 km, each ending at a port or
+// at water clear all round to hold in). Each section is planned in detail by the console's own planner (routePlan, as
+// a Transit is: lanes, the chart image, moored AIS, against the guard's own chart) and sent to her as a Transit of
+// what she has left plus the section - the page's resume pattern - so its hold disc and its arrival coast are the new
+// end's (an amend would keep the old end's disc and kill the coast for good, asv_console.py amend_plan).
+//   AHEAD OF HER: in the supervising window, when she has PASSAGE_AHEAD_M of route left, the next section is planned
+//   and sent - only to the route it was planned after, only while the guard is quiet, never to a boat already holding.
+//   A section that cannot be planned is said and tried again every PASSAGE_RETRY_MS.
+//   SHE HOLDS at the end of the last section sent (the route's completion is a loiter): no window to plan the next,
+//   or it could not be. Nothing moves her on from a hold but CONTINUE PASSAGE, beside Start.
+//   A PORT ends a section (a fuel stop, the arrival): she waits there for Continue; the arrival ends the passage.
+//   LEFT FOR ANOTHER COMMAND (a Go-To, an RTH, a Hold, a Stop): where she left it is recorded; Continue rejoins her there
+//   and sails the rest. A guard escape or hold is not a leaving - the passage waits until the guard gives the route
+//   back. DIVERT THE PASSAGE TO HERE (the chart's menu) is a Go-To with the leaving recorded: a port to refuel in.
+//   CONTINUE AFTER A PORT is refused until what is aboard reaches the next port with 20% of the tank (the passage's own
+//   fuel rule, fuel.js passageFuel) - where she reports a level.
+const PASSAGE_AHEAD_M = 10000;                 // the next section is planned and sent with this much route left
+const PASSAGE_RETRY_MS = 60000;                // a section that could not be planned is tried again after this
+const PASSAGE_END_M = 1;                       // the route she flies is the passage's when it ends within this of its end
+const PASSAGE_ONGOING = ["running", "holding", "at_port", "diverting", "diverted", "stopped"];
+let sailBusy = false, sailTriedAt = 0, sailSaid = null;
+/** The transit panel's Sail passage and its line - on every frame too (applyCmdState), as Follow is: arming her, or the
+ *  passage moving on, changes them without the line being touched. */
+function updateSailButton(){
+  const sb = $("#tr_sail"), ss = $("#tr_sail_st"), swhy = passage ? sailRefusal(passage) : null;
+  if(sb){
+    sb.disabled = !passage || !!swhy || sailBusy || passageBusy;
+    sb.textContent = sailBusy ? "Sailing…" : "Sail passage";
+    sb.dataset.why = swhy || "";
+  }
+  if(ss) ss.textContent = mission && mission.passage ? "passage: " + sailLine(mission.passage)
+                        : passage && swhy ? "not sailed yet: " + swhy : "";
+}
+/** The passage she sails, from a coarse plan (Plan passage's): its points, its sections, where it stands. */
+function sailRecord(plan){
+  return {id: "P" + Date.now().toString(36), t: Date.now(), kn: plan.twKn, floor_m: plan.floorM,
+          points: plan.points.map(p => ({lat: p.lat, lon: p.lon, port: !!p.port, t: p.t})),
+          sections: plan.sections.map(c => ({from: c.from, to: c.to, via: c.via, end: c.end, port: c.port,
+                                              lengthM: Math.round(c.lengthM)})),
+          state: "ready", sent: -1, sec: 0, base: 0, end: null, route: null, breakoff: null, note: ""};
+}
+/** A point's name in a passage record: T<n>, or her position. */
+function sailPortName(P, i){ const p = P.points[i]; return p && p.t ? "T" + p.t : "her position"; }
+/** Why the coarse plan cannot be sailed now, or null. */
+function sailRefusal(plan){
+  if(!plan) return "plan the passage first (Plan passage)";
+  const why = passageRefusal(); if(why) return why;
+  if(plan.legs.some(g => g.error)) return "part of it could not be planned";
+  if(!plan.sections || !plan.sections.length) return "it could not be cut into sections";
+  const short = (plan.fuelLegs || []).findIndex((fl, k) => !plan.fuel || !plan.fuel[k] || !plan.fuel[k].ok);
+  if(short >= 0) return passageName(plan.fuelLegs[short].from) + " to " + passageName(plan.fuelLegs[short].to)
+    + " does not arrive with " + Math.round(FUEL_RESERVE_FRAC * 100) + "% of the tank - make a point before it a fuel stop";
+  if(!asv) return "she has no position fix";
+  if(plan.points[0].t !== 0 || distTo(asv, plan.points[0]) > 1000)
+    return "it was planned from somewhere she no longer is - plan it again from her position";
+  if(!canCommand()) return S.estop ? "clear E-STOP first" : !S.armed ? "arm her first" : "this window is not supervising";
+  if(mission.passage && PASSAGE_ONGOING.includes(mission.passage.state)) return "a passage is being sailed - drop it first (the x beside Continue passage)";
+  return null;
+}
+/** Meters from p to the segment a-b, flat at p's latitude. */
+function sailSegM(p, a, b){
+  const k = Math.cos(p.lat * Math.PI / 180) * M_PER_DEG_LAT;
+  const ax = (a.lon - p.lon) * k, ay = (a.lat - p.lat) * M_PER_DEG_LAT, bx = (b.lon - p.lon) * k, by = (b.lat - p.lat) * M_PER_DEG_LAT;
+  const dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy, t = L > 0 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / L)) : 0;
+  return Math.hypot(ax + dx * t, ay + dy * t);
+}
+/** A section's turning points still ahead of a point she left it at: those after the stretch she was nearest. */
+function sectionRest(c, at){
+  const line = [c.from, ...c.via, c.to];
+  let best = 1, bd = Infinity;
+  for(let k = 1; k < line.length; k++){ const d = sailSegM(at, line[k - 1], line[k]); if(d < bd){ bd = d; best = k; } }
+  return line.slice(best, -1);
+}
+/** Is the route she flies the passage's: it ends where the passage's last send ended, and she has all of it? */
+function sailOwns(P, s){
+  return !!(P && P.end && runRoute && runRoute.length && (s || S).wp_total === runRoute.length
+            && distTo(runRoute[runRoute.length - 1], P.end) <= PASSAGE_END_M);
+}
+/** Is the guard quiet - nothing of its own in hand that a new route would cut across? */
+function sailGuardQuiet(){
+  return routeCmdsInFlight === 0 && !escapeThrottle && !guardActedAt && Date.now() - guardEdgeAt > EDGE_REASSESS_MS
+         && !aisAroundBusy && !heldResuming && !clearance.slowed;
+}
+/** Meters of route she has left, from where she is. */
+function sailLeftM(){
+  const rr = runRoute || [], i = Math.min(window._wpIndex || 0, rr.length);
+  if(!asv || i >= rr.length) return 0;
+  let m = distTo(asv, rr[i]);
+  for(let j = i + 1; j < rr.length; j++) m += distTo(rr[j - 1], rr[j]);
+  return m;
+}
+/**
+ * ONE SECTION, PLANNED IN DETAIL AND SENT: section k from `from` (her position, or the end of the route she flies when
+ * `append`), through its turning points - or from where she left it (`bo`) through the rest of it - to its end, held
+ * at clear water there. Appended, it goes after what she has left of the route she flies, and only to the route it
+ * was planned after. {ok, route} or {error} - or {soft} when it should simply be tried on the next frame.
+ */
+async function sailSend(P, k, from, bo, append){
+  const c = P.sections[k];
+  const pts = bo ? [bo.at, ...sectionRest(c, bo.at), c.to] : [...c.via, c.to];
+  const wasGen = planGen, rrWas = runRoute;
+  await ensureNogoCovers([from, ...pts]);
+  let ht = null;
+  const plan = await planInsideChart([from, ...pts], undefined, () => {
+    ht = holdTarget(c.to, holdOpts());
+    if(ht.error) return null;
+    return routePlan(from, [...pts.slice(0, -1), ht.to], true, transitStandoffM());
+  }, "Passage section " + (k + 1));
+  if(ht !== null && ht.error) return {error: "the end of section " + (k + 1) + " is not clear water to hold at"};
+  if(!plan) return {error: "no plan"};
+  if(plan.error) return {error: plan.error};
+  if(plan.uncharted) return {error: plan.uncharted.say || "the chart is not read over all of it"};
+  if(plan.unroutable && plan.unroutable.length) return {error: "no route clear of the chart's keep-outs on " + plan.unroutable.length + " leg(s)"};
+  plan.heldOff = ht.heldOff; plan.holdClear = holdClearWithContacts(ht.to, ht.holdClear);
+  let prefix = [];
+  if(append){
+    // ⚠ ONLY TO THE ROUTE IT WAS PLANNED AFTER, AND NEVER TO A BOAT ALREADY HOLDING: the guard may have moved the route
+    // while this planned (a way round), and a boat that has reached the end holds there until Continue (Andy).
+    if(runRoute !== rrWas || !sailOwns(P) || (S.status || {}).holding || S.run !== "running") return {soft: true};
+    prefix = runRoute.slice(Math.min(window._wpIndex || 0, runRoute.length));    // what she has left, read NOW
+  }
+  const route = [...prefix, ...plan.route];
+  if(routeTooLong(route.length)) return {error: "too many waypoints"};
+  const whole = {...plan, route};
+  const coast = solveCoastFor(whole);
+  const r = await routeCmd("/api/cmd/transit", {route, hold_clear_m: whole.holdClear, coast_from_m: coast ? coast.groundM : null});
+  if(!took(r)) return {error: notTookSay(r, "PASSAGE") || "the vessel did not take it"};
+  if(planGen === wasGen) releaseEscapeClaim("the passage's section replaced it");
+  whole.coast = coast;
+  runRoute = route; runUnsafe = []; setPlanIntent("transit", whole, route); updateMissionCard();
+  planIntent.why.push("the passage's section " + (k + 1) + " of " + P.sections.length);
+  legStartsHere(0, r);
+  P.sent = k; P.base = prefix.length; P.end = route[route.length - 1]; P.route = route; P.note = "";
+  if(!append) P.sec = k;
+  return {ok: true, route};
+}
+/** SAIL PASSAGE: the coarse plan becomes the passage she sails, and its first section is sent from where she is. */
+async function sailPassage(){
+  if(sailBusy) return;
+  const why = sailRefusal(passage);
+  if(why){ showBanner("Passage NOT sailed: " + why + "."); return; }
+  if(S.run === "running" && !(S.status || {}).holding
+     && !await guiConfirm("Sail the passage", "She is under way on another plan. Sailing the passage replaces it.")) return;
+  const P = sailRecord(passage);
+  sailBusy = true; updateTransitPanel(); applyCmdState(S);
+  try{
+    const r = await sailSend(P, 0, {lat: asv.lat, lon: asv.lon}, null, false);
+    if(r.error || r.soft){
+      showBanner("Passage NOT sailed: its first section could not be sent - " + (r.error || "try again") + ".");
+      logClient("passage_sail", {id: P.id, ok: false, why: r.error || "soft"});
+      return;
+    }
+    P.state = "running";
+    mission.passage = P; saveMission();
+    passage = null;                              // the plan is the passage now: drawn and said from it
+    showBanner("PASSAGE UNDER WAY: section 1 of " + P.sections.length + " sent (" + r.route.length + " waypoints). Each next "
+      + "section is planned by the console against its own chart and sent as she nears the end of the last; at a fuel stop "
+      + "or wherever the next could not be sent, she HOLDS and waits for Continue passage.");
+    logClient("passage_sail", {id: P.id, ok: true, sections: P.sections.length, wpts: r.route.length});
+  }catch(e){ showBanner("Passage NOT sailed: " + ((e && e.message) || e) + "."); }
+  finally{ sailBusy = false; updateTransitPanel(); applyCmdState(S); render(); }
+}
+/** The next section, planned and sent ahead of her (passageTick). */
+async function sailAppend(P, k){
+  sailBusy = true;
+  try{
+    const r = await sailSend(P, k, P.end, null, true);
+    if(r.soft) return;
+    if(r.error){
+      P.note = "section " + (k + 1) + " could not be planned: " + r.error;
+      if(sailSaid !== P.note){
+        sailSaid = P.note;
+        showBanner("PASSAGE: section " + (k + 1) + " of " + P.sections.length + " could NOT be planned - " + r.error
+          + ". Unless it can be, she will HOLD at the end of section " + k + "; it is tried again every minute.");
+        logClient("passage_section", {id: P.id, k, ok: false, why: r.error});
+      }
+      saveMission(); return;
+    }
+    saveMission();
+    flashNote("Passage: section " + (k + 1) + " of " + P.sections.length + " planned and sent ahead of her.");
+    logClient("passage_section", {id: P.id, k, ok: true, wpts: r.route.length});
+  }catch(e){ P.note = "section " + (k + 1) + ": " + ((e && e.message) || e); }
+  finally{ sailBusy = false; updateTransitPanel(); }
+}
+/** She holds at the end of the last section sent: a fuel stop, the arrival, or the end she waits at for Continue. */
+function sailAtEnd(P){
+  const c = P.sections[P.sent], last = P.sent === P.sections.length - 1;
+  P.state = c.end === "port" ? (last ? "done" : "at_port") : "holding";
+  P.sec = P.sent;
+  saveMission();
+  const port = c.port != null ? sailPortName(P, c.port) : null;
+  showBanner(P.state === "done" ? "PASSAGE ARRIVED at " + port + ": all " + P.sections.length + " sections sailed. She holds there."
+    : P.state === "at_port" ? "PASSAGE AT FUEL STOP " + port + " (end of section " + (P.sent + 1) + " of " + P.sections.length
+      + "): refuel her, then CONTINUE PASSAGE, beside Start."
+    : "PASSAGE HOLDING at the end of section " + (P.sent + 1) + " of " + P.sections.length + ": the next section was not sent"
+      + (P.note ? " (" + P.note + ")" : "") + ". CONTINUE PASSAGE, beside Start, plans and sends it.");
+  logClient("passage_" + P.state, {id: P.id, sec: P.sent, note: P.note || null});
+}
+/** She left the passage for another command: where, and in which section, is kept for Continue. */
+function sailBreakOff(P, why){
+  const at = asv ? {lat: asv.lat, lon: asv.lon} : P.sections[P.sec].from;
+  P.breakoff = {sec: P.sec, at, t: Date.now(), why: String(why || "another command")};
+  P.state = "stopped";
+  saveMission();
+  showBanner("PASSAGE LEFT in section " + (P.sec + 1) + " of " + P.sections.length + " for " + P.breakoff.why
+    + ". CONTINUE PASSAGE, beside Start, rejoins her where she left it.");
+  logClient("passage_breakoff", {id: P.id, sec: P.sec, at, why: P.breakoff.why});
+}
+/** THE PASSAGE ON EVERY FRAME (the supervising window): the next section sent ahead of her; her hold at an end said; a
+ *  passage left for another command recorded. */
+function passageTick(s){
+  const P = mission && mission.passage;
+  if(!P || P.state !== "running" || sailBusy || !supervising()) return;
+  if(!(runRoute && runRoute.length) && P.route && P.route.length === s.wp_total) runRoute = P.route.slice();   // a reload
+  if(!sailOwns(P, s)){
+    const k = planIntent && planIntent.kind;
+    if(s.run === "stopped" || s.run === "idle" || s.run === "complete" || ((k === "goto" || k === "rth" || k === "hold") && !guardActedAt))
+      sailBreakOff(P, s.run === "running" ? "a " + (k === "goto" ? "Go-To" : k === "rth" ? "Return-to-Home" : "Hold") : "a " + s.run);
+    return;                                      // otherwise the guard has it: the passage waits for its route back
+  }
+  if(s.run !== "running") return;                // paused: it waits
+  if((s.status || {}).holding){ sailAtEnd(P); return; }
+  P.sec = (window._wpIndex || 0) >= P.base ? P.sent : Math.max(0, P.sent - 1);
+  const c = P.sections[P.sent];
+  if(P.sent + 1 >= P.sections.length || c.end === "port") return;   // she stops at the end of this one
+  if(sailLeftM() > PASSAGE_AHEAD_M || Date.now() - sailTriedAt < PASSAGE_RETRY_MS || !sailGuardQuiet()) return;
+  sailTriedAt = Date.now();
+  sailAppend(P, P.sent + 1).catch(() => {});
+}
+/** Meters along a section from where she left it to its end (the rest of it). */
+function sailRestM(c, at){
+  const line = [at, ...sectionRest(c, at), c.to];
+  let m = 0; for(let k = 1; k < line.length; k++) m += distTo(line[k - 1], line[k]);
+  return m;
+}
+/** The fuel to the next port from here, against what is aboard: null when it reaches it with 20%, else why not. */
+function sailFuelShort(P, k, bo){
+  const model = fuelModel(), lv = model ? energyLevel(model, S && S.status) : null;
+  if(!model || lv == null || !asv) return null;      // no level reported: not held (as a survey's Continue)
+  let L = bo ? distTo(asv, bo.at) + sailRestM(P.sections[k], bo.at) : distTo(asv, P.sections[k].from) + P.sections[k].lengthM;
+  let j = k;
+  while(P.sections[j].end !== "port" && j + 1 < P.sections.length){ j++; L += P.sections[j].lengthM; }
+  const x = passageFuel(model, [{lengthM: L}], P.kn || V.SPEED_KN[roleSpeed("transit")], lv);
+  if(!x || x[0].ok) return null;
+  const to = P.sections[j].port != null ? sailPortName(P, P.sections[j].port) : "the end";
+  return "refuel first: " + fuelFmt(model, lv) + " aboard, and " + to + " is " + fmtDist(L) + " on - she needs "
+    + fuelFmt(model, x[0].used + model.floor + model.reserve) + " to arrive with " + Math.round(FUEL_RESERVE_FRAC * 100) + "% of the tank";
+}
+/** Why Continue passage cannot go now, or null. */
+function continueRefusal(P){
+  if(!P || !["holding", "at_port", "diverted", "stopped"].includes(P.state)) return "there is no passage waiting";
+  if(sailBusy) return "the passage is busy";
+  if(!canCommand()) return S.estop ? "clear E-STOP first" : !S.armed ? "arm her first" : "this window is not supervising";
+  if(S.run === "running" && !(S.status || {}).holding) return "she is under way - let her reach her hold, or stop her";
+  if(!asv) return "she has no position fix";
+  const bo = P.breakoff, k = bo ? bo.sec : P.sent + 1;
+  if(k >= P.sections.length) return "the passage has arrived";
+  if(P.state === "at_port" || P.state === "diverted" || P.state === "stopped"){ const f = sailFuelShort(P, k, bo); if(f) return f; }
+  return null;
+}
+/** CONTINUE PASSAGE: the next section from where she is - or, left mid-section, back to where she left it and on. */
+async function continuePassage(){
+  const P = mission.passage;
+  const why = continueRefusal(P);
+  if(why){ flashNote("Continue passage: " + why + "."); return; }
+  const bo = P.breakoff, k = bo ? bo.sec : P.sent + 1;
+  if(!await guiConfirm("Continue the passage", bo ? "Route her back to where she left the passage (section " + (k + 1)
+      + "), and sail on from there?" : "Plan section " + (k + 1) + " of " + P.sections.length + " from where she is, and sail it?")) return;
+  sailBusy = true; applyCmdState(S); updateTransitPanel();
+  try{
+    const r = await sailSend(P, k, {lat: asv.lat, lon: asv.lon}, bo, false);
+    if(r.error || r.soft){
+      showBanner("Passage NOT continued: section " + (k + 1) + " could not be sent - " + (r.error || "try again") + ". She stays where she is.");
+      logClient("passage_continue", {id: P.id, k, ok: false, why: r.error || "soft"});
+      return;
+    }
+    P.state = "running"; P.breakoff = null; saveMission();
+    showBanner("PASSAGE CONTINUED: section " + (k + 1) + " of " + P.sections.length + " sent" + (bo ? ", rejoining where she left it" : "") + ".");
+    logClient("passage_continue", {id: P.id, k, ok: true, rejoin: !!bo, wpts: r.route.length});
+  }catch(e){ showBanner("Passage NOT continued: " + ((e && e.message) || e) + "."); }
+  finally{ sailBusy = false; applyCmdState(S); updateTransitPanel(); render(); }
+}
+/** DIVERT THE PASSAGE TO HERE (the chart's menu): a Go-To to a port, and where she left the passage kept for Continue. */
+async function divertPassage(ll){
+  const P = mission.passage;
+  if(!P || !["running", "holding", "at_port"].includes(P.state)) return;
+  if(!await guiConfirm("Divert the passage", "Send her to this point and leave the passage there? Continue passage, beside "
+      + "Start, rejoins it where she left it.")) return;
+  const at = asv ? {lat: asv.lat, lon: asv.lon} : null, prev = P.state, gen = planGen;
+  const sec = prev === "running" ? P.sec : Math.min(P.sent + 1, P.sections.length - 1);
+  P.state = "diverting";                         // the frame's tick leaves it alone while the Go-To plans
+  try{ await doGoTo(ll); }
+  finally{
+    if(planGen !== gen && planIntent && planIntent.kind === "goto"){
+      const hp = runRoute && runRoute.length ? runRoute[runRoute.length - 1] : ll;     // where the Go-To holds her
+      P.breakoff = {sec, at: at || P.sections[sec].from, t: Date.now(), why: "a diversion", port: {lat: ll.lat, lon: ll.lon},
+                    to: {lat: hp.lat, lon: hp.lon}};
+      P.state = "diverted"; saveMission();
+      showBanner("PASSAGE DIVERTED: she is going to the point picked. Refuel her there; CONTINUE PASSAGE, beside Start, "
+        + "brings her back to where she left it (section " + (sec + 1) + ") and sails on.");
+      logClient("passage_divert", {id: P.id, sec, at: P.breakoff.at, port: P.breakoff.port});
+    } else P.state = prev;
+  }
+}
+/** The x beside Continue passage: the passage is dropped (she is not stopped). */
+async function dropPassage(){
+  const P = mission.passage; if(!P) return;
+  if(!await guiConfirm("Drop the passage", "Drop the passage being sailed? She is not stopped - she finishes what she was "
+      + "sent and holds; no further section is sent.", {always: true})) return;
+  mission.passage = null; saveMission();
+  logClient("passage_drop", {id: P.id, state: P.state, sent: P.sent});
+  flashNote("Passage dropped."); applyCmdState(S); updateTransitPanel(); render();
+}
+/** The command bar's Continue passage and its x. */
+function renderPassageControls(armed, estop, underWay){
+  const b = $("#b_passage"), x = $("#b_passDrop"); if(!b) return;
+  const P = mission && mission.passage;
+  const waits = !!(P && ["holding", "at_port", "diverted", "stopped"].includes(P.state));
+  b.style.display = waits ? "" : "none";
+  if(x) x.style.display = P ? "" : "none";
+  if(!waits) return;
+  const why = continueRefusal(P);
+  b.disabled = !!why;
+  b.classList.toggle("flash", !why);
+  setTip(b, (why ? "CONTINUE PASSAGE - NOT YET: " + why + ".\n\n" : "CONTINUE PASSAGE ") + sailLine(P) + ".");
+}
+/** Where the passage stands, in a line. */
+function sailLine(P){
+  if(!P) return "";
+  const n = P.sections.length, k = Math.max(0, P.sec);
+  return P.state === "running" ? "sailing section " + (k + 1) + " of " + n + (P.sent > k ? " (the next one sent)" : "")
+    + (P.note ? " · " + P.note : "")
+    : P.state === "holding" ? "holding at the end of section " + (P.sent + 1) + " of " + n
+    : P.state === "at_port" ? "at fuel stop " + sailPortName(P, P.sections[P.sent].port) + " - refuel, then Continue"
+    : P.state === "diverted" ? "diverted from section " + (P.breakoff.sec + 1) + " - Continue rejoins it there"
+    : P.state === "stopped" ? "left in section " + (P.breakoff.sec + 1) + " for " + P.breakoff.why + " - Continue rejoins it there"
+    : P.state === "done" ? "arrived: all " + n + " sections sailed" : P.state;
+}
+/** The passage being sailed on the chart: its sections (sent solid, to come dashed), their ends, where she left it. */
+function drawSail(toScreen){
+  const P = mission && mission.passage;
+  if(!P) return;
+  ctx.save();
+  P.sections.forEach((c, k) => {
+    const line = [c.from, ...c.via, c.to];
+    ctx.setLineDash(k <= P.sent ? [] : [8, 5]);
+    ctx.strokeStyle = k <= P.sent ? "rgba(190,230,255,0.75)" : "rgba(190,230,255,0.5)"; ctx.lineWidth = 1.6;
+    ctx.beginPath(); line.forEach((p, i) => { const s = toScreen(p.lat, p.lon); i ? ctx.lineTo(s.x, s.y) : ctx.moveTo(s.x, s.y); });
+    ctx.stroke(); ctx.setLineDash([]);
+    const e = toScreen(c.to.lat, c.to.lon);           // the section's end: a hold, or a port
+    ctx.fillStyle = c.end === "port" ? "#ff9f40" : "rgba(190,230,255,0.9)";
+    ctx.fillRect(e.x - 3, e.y - 3, 6, 6);
+  });
+  if(P.breakoff){
+    const s = toScreen(P.breakoff.at.lat, P.breakoff.at.lon);
+    ctx.strokeStyle = "#ff9f40"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(s.x - 6, s.y - 6); ctx.lineTo(s.x + 6, s.y + 6); ctx.moveTo(s.x + 6, s.y - 6); ctx.lineTo(s.x - 6, s.y + 6); ctx.stroke();
+  }
+  ctx.restore();
+}
+/** Does the passage own the hold she is at (an end of a section): the end-of-plan RTH chain stands down there. */
+function sailOwnsHold(){
+  const P = mission && mission.passage;
+  if(!P || !runRoute || !runRoute.length) return false;
+  const end = runRoute[runRoute.length - 1];
+  if(P.end && distTo(end, P.end) <= PASSAGE_END_M) return true;
+  // ⚠ AND THE PORT IT WAS DIVERTED TO (FOUND LIVE, 2026-10-12): she reached the divert point, held, and End of plan RTH
+  // chained her home from the port she had been sent to refuel in. There she waits for the refuel and Continue passage.
+  return !!(P.state === "diverted" && P.breakoff && P.breakoff.to && distTo(end, P.breakoff.to) <= PASSAGE_END_M);
 }
 async function doTransit(){
   if(transit.length<1){ flashNote("Draw a transit line first (click the chart)."); return; }
@@ -14169,6 +14554,9 @@ function openChartMenu(clientX, clientY, ll){
   $("#cmClear").classList.toggle("off", n === 0);
   $("#cmClearK").textContent = n ? (n + (n>1 ? " legs · Esc" : " leg · Esc")) : "none drawn";
   cmGate("#cmGoto",  canCommand(), "arm first");
+  { const P = mission && mission.passage, on = !!(P && ["running", "holding", "at_port"].includes(P.state)), el = $("#cmDivert");
+    if(el) el.style.display = on ? "" : "none";                 // only while a passage is sailed (2026-10-12)
+    if(on) cmGate("#cmDivert", canCommand(), "arm first"); }
   cmGate("#cmHome",  canSetHome(), "no link");
   cmGate("#cmSpawn", canSpawn(),   "sim only");
   gateResumeHere(ll);                                   // shown only while PAUSED; live only on a line the route runs
@@ -14222,6 +14610,7 @@ cmRow("#cmMeasure", ()=>{
 cmRow("#cmWhat",  ll => sayWhatIsHere(ll));
 cmRow("#cmClear", ()=>{ clearMeasures(); flashNote("Measurements cleared."); });
 cmRow("#cmGoto",  ll => doGoTo(ll));
+cmRow("#cmDivert", ll => divertPassage(ll));
 cmRow("#cmResume", ll => resumeFromHere(ll));   // paused runs only (2026-09-26)
 cmRow("#cmAvoid",   ll => avoidContactAt(ll));   // over a contact (2026-09-27)
 cmRow("#cmAisTest", ll => placeTestContact(ll)); // sim only (2026-09-27)
@@ -14779,7 +15168,7 @@ function rthPending(){
   // a card that promises a return the boat is not going to make is worse than one that never
   // mentioned it. (And the same exception: a hold's split waits for Continue, it does not go home.)
   return !!(S && S.completion==="rth" && chainableRun(S.behavior) && !heldSplitRun(S)
-            && S.home && S.armed && !S.estop && !rthChainFailed && runHolds());
+            && S.home && S.armed && !S.estop && !rthChainFailed && runHolds() && !sailOwnsHold());
 }
 function endAction(){
   if(rthPending()) return "rth";
@@ -16696,6 +17085,9 @@ async function dropBreak(){
   applyCmdState(S);
 }
 $("#b_continue").onclick = () => continueSurvey();
+$("#b_passage").onclick = () => continuePassage();
+$("#b_passDrop").onclick = () => dropPassage();
+$("#tr_sail").onclick = () => sailPassage();
 $("#b_contSel").onchange = (e) => { breakSel = e.target.value; applyCmdState(S); };
 $("#b_contDrop").onclick = () => dropBreak();
 
@@ -18257,6 +18649,8 @@ function applyCmdState(s){
   if(uploadBusy) $("#b_upload").title = "Measuring the plan’s corners — the route has not been sent yet.";
   $("#b_start").disabled = !armed || estop || !s.plan_uploaded || (run==="running" && !s.plan_staged);
   renderBreakControls(armed, estop, underWay);   // Continue, beside Start (2026-10-11)
+  renderPassageControls(armed, estop, underWay); // ... and Continue passage (2026-10-12)
+  updateSailButton();                            // ... and Sail passage on the transit panel
   // ⚠ PAUSE IS ENABLED WHILE PAUSED, BECAUSE IT IS THE WAY BACK. It used to gray out the
   // moment it worked, which left Start as the only resume — a control the operator has no
   // reason to look at for a run that is already going. It toggles, it says which way it
@@ -18323,6 +18717,7 @@ function onState(s){
     showBanner("⚠ THE FUEL MONITOR FAILED: " + ((e && e.message) || e) + " - fuel is NOT being watched; keep an eye on the gauge."); } }
   // the chart read ahead of her (step 3, 2026-10-11) - caught: a read is a convenience, never the frame's business
   try{ corridorAheadTick(s); }catch(e){ console.error(e); }
+  try{ passageTick(s); }catch(e){ console.error(e); }      // the passage, sailed (2026-10-12)
   // End-of-Plan RTH: the sim safely HOLDS at the last waypoint; the console chains the
   // existing Return-to-Home behavior (ENC-routed doRTH) exactly as if the operator had
   // pressed RTH. One-shot per run, and never re-chained off the RTH run itself.
@@ -18338,7 +18733,8 @@ function onState(s){
   // the standing plan that was driving at the pier.
   // ⚠ AND NEVER ON THE FRAME THAT STARTED THE RUN (`seqMoved`, 2026-09-27) - see the note where it is read.
   // ⚠ NOT AT A HOLD BEFORE A SURVEY (3b): there she waits for Continue - heldSplitRun.
-  if(s.run==="running" && st.holding && s.completion==="rth" && chainableRun(s.behavior) && !heldSplitRun(s)
+  // ⚠ NOR AT A PASSAGE'S HOLD (2026-10-12): the end of a section, a fuel stop, the arrival - she waits for Continue passage.
+  if(s.run==="running" && st.holding && s.completion==="rth" && chainableRun(s.behavior) && !heldSplitRun(s) && !sailOwnsHold()
      && s.armed && !s.estop && !rthChained && !seqMoved){
     rthChained=true;
     flashNote("End of plan — chaining Return-to-Home.");

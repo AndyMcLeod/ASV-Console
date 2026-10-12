@@ -1215,6 +1215,7 @@ def check_plan_body(m):
         raise PlanRefused("the survey-area boundary is not a list of positions - nothing was saved")
     _check_surveys(m)
     _check_breaks(m)
+    _check_passage(m)
     for k in ("arrival_radius_m", "approach_radius_m", "buffer_m", "min_depth_m", "lead_in", "lead_out"):
         v = m.get(k)
         if v is not None and (isinstance(v, bool) or not isinstance(v, (int, float))
@@ -1276,6 +1277,75 @@ def _check_breaks(m):
             if v is not None and not _finite_num(v):
                 raise PlanRefused("survey break-off %d's %s must be a finite number (got %r) - nothing was saved"
                                   % (i + 1, k, v))
+
+
+PASSAGE_SECTIONS_MAX = 600          # sections of a passage the plan keeps (~20 km each: 12,000 km)
+PASSAGE_VIA_MAX = 2000              # turning points one section keeps
+PASSAGE_POINTS_MAX = 200            # the drawn points of a passage
+PASSAGE_STATES = ("ready", "running", "holding", "at_port", "diverting", "diverted", "stopped", "done")
+
+
+def _check_passage(m):
+    """THE PASSAGE BEING SAILED (Andy, 2026-10-12: "Step 5" of the long-transit plan). The page keeps the passage it is
+    sailing on the PLAN - so a page reloaded, or a console restarted, mid-passage still knows which section she is on,
+    where she left it, and what Continue does - as {id, t, kn, floor_m, points: [{lat, lon, port, t}], sections:
+    [{from, to, via, end, port, lengthM}], state, sent, sec, base, end, route, breakoff: {sec, at, t, why, port} or
+    null, note}.
+
+    TYPES ONLY, as the break-offs are checked: positions positions, numbers finite, text short, the lists bounded, the
+    state one the page knows. What the page does with it is the page's."""
+    P = m.get("passage")
+    if P is None:
+        return
+    def bad(what):
+        raise PlanRefused("the plan's passage: %s - nothing was saved" % what)
+    if not isinstance(P, dict):
+        bad("not a record")
+    if P.get("state") not in PASSAGE_STATES:
+        bad("its state must be one of %s" % ", ".join(PASSAGE_STATES))
+    pts = P.get("points")
+    if not (isinstance(pts, list) and 1 < len(pts) <= PASSAGE_POINTS_MAX and all(_is_position(q) for q in pts)):
+        bad("its points must be 2 to %d positions" % PASSAGE_POINTS_MAX)
+    secs = P.get("sections")
+    if not (isinstance(secs, list) and 0 < len(secs) <= PASSAGE_SECTIONS_MAX):
+        bad("its sections must be a list of 1 to %d" % PASSAGE_SECTIONS_MAX)
+    for i, c in enumerate(secs):
+        if not (isinstance(c, dict) and _is_position(c.get("from")) and _is_position(c.get("to"))):
+            bad("section %d has no from and to" % (i + 1))
+        via = c.get("via")
+        if not (isinstance(via, list) and len(via) <= PASSAGE_VIA_MAX and all(_is_position(q) for q in via)):
+            bad("section %d's turning points are not a list of at most %d positions" % (i + 1, PASSAGE_VIA_MAX))
+        if c.get("end") not in ("hold", "port"):
+            bad("section %d must end at a hold or a port" % (i + 1))
+        for k in ("port", "lengthM"):
+            if c.get(k) is not None and not _finite_num(c.get(k)):
+                bad("section %d's %s must be a finite number" % (i + 1, k))
+    route = P.get("route")
+    if route is not None and not (isinstance(route, list) and len(route) <= ROUTE_MAX_WPTS
+                                  and all(_is_position(w) for w in route)):
+        bad("its route is not a list of at most %d positions" % ROUTE_MAX_WPTS)
+    if P.get("end") is not None and not _is_position(P.get("end")):
+        bad("its end is not a position")
+    bo = P.get("breakoff")
+    if bo is not None:
+        if not (isinstance(bo, dict) and _is_position(bo.get("at"))):
+            bad("its break-off has no position")
+        if bo.get("port") is not None and not _is_position(bo.get("port")):
+            bad("its break-off's port is not a position")
+        if bo.get("to") is not None and not _is_position(bo.get("to")):
+            bad("its break-off's hold point is not a position")
+        for k in ("sec", "t"):
+            if bo.get(k) is not None and not _finite_num(bo.get(k)):
+                bad("its break-off's %s must be a finite number" % k)
+        if bo.get("why") is not None and not (isinstance(bo.get("why"), str) and len(bo.get("why")) <= SURVEY_NAME_MAX):
+            bad("its break-off's why must be short text")
+    for k in ("t", "kn", "floor_m", "sent", "sec", "base"):
+        if P.get(k) is not None and not _finite_num(P.get(k)):
+            bad("its %s must be a finite number (got %r)" % (k, P.get(k)))
+    for k in ("id", "note"):
+        v = P.get(k)
+        if v is not None and not (isinstance(v, str) and len(v) <= 400):
+            bad("its %s must be text of at most 400 characters" % k)
 
 
 def _is_survey_id(v):
@@ -1614,6 +1684,7 @@ def load_mission():
             "surveys": m.get("surveys") if isinstance(m.get("surveys"), list) else [],
             # THE SURVEY BREAK-OFFS (2026-10-11) - carried in both dicts for the same reason as the surveys
             "breaks": m.get("breaks") if isinstance(m.get("breaks"), list) else [],
+            "passage": m.get("passage") if isinstance(m.get("passage"), dict) else None,
             # the revision a page sends back with its next save - see save_mission (review #10)
             "rev": (m.get("rev") if isinstance(m.get("rev"), int) and not isinstance(m.get("rev"), bool)
                     and m.get("rev") >= 0 else 0),
@@ -1624,7 +1695,7 @@ def load_mission():
             "speeds": _norm_speeds(None), "completion": "rth",
             "buffer_m": NOGO_BUFFER_DEFAULT_M, "min_depth_m": 2.0,
             "lead_mode": "m", "lead_in": 0, "lead_out": 0, "turn_ease": "arc",
-            "boundary": [], "boundary_closed": False, "surveys": [], "breaks": [], "rev": 0}
+            "boundary": [], "boundary_closed": False, "surveys": [], "breaks": [], "passage": None, "rev": 0}
     return dict(_MISSION_CACHE)
 
 
@@ -1671,6 +1742,7 @@ def save_mission(m):
         "boundary_closed": bool(m.get("boundary_closed")),
         "surveys": m.get("surveys") or [],          # checked by check_plan_body above; see load_mission
         "breaks": m.get("breaks") or [],            # the survey break-offs (2026-10-11); checked above, see load_mission
+        "passage": m.get("passage") if isinstance(m.get("passage"), dict) else None,   # the passage sailed (2026-10-12)
     }
     # ⚠ THE LOCK THE READS NOW HOLD TOO, the previous plan kept (_keep_previous_plan), a temp
     # file per writer, and the replace retried - review #5, see _read_mission_file. The revision is
@@ -2659,7 +2731,14 @@ def fetch_enc_features(bbox, min_depth=0.0, band=None, extras=True, use_cache=Tr
 ENC_TILE_DEG = 0.25
 ENC_LEAF_DEPTH = 7
 ENC_TILE_MEM_MAX = 16          # assembled tiles kept in memory: an operating area's reads reuse them
-ENC_TILE_WORKERS = 3           # tiles built at once (each fetches its layers 8 at a time)
+ENC_TILE_WORKERS = 3           # tiles read at once - from disk, or waiting their turn to be built (below)
+# ⚠ ONE TILE BUILT FROM NOAA AT A TIME (2026-10-12, found sailing step 5). With every band's every layer read (some six
+# hundred queries a tile, each child 8 at a time), three children at once put ~24 queries in flight, and NOAA dropped
+# layers - Depth_Area, Coastline_line among them - on the SAME three tiles off Portsmouth on every read, so they were
+# never kept and a passage through them could not be planned. Read on its own, one of them came back whole in 12.8 s.
+# Tiles already on disk still read three at a time; only the builds queue (_tile_build_now).
+ENC_TILE_BUILDS = 1
+_enc_build_sem = threading.BoundedSemaphore(ENC_TILE_BUILDS)
 ENC_TILE_FRESH_S = 7 * 86400   # a tile older than this is read again (behind the copy served): NOAA's weekly corrections
 ENC_TILE_RETRY_S = 120         # a tile served from an older copy is not read again for this long (offline: no hammering)
 _ENC_TILE_READER = 3           # the reader a tile was written by; an older one is read again before it is served
@@ -3311,7 +3390,8 @@ def _tile_build_now(tile):
     """A read of the tile - in a child, or in this process for the suites that stub the service (ENC_TILE_IN_PROCESS) -
     with the older reader's copy as its fallback, exactly as the child does it."""
     if not ENC_TILE_IN_PROCESS:
-        return _enc_tile_build_child(tile)
+        with _enc_build_sem:                      # one build from NOAA at a time (ENC_TILE_BUILDS)
+            return _enc_tile_build_child(tile)
     got = _enc_tile_build(tile)
     if got.get("complete"):
         try:

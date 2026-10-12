@@ -417,6 +417,8 @@ function menu(opts) {
     "const supervising = () => true;" +
     // the fuel rehearsal row (2026-10-11) reads the fuel monitor's latest; this world has none
     "let fuelNow = null;" +
+    // the Divert row (2026-10-12) is shown only while a passage is sailed; this world sails none
+    "const mission = {passage: null};" +
     grab("linkConnected") + grab("canCommand") + grab("canSpawn") + grab("canSetHome") +
     grab("chartMenuOpen") + grab("closeChartMenu") + grab("cmGate") + grab("openChartMenu") + grab("cmRow") +
     // RESUME FROM HERE (2026-09-26): openChartMenu shows, hides and gates the row through gateResumeHere
