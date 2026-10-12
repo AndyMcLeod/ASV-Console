@@ -374,48 +374,63 @@ check("8e. ... and the extract itself goes through it - the raw comprehension is
 # fetched NOTHING, ever: zero restricted features across 110 real cached extracts, while the
 # operator's "Dredged / restricted" enforcement checkbox said it was enforcing both halves.
 #
-# Checked against the CACHED LAYER MAPS, which are the service's own answer about what it
-# publishes rather than a list restated here. Harbour and approach are the bands a survey
-# ASV works in and must resolve everything; the small-scale coastal and general bands
-# legitimately omit harbour furniture, so a class missing THERE is not a fault.
-_LAYER_DIRS = [os.path.join(APP, "charts", "enc", _b) for _b in ("enc_harbour", "enc_approach")]
-_maps = []
-for _d in _LAYER_DIRS:
-    try:
-        with open(os.path.join(_d, "_layers.json"), "r", encoding="utf-8") as _f:
-            _m = json.load(_f)
-        _maps.append((os.path.basename(_d),
-                      set(_m.keys() if isinstance(_m, dict) else (x.get("name") for x in _m))))
-    except (OSError, ValueError):
-        pass
+# Checked against THE SERVICE'S OWN LAYER LISTS, ALL SIX BANDS (tests/fixtures/enc_layer_maps.json, every band's list
+# as the console reads it, fetched live 2026-10-12) - and the app's cached maps checked against those where they exist.
+#
+# ⚠⚠ "EVERY CLASS RESOLVES IN HARBOUR AND APPROACH" WAS THE RULE UNTIL 2026-10-12, AND IT WAS THE WRONG ONE. The service
+# names one object differently by band: a restricted area is `Restricted_Area_area` in harbour and approach and
+# `Restricted_Area` in coastal, general and overview - so the fix above was right for the two bands this check read and
+# left the layered read, which fills from the coarse bands, with no restricted area wherever there is no harbour chart
+# (45 coastal and 13 general polygons in the Gulf of Maine). And `Pontoon_line` was dropped as "published in no band"
+# because these two maps lack it; the coastal band publishes it. So, per band:
+#   9   every declared class resolves in AT LEAST ONE band - a class resolving nowhere is the typo this check is for;
+#   9a  every ROLE resolves in harbour and in approach - the bands a survey ASV works in - by one of its classes;
+#   9c  the restricted role resolves in every band that publishes a restricted area, under whichever name it uses;
+#   9d  the app's cached maps (charts/enc/<band>/_layers.json) agree with the fixture, layer for layer - a cache that
+#       disagrees is either NOAA renumbering (re-read the lists and this fixture) or a stale map the console will use.
+_FIX_MAPS = os.path.join(APP, "tests", "fixtures", "enc_layer_maps.json")
+_fx = json.load(open(_FIX_MAPS, encoding="utf-8"))
+_bands = _fx["bands"]
 
 _blk = src[src.index("ENC_ROLES = {"):src.index("ENC_KEEP_PROPS")]
 _blk = "\n".join(_l.split("#")[0] for _l in _blk.splitlines())      # code only, not comments
 _declared = re.findall(r'"([A-Z][A-Za-z_]+)"', _blk)
+_roles = {m.group(1): re.findall(r'"([A-Z][A-Za-z_]+)"', m.group(2))
+          for m in re.finditer(r'"([a-z_]+)":\s*\[([^\]]*)\]', _blk)}
 
-if not _maps:
-    # No cached layer map means this check CANNOT RUN — and that is a stated failure, never
-    # a silent pass. A coverage check that quietly reports nothing is the same class of
-    # fault as the one it exists to catch.
-    check("9. every ENC_ROLES class resolves to a published layer", lambda: False,
-          "NO CACHED LAYER MAP under charts/enc/<band>/_layers.json — run the console once "
-          "against a real area so the bands cache, then re-run this suite")
-else:
-    for _band, _names in _maps:
-        _missing = sorted(c for c in _declared if c not in _names)
-        check("9. every ENC_ROLES class resolves in %s" % _band,
-              (lambda m=_missing: not m),
-              ("%d/%d classes resolve" % (len(_declared) - len(_missing), len(_declared)))
-              + ("" if not _missing else
-                 " — UNRESOLVED, and SILENTLY SKIPPED by the fetch: " + ", ".join(_missing)))
-    # ... and the two the Rule 9 scope work rests on, named outright: a generic "they all
-    # resolve" check passes just as well over a list they have been deleted from.
-    _h = _maps[0][1]
-    check("9b. ... including FAIRWY and DRGARE, which decide where Rule 9 applies",
-          (lambda: "Fairway_area" in _h and "Dredged_Area" in _h
-                   and "Fairway_area" in _declared and "Dredged_Area" in _declared),
-          "requested: Fairway_area=%s Dredged_Area=%s"
-          % ("Fairway_area" in _declared, "Dredged_Area" in _declared))
+_nowhere = sorted(c for c in _declared if not any(c in m for m in _bands.values()))
+check("9. every ENC_ROLES class resolves in at least one of the six bands the service publishes (fetched %s)" % _fx["fetched"],
+      (lambda: len(_bands) == 6 and not _nowhere and len(_declared) > 40),
+      "%d classes, %d bands%s" % (len(_declared), len(_bands),
+                                  "" if not _nowhere else " - RESOLVING NOWHERE, silently skipped: " + ", ".join(_nowhere)))
+_role_gaps = ["%s in %s" % (r, b) for r, cs in sorted(_roles.items()) for b in ("enc_harbour", "enc_approach")
+              if not any(c in _bands[b] for c in cs)]
+check("9a. every ROLE resolves in harbour and in approach, by one of its classes",
+      (lambda: _roles and not _role_gaps),
+      "%d roles%s" % (len(_roles), "" if not _role_gaps else " - NOT RESOLVED: " + ", ".join(_role_gaps)))
+_restr = ["%s:%s" % (b, "+".join(c for c in _roles.get("restricted", []) if c in m) or "NONE")
+          for b, m in sorted(_bands.items()) if any(k.startswith("Restricted_Area") for k in m)]
+check("9c. the restricted role resolves in EVERY band that publishes a restricted area, under that band's own name",
+      (lambda: len(_restr) == 5 and not any(x.endswith(":NONE") for x in _restr)),
+      ", ".join(_restr))
+_h = _bands["enc_harbour"]
+check("9b. ... including FAIRWY and DRGARE, which decide where Rule 9 applies",
+      (lambda: "Fairway_area" in _h and "Dredged_Area" in _h
+               and "Fairway_area" in _declared and "Dredged_Area" in _declared),
+      "requested: Fairway_area=%s Dredged_Area=%s"
+      % ("Fairway_area" in _declared, "Dredged_Area" in _declared))
+_drift = []
+for _b, _m in sorted(_bands.items()):
+    try:
+        with open(os.path.join(APP, "charts", "enc", _b, "_layers.json"), "r", encoding="utf-8") as _f:
+            _c = json.load(_f)
+    except (OSError, ValueError):
+        continue
+    _diff = sorted(k for k in set(_c) | set(_m) if _c.get(k) != _m.get(k))
+    _drift.append((_b, _diff))
+check("9d. the app's cached layer maps agree with the service's lists, layer for layer (%d cached)" % len(_drift),
+      (lambda: all(not d for _, d in _drift)),
+      "; ".join("%s: %s" % (b, ("same" if not d else "DIFFERS at " + ", ".join(d[:6]))) for b, d in _drift) or "none cached here")
 
 # ── 10. THE FEATURE CACHE VERSION MOVES WITH THE ROLE SET ───────────────────────────
 #
@@ -634,7 +649,7 @@ try:
         def __exit__(s, *a): return False
     _savurl = A.urllib.request.urlopen
     try:
-        A.urllib.request.urlopen = lambda req, timeout=None: _R200(
+        A.urllib.request.urlopen = lambda req, timeout=None, **_k: _R200(
             {"error": {"code": 500, "message": "Unable to complete operation."}})
         raised = False
         try:
@@ -655,7 +670,7 @@ try:
     # and the console has no ENC there for ever.
     A._enc_layer_map = _sav[1]                              # the REAL one, for this check
     try:
-        A.urllib.request.urlopen = lambda req, timeout=None: _R200(
+        A.urllib.request.urlopen = lambda req, timeout=None, **_k: _R200(
             {"error": {"code": 500, "message": "Unable to complete operation."}})
         A._enc_layermaps.clear()
         lm = A._enc_layer_map("enc_harbour")

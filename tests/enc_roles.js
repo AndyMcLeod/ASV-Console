@@ -161,14 +161,56 @@ console.log("ENC roles — each one reaches exactly one branch, and the context 
         () => ko.polys.length === 1 && ko.polys[0].kind === "a bridge support",
         "polys=" + ko.polys.length + " kind=" + (ko.polys[0] || {}).kind);
 
-  const span = build([poly("bridge_span", "Bridge_area"),
-                      line("bridge_span", "Bridge_line")]);
-  check("6. the SPAN is overhead and reaches NO list, with everything enforced",
+  // ⚠ SINCE 2026-10-12 A SPAN IS A KEEP-OUT WHEN IT IS TOO LOW FOR HER (the overhead checks below, 6b-6f) - so this
+  // check now asks it of a hull that declares NO air draft, the case the rule above was written for, and of a span
+  // HIGH ENOUGH for a hull that does. Neither may refuse a passage under the bridge.
+  const air0 = V.AIR_DRAFT_M;
+  V.AIR_DRAFT_M = 0;
+  const span = build([poly("bridge_span", "Bridge_area", { VERCLR: 2.1 }),
+                      line("bridge_span", "Bridge_line", { VERCLR: 2.1 })]);
+  V.AIR_DRAFT_M = 2.85;
+  const high = build([poly("bridge_span", "Bridge_area", { VERCLR: 40.8 }),
+                      line("overhead", "Cable_Overhead_line", { VERCLR: 50.2 })]);
+  V.AIR_DRAFT_M = air0;
+  check("6. the SPAN reaches NO list for a hull with no air draft, nor a span high enough for one that has one",
         () => span.polys.length === 0 && span.lines.length === 0
-              && span.points.length === 0 && span.marks.length === 0,
-        "polys=" + span.polys.length + " lines=" + span.lines.length +
-        " points=" + span.points.length + " marks=" + span.marks.length +
+              && span.points.length === 0 && span.marks.length === 0
+              && high.polys.length === 0 && high.lines.length === 0,
+        "no air draft: polys=" + span.polys.length + " lines=" + span.lines.length +
+        "; 2.85 m under 40.8 / 50.2 m: polys=" + high.polys.length + " lines=" + high.lines.length +
         " — a span as keep-out refuses passage under every bridge there is");
+}
+
+// ── 6b-6f. OVERHEAD, TOO LOW FOR HER (2026-10-12) ──────────────────────────────────
+// New Castle's fixed bridges clear 1.8, 2.1, 2.4, 3.0 and 3.3 m (VERCLR, measured live) and a DriX stands 2.85 m above
+// the water. Her need is her air draft plus her overhead clearance (V.AIR_DRAFT_M + V.OVERHEAD_CLEARANCE_M).
+{
+  const air0 = V.AIR_DRAFT_M, oc0 = V.OVERHEAD_CLEARANCE_M;
+  V.AIR_DRAFT_M = 2.85; V.OVERHEAD_CLEARANCE_M = 1.0;                 // she needs 3.85 m
+  const low = build([poly("bridge_span", "Bridge_area", { VERCLR: 2.1 })]);
+  const edge = build([poly("bridge_span", "Bridge_area", { VERCLR: 3.85 }), poly("bridge_span", "Bridge_area", { VERCLR: 3.84 })]);
+  const shut = build([poly("bridge_span", "Bridge_area", { VERCCL: 3.6, VERCOP: 41.1 })]);
+  const both = build([poly("bridge_span", "Bridge_area", { VERCLR: 6.0, VERCCL: 3.6 })]);   // two charted: the LOWER
+  const none = build([line("bridge_span", "Bridge_line"), line("overhead", "Cable_Overhead_line")]);
+  const cable = build([line("overhead", "Cable_Overhead_line", { VERCLR: "4.8" }), line("overhead", "Cable_Overhead_line", { VERCLR: 3.0 })]);
+  const off = build([poly("bridge_span", "Bridge_area", { VERCLR: 2.1 })], { ...ALL_ON, land: false });
+  V.AIR_DRAFT_M = air0; V.OVERHEAD_CLEARANCE_M = oc0;
+  check("6b. a 2.1 m span is a keep-out RING for a 2.85 m hull, named as too low, carrying its clearance",
+        () => low.polys.length === 1 && low.polys[0].kind === "a bridge too low for her" && low.polys[0].clr === 2.1,
+        "polys=" + low.polys.length + " kind=" + (low.polys[0] || {}).kind + " clr=" + (low.polys[0] || {}).clr);
+  check("6c. ... and the line falls exactly at her need: 3.85 m clears, 3.84 m does not",
+        () => edge.polys.length === 1 && edge.polys[0].clr === 3.84, "kept " + edge.polys.map((p) => p.clr).join(","));
+  check("6d. an opening bridge is judged SHUT (VERCCL 3.6, never its 41.1 m open); with two clearances charted the "
+        + "LOWER is hers (6.0 and 3.6: 3.6)",
+        () => shut.polys.length === 1 && shut.polys[0].clr === 3.6 && both.polys.length === 1 && both.polys[0].clr === 3.6,
+        "polys=" + shut.polys.length + ", two charted -> " + (both.polys[0] || {}).clr);
+  check("6e. a span or a cable with NO charted clearance is too low - unknown is the conservative case",
+        () => none.lines.length === 2 && none.lines.every((l) => /no charted clearance/.test(l.kind)),
+        none.lines.map((l) => l.kind).join(" | "));
+  check("6f. a cable is judged the same way, its clearance read as a number whatever it arrived as; and the land "
+        + "toggle turns overhead keep-outs off with the other structures",
+        () => cable.lines.length === 1 && cable.lines[0].clr === 3.0 && off.polys.length === 0,
+        "cable lines=" + cable.lines.length + " (" + cable.lines.map((l) => l.clr).join(",") + "); land off polys=" + off.polys.length);
 }
 
 // ── 7. `extra` IS CHART CONTEXT, NOT AN OBSTACLE ────────────────────────────────────
@@ -215,10 +257,14 @@ console.log("ENC roles — each one reaches exactly one branch, and the context 
   // Roles that are chart CONTEXT by design reach no bucket on purpose. Check 15 is what
   // keeps that list honest — a role cannot escape this check by being added to it there
   // without a reason written beside it.
-  const CONTEXT = new Set(["depth_area", "depth_contour", "sounding", "bridge_span", "fairway"]);
+  const CONTEXT = new Set(["depth_area", "depth_contour", "sounding", "fairway"]);
   const MAKE = { area: poly, line: line, point: point };
   const total = (ko) => ko.polys.length + ko.lines.length + ko.points.length + ko.marks.length;
   const lost = [], unsuffixed = [];
+  // A hull WITH an air draft (2026-10-12): the overhead roles (bridge_span, overhead) reach the model only for one,
+  // and with no clearance charted on these fixtures each must arrive - in the form its branch draws.
+  const air0 = V.AIR_DRAFT_M;
+  V.AIR_DRAFT_M = 2.85;
   for (const [r, classes] of Object.entries(roles)) {
     if (CONTEXT.has(r)) continue;
     for (const c of classes) {
@@ -229,6 +275,7 @@ console.log("ENC roles — each one reaches exactly one branch, and the context 
       if (total(build([MAKE[g](r, c)])) === 0) lost.push(c + " (role " + r + ", a " + g + ")");
     }
   }
+  V.AIR_DRAFT_M = air0;
   check("8. every geometry form the server requests reaches the keep-out model",
         () => lost.length === 0 && unsuffixed.length === 0,
         (lost.length ? "SILENTLY DROPPED: " + lost.join("; ") +
@@ -289,9 +336,25 @@ console.log("ENC roles — each one reaches exactly one branch, and the context 
               && roleOf("Pylon_Bridge_Support_area") === "bridge",
         "point -> " + roleOf("Pylon_Bridge_Support_point") +
         ", area -> " + roleOf("Pylon_Bridge_Support_area"));
-  check("14. the bridge SPAN is requested, and under its own non-enforced role",
+  check("14. the bridge SPAN is requested, under its own role - enforced only where too low for her (6b)",
         () => roleOf("Bridge_area") === "bridge_span" && roleOf("Bridge_line") === "bridge_span",
         "Bridge_area -> " + roleOf("Bridge_area") + ", Bridge_line -> " + roleOf("Bridge_line"));
+  // ── 14c. WHAT WAS `extra` AND IS NOW READ (2026-10-12) ─────────────────────────────
+  // The review found each of these reaching the model as nothing: islets (151 in the Portsmouth tiles), unsurveyed
+  // water, overhead cables, the coarse bands' restricted areas (published there as `Restricted_Area`), aquaculture,
+  // platforms, fishing facilities, oil booms, light floats and the beacon forms of the danger marks.
+  const want = {
+    Land_Area_point: "land_point", Land_Area_line: "land_line", Unsurveyed_Area: "unsurveyed",
+    Cable_Overhead_line: "overhead", Pipeline_Overhead_line: "overhead",
+    Restricted_Area_area: "restricted", Restricted_Area: "restricted",
+    Marine_Farm_Culture_area: "hazard_area", Offshore_Platform_point: "hazard_point",
+    Fishing_Facility_line: "hazard_line", Oil_Barrier_line: "hazard_line", Light_Float_point: "hazard_point",
+    Beacon_Isolated_Danger_point: "hazard_point", Beacon_Cardinal_point: "hazard_point", Dry_Dock_area: "dock",
+    Pontoon_line: "dock_line",
+  };
+  const wrong = Object.entries(want).filter(([c, r]) => roleOf(c) !== r).map(([c, r]) => c + " -> " + (roleOf(c) || "NOTHING") + " (want " + r + ")");
+  check("14c. every class the review found reaching the model as nothing is requested under its decided role",
+        () => wrong.length === 0, wrong.length ? wrong.join("; ") : Object.keys(want).length + " classes, each where it belongs");
 
   // ── 14b. ONE CLASS, ONE ROLE ─────────────────────────────────────────────────────
   //
@@ -323,7 +386,6 @@ console.log("ENC roles — each one reaches exactly one branch, and the context 
     depth_area:    "the survey depth window, applied per-request by depthExcluded",
     depth_contour: "drawn, not enforced",
     sounding:      "drawn, not enforced",
-    bridge_span:   "OVERHEAD — enforcing it refuses passage under every bridge",
     fairway:       "where Rule 9 is in force; the opposite of a keep-out",
   };
   // NOT line-anchored, and deliberately the same pattern check 8 reads the table with. It
@@ -333,7 +395,10 @@ console.log("ENC roles — each one reaches exactly one branch, and the context 
   // report it. Two checks reading one table two ways is a hole by construction.
   const declared = [...code.matchAll(/"([a-z_]+)":\s*\[/g)].map((m) => m[1]);
   const KO = fs.readFileSync(path.join(__dirname, "..", "static", "js", "keepouts.js"), "utf8");
-  const dispatch = KO.slice(KO.indexOf("export function buildKeepouts"));
+  // The depth roles are decided in depthExcluded, which buildKeepouts asks first (2026-10-12: `dredged` by its own
+  // DRVAL1, `unsurveyed` always) - its body is part of the dispatch.
+  const dispatch = KO.slice(KO.indexOf("export function depthExcluded"), KO.indexOf("export function hazExtent"))
+                 + KO.slice(KO.indexOf("export function buildKeepouts"));
   const undecided = declared.filter(
     (r) => !CONTEXT_ONLY[r] && !dispatch.includes("'" + r + "'"));
   check("15. every fetched role is either dispatched by name or listed as context",

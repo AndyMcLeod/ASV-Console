@@ -2268,7 +2268,7 @@ of the operator.
    **Floats the vector service leaves out are read off the seabed's own gaps.** At
    Pepperrell Cove (Kittery Point), survey lines and transits ran straight across the
    floats off the town piers. They are **pontoons**, and NOAA's vector service publishes no
-   pontoon layer in any band, so the extract held nothing there. The chart-image read
+   pontoon layer at harbour scale (only the coastal band lists one), so the extract held nothing there. The chart-image read
    didn't catch them either: their outlines lay exactly under the depth areas' own
    boundaries, which counted as "already charted". But S-57 tiles the seabed with depth
    areas, land, dredged areas, floating docks, hulks, pontoons and unsurveyed areas, with
@@ -2392,7 +2392,7 @@ of the operator.
    STALE, and for those seconds the clearance guard judged nothing. Three changes, each measured:
    a tile is **built in a child process** (`asv_console.py --enc-tile-worker`; the console starts it,
    nothing to run by hand), so NOAA's answers are parsed there; a tile is **kept one feature per
-   line** (`charts/enc/tile_v2_<key>.jsonl`), read back in thousands of small parses the other
+   line** (`charts/enc/tile_v2_<key>.jsonl`; `tile_v3_` since 2026-10-12), read back in thousands of small parses the other
    threads run between; and the **garbage collector is held** while a tile is read, and what was read
    is frozen out of its later walks (with three tiles in memory, a full collection took 0.93 s before
    and 0.014 s after). A thread ticking at 20 Hz in place of the telemetry loop: reading a 22 MB tile,
@@ -2400,8 +2400,8 @@ of the operator.
    (about 1 s in the console's own process). On a live console (frames every 0.25 s; 0.40 s worst
    with no read at all): a fresh corridor read from NOAA, five tiles and 77 MB, worst gap 0.57 s; a
    box read carrying over two old tiles, 0.74 s. The page calls the telemetry stale at 2 s. A tile
-   kept the old way (`tile_v1_<key>.json`) is carried over the first time it is asked for, offline
-   too, and the old copy removed. A child that fails, or runs past 15 minutes, leaves the tile
+   kept by an older reader is read again (since 2026-10-12, below); only when that read fails is
+   the older copy served, offline too, and said so. A child that fails, or runs past 15 minutes, leaves the tile
    unread with the reason, as a chart that could not be read does. `tests/chart_read_stall.py`.
 
    **Plan passage: a long passage, its fuel leg by leg (2026-10-12, diesel hulls).** The transit
@@ -2426,9 +2426,81 @@ of the operator.
    shallowest danger at its center and anywhere touching it, judged as the keep-out model judges: a
    depth area by its deepest depth, a rock by its sounding less a meter, land, structures and buoys
    always. It is built in the tile's own child process (0.4-2.2 s a tile), or from a tile already
-   read in a child of its own, and kept as `charts/enc/grid_v1_<key>.bin` beside the tile. The
+   read in a child of its own, and kept as `charts/enc/grid_v2_<key>.bin` beside the tile. The
    corridor read takes `grids: true` (`POST /api/enc/corridor`), and `GET /api/enc/grid?tile=W,S,E,N`
    serves a grid. `tests/passage_grid.py`, `tests/passage_plan.js`.
+
+   **Every layer read, and what each charted thing means to each hull (2026-10-12).** A review of
+   how the console reads the chart and what its keep-out model makes of it found charted things that
+   reached the model as nothing - each measured on the cached Portsmouth tiles with the code as it
+   shipped - and they are now read and applied, for each hull by its own vessel file:
+   - **Dredged channels.** S-57 lays a dredged area IN PLACE OF a depth area, and the depth test read
+     depth areas alone, so a dredged channel shallower than the hull's floor was open water: New
+     Castle's Back Channel (1.8 m) and Northward Channel (0.9 m) for a DriX drawing 2.25 m; 333 such
+     channels across the cache. A dredged area is now judged by the depth it is kept to (DRVAL1),
+     corrected for the live tide like any depth area, under the depth toggle; the Dredged / restricted
+     toggle still only adds the deep ones.
+   - **Unsurveyed water** - the same, the other object that stands in for a depth area: open for every
+     hull (11 of 11 sampled at Erie). Now refused at every floor and tide, under the depth toggle.
+   - **Islets charted as a point or a line** were `extra`. The drying flat round each held a boat off
+     at low water; at +1.5 m of tide it stopped holding the 1 m hulls, and all 151 at Portsmouth read
+     as open water to the Z-Boat and the C-Worker. Now land, sized by the assumed extent (10 m), never
+     passed, and passed either side by the channel lane like a rock.
+   - **Overhead.** No hull had an air draft and the server dropped every clearance, so a DriX 2.85 m
+     tall was routed under New Castle's 1.8, 2.1 and 2.4 m fixed bridges. Each vessel file now carries
+     `hull.air_draft_m` (DriX 2.85 m off iXblue's drawing, both gondolas; C-Worker 1.97 m off the GA;
+     Z-Boat 1.1 m, its user guide's whole height) and `planning.overhead_clearance_m` (1.0 m). A bridge
+     span, an overhead cable, pipeline or conveyor charted lower than the two together - or with NO
+     clearance charted - is a keep-out; an opening bridge is judged shut. At New Castle the 1.8 m
+     bridge refuses all three hull types, the 2.4 m one the C-Worker and the DriX, and the Sarah
+     Mildred Long lift span shut (4.9 m) passes the DriX. A hull with no air draft is judged as before.
+   - **Things in the water**: aquaculture sites, offshore platforms, fishing facilities (stakes, traps,
+     weirs), oil booms, light floats, the isolated-danger and cardinal BEACONS and dry docks are
+     keep-outs named for what they are (half the sampled aquaculture sites had read as open water).
+   - **A rock is passed on a sounding only when the chart stands behind it**: not on a sounding the
+     chart calls doubtful, unreliable or only reported, and never when it says the rock is always dry
+     or floating.
+
+   Reading the chart:
+   - **Every layer of every band.** A coarser chart filling in was asked for its named layers only;
+     every band now reads everything it publishes. The **overview** band is read as the last fill
+     (water charted only at that scale was refused as unread), and the **berthing** band (65 cells,
+     one at Eastport) is read whole beside the harbour chart where it reaches. Restricted areas are
+     read under both of NOAA's names - the coastal, general and overview bands call the layer
+     `Restricted_Area`, which left 58 polygons in the Gulf of Maine unread - and the coastal band's
+     pontoon layer is read too.
+   - **What each feature carries**: clearances (vertical, shut, open, horizontal), the water level
+     and sounding quality of a rock, a wreck's and an obstruction's category, a restricted area's
+     category, notes and restrictions (`INFORM` tells a no-discharge zone, "40 CFR 140", from the
+     Naval Shipyard's restricted area, "33 CFR 334.50").
+   - **Read whole, or said not to be.** A layer whose geometry came back as an error, or short of the
+     objects asked for, was taken as whole and kept for good; now it fails, and a refusal by the
+     service is tried three times (a dead link is not). A tile missing a layer the model acts on is
+     **unread water** - the planners refuse it, the guard keeps everything that did arrive - and the
+     Nogo row says **incomplete** and the banner names the layers.
+   - **The chart's age.** A tile carries when it was read. One past a week is served and read again
+     behind it (NOAA corrects its charts week by week); one written by an older reader is read again
+     first, and only if that fails is the older copy served, the row saying **old chart**. The layer
+     lists are asked for again monthly, the chart-source card weekly, and a card answer with a failed
+     query is never kept. The row's tooltip gives the oldest tile's date.
+   - **Speed.** Every request built its own TLS context, and on Windows that loads the certificate
+     store each time: 22 s of a tile's 36 s of CPU. One shared context read the same tile in 21 s
+     instead of 45 (616 requests to NOAA).
+   - **Plan passage** judges the same things: its grid (`grid_v2`) holds dredged channels by their
+     depth, unsurveyed water under every floor, islets, and a third layer of overhead clearance, so a
+     coarse passage goes round a bridge too low for the hull.
+
+   Measured on a scratch console: the Portsmouth to New Castle box read whole from NOAA in 104 s
+   (before the TLS change); the page's own planner, run over it for each hull: the run upriver under
+   the I-95 bridge unchanged; at +1.0 m of tide the Z-Boat's and the C-Worker's routes into the Back
+   Channel unchanged; at chart datum both refused - Northward Channel is 0.9 m, and the other way in
+   runs under the fixed span beside the Little Harbor bascule, which has no charted clearance (where
+   the committed code ran the Z-Boat through 0.9 m of water against its 1.02 m floor, and the C-Worker
+   through four channels shallower than its own). `tests/enc_awareness.js` (each hull against New
+   Castle's real chart, `tests/fixtures/enc_newcastle.json`), `tests/enc_acquire.py`; and
+   `enc_roles.js`, `enc_layered.py`, `enc_extract.py` (the six bands' layer lists,
+   `tests/fixtures/enc_layer_maps.json`), `chart_read_stall.py`, `passage_grid.py`, `passage_plan.js`,
+   `nogo_readout.js`, `enc_cache.js` updated.
 
    The vessel-status card's **Nogo** row names which of four things is true, because they
    are not interchangeable: *reading chart… 6 s* (with the seconds climbing, so a chart

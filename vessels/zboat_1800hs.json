@@ -8,6 +8,8 @@
     "beam_m": 0.75,
     "above_water_h_m": 0.35,
     "draft_m": 0.12,
+    "air_draft_m": 1.1,
+    "air_draft_source": "THE BOAT'S HEIGHT, TAKEN WHOLE (2026-10-12): the maker's User's Guide (January 2017) gives 'Boat height 1.1 m, depending on configuration' (p. 9). The 0.12 m draft is not taken off it, because the antennas vary by configuration and the larger figure is the safe one. A bridge or overhead line charted lower than this plus planning.overhead_clearance_m (1.0 m, ESTIMATED: US charts give vertical clearance at mean high water, and a spring tide, a surge or her pitch takes some of it) is a keep-out for her.",
     "wind_cd": 1.0,
     "hull_cd": 1.0
   },
@@ -46,6 +48,7 @@
   "planning": {
     "nogo_buffer_m": 3.0,
     "under_keel_clearance_m": 0.9,
+    "overhead_clearance_m": 1.0,
     "min_survey_line_m": 0,
     "search": {
       "expbox_step_m": 8,

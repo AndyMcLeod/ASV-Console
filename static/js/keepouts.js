@@ -217,6 +217,30 @@ export const HAZ_UNKNOWN_EXTENT = new Set([
 ]);
 
 /**
+ * ... and charted points whose extent the chart does not give EITHER, but which stand AT OR ABOVE THE SURFACE, so no
+ * sounding ever passes them (2026-10-12): an islet charted as a point (LNDARE - land too small for an area at the
+ * cell's scale), an offshore platform, an aquaculture site, a fishing facility (stake, trap, weir). Each takes the
+ * assumed extent, like a wreck; none reaches hazPassable's sounding test. They were `extra` until today - nothing.
+ */
+export const HAZ_SURFACE_SIZED = new Set([
+  'Land_Area_point', 'Offshore_Platform_point', 'Marine_Farm_Culture_point', 'Fishing_Facility_point',
+]);
+
+/**
+ * What a class IS, where the role's own word would say less (2026-10-12): a refusal names the thing that refused it.
+ * Read by buildKeepouts after a feature's own `kind` and before nogoKind's role-based one.
+ */
+export const CLS_KIND = {
+  Land_Area_point: 'a charted islet', Land_Area_line: 'a charted islet',
+  Offshore_Platform_point: 'an offshore platform', Offshore_Platform_area: 'an offshore platform',
+  Marine_Farm_Culture_point: 'an aquaculture site', Marine_Farm_Culture_area: 'an aquaculture site',
+  Marine_Farm_Culture_line: 'an aquaculture site',
+  Fishing_Facility_point: 'a fishing facility', Fishing_Facility_area: 'a fishing facility',
+  Fishing_Facility_line: 'a fishing facility',
+  Oil_Barrier_line: 'an oil boom', Light_Float_point: 'a light float', Dry_Dock_area: 'a dry dock',
+};
+
+/**
  * A wreck with a CHARTED depth over it is a known quantity: if the corrected
  * sounding clears the navigability floor by this margin the vessel can pass
  * over it, and the hazard collapses back to a point.
@@ -233,6 +257,7 @@ export const DEFAULTS = {
   bufferM: 3,            // keep-clear margin around every keep-out
   wreckRadiusM: 10,      // assumed extent of a hazard the chart does not size (50 until 2026-10-09: drift 8)
   waterOffsetM: 0,       // live water level above chart datum; see depthExcluded
+  airNeedM: 0,           // the clearance she needs overhead: air draft + overhead margin; 0 = no check (overheadBlocks)
 };
 
 /**
@@ -310,7 +335,16 @@ export function enforcement(o) {
  * trusting a chart symbol without its size.
  */
 export function depthExcluded(f, dr, waterOffset = 0) {
-  if (f.role !== 'depth_area') return false;
+  // ⚠⚠ THE SEABED'S OTHER GROUP 1 OBJECTS (2026-10-12). S-57 tiles the seabed with depth areas, land, docks - AND
+  // dredged areas and unsurveyed areas, each IN PLACE OF a depth area: where one lies there is no Depth_Area under it.
+  // This test read depth areas alone, so both were water of no known depth to it, which it treated as no shallow water
+  // at all. Measured with this file on his Portsmouth tiles: every dredged channel shallower than the hull's floor read
+  // OPEN WATER - the Back Channel at 1.8 m and Northward Channel at 0.9 m for a DriX drawing 2.25 m; 333 such channels
+  // in his cache below that floor - and unsurveyed water open for every hull (11 of 11 at Erie).
+  //   A DREDGED AREA is judged as a depth area by its own DRVAL1, the depth it is maintained to (DRVAL2 when given).
+  //   AN UNSURVEYED AREA has no depth anybody measured: under every floor, and outside any survey window.
+  if (f.role === 'unsurveyed') return true;
+  if (f.role !== 'depth_area' && f.role !== 'dredged') return false;
   const d1 = f.props?.DRVAL1, d2 = f.props?.DRVAL2;
   const deepest = (d2 != null) ? d2 + waterOffset : (d1 != null ? d1 + waterOffset : null);
   const shallowest = (d1 != null) ? d1 + waterOffset : (d2 != null ? d2 + waterOffset : null);
@@ -333,8 +367,56 @@ export function depthExcluded(f, dr, waterOffset = 0) {
  */
 export function hazExtent(f, opts = {}) {
   const o = { ...DEFAULTS, ...opts };
+  if (HAZ_SURFACE_SIZED.has(f.cls)) return o.wreckRadiusM;       // at the surface: sized, never passed (2026-10-12)
   if (!HAZ_UNKNOWN_EXTENT.has(f.cls)) return 0;
   return hazPassable(f, o) ? 0 : o.wreckRadiusM;
+}
+
+/**
+ * QUASOU values that make a sounding no proof of water (S-57): 3 doubtful, 4 unreliable, 8 value reported (not
+ * surveyed), 9 value reported (not confirmed). QUASOU is a LIST ("2,6").
+ */
+export const QUASOU_UNTRUSTED = new Set([3, 4, 8, 9]);
+
+/**
+ * WATLEV values that put the object at or above the surface whatever its sounding says: 1 partly submerged at high
+ * water, 2 always dry, 7 floating.
+ */
+export const WATLEV_SURFACE = new Set([1, 2, 7]);
+
+/**
+ * The clearance under a bridge span or an overhead line, meters - the LOWER of VERCLR (a fixed span, a cable) and VERCCL
+ * (an opening bridge SHUT: she cannot ask for an opening) where both are charted - or null where neither is.
+ */
+export function overheadClearance(f) {
+  const p = (f && f.props) || {};
+  let lo = null;
+  for (const k of ['VERCLR', 'VERCCL']) {
+    const v = p[k];
+    if (v == null || v === '' || typeof v === 'boolean') continue;
+    const n = Number(v);
+    if (Number.isFinite(n) && (lo === null || n < lo)) lo = n;
+  }
+  return lo;
+}
+
+/**
+ * Is this span or line too low for a hull that needs `airNeedM` overhead (air draft + overhead clearance)? A clearance
+ * the chart does not give is UNKNOWN, and unknown is the conservative case here as for a wreck: too low. A hull that
+ * needs nothing declared (0) is never blocked - the answer before 2026-10-12, kept for a hull nobody has measured.
+ */
+export function overheadBlocks(f, airNeedM) {
+  if (!(airNeedM > 0)) return false;
+  const c = overheadClearance(f);
+  return c === null || c < airNeedM;
+}
+
+/** Does the chart say a sounding over this hazard is not to be trusted, or that the hazard stands at the surface? */
+export function soundingUntrusted(props) {
+  const p = props || {};
+  if (WATLEV_SURFACE.has(Number(p.WATLEV))) return true;
+  const q = String(p.QUASOU == null ? '' : p.QUASOU).split(',').map((x) => Number(x.trim())).filter(Number.isFinite);
+  return q.some((x) => QUASOU_UNTRUSTED.has(x));
 }
 
 /**
@@ -379,6 +461,10 @@ export function hazExtent(f, opts = {}) {
 export function hazPassable(f, opts = {}) {
   const o = { ...DEFAULTS, ...opts };
   if (!HAZ_UNKNOWN_EXTENT.has(f.cls)) return false;
+  // ⚠ AND ONLY ON A SOUNDING THE CHART STANDS BEHIND (2026-10-12). The quality and water-level attributes were never
+  // kept, so a VALSOU the chart itself calls doubtful, unreliable or only reported passed a rock exactly as a surveyed
+  // least depth did, and a rock the chart says is always dry needed only a number beside it.
+  if (soundingUntrusted(f.props)) return false;
   const vs = f.props?.VALSOU;
   return typeof vs === 'number'
       && (vs + o.waterOffsetM) >= o.minDepthM + WRECK_CLEAR_MARGIN_M;
@@ -740,7 +826,14 @@ export function gateSweep(P, gx, gy, ax, ay, w, Le, rings) {
  */
 export function nogoKind(role, depthbad, opts = {}) {
   const o = { ...DEFAULTS, ...opts };
+  // The two Group 1 objects that stand in for a depth area say what they are (2026-10-12): "water shallower than 3.2 m"
+  // over a dredged channel reads like a misdrawn chart, and over unsurveyed water it is not even true.
+  if (role === 'unsurveyed') return 'unsurveyed water';
+  if (depthbad && role === 'dredged') return `a dredged channel shallower than ${o.minDepthM.toFixed(1)} m`;
   if (depthbad) return `water shallower than ${o.minDepthM.toFixed(1)} m`;
+  if (role === 'bridge_span') return 'a bridge too low for her';
+  if (role === 'overhead') return 'an overhead line too low for her';
+  if (role === 'land_point' || role === 'land_line') return 'a charted islet';
   if (role === 'dock' || role === 'dock_line') return 'a dock / pier';
   if (role === 'bridge') return 'a bridge support';
   if (role === 'hazard_area' || role === 'hazard_point' || role === 'hazard_line')
@@ -781,9 +874,9 @@ export function buildKeepouts(frame, feats, opts = {}) {
     const g = f.geometry, r = f.role;
     // ⚠ `bridge` IS THE SUPPORTS, NOT THE SPAN. A bridge pylon is a pier that happens
     // to hold something up and is enforced exactly like one; the DECK (`bridge_span`)
-    // is overhead and is deliberately absent from every list here - enforcing it would
-    // refuse passage under every bridge, which for a hull with a meter of air draft is
-    // wrong on all of them. The span is fetched and cached for drawing, and that is all.
+    // is overhead and is enforced ONLY WHERE IT IS TOO LOW FOR HER (the overhead branch
+    // below, 2026-10-12) - enforcing every span would refuse passage under every bridge,
+    // which for a hull with a meter of air draft is wrong on all of them.
     // ⚠ EACH ROLE BELONGS TO EXACTLY ONE OF THESE, because the dispatch below is an
     // if/else chain on geometry: `isLand` draws RINGS, `isShore` draws PATHS, `isHaz`
     // draws POINTS, and the first match wins. Putting `bridge` in both isLand and isHaz
@@ -791,10 +884,36 @@ export function buildKeepouts(frame, feats, opts = {}) {
     // pylon charted as a POINT yields no rings and is silently dropped. The pylon POINT
     // class lives in `hazard_point` instead, where the dispatch is already right.
     const isLand = (r === 'land' || r === 'dock' || r === 'hazard_area' || r === 'bridge');
-    const isShore = (r === 'shore_line' || r === 'dock_line' || r === 'hazard_line');
+    const isShore = (r === 'shore_line' || r === 'dock_line' || r === 'hazard_line' || r === 'land_line');
     const depthbad = depthExcluded(f, dr, o.waterOffsetM);
     const isHaz = (r === 'hazard_point');
     const isArea = (r === 'dredged' || r === 'restricted');
+    // An islet charted as a POINT is land, under the land toggle, sized by the assumed extent (HAZ_SURFACE_SIZED) and
+    // never passed on a sounding - it was `extra` until 2026-10-12, and at +1.5 m of tide its drying flat stopped
+    // holding the 1 m hulls off it.
+    const isLandPt = (r === 'land_point');
+
+    // ⚠⚠ OVERHEAD: A SPAN OR A LINE IS A KEEP-OUT ONLY WHEN IT IS TOO LOW FOR HER (2026-10-12). Until today a span was
+    // never one, which was right for the hull it was written for (a meter of air draft) and wrong for a DriX at 2.85 m
+    // under New Castle's 1.8-2.4 m bridges. `airNeedM` is her air draft plus her overhead clearance (the vessel file);
+    // 0 means she declared none and nothing overhead is judged - the old answer, for a hull nobody measured. The water
+    // under a span she clears stays what it is: this decides the span alone. Its rings or paths by its geometry.
+    if (r === 'bridge_span' || r === 'overhead') {
+      if (!enf.land || !overheadBlocks(f, o.airNeedM)) continue;
+      const clr = overheadClearance(f);
+      const kind = clr == null
+        ? (r === 'bridge_span' ? 'a bridge with no charted clearance' : 'an overhead line with no charted clearance')
+        : nogoKind(r, false, o);
+      eachRing(g, (rg) => {
+        const ring = rg.map((c) => frame.toEN({ lon: c[0], lat: c[1] }));
+        if (ring.length > 2) polys.push({ ring, bb: bbOf(ring), kind, cls: f.cls, clr });
+      });
+      eachPath(g, (p) => {
+        const pts = p.map((c) => frame.toEN({ lon: c[0], lat: c[1] }));
+        if (pts.length > 1) lines.push({ pts, bb: bbOf(pts), kind, cls: f.cls, clr });
+      });
+      continue;
+    }
 
     // Lateral marks do TWO jobs, and they are not the same job. As keep-outs
     // they are small points — do not hit a buoy. As channel structure they pair
@@ -844,7 +963,7 @@ export function buildKeepouts(frame, feats, opts = {}) {
     // 'dredged' and 'restricted' looks tidy and would make the designated
     // channel a polygon keep-out — refusing every route down the middle of a
     // marked channel. That is the mutation the check is aimed at.
-    if ((isLand || isShore) && !enf.land) continue;
+    if ((isLand || isShore || isLandPt) && !enf.land) continue;
     if (depthbad && !enf.depth) continue;
     if (isHaz && !enf.haz) continue;
     // ⚠ PROVEN PASSABLE IS NOT A KEEP-OUT AT ALL -- see hazPassable. Zeroing the
@@ -856,11 +975,14 @@ export function buildKeepouts(frame, feats, opts = {}) {
     // is counted as passed, one whose own class is switched off is not counted at all, and
     // the toggle can only ever narrow - it cannot arm a wreck `haz` or `land` disarmed.
     if (!enf.wreck && (f.cls === 'Wreck_point' || f.cls === 'Wreck_area')) { wrecksOff++; continue; }
-    if (isArea && !enf.area) continue;
+    // ⚠ A DREDGED AREA TOO SHALLOW FOR HER IS ENFORCED BY THE DEPTH TOGGLE, NOT THE AREA ONE (2026-10-12). The `area`
+    // toggle - off by default, rightly: a dredged channel is where the deep water is - dropped every dredged area here,
+    // the shallow ones with the deep, so a 0.9 m channel was water to a 3.15 m floor however depth was enforced.
+    if (isArea && !enf.area && !depthbad) continue;
 
     // A feature that carries its own kind keeps it: a float read off the seabed's gaps (skin.js) is refused as
-    // what it is, not as a dock NOAA served.
-    const kind = f.kind || nogoKind(r, depthbad, o);
+    // what it is, not as a dock NOAA served. Then what its class is (CLS_KIND), then what its role is.
+    const kind = f.kind || CLS_KIND[f.cls] || nogoKind(r, depthbad, o);
     if (isLand || depthbad || isArea) {
       eachRing(g, (rg) => {
         const ring = rg.map((c) => frame.toEN({ lon: c[0], lat: c[1] }));
@@ -871,7 +993,7 @@ export function buildKeepouts(frame, feats, opts = {}) {
         const pts = p.map((c) => frame.toEN({ lon: c[0], lat: c[1] }));
         if (pts.length > 1) lines.push({ pts, bb: bbOf(pts), kind, cls: f.cls });
       });
-    } else if (isHaz) {
+    } else if (isHaz || isLandPt) {
       const radius = hazExtent(f, o);
       eachPoint(g, (c) => {
         const q = frame.toEN({ lon: c[0], lat: c[1] });

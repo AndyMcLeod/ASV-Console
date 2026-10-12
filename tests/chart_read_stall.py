@@ -196,6 +196,7 @@ os.remove(path)
 inner = [[-70.70, 43.05], [-70.55, 43.05], [-70.55, 43.20], [-70.70, 43.20], [-70.70, 43.05]]
 # the coastal chart covers every tile this suite builds (here and in 3b and 4); the harbor chart only the first
 outer = [[-70.75, 43.0], [-69.25, 43.0], [-69.25, 43.25], [-70.75, 43.25], [-70.75, 43.0]]
+outer2 = [[-69.30, 42.95], [-68.40, 42.95], [-68.40, 43.30], [-69.30, 43.30], [-69.30, 42.95]]   # 3d's tiles, east of it
 FAKE = {"coverage": {"enc_harbour": [[inner]], "enc_coastal": [[outer]]},
         "features": {"enc_harbour": [{"role": "dock", "cls": "Shoreline_Construction_area", "props": {}, "oid": 1,
                                       "geometry": {"type": "Polygon", "coordinates": [sq(-70.66, 43.10, -70.659, 43.101)]}}],
@@ -258,31 +259,61 @@ try:
           lambda: "partial %s kept %s; crash %r; wrote-then-failed %r kept %s; offline %r breaker %s; leftovers %s"
                   % (p1.get("partial"), p_kept, k1.get("note"), e1.get("note"), e_kept, o1.get("note"), breaker, leftovers))
 
-    # ── 3c. a tile kept the old way ───────────────────────────────────────────────────────────────────────────────
-    t5, t6 = [-69.25, 43.0, -69.0, 43.25], [-69.0, 43.0, -68.75, 43.25]
+    # ── 3c. a tile an older reader kept (2026-10-12: the FALLBACK, never carried over) ───────────────────────────
+    # Until 2026-10-12 a one-JSON tile_v1 was carried over as it was. A tile of this reader holds what no older one does
+    # (clearances, every coarse band's layers, the roles since), so an older copy is now served only when the tile
+    # cannot be read: `stale` says so, its roles re-tagged by today's table, NOT kept as a tile of this reader, NOT
+    # removed, held ENC_TILE_RETRY_S before a read is tried again - and removed the moment a read comes back whole.
+    t5, t6, t7 = [-69.25, 43.0, -69.0, 43.25], [-69.0, 43.0, -68.75, 43.25], [-68.75, 43.0, -68.5, 43.25]
+    islet = {"role": "extra", "cls": "Land_Area_point", "props": {}, "oid": 78, "band": "enc_harbour",
+             "geometry": {"type": "Point", "coordinates": [-69.15, 43.15]}}
     old = {"tile": t5, "bands": ["enc_coastal"], "unread": [], "unread_failed": [], "partial": [], "complete": True,
            "features": [{"role": "land", "cls": "Land_Area", "props": {}, "oid": 77, "band": "enc_coastal",
-                         "geometry": {"type": "Polygon", "coordinates": [sq(-69.2, 43.1, -69.1, 43.2)]}}]}
+                         "geometry": {"type": "Polygon", "coordinates": [sq(-69.2, 43.1, -69.1, 43.2)]}}, islet]}
     json.dump(old, open(A._legacy_tile_path(t5), "w", encoding="utf-8"))
     open(A._legacy_tile_path(t6), "w", encoding="utf-8").write('{"tile": [')     # cut short: not a tile
+    v2path = os.path.join(A.ENC_DIR, "tile_v2_%s.jsonl" % A._bbox_key(t7))
+    A._write_tile_jsonl(v2path, dict(old, tile=t7))                                 # the 2026-10-11 reader's copy
     json.dump({"offline": True}, open(fake_path, "w", encoding="utf-8"))           # NOAA unreachable throughout
     A._enc_tile_mem.clear()
     A._enc_down_until = time.monotonic() + 30.0       # and the breaker set: only the old copy can answer
     n5 = len(runs)
     v5 = A.fetch_enc_tile(t5)
     v5_children = len(runs) - n5
-    v2_kept, v1_gone = os.path.exists(A._tile_path(t5)), not os.path.exists(A._legacy_tile_path(t5))
-    A._enc_tile_mem.clear()
-    v5b = A.fetch_enc_tile(t5)                         # from the new file now
+    kept3, old_left = os.path.exists(A._tile_path(t5)), os.path.exists(A._legacy_tile_path(t5))
+    n5b = len(runs)
+    v5b = A.fetch_enc_tile(t5)                         # within the retry window: from memory, no child
+    held = len(runs) == n5b and v5b is v5
     v6 = A.fetch_enc_tile(t6)
-    check("3c. A TILE KEPT THE OLD WAY (one JSON) is carried over by a child - with NOAA unreachable and the breaker "
-          "set - kept as a tile file and the old copy removed, then read from the new one; an old copy that is not a "
-          "whole tile is not served",
-          lambda: v5.get("complete") and [f["oid"] for f in v5["features"]] == [77] and v5_children == 1
-                  and v2_kept and v1_gone and [f["oid"] for f in v5b["features"]] == [77] and v6.get("unread_failed"),
-          lambda: "complete %s oids %s children %d, kept %s, old copy gone %s, read again %s; cut-short copy %r"
-                  % (v5.get("complete"), [f["oid"] for f in v5.get("features") or []], v5_children, v2_kept, v1_gone,
-                     [f["oid"] for f in v5b.get("features") or []], v6.get("note")))
+    v7 = A.fetch_enc_tile(t7)
+    roles5 = sorted((f["cls"], f["role"]) for f in v5.get("features") or [])
+    check("3c. A TILE AN OLDER READER KEPT is the FALLBACK when the tile cannot be read (NOAA unreachable, the breaker "
+          "set): served by a child with `stale` saying what it lacks, its roles RE-TAGGED by today's table (the islet "
+          "stored as `extra` is land_point), not complete, NOT kept as a tile of this reader and NOT removed, and held "
+          "from memory with no child inside the retry window; the 2026-10-11 reader's line-per-feature copy the same; "
+          "an old copy that is not a whole tile is not served",
+          lambda: v5.get("stale") and not v5.get("complete") and v5_children == 1 and not kept3 and old_left and held
+                  and ("Land_Area_point", "land_point") in roles5 and ("Land_Area", "land") in roles5
+                  and v7.get("stale") and sorted(f["oid"] for f in v7["features"]) == [77, 78]
+                  and not v6.get("stale") and v6.get("unread_failed"),
+          lambda: "stale %r complete %s children %d kept %s old left %s held %s roles %s; v2 copy %s; cut-short %r"
+                  % ((v5.get("stale") or "")[:60], v5.get("complete"), v5_children, kept3, old_left, held, roles5,
+                     bool(v7.get("stale")), v6.get("note")))
+    # NOAA back: past the retry window the tile is read whole, kept as this reader's, and the older copies go
+    A._enc_down_until = 0.0
+    json.dump(dict(FAKE, coverage={"enc_coastal": [[outer2]]}, features={"enc_coastal": FAKE["features"]["enc_coastal"]}),
+              open(fake_path, "w", encoding="utf-8"))
+    with A._enc_tile_locks_lock:
+        A._enc_tile_mem[A._bbox_key(t5)]["retry_at"] = 0.0
+    v5c = A.fetch_enc_tile(t5)
+    check("3d. ... and once the chart can be read again (the retry window past), the tile is read WHOLE by this reader, "
+          "kept, stamped with when it was read - and the older copy removed",
+          lambda: v5c.get("complete") and not v5c.get("stale") and os.path.exists(A._tile_path(t5))
+                  and not os.path.exists(A._legacy_tile_path(t5)) and isinstance(v5c.get("read_at"), float)
+                  and v5c.get("reader") == A._ENC_TILE_READER,
+          lambda: "complete %s stale %s kept %s old left %s read_at %r reader %r"
+                  % (v5c.get("complete"), v5c.get("stale"), os.path.exists(A._tile_path(t5)),
+                     os.path.exists(A._legacy_tile_path(t5)), v5c.get("read_at"), v5c.get("reader")))
 
     # ── 4. the console's cadence while a child builds ─────────────────────────────────────────────────────────────
     HEAVY = dict(FAKE, parse_mb=25)                    # each band's answer as big as NOAA's, parsed as one
@@ -313,10 +344,10 @@ finally:
 # ── 5. the wiring ─────────────────────────────────────────────────────────────────────────────────────────────────
 src = open(os.path.join(APP, "asv_console.py"), encoding="utf-8").read()
 main_at = src.index('if __name__ == "__main__":')
-check("5. THE WIRING: a tile is built in a child by default (ENC_TILE_IN_PROCESS False, fetch_enc_tile's else), kept "
-      "as tile_v2 lines, and the worker is dispatched before main() starts anything",
-      lambda: A.ENC_TILE_IN_PROCESS is False and "got = _enc_tile_build_child(tile)" in src
-              and A._ENC_TILE_FMT == "tile_v2_%s.jsonl"
+check("5. THE WIRING: a tile is built in a child by default (ENC_TILE_IN_PROCESS False, _tile_build_now), kept "
+      "as tile_v3 lines (the 2026-10-12 reader), and the worker is dispatched before main() starts anything",
+      lambda: A.ENC_TILE_IN_PROCESS is False and "return _enc_tile_build_child(tile)" in src
+              and A._ENC_TILE_FMT == "tile_v3_%s.jsonl" and "tile_v2_%s.jsonl" in A._ENC_OLDER_TILE_FMTS
               and src.index('sys.argv[1] == "--enc-tile-worker"', main_at) < src.index("    main()", main_at),
       "asv_console.py")
 

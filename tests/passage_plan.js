@@ -74,16 +74,17 @@ const N = C.GRID_N, N2 = N * N, CD = C.CELL_DEG;
 const TX = Math.round((-70.75 + 180) / C.TILE_DEG), TY = Math.round((43.0 + 90) / C.TILE_DEG);
 function grid(tx, ty, fill = 300) {
   const W = tx * C.TILE_DEG - 180, S = ty * C.TILE_DEG - 90;
-  return { head: { tile: [W, S, W + C.TILE_DEG, S + C.TILE_DEG] }, C: new Int16Array(N2).fill(fill), T: new Int16Array(N2).fill(fill), tx, ty };
+  return { head: { tile: [W, S, W + C.TILE_DEG, S + C.TILE_DEG] }, C: new Int16Array(N2).fill(fill), T: new Int16Array(N2).fill(fill),
+           A: new Int16Array(N2).fill(32767), tx, ty };
 }
 const setC = (g, c, r, v) => { g.C[r * N + c] = v; if (g.T[r * N + c] > v) g.T[r * N + c] = v; };
 const setT = (g, c, r, v) => { g.T[r * N + c] = v; };
 const ll = (g, c, r) => ({ lat: (g.ty * N + r + 0.5) * CD - 90, lon: (g.tx * N + c + 0.5) * CD - 180 });
 const enc = (g) => {                                  // the server's file layout (_grid_bytes)
-  const hb = Buffer.from(JSON.stringify(Object.assign({ v: 1, n: N }, g.head)) + " ");
+  const hb = Buffer.from(JSON.stringify(Object.assign({ v: 2, n: N }, g.head)) + " ");
   const h2 = hb.length % 2 ? hb.slice(0, hb.length - 1) : hb;
   const len = Buffer.alloc(4); len.writeUInt32LE(h2.length);
-  const b = Buffer.concat([Buffer.from("ASVG"), len, h2, Buffer.from(g.C.buffer), Buffer.from(g.T.buffer)]);
+  const b = Buffer.concat([Buffer.from("ASVG"), len, h2, Buffer.from(g.C.buffer), Buffer.from(g.T.buffer), Buffer.from(g.A.buffer)]);
   return b.buffer.slice(b.byteOffset, b.byteOffset + b.length);
 };
 const flat = (a, b) => Math.hypot((b.lat - a.lat) * 111320, (b.lon - a.lon) * 111320 * Math.cos((a.lat + b.lat) / 2 * Math.PI / 180));
@@ -102,6 +103,34 @@ const FLOOR = 30;
         () => lv1[N + 1] === C.LV_UNREAD && lv1[N + 2] === C.LV_BLOCKED && lv1[N + 3] === C.LV_PARTLY && lv1[N + 4] === C.LV_CLEAR
               && lv1[N + 5] === C.LV_BLOCKED && lv1[N + 6] === C.LV_CLEAR && d1.head.tile[0] === -70.75 && /size/.test(wrong || ""),
         () => "levels " + Array.from(lv1.slice(N + 1, N + 7)).join(",") + "; wrong-size: " + wrong);
+
+  // ── 1b. OVERHEAD (2026-10-12): the grid's third layer, A - the lowest clearance over a cell ───────────────────
+  // A cell a span or a line crosses lower than her need (airDm: air draft + overhead clearance, decimeters) is BLOCKED;
+  // AT her need it is water; a hull with no air draft (airDm 0) judges nothing overhead. A plan goes round a low span
+  // that a hull with no air draft passes under.
+  const g1b = grid(TX, TY);
+  g1b.A[N + 1] = 21; g1b.A[N + 2] = 39; g1b.A[N + 3] = 38; g1b.A[N + 4] = 0;
+  const d1b = C.decodeGrid(enc(g1b));
+  const lvAir = C.tileLevels(d1b.C, d1b.T, FLOOR, d1b.A, 39), lvNone = C.tileLevels(d1b.C, d1b.T, FLOOR, d1b.A, 0);
+  const span = grid(TX, TY);
+  for (let r = 40; r < 220; r++) for (let c = 126; c < 130; c++) span.A[r * N + c] = 21;      // a 2.1 m span, across
+  const pa1b = ll(span, 60, 128), pb1b = ll(span, 200, 128);
+  const under = C.planPassage({ grids: [span], floorDm: FLOOR, airDm: 0, points: [pa1b, pb1b] });
+  const round = C.planPassage({ grids: [span], floorDm: FLOOR, airDm: 39, points: [pa1b, pb1b] });
+  const fldR = C.buildField([span], FLOOR, 39);
+  const cellsR = []; for (let k = 1; k < (round.legs[0].pts || []).length; k++)
+    cellsR.push(...C.lineCells(C.cellOf(round.legs[0].pts[k - 1]), C.cellOf(round.legs[0].pts[k])));
+  const worstR = cellsR.length ? Math.max(...cellsR.map((c) => fldR.level(c.gx, c.gy))) : -1;
+  check("1b. OVERHEAD: the file's third layer decoded; a 2.1 m span blocks a hull needing 3.9 m, 3.9 m clears AT her need, "
+        + "3.8 m does not, no clearance charted (0) blocks; a hull with no air draft judges none of it; a plan goes "
+        + "ROUND a low span a hull with no air draft passes straight under",
+        () => d1b.A[N + 1] === 21 && lvAir[N + 1] === C.LV_BLOCKED && lvAir[N + 2] === C.LV_CLEAR && lvAir[N + 3] === C.LV_BLOCKED
+              && lvAir[N + 4] === C.LV_BLOCKED && [1, 2, 3, 4].every((k) => lvNone[N + k] === C.LV_CLEAR)
+              && !under.legs[0].error && under.legs[0].pts.length === 2 && !round.legs[0].error
+              && round.legs[0].lengthM > under.legs[0].lengthM * 1.2 && worstR < C.LV_BLOCKED,
+        () => "levels at 3.9 m " + Array.from(lvAir.slice(N + 1, N + 5)).join(",") + ", at none " + Array.from(lvNone.slice(N + 1, N + 5)).join(",")
+              + "; under " + (under.legs[0].error || Math.round(under.legs[0].lengthM) + " m/" + under.legs[0].pts.length + " pts")
+              + ", round " + (round.legs[0].error || Math.round(round.legs[0].lengthM) + " m") + ", its worst cell " + worstR);
 
   // ── 2. near across a tile edge ──────────────────────────────────────────────────────────────────────────────────
   const gA = grid(TX, TY), gB = grid(TX + 1, TY);
@@ -319,7 +348,7 @@ const FLOOR = 30;
     w.api = new Function("asv", "transit", "fuelModel", "V", "roleSpeed", "S", "energyLevel", "passageFuel", "FUEL_RESERVE_FRAC",
       "fmtDist", "fmtDur", "fmtMS", "distTo", "PASSAGE_PORT_R_M", "M_PER_DEG_LAT", "nogoDR", "postCorridor", "getCorridor",
       "corridorSummary", "toCorridor", "fetch", "passageInWorker", "showBanner", "flashNote", "logClient", "updateTransitPanel",
-      "render", "worldPx", "zoom", "ctx", src)(
+      "render", "worldPx", "zoom", "ctx", "airNeedM", src)(
       w.asv, w.transit, () => w.model, { SPEED_KN: { transit: w.kn } }, () => "transit", { status: w.status }, F.energyLevel,
       F.passageFuel, F.FUEL_RESERVE_FRAC, fmtDist, fmtDur, (s) => s + "s", flat, C.PORT_R_M, 111320, () => ({ min: 3.15 }),
       async (b) => { w.posts.push(b); return w.seq.length ? w.seq.shift() : { id: "j", state: "done", total: 0, done: 0, tiles: [] }; },
@@ -327,7 +356,7 @@ const FLOOR = 30;
       async (url) => { w.fetches.push(url); const bad = w.grid404.some((t) => url.endsWith(t)); return { ok: !bad, arrayBuffer: async () => new ArrayBuffer(8) }; },
       async (msg) => { w.workerMsgs.push(msg); if (w.duringWorker) w.duringWorker(w); return w.worker; },
       (t) => w.banners.push(t), (t) => w.notes.push(t), (k, d) => w.logs.push([k, d]), () => {}, () => { w.renders++; },
-      (lat, lon) => ({ x: lon * 1000, y: -lat * 1000 }), 9, ctx);
+      (lat, lon) => ({ x: lon * 1000, y: -lat * 1000 }), 9, ctx, () => 3.85);
     return w;
   };
 
@@ -396,17 +425,19 @@ const FLOOR = 30;
   const banner16 = W16.banners[W16.banners.length - 1] || "";
   check("16. PLAN PASSAGE end to end: the corridor read WITH grids along the points, 5 km either side, polled to done; "
         + "each listed tile's grid fetched (one missing, counted); the worker given the floor in decimeters (3.15 m -> 32) "
+        + "and what she needs overhead (3.85 m -> 39) "
         + "and the points; the plan kept - her position to T2 from the 120 L aboard, T2 to T4 from a full tank and SHORT, "
         + "its reserve marked - said, logged (reading, planned, with the points) and free after",
         () => W16.posts.length === 1 && W16.posts[0].grids === true && W16.posts[0].half_km === 5
               && W16.posts[0].route.length === 5 && W16.gets.length === 2 && W16.fetches.length === 3
               && /tile=-70.75,43,-70.5,43.25$/.test(W16.fetches[0]) && W16.workerMsgs.length === 1
-              && W16.workerMsgs[0].floorDm === 32 && W16.workerMsgs[0].points.length === 5 && W16.workerMsgs[0].grids.length === 2
+              && W16.workerMsgs[0].floorDm === 32 && W16.workerMsgs[0].airDm === 39
+              && W16.workerMsgs[0].points.length === 5 && W16.workerMsgs[0].grids.length === 2
               && pl && pl.missing === 1 && pl.fuel.length === 2 && pl.fuel[0].start === 120 && pl.fuel[1].start === model.full
               && pl.fuel[1].ok === false && pl.reserveAt[0] === null && pl.reserveAt[1] && /PASSAGE PLANNED, COARSE/.test(banner16)
               && /BELOW THE 20% RESERVE/.test(banner16) && W16.logs.length === 2 && W16.logs[0][1].state === "reading"
               && W16.logs[1][1].state === "planned" && W16.logs[1][1].points.length === 5 && s16.passageBusy === false,
-        () => JSON.stringify({ posts: W16.posts.length, gets: W16.gets.length, fetches: W16.fetches.length, worker: W16.workerMsgs.map((m) => [m.floorDm, m.points.length, m.grids.length]),
+        () => JSON.stringify({ posts: W16.posts.length, gets: W16.gets.length, fetches: W16.fetches.length, worker: W16.workerMsgs.map((m) => [m.floorDm, m.airDm, m.points.length, m.grids.length]),
                                fuel: pl && pl.fuel.map((x) => [x.start, +x.arrive.toFixed(1), x.ok]), logs: W16.logs.map((l) => l[1].state), banner: banner16.slice(0, 160) }));
   const W16b = world({ transit: T3.map((p) => ({ ...p })) });
   W16b.seq = [{ id: "g", state: "done", total: 1, done: 1, tiles: [tiles16[0]], failed: [] }];

@@ -8,6 +8,8 @@
     "beam_m": 1.6,
     "above_water_h_m": 0.82,
     "draft_m": 0.66,
+    "air_draft_m": 1.97,
+    "air_draft_source": "MEASURED OFF THE GA (2026-10-10, hull.wind_source): the antenna tops stand 1.97 m above the water. A bridge or overhead line charted lower than this plus planning.overhead_clearance_m (1.0 m, ESTIMATED: US charts give vertical clearance at mean high water, and a spring tide, a surge or her pitch takes some of it) is a keep-out for her.",
     "wind_cd": 1.0,
     "hull_cd": 1.0,
     "wind_area_side_m2": 3.46,
@@ -51,6 +53,7 @@
   "planning": {
     "nogo_buffer_m": 8.0,
     "under_keel_clearance_m": 0.65,
+    "overhead_clearance_m": 1.0,
     "min_survey_line_m": 25,
     "search": {
       "expbox_step_m": 20,

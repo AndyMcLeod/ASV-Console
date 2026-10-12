@@ -81,7 +81,7 @@ const { sea } = require("../static/js/state.js");
 // THE REAL MODULE, not its source text lifted out of the page. A renamed or
 // deleted export now fails HERE, at load, instead of quietly resolving to a stale
 // copy - and the checks below exercise the function that actually ships.
-const { HAZ_UNKNOWN_EXTENT, WRECK_CLEAR_MARGIN_M, blocked, blockedInfo, bufferFloor, buildKeepouts, depthExcluded, hazExtent, hazPassable, legClear, markId, markSystems, nogoDR, nogoKind, snapClearLL } = require("../static/js/chart.js");
+const { HAZ_UNKNOWN_EXTENT, WRECK_CLEAR_MARGIN_M, blocked, blockedInfo, bufferFloor, buildKeepouts, depthExcluded, hazExtent, hazPassable, legClear, markId, markSystems, nogoDR, nogoKind, snapClearLL, airNeedM, overheadBlocks } = require("../static/js/chart.js");
 
 // THE REAL MODULE, not its source text lifted out of the page. A renamed or
 // deleted export now fails HERE, at load, instead of quietly resolving to a stale

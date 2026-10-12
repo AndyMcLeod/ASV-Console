@@ -54,6 +54,11 @@ export const V = {
   // Corrected-depth nogo floor: draft + under-keel clearance, so a deeper-draft vessel
   // avoids more shallow water. Drives the ENC extract AND the keep-out reclassification.
   NOGO_MIN_DEPTH_M: 1.0,
+  // Her height above the water (hull.air_draft_m) and the margin she keeps under a bridge or a cable
+  // (planning.overhead_clearance_m): a span or line charted lower than the two together is a keep-out (chart.js
+  // airNeedM, keepouts.js overheadBlocks). 0 air draft - a hull that declares none - judges nothing overhead.
+  AIR_DRAFT_M: 0,
+  OVERHEAD_CLEARANCE_M: 1.0,
   // Keep-clear buffer. A FLOOR, not a default: a persisted mission carries whatever buffer
   // it was saved with - often a smaller boat's - and applying that to a bigger vessel would
   // give it less clearance than its own file demands.

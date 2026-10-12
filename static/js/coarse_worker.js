@@ -7,7 +7,7 @@ self.onmessage = (ev) => {
   const d = (ev && ev.data) || {};
   const t0 = Date.now();
   try {
-    const r = planPassage({ grids: d.grids || [], floorDm: d.floorDm, points: d.points || [] });
+    const r = planPassage({ grids: d.grids || [], floorDm: d.floorDm, airDm: d.airDm || 0, points: d.points || [] });
     self.postMessage({ id: d.id, ms: Date.now() - t0, ...r });
   } catch (e) {
     self.postMessage({ id: d.id, error: String((e && e.message) || e) });

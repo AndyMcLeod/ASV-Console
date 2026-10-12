@@ -94,7 +94,8 @@ const { nogo, sea } = require("../static/js/state.js");
 // the EFFECTIVE depth floor now (the deeper of the hull's own and the operator's Min depth), so
 // a stub here would let this suite stay green while the row printed a floor the keep-out model
 // had not been built at - which is the exact fault that change was made to fix.
-const { nogoKindCounts, nogoDR } = require("../static/js/chart.js");
+// airNeedM (2026-10-12): the readout says what she needs overhead - the real one, read off the live V.
+const { nogoKindCounts, nogoDR, airNeedM } = require("../static/js/chart.js");
 // THE SEABED'S GAPS (2026-09-30): refreshNogo folds them in as features and the readout counts them by their kind,
 // so the real module has to resolve in the eval'd scope - a free SKIN_KIND is a RUNTIME error inside the readout,
 // which is exactly how this suite first went red on the change.
@@ -188,6 +189,50 @@ check("18. ... and a scan that has NOT been made says so, rather than reading as
       (()=>{ const r = read({}, {note:null, lines:[]});
              return !/chart/.test(r.text) && /not compared here yet/.test(r.title); })(),
       "a silent absence would read exactly like open water");
+
+// 30-33. THE CHART'S AGE, AN OLDER COPY, A READ THAT DID NOT ARRIVE WHOLE, AND WHAT SHE NEEDS OVERHEAD (2026-10-12, the
+// review "all ENC components understood and applied"). A tile was kept for ever and NOAA corrects week by week; an older
+// reader's copy is served only when a read fails; a failed depth layer used to leave the row reading healthy.
+{
+  // THIS FILE'S check() TAKES A VALUE, NOT A FUNCTION: a condition passed as `() => ...` is a function, always truthy,
+  // and these four first shipped that way - passing while testing nothing, until a mutation run scored them SURVIVED.
+  const checkF = (name, f, detail) => check(name, f(), detail);
+  const encWas = sea.enc, airWas = V.AIR_DRAFT_M, ocWas = V.OVERHEAD_CLEARANCE_M;
+  const nine = Date.now() / 1000 - 9 * 86400 - 60;
+  const withEnc = (e) => { sea.enc = Object.assign({ features: [], band: "enc_harbour", bands: ["enc_harbour"], layered: true,
+                                                     unread: [], partial: [], partialNamed: [], stale: [], aged: 0, readAt: null }, e);
+                           return read({}); };
+  const r30 = withEnc({ readAt: nine, aged: 2 });
+  checkF("30. THE CHART'S AGE is in the tip - the oldest tile's read date and how long ago - and the tiles past a week "
+        + "old, each being read again behind the copy in use; a chart merely aged does not warn",
+        () => /Chart read: \d{4}-\d{2}-\d{2} \(9 days ago/.test(r30.title) && /2 tile\(s\) past a week old/.test(r30.title)
+              && !/old chart/.test(r30.text),
+        r30.title.split("\n").filter((l) => /Chart read/.test(l)).join(" ").slice(0, 160));
+  const r31 = withEnc({ readAt: nine, stale: ["the chart could not be read again here; a copy read 2026-10-11 by an older reader is used"] });
+  checkF("31. AN OLDER READER'S COPY IN USE is on the row (old chart), warns, and its reason is in the tip",
+        () => /· old chart/.test(r31.text) && r31.cls === "warn" && /OLDER CHART IN USE: the chart could not be read again/.test(r31.title),
+        r31.text);
+  const r32 = withEnc({ partial: ["Building_Single_point", "Depth_Area"], partialNamed: ["Depth_Area"] });
+  const r32b = withEnc({ partial: ["Building_Single_point"], partialNamed: [] });
+  checkF("32. A READ THAT DID NOT ARRIVE WHOLE is on the row (incomplete), warns, names the layers, and says which of them "
+        + "the model acts on (that water unread) - or that none of them is, and nothing is refused for it",
+        () => /· incomplete/.test(r32.text) && r32.cls === "warn" && /NOT READ WHOLE: Building_Single_point, Depth_Area/.test(r32.title)
+              && /Depth_Area the model acts on, so that water is unread/.test(r32.title)
+              && /None of them is a layer the model acts on; nothing is refused/.test(r32b.title),
+        r32.text + " | " + r32b.text);
+  V.AIR_DRAFT_M = 2.85; V.OVERHEAD_CLEARANCE_M = 1.0;
+  const r33 = withEnc({});
+  V.AIR_DRAFT_M = 0;
+  const r33b = withEnc({});
+  sea.enc = encWas; V.AIR_DRAFT_M = airWas; V.OVERHEAD_CLEARANCE_M = ocWas;
+  checkF("33. WHAT SHE NEEDS OVERHEAD is in the tip: a bridge or line lower than her air draft plus her margin, or with no "
+        + "clearance charted - and a hull with no air draft is told nothing overhead is judged; dredged channels and "
+        + "unsurveyed water are named in what the model is",
+        () => /charted lower than 3\.85 m \(her air draft 2\.85 m \+ 1\.0 m\)/.test(r33.title) && /opening bridge as if shut/.test(r33.title)
+              && /nothing overhead is judged - this vessel declares no air draft/.test(r33b.title)
+              && /dredged channels by the depth they are kept to, and unsurveyed water always/.test(r33.title),
+        (r33.title.match(/and any bridge[^.]*/) || ["(no overhead sentence)"])[0].slice(0, 160));
+}
 
 // 20-20e. THE SEABED'S GAPS (Andy, 2026-09-30, the floats at Pepperrell Cove that survey lines and transits crossed).
 // Counted from the MODEL, by their own kind, so a gap the structure toggle has switched off is not claimed as a
@@ -391,6 +436,24 @@ async function drive(fetchResult) {
   check("12. ... and 'reading chart' was still shown while the fetch was in flight",
         ok.all.some(t => /reading chart/.test(t)),
         ok.all.length + " paints: " + JSON.stringify(ok.all));
+
+  // 34. THE BANNER OVER A CHART THAT DID NOT ARRIVE WHOLE (2026-10-12). It said "Nogo established" over a chart whose
+  // depth layer had failed. Now it names the failed layers the model ACTS ON - and only those (an `extra` failing refuses
+  // nothing, and a banner saying it did would be a cause the code cannot produce) - and an older reader's copy in use.
+  const withEnc = (e) => () => { sea.enc = Object.assign({ features: [{}], band: "enc_5", partial: [], partialNamed: [], stale: [] }, e);
+                                 return { band: "enc_5" }; };
+  await drive(withEnc({ partial: ["Building_Single_point", "Depth_Area"], partialNamed: ["Depth_Area"] }));
+  const bInc = banners[banners.length - 1] || "";
+  await drive(withEnc({ partial: ["Building_Single_point"], partialNamed: [] }));
+  const bExtra = banners[banners.length - 1] || "";
+  await drive(withEnc({ stale: ["the chart could not be read again here; a copy read 2026-10-11 by an older reader is used"] }));
+  const bOld = banners[banners.length - 1] || "";
+  check("34. THE BANNER over a chart that did not arrive whole names the failed layer the model acts on and says that water "
+        + "is unread; an `extra` failing is not called a refusal; an older reader's copy in use is said",
+        /Nogo established/.test(bInc) && /CHART INCOMPLETE: Depth_Area did not arrive - that water is unread/.test(bInc)
+          && !/Building_Single_point/.test(bInc) && !/CHART INCOMPLETE/.test(bExtra) && /Nogo established/.test(bExtra)
+          && /OLDER CHART IN USE: the chart could not be read again/.test(bOld),
+        JSON.stringify([bInc.slice(-110), bExtra.slice(-60), bOld.slice(-90)]));
 
   const off = await drive(() => null);
   check("13. an extract that returns no coverage lands on the no-chart warning",

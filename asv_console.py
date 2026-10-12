@@ -719,6 +719,14 @@ def validate_vessel(v, source="<vessel>"):
             a = v["hull"][key]
             if isinstance(a, bool) or not isinstance(a, (int, float)) or not a > 0:
                 raise ValueError("%s: hull.%s must be a number > 0 (got %r)" % (source, key, a))
+    # OPTIONAL OVERHEAD (2026-10-12): the hull's height above the water (hull.air_draft_m) and the margin it keeps under a
+    # bridge or a cable (planning.overhead_clearance_m). The page holds a span lower than the two together as a
+    # keep-out (keepouts.js); absent, a hull has no overhead check. A safety input: a wrong type is refused, not read.
+    for blk, key in (("hull", "air_draft_m"), ("planning", "overhead_clearance_m")):
+        if key in v[blk]:
+            a = v[blk][key]
+            if isinstance(a, bool) or not isinstance(a, (int, float)) or not math.isfinite(a) or a < 0:
+                raise ValueError("%s: %s.%s must be a number >= 0 (got %r)" % (source, blk, key, a))
     # The operator selects speed in WHOLE KNOTS between the hull's low and high (apply_vessel), so a hull must have one.
     lo, hi = v["propulsion"]["speeds_kn"]["low"], v["propulsion"]["speeds_kn"]["high"]
     if not (lo > 0 and math.floor(hi + 1e-9) >= math.ceil(lo - 1e-9)):
@@ -1964,7 +1972,14 @@ def prefetch_charts(lat, lon, radius_km, zmin, zmax, max_tiles=6000):
 # Verified live 2026-07-20. Assembled results cache to charts/enc/ for offline
 # missions (like the tile cache), with a short circuit breaker when offline.
 ENC_BASE = "https://gis.charttools.noaa.gov/arcgis/rest/services/encdirect/%s/MapServer"
-ENC_BANDS = ["enc_harbour", "enc_approach", "enc_coastal", "enc_general"]  # finest first
+# ⚠ SIX BANDS ARE PUBLISHED AND FOUR WERE READ UNTIL 2026-10-12. The OVERVIEW band (usage 1) is the coarsest and is now
+# the last fill: water charted only at that scale read as UNREAD and the planners refused it. The BERTHING band (usage
+# 6, 65 cells - one of them at Eastport, US6ME56M) is finer than harbour and is read as a SUPPLEMENT where it reaches
+# (ENC_BERTHING, _enc_tile_build): added whole, never displacing the harbour chart, so the seabed-gap check keeps the
+# harbour chart's exact topology and both charts' hazards apply - more chart, never less.
+ENC_BANDS = ["enc_harbour", "enc_approach", "enc_coastal", "enc_general", "enc_overview"]  # finest first
+ENC_BERTHING = "enc_berthing"
+ENC_LAYER_MAP_MAX_AGE_S = 30 * 86400    # a band's layer list is asked for again after this (_enc_layer_map)
 ENC_DIR = os.path.join(CHART_DIR, "enc")
 
 # S-57 object classes we fetch, grouped by the punch-out ROLE they play. Layer ids
@@ -1979,18 +1994,35 @@ ENC_ROLES = {
     # (DAMCON), and permanently-moored hulks (HULKES).
     "dock":          ["Shoreline_Construction_area", "Floating_Dock_area",
                       "Mooring_Warping_Facility_area", "Dyke_area", "Causeway_area",
-                      "Gate_area", "Dam_area", "Hulk_area"],
+                      "Gate_area", "Dam_area", "Hulk_area",
+                      # A DRY DOCK is a basin walled from the water, gated at its seaward end: a structure, and
+                      # served only as `extra` until 2026-10-12 (the review: "all ENC components understood").
+                      "Dry_Dock_area"],
     # ... and the same structures as LINES - finger piers are typically charted as
-    # Shoreline_Construction_line / Mooring_Warping_Facility_line / Pontoon_line.
-    # ⚠ "Pontoon_line" IS GONE, and its absence is the point: ENCDirect publishes no such
-    # layer in any band. PONTON is a real S-57 class, but this service does not serve it
-    # under that name, so the class resolved to nothing and was silently skipped from the
-    # day it was written. A requested class that cannot resolve is worse than no class -
-    # it reads like coverage. tests/enc_extract.py check 9 is what found it, and is what
-    # will refuse the next one.
+    # Shoreline_Construction_line / Mooring_Warping_Facility_line.
+    # ⚠ PONTOON IS PUBLISHED IN ONE BAND ONLY - THE COASTAL ONE - AND THIS SAID "IN NO BAND" FOR SIX WEEKS. It was
+    # dropped from this list because the harbour and approach maps carry no such layer, and the comment generalized
+    # that to every band; the live service lists `Pontoon_line` in enc_coastal (measured 2026-10-12, all six bands'
+    # layer lists in tests/fixtures/enc_layer_maps.json). A class is resolved PER BAND - and checked in every band.
     "dock_line":     ["Shoreline_Construction_line",
                       "Floating_Dock_line", "Mooring_Warping_Facility_line",
-                      "Dyke_line", "Causeway_line", "Gate_line", "Dam_line"],
+                      "Dyke_line", "Causeway_line", "Gate_line", "Dam_line", "Pontoon_line"],
+    # ── LAND TOO SMALL TO DRAW AS AN AREA (2026-10-12) ──────────────────────────────────────────────────────────────
+    # LNDARE is charted as a POINT where an islet or a rock above high water is too small for an area at the cell's
+    # scale, and as a LINE for a strip of land too narrow for one. Both were `extra` - and an extra is nothing to the
+    # keep-out model - so the 151 islets of the Portsmouth tiles were in no keep-out at all. At low water the drying
+    # area round each one (DRVAL1 -2.7) held them off; at +1.5 m of tide that area is navigable for a 1 m floor and
+    # every one of the 151 read as open water to the small-class boat and the C-Worker (measured with the shipped keepouts.js).
+    # They are LAND, under the land toggle, never passable by any tide. One role each, because a role gets one
+    # geometry branch (tests/enc_roles.js 8).
+    "land_point":    ["Land_Area_point"],
+    "land_line":     ["Land_Area_line"],
+    # ── WATER NOBODY HAS SOUNDED (2026-10-12) ───────────────────────────────────────────────────────────────────────
+    # UNSARE is one of S-57's Group 1 objects: it tiles the seabed IN PLACE OF a depth area, so where it lies there is
+    # NO Depth_Area - and the depth test, reading depth areas alone, saw no shallow water there: open water, for every
+    # hull (11 of 11 at Erie). Its depth is UNKNOWN, and unknown is the conservative case here as everywhere: the page
+    # holds it as water under every floor (keepouts.js depthExcluded), so it is refused under the depth toggle.
+    "unsurveyed":    ["Unsurveyed_Area"],
     "depth_area":    ["Depth_Area"],
     "depth_contour": ["Depth_Contour_line"],
     "sounding":      ["Sounding_point"],
@@ -2015,12 +2047,25 @@ ENC_ROLES = {
                       # isolated-danger, safe-water and special-purpose buoys were all
                       # fetched and this one was not (Andy, 2026-08-31).
                       "Buoy_Cardinal_point",
-                      "Underwater_Awash_Rock_point", "Obstruction_point", "Wreck_point"],
-    "hazard_area":   ["Obstruction_area", "Wreck_area"],
+                      "Underwater_Awash_Rock_point", "Obstruction_point", "Wreck_point",
+                      # ── THINGS IN THE WATER THAT WERE ONLY EVER `extra` (2026-10-12) ─────────────────────────────
+                      # The BEACON forms of the isolated-danger and cardinal marks (the approach band publishes them;
+                      # the buoy forms were already here) - a beacon stands ON the danger it marks; a light float; and
+                      # three charted objects whose extent the point does not give - an offshore platform, an
+                      # aquaculture site, a fishing facility (stake, trap, weir). keepouts.js sizes those three by the
+                      # assumed extent and never passes them on a sounding: they stand at the surface.
+                      "Beacon_Isolated_Danger_point", "Beacon_Cardinal_point", "Light_Float_point",
+                      "Offshore_Platform_point", "Marine_Farm_Culture_point", "Fishing_Facility_point"],
+    # Aquaculture sites and offshore platforms as AREAS: half the sampled marine farms in his cached areas read as open
+    # water to the model (2026-10-12), e.g. off Rye at 42.958 N 70.713 W. A fishing facility charted as an area is a
+    # trap or weir field.
+    "hazard_area":   ["Obstruction_area", "Wreck_area",
+                      "Offshore_Platform_area", "Marine_Farm_Culture_area", "Fishing_Facility_area"],
     # OBSTRUCTIONS AS LINES. The point and area forms were fetched and the line was not,
     # so a linear obstruction - a submerged barrier, a ruined training wall, a line of
-    # piles charted as one object - was invisible to the keep-out model.
-    "hazard_line":   ["Obstruction_line"],
+    # piles charted as one object - was invisible to the keep-out model. The same for a fish weir, an aquaculture
+    # longline and an oil boom charted as a line (2026-10-12).
+    "hazard_line":   ["Obstruction_line", "Marine_Farm_Culture_line", "Fishing_Facility_line", "Oil_Barrier_line"],
     # ⚠ BRIDGES SPLIT IN TWO, AND THE SPLIT IS THE WHOLE POINT.
     #   the SUPPORTS are a hard obstruction at the waterline - a pylon is a pier that
     #     happens to hold something up, and hitting one is the same as hitting a pier;
@@ -2028,12 +2073,22 @@ ENC_ROLES = {
     #     as a keep-out would refuse every passage under a bridge - which for a hull with
     #     1 m of air draft is wrong on every bridge there is.
     # So both are FETCHED (the span is worth having cached and drawable) and only the
-    # supports are enforced. `bridge_span` is deliberately not a keep-out role.
+    # supports are enforced unconditionally.
+    # ⚠ THE SPAN IS ENFORCED WHEN IT IS TOO LOW FOR HER (2026-10-12). "Wrong on every bridge there is" held for a hull
+    # with a meter of air draft; it does not for a DriX standing 2.85 m above the water, and New Castle's fixed bridges
+    # clear 1.8, 2.1 and 2.4 m (VERCLR, measured live). So the span carries its clearances (VERCLR, VERCCL for an
+    # opening bridge shut - she cannot ask for an opening - VERCOP, HORCLR: the kept properties below) and keepouts.js holds it as
+    # a keep-out where that clearance is under the hull's air draft plus its overhead clearance (vessels/*.json
+    # hull.air_draft_m, planning.overhead_clearance_m), or where no clearance is charted. A hull with no air draft
+    # declared gets no overhead check, as before.
     # AREA only - the pylon POINT class sits in `hazard_point` above, because the
     # client's keep-out dispatch is an if/else chain on geometry and a role can belong to
     # exactly one branch. A point in the ring branch yields no rings and is dropped.
     "bridge":        ["Pylon_Bridge_Support_area"],
     "bridge_span":   ["Bridge_area", "Bridge_line"],
+    # OVERHEAD LINES AND STRUCTURES, judged exactly as a span: a power cable at 4.8 m over the Piscataqua is a wall to a
+    # 2.85 m hull with a meter of margin. Cables were `extra` until 2026-10-12.
+    "overhead":      ["Cable_Overhead_line", "Pipeline_Overhead_line", "Conveyor_line", "Conveyor_area"],
     "dredged":       ["Dredged_Area"],
     # ⚠ "Restricted_Area_area", NOT "Restricted_Area" - the published layer carries the
     # geometry suffix like the rest of them. The name was wrong from the day this role was
@@ -2041,7 +2096,11 @@ ENC_ROLES = {
     # fetch), the role fetched nothing, ever: ZERO restricted features across 110 real
     # cached extracts. The operator's "Dredged / restricted" enforcement checkbox has only
     # ever enforced the dredged half of what it says.
-    "restricted":    ["Restricted_Area_area"],
+    # ⚠⚠ AND IN THE COASTAL, GENERAL AND OVERVIEW BANDS IT IS "Restricted_Area" (measured 2026-10-12). The fix above
+    # was right for the two bands it was checked in and wrong for the other three, so the layered read - which fills
+    # from the coarse bands wherever there is no harbour chart - fetched no restricted area there: 45 coastal and 13
+    # general polygons in the Gulf of Maine alone. BOTH names: each band resolves the one it publishes.
+    "restricted":    ["Restricted_Area_area", "Restricted_Area"],
     # ── WHERE COLREGS RULE 9 APPLIES, READ OFF THE CHART ────────────────────
     # Andy, 2026-08-31: "Rule 9 is being improperly applied ... It applies only
     # within narrow channels. ... In open bay or open ocean transits and while
@@ -2075,9 +2134,37 @@ ENC_ROLES = {
 }
 # CATLAM = category of lateral mark (1 port-hand, 2 starboard-hand, 3 pref-chan-to-
 # stbd, 4 pref-chan-to-port); COLOUR for the buoy symbol. Kept for chan_mark use.
-ENC_KEEP_PROPS = ("DRVAL1", "DRVAL2", "VALSOU", "VALDCO", "OBJNAM", "CATLAM", "COLOUR")
-# ...and the four the nogo model does ARITHMETIC on, which have to be NUMBERS.
-ENC_NUMERIC_PROPS = frozenset(("DRVAL1", "DRVAL2", "VALSOU", "VALDCO"))
+# ⚠ AND WHAT THE REST OF THE MODEL READS (2026-10-12). keepouts.js and routing.js read CATREA and INFORM (a restricted
+# area's identity, which merges the pieces the service cuts at cell seams) and RESTRN, and none of the three was ever
+# kept - so every restricted piece keyed on its name alone. routing.js said the service "publishes no attribute that
+# tells" a no-discharge zone from the Naval Shipyard's restricted area; it does - INFORM reads "40 CFR 140" for one and
+# "33 CFR 334.50" for the other - and that claim was measured through this filter. Also kept now:
+#   WATLEV  water level effect (1 partly submerged at high water, 2 always dry, 3 always under water, 4 covers and
+#           uncovers, 5 awash, 7 floating) - a rock always dry is never passed on a sounding (keepouts.js hazPassable);
+#   QUASOU  quality of the sounding - a doubtful, unreliable or only reported VALSOU passes nothing (hazPassable);
+#   EXPSOU, CATWRK, CATOBS, CATCAM, CONDTN, TRAFIC - what the object is, carried for the operator and later rules;
+#   VERCLR VERCCL VERCOP HORCLR CATBRG - a bridge's and an overhead line's clearances (the `bridge_span` note above).
+ENC_KEEP_PROPS = ("DRVAL1", "DRVAL2", "VALSOU", "VALDCO", "OBJNAM", "CATLAM", "COLOUR",
+                  "CATREA", "INFORM", "RESTRN", "WATLEV", "QUASOU", "EXPSOU", "CATWRK", "CATOBS", "CATCAM",
+                  "CONDTN", "TRAFIC", "VERCLR", "VERCCL", "VERCOP", "HORCLR", "CATBRG")
+# ...and the ones the nogo model does ARITHMETIC or comparison on, which have to be NUMBERS.
+ENC_NUMERIC_PROPS = frozenset(("DRVAL1", "DRVAL2", "VALSOU", "VALDCO", "WATLEV",
+                               "VERCLR", "VERCCL", "VERCOP", "HORCLR"))
+# A CLASS'S ROLE IS DECIDED HERE AND APPLIED WHERE A FEATURE IS SERVED (2026-10-12), not only where it was fetched: a tile
+# written before a class had a role carries it as `extra`, and the 151 islets in his Portsmouth tiles were exactly that.
+# fetch_enc_layered and the passage grid re-tag every feature by this table (_enc_retag), so a role given to a class
+# reaches every tile already on disk - which is what holding every layer was for (fetch_enc_features' v5 note).
+_ENC_ROLE_OF = {c: r for r, cs in ENC_ROLES.items() for c in cs}
+# THE LAYERS THE MODEL ACTS ON: every named class but the two that are only ever drawn (soundings and contours reach no
+# keep-out, lane or rule). One of these failing makes its tile water not read (fetch_enc_layered, _corridor_one).
+_ENC_DRAWN_ONLY_ROLES = ("sounding", "depth_contour")
+_ENC_ACTED_ON = frozenset(c for r, cs in ENC_ROLES.items() if r not in _ENC_DRAWN_ONLY_ROLES for c in cs)
+
+
+def _enc_retag(ft):
+    """The feature with its class's role today (a copy when that differs from the one it was stored with)."""
+    r = _ENC_ROLE_OF.get(ft.get("cls"))
+    return dict(ft, role=r) if r and r != ft.get("role") else ft
 
 
 def _enc_num(value):
@@ -2147,6 +2234,22 @@ _enc_layermaps = {}          # band -> {className: layerId}
 _enc_layermap_lock = threading.Lock()
 _enc_down_until = 0.0        # circuit breaker (monotonic deadline)
 
+# ⚠ ONE TLS CONTEXT FOR EVERY CHART QUERY (2026-10-12, Andy: "is reader speed a function of the hardware it's running
+# on?"). Measured on one Portsmouth tile, 616 requests: 36 s of CPU in a 45 s read, and cProfile put 22.5 s of it in
+# building a TLS context per request - urlopen without one makes a fresh default context each call, and on Windows
+# that loads the certificate store twice (load_verify_locations 13.2 s, enum_certificates 9.3 s, 1,232 calls). One
+# context, made once and shared (an SSLContext is safe across threads), is the same verification, loaded once.
+_enc_ssl_lock = threading.Lock()
+_enc_ssl_ctx = None
+
+
+def _enc_ssl():
+    global _enc_ssl_ctx
+    with _enc_ssl_lock:
+        if _enc_ssl_ctx is None:
+            _enc_ssl_ctx = ssl.create_default_context()
+        return _enc_ssl_ctx
+
 
 def _enc_layer_map(band, timeout=20.0):
     """Return {className: layerId} for a band, cached in memory + on disk."""
@@ -2158,20 +2261,33 @@ def _enc_layer_map(band, timeout=20.0):
     try:
         with open(path, "r", encoding="utf-8") as f:
             m = json.load(f)
-    except OSError:
-        pass
+        # ⚠ A LAYER MAP IS ASKED FOR AGAIN ONCE A MONTH (2026-10-12). It was kept for ever, and a republished service
+        # can number its layers anew: a stale map then asks layer 227 for depth areas and gets something else under the
+        # depth role. Measured: his maps of July 22 and August 5 still matched the live service exactly - this is a
+        # renewal, not a repair. A renewal that fails keeps the old map.
+        old = m if time.time() - os.path.getmtime(path) > ENC_LAYER_MAP_MAX_AGE_S else None
+        if old is not None:
+            m = None
+    except (OSError, ValueError):
+        old = None
     if m is None:
         try:
             req = urllib.request.Request(ENC_BASE % band + "?f=json",
                                          headers={"User-Agent": "ASV-Console/1.0"})
-            with urllib.request.urlopen(req, timeout=timeout) as r:
+            with urllib.request.urlopen(req, timeout=timeout, context=_enc_ssl()) as r:
                 info = json.loads(r.read())
         except (OSError, ValueError):
-            return {}
+            info = None
         m = {}
-        for L in info.get("layers", []):
+        for L in (info or {}).get("layers", []):
             if L.get("geometryType"):            # skip group layers
                 m[(L.get("name") or "").split(".")[-1]] = L["id"]
+        if not m and old:
+            with _enc_layermap_lock:
+                _enc_layermaps[band] = old
+            return old
+        if info is None:
+            return {}
         # ⚠⚠ A FAILED SERVICE IS NOT A LAYERLESS ONE. ArcGIS REST answers its own faults with
         # HTTP 200 and {"error": ...} and no "layers" - which parses fine and leaves this map
         # EMPTY. This file carries no version and no TTL, so caching that makes one bad minute
@@ -2208,7 +2324,7 @@ def _enc_query(band, layer_id, bbox, timeout=25.0, count_only=False, max_records
         params["resultRecordCount"] = str(max_records)
     url = ENC_BASE % band + "/%d/query?" % layer_id + urllib.parse.urlencode(params)
     req = urllib.request.Request(url, headers={"User-Agent": "ASV-Console/1.0"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    with urllib.request.urlopen(req, timeout=timeout, context=_enc_ssl()) as r:
         return json.loads(r.read())
 
 
@@ -2225,7 +2341,7 @@ def _enc_query_ids(band, layer_id, bbox, timeout=25.0):
     }
     url = ENC_BASE % band + "/%d/query?" % layer_id + urllib.parse.urlencode(params)
     req = urllib.request.Request(url, headers={"User-Agent": "ASV-Console/1.0"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    with urllib.request.urlopen(req, timeout=timeout, context=_enc_ssl()) as r:
         d = json.loads(r.read())
     # ⚠⚠ AN ARCGIS ERROR PAYLOAD IS NOT AN EMPTY LAYER. The REST service reports its own
     # faults as HTTP 200 with {"error": {...}} and no objectIds, which parses perfectly and
@@ -2251,9 +2367,39 @@ def _enc_query_by_ids(band, layer_id, ids, timeout=30.0, batch=200):
         }
         url = ENC_BASE % band + "/%d/query?" % layer_id + urllib.parse.urlencode(params)
         req = urllib.request.Request(url, headers={"User-Agent": "ASV-Console/1.0"})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            feats.extend(json.loads(r.read()).get("features", []))
+        with urllib.request.urlopen(req, timeout=timeout, context=_enc_ssl()) as r:
+            d = json.loads(r.read())
+        # ⚠⚠ THE SAME HTTP-200 FAULT _enc_query_ids REFUSES, ON THE OTHER HALF OF THE READ (2026-10-12). This answered
+        # an {"error": ...} payload with `.get("features", [])` - no features, no exception - and the caller's length
+        # test ran only on its fallback path, so a layer whose geometry NOAA refused was marked whole and the tile kept
+        # for good (a stubbed answer of 0 of 5 features came back `complete: True`). Raised here; the caller retries.
+        if isinstance(d, dict) and isinstance(d.get("error"), dict):
+            raise ValueError("ENC %s/%d by id: %s" % (band, layer_id, d["error"].get("message") or "service error"))
+        if isinstance(d, dict) and d.get("exceededTransferLimit"):
+            raise ValueError("ENC %s/%d by id: the service cut the answer short" % (band, layer_id))
+        feats.extend((d or {}).get("features") or [])
     return feats
+
+
+# ⚠ A READ IS TRIED THREE TIMES BEFORE A LAYER IS CALLED FAILED (2026-10-12). Measured 2026-08-16: at 8 queries in flight
+# a 39-layer extract lost 1-4 random layers on every run, while 4 in flight with 4 attempts came back whole. A failed
+# layer is never cached - but a tile read fails WHOLE for one (fetch_enc_layered: its squares are unread), so a retry
+# here is what keeps one bad answer in two hundred from refusing the water.
+ENC_QUERY_ATTEMPTS = 3
+ENC_QUERY_BACKOFF_S = (0.5, 1.5)
+
+
+def _enc_retry(fn, *args):
+    """fn(*args), again after a short wait when the SERVICE refused (an error payload, a short answer, an HTTP error
+    status), ENC_QUERY_ATTEMPTS times in all; the last raises. A link that is down (a timeout, no route) raises at
+    once: three 25 s timeouts on a dead link would hold every chart read 75 s before the copy on disk is served."""
+    for k in range(ENC_QUERY_ATTEMPTS):
+        try:
+            return fn(*args)
+        except (urllib.error.HTTPError, ValueError):
+            if k == ENC_QUERY_ATTEMPTS - 1:
+                raise
+            time.sleep(ENC_QUERY_BACKOFF_S[min(k, len(ENC_QUERY_BACKOFF_S) - 1)])
 
 
 def _enc_pick_band(bbox):
@@ -2383,27 +2529,30 @@ def fetch_enc_features(bbox, min_depth=0.0, band=None, extras=True, use_cache=Tr
             # geometry by id. This is what makes the finger piers actually appear -
             # the plain bbox+geometry query returns them EMPTY on some line layers.
             try:
-                ids = _enc_query_ids(band, lid, bbox)
+                ids = _enc_retry(_enc_query_ids, band, lid, bbox)
             except (OSError, ValueError):
                 return (False, cls, [])
             if not ids:
                 return (True, cls, [])                 # genuinely nothing of this class here
-            short = False
             try:
-                features = _enc_query_by_ids(band, lid, ids)
+                features = _enc_retry(_enc_query_by_ids, band, lid, ids)
             except (OSError, ValueError):
                 try:                                   # last resort: the direct query
                     d = _enc_query(band, lid, bbox)
+                    if isinstance(d.get("error"), dict) or d.get("exceededTransferLimit"):
+                        return (False, cls, [])
                     features = d.get("features", [])
                 except (OSError, ValueError):
                     return (False, cls, [])
-                # ⚠⚠ A SHORT ANSWER IS A FAILED LAYER, NOT A THIN ONE. `resultRecordCount` is
-                # a REQUEST; the service caps at its own maxRecordCount - 1000 on ENCDirect -
-                # and says so in `exceededTransferLimit`. `ids` came from the ID query, which
-                # is NOT capped, so it is the count to beat. Cached as complete, a truncated
-                # layer is a chart missing everything past the cap with nothing to show for
-                # it: TWO extracts in this operator's cache hold exactly 1000 soundings.
-                short = bool(d.get("exceededTransferLimit")) or len(features) < len(ids)
+            # ⚠⚠ A SHORT ANSWER IS A FAILED LAYER, NOT A THIN ONE. `resultRecordCount` is
+            # a REQUEST; the service caps at its own maxRecordCount - 1000 on ENCDirect -
+            # and says so in `exceededTransferLimit`. `ids` came from the ID query, which
+            # is NOT capped, so it is the count to beat. Cached as complete, a truncated
+            # layer is a chart missing everything past the cap with nothing to show for
+            # it: TWO extracts in this operator's cache hold exactly 1000 soundings.
+            # ⚠ ON BOTH PATHS (2026-10-12): this test ran only after the fallback, so the by-id answer - the one every
+            # read takes - was never counted against its ids.
+            short = len(features) < len(ids)
             out = []
             for ft in features:
                 g = ft.get("geometry")
@@ -2485,13 +2634,24 @@ def fetch_enc_features(bbox, min_depth=0.0, band=None, extras=True, use_cache=Tr
 #   (Sutherland-Hodgman against each rectangle, lines by Liang-Barsky), and kept whole when it lies inside one; a cut
 #   piece carries `clip`, its rectangle, so the page draws no outline along the cut and the chart-image check does not
 #   take the cut for charted ink.
-#   TILES. ENC_TILE_DEG on a fixed grid: the unit fetched and cached (tile_v1_<key>.json, complete tiles only), so
+#   TILES. ENC_TILE_DEG on a fixed grid: the unit fetched and cached (_ENC_TILE_FMT, complete tiles only), so
 #   overlapping reads share them and a corridor (the next step) is a list of tiles. A read is the union of its tiles'
 #   features that reach into its box, a whole feature two tiles both fetched kept once (band, class, object id).
+#   EVERY LAYER OF EVERY BAND (2026-10-12). A coarser band filling in was asked for its NAMED roles only, so wherever
+#   no harbour chart exists some 70-200 published layers per band never came down at all - and a role given to one of
+#   them later could not see that water without a re-read. Every band now reads every layer it publishes.
+#   HOW OLD A TILE IS (2026-10-12). A tile carries `read_at` and `reader` (_ENC_TILE_READER). NOAA corrects its cells
+#   week by week, and a tile was kept for ever: one older than ENC_TILE_FRESH_S is served and read again behind it
+#   (_tile_refresh_later); one written by an older reader is read again BEFORE it is served, because it lacks what
+#   this reader holds (the clearances, the new roles, the coarse bands' layers) - and, when that read fails, served
+#   anyway with `stale` saying so, because a whole chart a reader older beats a hole (_older_tile).
 ENC_TILE_DEG = 0.25
 ENC_LEAF_DEPTH = 7
 ENC_TILE_MEM_MAX = 16          # assembled tiles kept in memory: an operating area's reads reuse them
 ENC_TILE_WORKERS = 3           # tiles built at once (each fetches its layers 8 at a time)
+ENC_TILE_FRESH_S = 7 * 86400   # a tile older than this is read again (behind the copy served): NOAA's weekly corrections
+ENC_TILE_RETRY_S = 120         # a tile served from an older copy is not read again for this long (offline: no hammering)
+_ENC_TILE_READER = 3           # the reader a tile was written by; an older one is read again before it is served
 _ENC_NOT_COVERED = ("no coverage available", "2")
 _enc_tile_locks = {}
 _enc_tile_locks_lock = threading.Lock()
@@ -2535,8 +2695,10 @@ def _enc_coverage(band, tile):
     service cannot say (a coverage not known is not a coverage of nothing). Cached per band and tile."""
     path = os.path.join(ENC_DIR, "cov_v1_%s_%s.json" % (band, _bbox_key(tile)))
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+        # A coverage as old as a tile that is read again is read again with it: a new cell changes where a band's data is.
+        if time.time() - os.path.getmtime(path) <= ENC_TILE_FRESH_S:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
     except (OSError, ValueError):
         pass
     lm = _enc_layer_map(band)
@@ -2545,8 +2707,8 @@ def _enc_coverage(band, tile):
     lid = lm.get("Coverage_area")
     if lid is None:
         raise ValueError("%s publishes no Coverage_area layer" % band)
-    ids = _enc_query_ids(band, lid, tile)
-    feats = _enc_query_by_ids(band, lid, ids) if ids else []
+    ids = _enc_retry(_enc_query_ids, band, lid, tile)
+    feats = _enc_retry(_enc_query_by_ids, band, lid, ids) if ids else []
     if len(feats) < len(ids):
         raise ValueError("%s coverage arrived short (%d of %d)" % (band, len(feats), len(ids)))
     polys = []
@@ -2840,20 +3002,36 @@ def _enc_tile_build(tile):
         return dict(fail, note="ENC offline (no cache for this tile)")
     try:
         idx = [_cov_index(_enc_coverage(b, tile)) for b in ENC_BANDS]
+        berth = _enc_coverage(ENC_BERTHING, tile)
     except (OSError, ValueError) as e:
         if isinstance(e, OSError):
             _enc_down_until = time.monotonic() + 30.0
         return dict(fail, note="the chart's coverage could not be read here (%s)" % e)
     leaves = _enc_leaves(tile, idx)
     feats, failed, present = [], set(), []
+    # THE BERTHING CHART, WHERE IT REACHES (ENC_BANDS' note): every layer, whole, beside the harbour chart.
+    bb = [_geom_bbox({"type": "Polygon", "coordinates": rings}) for rings in berth if rings]
+    bb = [b for b in bb if b and b[0] < tile[2] and b[2] > tile[0] and b[1] < tile[3] and b[3] > tile[1]]
+    if bb:
+        region = [max(tile[0], min(b[0] for b in bb)), max(tile[1], min(b[1] for b in bb)),
+                  min(tile[2], max(b[2] for b in bb)), min(tile[3], max(b[3] for b in bb))]
+        d = fetch_enc_features(region, 0.0, band=ENC_BERTHING, extras=True, use_cache=False)
+        if d.get("band") is None:
+            return dict(fail, note="the %s chart could not be read here (%s)" % (ENC_BERTHING, d.get("note") or "no answer"))
+        failed.update(d.get("partial") or [])
+        present.append(ENC_BERTHING)
+        for ft in d.get("features") or []:
+            ft = dict(ft)
+            ft["band"] = ENC_BERTHING
+            ft.pop("shallow", None)
+            feats.append(ft)
     for r, band in enumerate(ENC_BANDS):
         rects = _merge_rects([lf[0] for lf in leaves if r in lf[1]])
         if not rects:
             continue
         region = [min(x[0] for x in rects), min(x[1] for x in rects), max(x[2] for x in rects), max(x[3] for x in rects)]
-        # The finest band's every layer, as an extract always held (Andy, 2026-08-31); a coarser band filling in
-        # where no finer chart exists, its named roles only.
-        d = fetch_enc_features(region, 0.0, band=band, extras=(r == 0), use_cache=False)
+        # Every band's every layer (the block header, 2026-10-12): the finest whole, a coarser one cut to its squares.
+        d = fetch_enc_features(region, 0.0, band=band, extras=True, use_cache=False)
         if d.get("band") is None:
             return dict(fail, note="the %s chart could not be read here (%s)" % (band, d.get("note") or "no answer"))
         failed.update(d.get("partial") or [])
@@ -2867,7 +3045,8 @@ def _enc_tile_build(tile):
             else:
                 feats.extend(_clip_feature(ft, rects))
     out = {"tile": tile, "features": feats, "bands": present, "partial": sorted(failed), "unread_failed": [],
-           "unread": [list(x) for x in _merge_rects([lf[0] for lf in leaves if not lf[2]])], "leaves": len(leaves)}
+           "unread": [list(x) for x in _merge_rects([lf[0] for lf in leaves if not lf[2]])], "leaves": len(leaves),
+           "read_at": time.time(), "reader": _ENC_TILE_READER}
     if failed:
         print("[enc] REFUSING TO CACHE tile %s: %d layer(s) failed (%s) - served once and re-read next time"
               % (_bbox_key(tile), len(failed), ", ".join(sorted(failed)[:6])), flush=True)
@@ -2887,11 +3066,13 @@ def _enc_tile_build(tile):
 #   A TILE IS KEPT ONE FEATURE PER LINE (tile_v2_<key>.jsonl, _write_tile_jsonl / _read_tile_jsonl): read back as
 #   thousands of small parses, between which the interpreter hands the other threads their turn;
 #   THE GARBAGE COLLECTOR is held while a tile is read, and the tile frozen out of its walk after (_GcHeld, below).
-# A tile kept the old way (tile_v1_<key>.json) is carried over by the child, not read from NOAA again.
-# ENC_TILE_IN_PROCESS builds in this process instead - for the suites that stub the service here (enc_layered.py).
+# A tile kept by an older reader (tile_v2_<key>.jsonl, or tile_v1_<key>.json before 2026-10-11) is the FALLBACK when
+# the tile cannot be read again (2026-10-12, _older_tile): the child serves it with `stale`, and it is never kept as
+# a tile of this reader. ENC_TILE_IN_PROCESS builds in this process instead - for the suites that stub the service here.
 ENC_TILE_IN_PROCESS = False
 ENC_TILE_BUILD_TIMEOUT_S = 900
-_ENC_TILE_FMT = "tile_v2_%s.jsonl"
+_ENC_TILE_FMT = "tile_v3_%s.jsonl"
+_ENC_OLDER_TILE_FMTS = ("tile_v2_%s.jsonl", "tile_v1_%s.json")   # newest first
 
 
 def _tile_path(tile):
@@ -2899,8 +3080,45 @@ def _tile_path(tile):
 
 
 def _legacy_tile_path(tile):
-    """A tile as kept before 2026-10-11: one JSON file. Not read here - the worker carries it over (its header)."""
+    """A tile as kept before 2026-10-11: one JSON file. Not read here - the worker falls back to it (_older_tile)."""
     return os.path.join(ENC_DIR, "tile_v1_%s.json" % _bbox_key(tile))
+
+
+def _older_tile_paths(tile):
+    """Every copy of this tile an older reader kept, newest format first."""
+    return [os.path.join(ENC_DIR, f % _bbox_key(tile)) for f in _ENC_OLDER_TILE_FMTS]
+
+
+def _older_tile(tile):
+    """A whole tile an older reader kept, re-tagged, with `stale` saying what it lacks - or None. Read in the CHILD
+    (one of them is a single 25-30 MB JSON parse). Never kept as a tile of this reader."""
+    for p in _older_tile_paths(tile):
+        try:
+            if p.endswith(".jsonl"):
+                got = _read_tile_jsonl(p)
+            else:
+                with open(p, "r", encoding="utf-8") as f:
+                    got = json.load(f)
+        except (OSError, ValueError):
+            got = None
+        if not (isinstance(got, dict) and got.get("complete") and isinstance(got.get("features"), list)):
+            continue
+        got.pop("n", None)
+        when = got.get("read_at")
+        if not isinstance(when, (int, float)):
+            try:
+                when = os.path.getmtime(p)
+            except OSError:
+                when = None
+        got["features"] = [_enc_retag(ft) for ft in got["features"]]
+        got["read_at"] = when
+        got["complete"] = False
+        got["stale"] = ("the chart could not be read again here; a copy read %s by an older reader is used - without "
+                        "bridges' and cables' clearances or the coarse charts' other layers"
+                        % (time.strftime("%Y-%m-%d", time.localtime(when)) if when else "earlier"))
+        got["note"] = got["stale"]
+        return got
+    return None
 
 
 def _write_tile_jsonl(path, got):
@@ -2983,8 +3201,8 @@ def _enc_tile_build_child(tile):
     tile unread (failed), as a coverage that cannot be read does; one that found NOAA unreachable trips the breaker."""
     global _enc_down_until
     fail = {"tile": tile, "features": [], "unread": [], "unread_failed": [tile], "bands": [], "partial": []}
-    legacy = _legacy_tile_path(tile)
-    if time.monotonic() < _enc_down_until and not os.path.exists(legacy):
+    older = [p for p in _older_tile_paths(tile) if os.path.exists(p)]
+    if time.monotonic() < _enc_down_until and not older:
         return dict(fail, note="ENC offline (no cache for this tile)")
     out = "%s.%d.%d.build" % (_tile_path(tile), os.getpid(), threading.get_ident())
     gout = "%s.%d.%d.build" % (_grid_path(tile), os.getpid(), threading.get_ident())   # its grid (THE PASSAGE GRID)
@@ -3011,8 +3229,9 @@ def _enc_tile_build_child(tile):
             _replace_retrying(out, _tile_path(tile))
             if os.path.exists(gout):
                 _replace_retrying(gout, _grid_path(tile))
-            if os.path.exists(legacy):           # carried over (the worker's header): the one-JSON copy goes
-                os.remove(legacy)
+            for p in older:                      # read again whole by this reader: the older copies go
+                if os.path.exists(p):
+                    os.remove(p)
         else:
             for f in (out, gout):
                 if os.path.exists(f):
@@ -3024,9 +3243,9 @@ def _enc_tile_build_child(tile):
 
 
 def _enc_tile_worker_main(argv):
-    """`asv_console.py --enc-tile-worker --tile=W,S,E,N --enc-dir DIR --out PATH`: build one tile (_enc_tile_build), or
-    carry over the one kept before 2026-10-11, and write it to PATH as a tile file - complete or not; the console
-    decides what to keep. ASV_ENC_TILE_FAKE (a JSON file:
+    """`asv_console.py --enc-tile-worker --tile=W,S,E,N --enc-dir DIR --out PATH`: build one tile (_enc_tile_build) - or,
+    when it cannot be read whole, fall back to a copy an older reader kept (_older_tile, served `stale`, never kept) -
+    and write it to PATH as a tile file, complete or not; the console decides what to keep. ASV_ENC_TILE_FAKE (a JSON file:
     coverage / features / partial per band, `offline`, `crash`, or `exit_after_write`: a tile written, then a failing
     exit) stands in for NOAA, for tests/chart_read_stall.py."""
     global ENC_DIR
@@ -3059,19 +3278,16 @@ def _enc_tile_worker_main(argv):
             return {"band": band, "features": [dict(x) for x in F.get("features", {}).get(band, [])],
                     "partial": F.get("partial", {}).get(band, [])}
         g["fetch_enc_features"] = feats
-    # A TILE KEPT BEFORE THIS CHANGE (tile_v1, one JSON) IS CARRIED OVER, not read from NOAA again: its one big parse
-    # is made here, where it stops nothing, and the console keeps it as a tile file and removes the old copy. Without
-    # this, every passage read before the change would have no chart offline until it was read again.
-    got = None
-    try:
-        with open(_legacy_tile_path(tile), "r", encoding="utf-8") as f:
-            got = json.load(f)
-        if not (isinstance(got, dict) and got.get("complete") and isinstance(got.get("features"), list)):
-            got = None
-    except (OSError, ValueError):
-        got = None
-    if got is None:
-        got = _enc_tile_build(tile)
+    # ⚠ A TILE AN OLDER READER KEPT IS READ AGAIN, NOT CARRIED OVER (2026-10-12). Until today the one-JSON tile_v1 was
+    # carried over as it was. A tile of this reader holds what no older one does - the clearances bridges and cables are
+    # judged by, every coarse band's layers, the roles given since - so an older copy is the FALLBACK when NOAA cannot
+    # be read: served with `stale` naming what it lacks (its parse made here, where it stops nothing), never kept.
+    # Without the fallback, every area read before the change would have no chart offline until it was read again.
+    got = _enc_tile_build(tile)
+    if not got.get("complete"):
+        old = _older_tile(tile)
+        if old is not None:
+            got = old
     got["offline"] = time.monotonic() < _enc_down_until
     _write_tile_jsonl(a.out, got)
     if a.grid_out and got.get("complete"):
@@ -3079,35 +3295,97 @@ def _enc_tile_worker_main(argv):
     return int(F.get("exit_after_write", 0)) if fake else 0
 
 
+def _tile_build_now(tile):
+    """A read of the tile - in a child, or in this process for the suites that stub the service (ENC_TILE_IN_PROCESS) -
+    with the older reader's copy as its fallback, exactly as the child does it."""
+    if not ENC_TILE_IN_PROCESS:
+        return _enc_tile_build_child(tile)
+    got = _enc_tile_build(tile)
+    if got.get("complete"):
+        try:
+            _write_tile_jsonl(_tile_path(tile), got)
+            for p in _older_tile_paths(tile):
+                if os.path.exists(p):
+                    os.remove(p)
+        except OSError as e:
+            print("[cache] could not write %s: %s" % (os.path.basename(_tile_path(tile)), e), file=sys.stderr)
+        return got
+    old = _older_tile(tile)
+    return old if old is not None else got
+
+
+def _tile_keep(key, got):
+    with _enc_tile_locks_lock:
+        _enc_tile_mem.pop(key, None)
+        _enc_tile_mem[key] = got
+        while len(_enc_tile_mem) > ENC_TILE_MEM_MAX:
+            _enc_tile_mem.pop(next(iter(_enc_tile_mem)))
+
+
+_enc_tile_refreshing = set()
+
+
+def _tile_refresh_later(tile):
+    """Read the tile again BEHIND the copy being served (ENC_TILE_FRESH_S): one read per tile at a time, kept - on disk by
+    the read itself, in memory here - only when it is whole. A read that fails leaves the copy as it was."""
+    key = _bbox_key(tile)
+    with _enc_tile_locks_lock:
+        if key in _enc_tile_refreshing or time.monotonic() < _enc_down_until:
+            return
+        _enc_tile_refreshing.add(key)
+
+    def run():
+        try:
+            got = _tile_build_now(tile)
+            if got.get("complete"):
+                _tile_keep(key, got)
+        except Exception as e:                     # a refresh must never take anything else with it
+            print("[enc] the re-read of tile %s failed: %s" % (key, e), file=sys.stderr)
+        finally:
+            with _enc_tile_locks_lock:
+                _enc_tile_refreshing.discard(key)
+    threading.Thread(target=run, name="enc-refresh", daemon=True).start()
+
+
 def fetch_enc_tile(tile):
-    """One tile, from memory, from disk, or read - complete tiles only are kept."""
+    """One tile, from memory, from disk, or read - complete tiles only are kept (the block header). A tile older than
+    ENC_TILE_FRESH_S is served and read again behind it; one this reader did not write is read again first, and served
+    from the older copy (`stale`) only when that read fails - held ENC_TILE_RETRY_S before it is tried again."""
     key = _bbox_key(tile)
     with _enc_tile_locks_lock:
         lk = _enc_tile_locks.setdefault(key, threading.Lock())
     with lk:
+        now = time.time()
         with _enc_tile_locks_lock:
             got = _enc_tile_mem.get(key)
-        if got is not None:
-            return got
-        path = _tile_path(tile)
-        got = _read_tile_jsonl(path)
-        if got is not None:
-            got.pop("n", None)
-        else:
-            if ENC_TILE_IN_PROCESS:
-                got = _enc_tile_build(tile)
-                if got.get("complete"):
+        if got is not None and got.get("retry_at") is not None:
+            if now < got["retry_at"]:
+                return got
+            got = None
+        if got is None:
+            path = _tile_path(tile)
+            got = _read_tile_jsonl(path)
+            if got is not None:
+                got.pop("n", None)
+                if not got.get("complete"):
+                    got = None
+                elif not isinstance(got.get("read_at"), (int, float)):
                     try:
-                        _write_tile_jsonl(path, got)
-                    except OSError as e:
-                        print("[cache] could not write %s: %s" % (os.path.basename(path), e), file=sys.stderr)
-            else:
-                got = _enc_tile_build_child(tile)
+                        got["read_at"] = os.path.getmtime(path)
+                    except OSError:
+                        got["read_at"] = now
+            if got is not None:
+                _tile_keep(key, got)
+        if got is not None:
+            if now - got.get("read_at", now) > ENC_TILE_FRESH_S:
+                _tile_refresh_later(tile)
+            return got
+        got = _tile_build_now(tile)
         if got.get("complete"):
-            with _enc_tile_locks_lock:
-                _enc_tile_mem[key] = got
-                while len(_enc_tile_mem) > ENC_TILE_MEM_MAX:
-                    _enc_tile_mem.pop(next(iter(_enc_tile_mem)))
+            _tile_keep(key, got)
+        elif got.get("stale"):
+            got["retry_at"] = now + ENC_TILE_RETRY_S
+            _tile_keep(key, got)
         return got
 
 
@@ -3122,12 +3400,14 @@ def fetch_enc_layered(bbox, min_depth=0.0):
         got = list(ex.map(fetch_enc_tile, tiles))
     md = float(min_depth or 0.0)
     feats, seen, unread, unread_failed, partial, bands, notes = [], set(), [], [], set(), set(), []
+    stale, read_at, aged = set(), [], 0
 
     def into(rs, dst):
         for r in rs:
             c = [max(r[0], W), max(r[1], S), min(r[2], E), min(r[3], N)]
             if c[0] < c[2] and c[1] < c[3]:
                 dst.append(c)
+    now = time.time()
     for d in got:
         if d.get("note"):
             notes.append(d["note"])
@@ -3135,6 +3415,20 @@ def fetch_enc_layered(bbox, min_depth=0.0):
         bands.update(d.get("bands") or [])
         into(d.get("unread") or [], unread)
         into(d.get("unread_failed") or [], unread_failed)
+        # ⚠⚠ A TILE THAT ARRIVED WITHOUT A LAYER THE MODEL ACTS ON IS WATER NOT READ (2026-10-12). Such a tile was served
+        # with its features and the failed layers named in `partial` - and the page's ordinary read took it as the chart:
+        # a Depth_Area that failed meant no shallow water anywhere in it, and the readout said nothing. Its squares are
+        # now `unread_failed`: the planners refuse to route there (drawn gray, dashed) while the guard still holds every
+        # feature that did arrive. A layer nothing acts on (`extra`, soundings, contours) failing is reported, and refuses
+        # nothing (_ENC_ACTED_ON).
+        if any(c in _ENC_ACTED_ON for c in (d.get("partial") or [])) and d.get("tile"):
+            into([d["tile"]], unread_failed)
+        if d.get("stale"):
+            stale.add(d["stale"])
+        if isinstance(d.get("read_at"), (int, float)):
+            read_at.append(d["read_at"])
+            if now - d["read_at"] > ENC_TILE_FRESH_S:
+                aged += 1
         for ft in d.get("features") or []:
             b = _geom_bbox(ft.get("geometry"))
             if b is None or b[0] > E or b[2] < W or b[1] > N or b[3] < S:
@@ -3144,7 +3438,8 @@ def fetch_enc_layered(bbox, min_depth=0.0):
                 if k in seen:
                     continue
                 seen.add(k)
-            nf = dict(ft)
+            nf = _enc_retag(ft)
+            nf = dict(nf) if nf is ft else nf
             if nf.get("role") == "depth_area":
                 d1 = (nf.get("props") or {}).get("DRVAL1")
                 nf["shallow"] = (d1 is not None and float(d1) < md)
@@ -3155,10 +3450,16 @@ def fetch_enc_layered(bbox, min_depth=0.0):
     finest = next((b for b in ENC_BANDS if b in bands), None)
     out = {"band": finest, "bands": [b for b in ENC_BANDS if b in bands], "layered": True, "features": feats,
            "counts": counts, "partial": sorted(partial), "unread": unread, "unread_failed": unread_failed,
-           "min_depth": md, "tiles": len(tiles)}
+           "min_depth": md, "tiles": len(tiles),
+           # THE CHART'S AGE, SAID (2026-10-12): the oldest tile's read, how many are past ENC_TILE_FRESH_S (each being
+           # read again behind it), and the tiles served from an older reader's copy because a read failed.
+           "read_at": min(read_at) if read_at else None, "aged": aged, "stale": sorted(stale),
+           "supplement": [ENC_BERTHING] if ENC_BERTHING in bands else [],
+           # the failed layers the model ACTS ON - the ones that made their tiles unread water
+           "partial_named": sorted(c for c in partial if c in _ENC_ACTED_ON)}
     if finest is None:
         out["note"] = notes[0] if notes else "no ENC coverage here"
-    if not partial and not unread_failed:
+    if not partial and not unread_failed and not stale:
         out["complete"] = True
     return out
 
@@ -3338,7 +3639,11 @@ def _corridor_one(job, tile):
             return {"failed": True, "note": raw, "bands": [], "unread": [], "unread_failed": [tile]}
         return dict(head, failed=bool(head.get("unread_failed")))
     d = fetch_enc_tile(tile)
-    return dict(d, failed=bool(d.get("unread_failed")))
+    # A layer the model acts on that failed makes the tile water not read, as in fetch_enc_layered.
+    uf = list(d.get("unread_failed") or [])
+    if any(c in _ENC_ACTED_ON for c in (d.get("partial") or [])):
+        uf.append(list(tile))
+    return dict(d, unread_failed=uf, failed=bool(uf))
 
 
 def corridor_cancel(jid):
@@ -3391,14 +3696,24 @@ def corridor_status(jid):
 #   the squares no chart covers          -> GRID_UNREAD.
 # The page then needs only its floor: a cell is BLOCKED where C is under it, PARTLY where only T is, CLEAR otherwise.
 # Built in the tile's own child process (_enc_tile_worker_main: 0.4-2.2 s a tile, measured), or from a cached tile in
-# a child of its own (_enc_grid_worker_main), and kept beside it: grid_v1_<key>.bin = b"ASVG", a uint32 header length,
-# a JSON header (the tile's bands, unread squares, completeness) padded to an even length, then C and T as int16 LE.
+# a child of its own (_enc_grid_worker_main), and kept beside it: grid_v2_<key>.bin = b"ASVG", a uint32 header length,
+# a JSON header (the tile's bands, unread squares, completeness) padded to an even length, then C, T and A as int16 LE.
+# ⚠⚠ v2 (2026-10-12): THE SEABED'S OTHER GROUP 1 OBJECTS, AND WHAT IS OVERHEAD. A dredged area and an unsurveyed area
+# tile the seabed IN PLACE OF a depth area, so v1 read every cell of them as "neither land nor a depth area" - a FLOAT,
+# blocked: the Piscataqua's 10.6 m ship channel among them. A dredged area is now its maintained depth (DRVAL1, the
+# depth area's rule); an unsurveyed one GRID_UNSURVEYED, under every floor (keepouts.js depthExcluded). Islets
+# (land_point, land_line) are hard. A THIRD LAYER, A, is the lowest overhead clearance touching the cell (dm; a span or
+# line with no charted clearance 0; GRID_NONE where nothing is overhead): the page blocks a cell whose A is under the
+# hull's air draft plus its overhead clearance (coarse.js tileLevels), as keepouts.js does a span.
 ENC_GRID_N = 256
-_ENC_GRID_FMT = "grid_v1_%s.bin"
+_ENC_GRID_FMT = "grid_v2_%s.bin"
 GRID_HARD, GRID_NODATA, GRID_UNREAD, GRID_NONE = -30000, -31000, -32000, 32767
+GRID_UNSURVEYED = -29500         # no depth known: under every floor, but not land (a v2 value; depths clamp at -29000)
 GRID_HAZ_MARGIN_M = 1.0          # keepouts.js WRECK_CLEAR_MARGIN_M
-_GRID_HARD_ROLES = ("land", "dock", "bridge", "shore_line", "dock_line", "chan_mark")
+_GRID_HARD_ROLES = ("land", "dock", "bridge", "shore_line", "dock_line", "chan_mark", "land_point", "land_line")
 _GRID_HAZ_ROLES = ("hazard_point", "hazard_area", "hazard_line")
+_GRID_DEPTH_ROLES = ("depth_area", "dredged")
+_GRID_OVERHEAD_ROLES = ("bridge_span", "overhead")
 
 
 def _grid_path(tile):
@@ -3410,9 +3725,11 @@ def _grid_danger(ft):
     r, p = ft.get("role"), ft.get("props") or {}
     if r in _GRID_HARD_ROLES:
         return GRID_HARD
-    if r == "depth_area":
+    if r in _GRID_DEPTH_ROLES:
         v = p.get("DRVAL2") if isinstance(p.get("DRVAL2"), (int, float)) else p.get("DRVAL1")
         return max(-29000, min(32000, int(round(v * 10)))) if isinstance(v, (int, float)) and math.isfinite(v) else None
+    if r == "unsurveyed":
+        return GRID_UNSURVEYED
     if r in _GRID_HAZ_ROLES:
         v = p.get("VALSOU")
         if isinstance(v, (int, float)) and math.isfinite(v):
@@ -3421,21 +3738,38 @@ def _grid_danger(ft):
     return None
 
 
+def _grid_overhead(ft):
+    """The clearance under a span or an overhead line, decimeters - 0 when none is charted (keepouts.js: unknown is too
+    low) - or None for a feature that is nothing overhead. The LOWER of VERCLR and VERCCL (an opening bridge shut), as
+    keepouts.js overheadClearance takes it."""
+    if ft.get("role") not in _GRID_OVERHEAD_ROLES:
+        return None
+    p = ft.get("props") or {}
+    vs = [p[k] for k in ("VERCLR", "VERCCL")
+          if isinstance(p.get(k), (int, float)) and not isinstance(p.get(k), bool) and math.isfinite(p[k])]
+    return 0 if not vs else max(0, min(32000, int(round(min(vs) * 10))))
+
+
 def _tile_grid(got):
-    """A tile (fetch_enc_tile's dict) as its planning grid: (C, T) arrays of int16, row 0 the southern edge."""
+    """A tile (fetch_enc_tile's dict) as its planning grid: (C, T, A) arrays of int16, row 0 the southern edge."""
     from array import array
     N = ENC_GRID_N
     W, S, E, Nn = got["tile"]
     dx, dy = (E - W) / N, (Nn - S) / N
     C = array("h", [GRID_NONE]) * (N * N)
     T = array("h", [GRID_NONE]) * (N * N)
+    A = array("h", [GRID_NONE]) * (N * N)
     wet = bytearray(N * N)                      # a depth area's interior reaches the cell's center
 
     def mark_t(j, v):
         if v < T[j]:
             T[j] = v
 
-    def walk(pts, v):
+    def mark_a(j, v):
+        if v < A[j]:
+            A[j] = v
+
+    def walk(pts, v, mark=mark_t):
         """Every cell a polyline passes through (sampled at half a cell)."""
         for k in range(len(pts) - 1):
             x0, y0 = (pts[k][0] - W) / dx, (pts[k][1] - S) / dy
@@ -3448,11 +3782,11 @@ def _tile_grid(got):
                     j = cy * N + cx
                     if j != last:
                         if v is not None:
-                            mark_t(j, v)
+                            mark(j, v)
                         last = j
 
-    def fill(rings, v):
-        """Even-odd over every ring of one polygon, at the cells' centers."""
+    def fill(rings, v, put=None):
+        """Even-odd over every ring of one polygon, at the cells' centers (`put(j)` for each, when given)."""
         ys = [q[1] for ring in rings for q in ring]
         if not ys:
             return
@@ -3480,6 +3814,9 @@ def _tile_grid(got):
                 c1 = min(N - 1, int(math.floor((xs[i + 1] - W) / dx - 0.5)))
                 for col in range(c0, c1 + 1):
                     j = base + col
+                    if put is not None:
+                        put(j)
+                        continue
                     if v is None:
                         wet[j] = 1
                         continue
@@ -3490,12 +3827,24 @@ def _tile_grid(got):
                         wet[j] = 1
 
     for ft in got.get("features") or []:
+        ft = _enc_retag(ft)                     # a tile kept before a class had its role is gridded by today's table
         r = ft.get("role")
-        v = _grid_danger(ft)
-        if v is None and r != "depth_area":
-            continue
         g = ft.get("geometry") or {}
         ty, co = g.get("type"), g.get("coordinates")
+        a = _grid_overhead(ft)
+        if a is not None:                       # OVERHEAD: the A layer only - the water under it is judged as ever
+            if co and ty in ("Polygon", "MultiPolygon"):
+                for rings in ([co] if ty == "Polygon" else co):
+                    fill(rings, None, put=lambda j, a=a: mark_a(j, a))
+                    for ring in rings:
+                        walk(ring, a, mark_a)
+            elif co and ty in ("LineString", "MultiLineString"):
+                for ln in ([co] if ty == "LineString" else co):
+                    walk(ln, a, mark_a)
+            continue
+        v = _grid_danger(ft)
+        if v is None and r not in _GRID_DEPTH_ROLES:
+            continue
         if not co:
             continue
         if ty in ("Polygon", "MultiPolygon"):
@@ -3521,21 +3870,23 @@ def _tile_grid(got):
         for row in range(r0, r1):
             for col in range(c0, c1):
                 C[row * N + col] = T[row * N + col] = GRID_UNREAD
-    return C, T
+    return C, T, A
 
 
 def _grid_bytes(got):
     """The grid file's bytes for a tile (the block header)."""
-    C, T = _tile_grid(got)
+    C, T, A = _tile_grid(got)
     if sys.byteorder != "little":
         C.byteswap()
         T.byteswap()
-    head = {"v": 1, "n": ENC_GRID_N, "tile": got["tile"], "bands": got.get("bands") or [],
+        A.byteswap()
+    head = {"v": 2, "n": ENC_GRID_N, "tile": got["tile"], "bands": got.get("bands") or [],
             "unread": got.get("unread") or [], "unread_failed": got.get("unread_failed") or [],
-            "partial": got.get("partial") or [], "complete": bool(got.get("complete"))}
+            "partial": got.get("partial") or [], "complete": bool(got.get("complete")),
+            "read_at": got.get("read_at")}
     hb = json.dumps(head).encode("utf-8")
     hb += b" " * (len(hb) % 2)                  # the arrays start on an even byte: an Int16Array needs it
-    return b"ASVG" + struct.pack("<I", len(hb)) + hb + C.tobytes() + T.tobytes()
+    return b"ASVG" + struct.pack("<I", len(hb)) + hb + C.tobytes() + T.tobytes() + A.tobytes()
 
 
 def _grid_read(path):
@@ -3552,7 +3903,7 @@ def _grid_read(path):
         head = json.loads(raw[8:8 + n].decode("utf-8"))
     except ValueError:
         return None
-    if not isinstance(head, dict) or len(raw) != 8 + n + 4 * ENC_GRID_N * ENC_GRID_N:
+    if not isinstance(head, dict) or len(raw) != 8 + n + 6 * ENC_GRID_N * ENC_GRID_N:
         return None
     return head, raw
 
@@ -3668,8 +4019,10 @@ def fetch_chart_info(bbox):
     key = _bbox_key(bbox)
     cache = os.path.join(ENC_DIR, "chartinfo_v1_%s.json" % key)
     try:
-        with open(cache, "r", encoding="utf-8") as f:
-            return json.load(f)
+        # As old as a tile that is read again, read again (ENC_TILE_FRESH_S): new cells and new surveys change it.
+        if time.time() - os.path.getmtime(cache) <= ENC_TILE_FRESH_S:
+            with open(cache, "r", encoding="utf-8") as f:
+                return json.load(f)
     except (OSError, ValueError):
         pass
     if time.monotonic() < _enc_down_until:
@@ -3679,14 +4032,18 @@ def fetch_chart_info(bbox):
         return {"band": None, "cells": [], "quality": [], "note": "no ENC coverage here"}
     lm = _enc_layer_map(band)
     out = {"band": band, "cells": [], "quality": [], "note": ""}
+    failed = []
     for key_name, cls in ENC_META_CLASSES.items():
         lid = lm.get(cls)
         if lid is None:                       # layer absent in this band - skip, don't fail
             continue
         try:
-            ids = _enc_query_ids(band, lid, bbox)
-            feats = _enc_query_by_ids(band, lid, ids) if ids else []
+            ids = _enc_retry(_enc_query_ids, band, lid, bbox)
+            feats = _enc_retry(_enc_query_by_ids, band, lid, ids) if ids else []
+            if len(feats) < len(ids):
+                raise ValueError("short")
         except (OSError, ValueError):
+            failed.append(cls)
             continue
         for ft in feats:
             props = ft.get("properties") or {}
@@ -3694,7 +4051,12 @@ def fetch_chart_info(bbox):
             if not kept:
                 continue
             out[key_name].append({"props": kept, "geometry": ft.get("geometry")})
-    _cache_json(cache, out)
+    # ⚠ AN ANSWER WITH A FAILED QUERY IS SERVED ONCE AND NOT KEPT (2026-10-12) - the rule every other chart cache here
+    # follows. This one kept it: a quality layer that failed once was an empty zone-of-confidence card for ever.
+    if failed:
+        out["note"] = "not read whole (%s)" % ", ".join(failed)
+    else:
+        _cache_json(cache, out)
     return out
 
 

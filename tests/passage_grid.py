@@ -115,8 +115,15 @@ got = {"tile": TILE, "complete": True, "bands": ["enc_harbour"], "unread": [[TIL
            ft("land", {"type": "Polygon", "coordinates": [[[TILE[0] + 160.6 * D, TILE[1] + 30.2 * D], [TILE[0] + 165.3 * D, TILE[1] + 30.2 * D],
                                                           [TILE[0] + 165.3 * D, TILE[1] + 39.8 * D], [TILE[0] + 160.6 * D, TILE[1] + 39.8 * D],
                                                           [TILE[0] + 160.6 * D, TILE[1] + 30.2 * D]]]}),
+           # v2 (2026-10-12): the seabed's other Group 1 objects, islets, and what is overhead
+           ft("dredged", {"type": "Polygon", "coordinates": [sq_cells(170, 10, 179, 19)]}, DRVAL1=1.2),     # kept to 1.2 m
+           ft("unsurveyed", {"type": "Polygon", "coordinates": [sq_cells(190, 10, 199, 19)]}),               # no depth known
+           dict(ft("extra", {"type": "Point", "coordinates": cell_ll(210, 15)}), cls="Land_Area_point"),   # stored before it had a role
+           ft("bridge_span", {"type": "Polygon", "coordinates": [sq_cells(220, 10, 229, 19)]}, VERCLR=2.1, VERCCL=9.9),
+           ft("overhead", {"type": "LineString", "coordinates": [cell_ll(230, 15), cell_ll(239, 15)]}, VERCLR=4.8),
+           ft("bridge_span", {"type": "LineString", "coordinates": [cell_ll(240, 15), cell_ll(249, 15)]}),  # no clearance charted
        ]}
-C, T = A._tile_grid(got)
+C, T, AIR = A._tile_grid(got)
 at = lambda arr, c, r: arr[r * N + c]
 H, NOD, UNR = A.GRID_HARD, A.GRID_NODATA, A.GRID_UNREAD
 checks1 = {
@@ -136,14 +143,26 @@ checks1 = {
                                                                           and at(C, 163, 35) == H,
     "no depth area: NODATA": at(C, 50, 210) == NOD and at(T, 50, 210) == NOD,
     "unread square: UNREAD both": at(C, 5, 225) == UNR and at(T, 5, 225) == UNR,
+    # v2 (2026-10-12)
+    "dredged area by its DRVAL1, 1.2 m -> 12 (not NODATA)": at(C, 175, 15) == 12 and at(T, 175, 15) == 12,
+    "unsurveyed: UNSURVEYED, under every floor, not land": at(C, 195, 15) == A.GRID_UNSURVEYED and A.GRID_UNSURVEYED < 0
+                                                           and A.GRID_UNSURVEYED not in (H, NOD, UNR),
+    "an islet stored as `extra`: re-tagged, HARD (T)": at(T, 210, 15) == H,
+    "a span: A its LOWER clearance (2.1 m -> 21) over it, the water under it still the sea": at(AIR, 225, 15) == 21
+                                                                                           and at(C, 225, 15) == 300,
+    "a cable: A 48 along it": all(at(AIR, c, 15) == 48 for c in (230, 235, 239)),
+    "a span with no clearance charted: A 0 (too low for anyone)": at(AIR, 245, 15) == 0,
+    "nothing overhead: A none": at(AIR, 30, 100) == A.GRID_NONE,
 }
-check("1. THE RASTER judges as the page's keep-out model: land HARD inside and on its edges, never outside; a depth area "
+check("1. THE RASTER judges as the page's keep-out model (and v2's: a dredged area by its maintained depth, unsurveyed "
+      "water under every floor, an islet HARD, and the A layer the lowest clearance overhead); land HARD inside and on its edges, never outside; a depth area "
       "by its DEEPEST depth (a 0-18.2 m area is 18.2 m - its DRVAL1 would block water the page sails), DRVAL1 without a "
       "DRVAL2; a rock by VALSOU less a meter, touching only; a buoy, a lateral mark, a dock line HARD where they are; "
       "soundings and contours nothing; an edge through a cell marks it touched, its center still water; no depth area "
       "NODATA; an unread square UNREAD in both layers",
       lambda: all(checks1.values()),
-      lambda: "failed: " + ", ".join(k for k, v in checks1.items() if not v) if not all(checks1.values()) else "all 14 rules")
+      lambda: "failed: " + ", ".join(k for k, v in checks1.items() if not v) if not all(checks1.values())
+              else "all %d rules" % len(checks1))
 
 # ── 2. the file ───────────────────────────────────────────────────────────────────────────────────────────────────
 gp = os.path.join(TMP, "g.bin")
@@ -160,14 +179,14 @@ cut = A._grid_read(os.path.join(TMP, "cut.bin"))
 node_src = ("const C=require(process.argv[1]);const fs=require('fs');const b=fs.readFileSync(process.argv[2]);"
             "const g=C.decodeGrid(b.buffer.slice(b.byteOffset,b.byteOffset+b.length));const N=C.GRID_N;"
             "const at=(a,c,r)=>a[r*N+c];console.log(JSON.stringify({bands:g.head.bands,v:[at(g.C,30,100),at(g.C,15,15),"
-            "at(g.C,45,15),at(g.T,80,15),at(g.C,50,210),at(g.T,5,225)]}))")
+            "at(g.C,45,15),at(g.T,80,15),at(g.C,50,210),at(g.T,5,225),at(g.C,175,15),at(g.A,225,15),at(g.A,30,100)]}))")
 try:
     js = subprocess.run(["node", "-e", node_src, os.path.join(APP, "static", "js", "coarse.js"), gp2],
                         capture_output=True, text=True, timeout=60)
     jsv = json.loads(js.stdout.strip() or "{}")
 except (OSError, ValueError) as e:
     jsv = {"error": str(e)}
-want = [300, H, 182, 40, NOD, UNR]
+want = [300, H, 182, 40, NOD, UNR, 12, 21, A.GRID_NONE]
 check("2. THE FILE: read back whole (header and arrays), the arrays at an EVEN offset whichever the header's length, a file "
       "cut short NOT read - and the page's own decodeGrid (coarse.js, in node) reads the same cells this module wrote",
       lambda: back is not None and back[0]["complete"] and back[0]["unread"] == got["unread"] and back[1] == raw

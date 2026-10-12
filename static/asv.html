@@ -1012,8 +1012,8 @@ import { CHART_EDGE_M, LANE_FRAC, SEG_LEN_M, beyondChart, beyondChartSay, buoyCh
          pruneStitch, rasterKeepouts, regionOrder,
          routeAround, routeAroundSeg, routePlan, smoothTrack, stampSeg } from "/static/js/passage.js";
 import { HAZ_UNKNOWN_EXTENT, MARK_TAIL, WATER_FAR_KM, WATER_REMOTE_KM, WATER_STALE_S,
-         WRECK_CLEAR_MARGIN_M, blocked, blockedInfo, bufferFloor, buildKeepouts, clearanceM,
-         channelPolys, depthExcluded, effectiveWaterOffset, firstBlockAlong, hazExtent,
+         WRECK_CLEAR_MARGIN_M, airNeedM, blocked, blockedInfo, bufferFloor, buildKeepouts, clearanceM,
+         channelPolys, depthExcluded, effectiveWaterOffset, firstBlockAlong, hazExtent, overheadBlocks,
          legClear, legReason, legReasons, markId, markSystems, nogoDR, nogoKind,
          nogoKindCounts, pairGates, qualityAt, snapClearLL, systemCenterline, waterTrust } from "/static/js/chart.js";
 // THE SURVEYS IN THE PLAN (sequenced surveys, phase 1, 2026-10-02): which survey each line and waypoint belongs to,
@@ -5868,6 +5868,11 @@ function applyVesselToUI(v){
   // avoid more shallow water). Drives the ENC extract + keep-out reclassification.
   if(v.hull && v.planning && typeof v.hull.draft_m==="number" && typeof v.planning.under_keel_clearance_m==="number")
     V.NOGO_MIN_DEPTH_M = v.hull.draft_m + v.planning.under_keel_clearance_m;
+  // ...and the clearance she needs OVERHEAD (2026-10-12): her air draft plus her overhead margin - a bridge or a cable
+  // charted lower than the two is a keep-out (chart.js airNeedM). Absent: no overhead check, as for a hull before this.
+  V.AIR_DRAFT_M = (v.hull && typeof v.hull.air_draft_m === "number" && v.hull.air_draft_m > 0) ? v.hull.air_draft_m : 0;
+  V.OVERHEAD_CLEARANCE_M = (v.planning && typeof v.planning.overhead_clearance_m === "number"
+                            && v.planning.overhead_clearance_m >= 0) ? v.planning.overhead_clearance_m : 1.0;
   // Rule 9 keep-right fairway reach (wider for a big boat in a wide dredged channel)
   V.CHANNEL_REACH_M = (v.planning && typeof v.planning.channel_reach_m==="number") ? v.planning.channel_reach_m : null;
   // The hull's own color on the chart (see state.js). A string or nothing - anything
@@ -9995,7 +10000,7 @@ function drawENC(toScreen, ctx){
     else if(r==="dredged"||r==="restricted") strokePath(g,"rgba(110,160,205,0.7)",1.2,[5,4]); }
   // points
   for(const f of sea.enc.features){ const g=f.geometry, r=f.role;
-    if(r==="hazard_point") eachPoint(g,c=>{ const s=toScreen(c[1],c[0]);
+    if(r==="hazard_point"||r==="land_point") eachPoint(g,c=>{ const s=toScreen(c[1],c[0]);
       // A sized hazard (wreck / obstruction of unknown extent) draws the circle the
       // router actually keeps out of. Without it the operator sees a route swing wide
       // for no visible reason - and, worse, would read a bare cross as the whole danger.
@@ -10028,8 +10033,14 @@ async function fetchENCBbox(b, minDepth){
   // `unread` (2026-10-11, the layered chart): the squares of the box no chart covers, and those whose chart could not
   // be read (`failed`) - nogo.unread once the extract is taken in (refreshNogo).
   const sq = (rs, failed) => (rs || []).map(r => ({W: r[0], S: r[1], E: r[2], N: r[3], failed}));
+  // The chart's AGE and its older copies (2026-10-12): `read_at` the oldest tile's read (epoch s), `aged` the tiles past
+  // a week (being read again behind the copy served), `stale` why a tile is an older reader's copy; `supplement` the
+  // berthing chart where it reaches.
   sea.enc={features:d.features||[], band:d.band, bands:(d && d.bands) || [], minDepth, partial:(d && d.partial) || [], layered: !!(d && d.layered),
-           unread: [...sq(d && d.unread, false), ...sq(d && d.unread_failed, true)]}; return d;
+           unread: [...sq(d && d.unread, false), ...sq(d && d.unread_failed, true)],
+           readAt: (d && typeof d.read_at === "number") ? d.read_at : null, aged: (d && d.aged) || 0,
+           stale: (d && d.stale) || [], supplement: (d && d.supplement) || [], partialNamed: (d && d.partial_named) || []};
+  return d;
 }
 // clip one survey line to the sub-segments that clear every keep-out (sampled)
 function clipLine(a, b, ref, ko, buf){
@@ -10259,7 +10270,13 @@ async function refreshNogo(centerLL, bbox, ask){     // extract ENC for the oper
     nogo.busy=false;
     rebuildNogo();
     encShow=true; $("#chrtBtn").classList.add("on");
-    nogoStatus("Nogo established ("+nogo.note+"). Go-To / RTH / search / survey all clip to these zones.");
+    // ⚠ AN EXTRACT THAT DID NOT ARRIVE WHOLE SAYS SO HERE (2026-10-12): this banner said "established" over a chart whose
+    // depth layer had failed. The server makes such a tile unread water; the banner names what is missing.
+    const encP = enc.partialNamed || [], encS = enc.stale || [];
+    nogoStatus("Nogo established ("+nogo.note+"). Go-To / RTH / search / survey all clip to these zones."
+               + (encP.length ? " CHART INCOMPLETE: " + encP.slice(0, 4).join(", ") + (encP.length > 4 ? " and " + (encP.length - 4) + " more" : "")
+                                + " did not arrive - that water is unread until it is read again." : "")
+               + (encS.length ? " OLDER CHART IN USE: " + encS[0] : ""));
     render();
   }catch(e){
     if(keep) keptOn("chart read failed: " + e);
@@ -10299,13 +10316,20 @@ function nogoReadout(){
   // The shared tail: what a nogo IS. The operator should never have to remember that the
   // shallow-water part of it is derived from THIS vessel's draft - or, when they have asked
   // for more water than the hull needs, that it is THEIR number doing the work.
+  const air = airNeedM();
   const why = "\n\nThe keep-out model every commanded motion routes clear of: charted land and "
     + "shoreline, docks and manmade features, charted hazards, and water shallower than "
     + floor + (byOperator
         ? " - YOUR Min depth setting, which is deeper than this vessel's own floor of "
           + hull.toFixed(1) + " m (draft + under-keel clearance), so it is the one in force"
         : " = this vessel's own floor (draft + under-keel clearance)")
-    + ", corrected for the live water level. Press NOGO to show the zones on the chart.";
+    + ", corrected for the live water level - dredged channels by the depth they are kept to, and unsurveyed water "
+    + "always"
+    + (air > 0 ? "; and any bridge or overhead line charted lower than " + air.toFixed(2) + " m (her air draft "
+                 + V.AIR_DRAFT_M.toFixed(2) + " m + " + (V.OVERHEAD_CLEARANCE_M || 0).toFixed(1) + " m), or with no "
+                 + "clearance charted - an opening bridge as if shut"
+               : "; nothing overhead is judged - this vessel declares no air draft")
+    + ". Press NOGO to show the zones on the chart.";
   if(nogo.busy){
     const s = nogo.since ? Math.max(0, Math.round((Date.now() - nogo.since)/1000)) : 0;
     return {text: "reading chart… " + s + " s", cls: "warn",
@@ -10389,17 +10413,35 @@ function nogoReadout(){
                          + "Go-To, RTH and transits still keep right in a channel." : "");
   // THE CHART IN LAYERS (2026-10-11): which scales were read, and the water none of them covers - said where the model
   // is, because a square nobody charted holds nothing and the planners refuse to route through it.
-  const encNow = sea.enc || {}, bandsTxt = encNow.layered && encNow.bands && encNow.bands.length > 1
-    ? " with " + encNow.bands.slice(1).map(x => String(x).replace("enc_", "")).join(" and ") + " filling in where it has no chart" : "";
+  const encNow = sea.enc || {}, bandsTxt = (encNow.layered && encNow.bands && encNow.bands.length > 1
+    ? " with " + encNow.bands.slice(1).map(x => String(x).replace("enc_", "")).join(" and ") + " filling in where it has no chart" : "")
+    + ((encNow.supplement || []).length ? ", and the berthing chart beside it where one is published" : "");
+  // HOW OLD THE CHART IS, AND WHETHER IT ARRIVED WHOLE (2026-10-12). A tile was kept for ever and NOAA corrects its
+  // cells week by week; one past a week is read again behind the copy served. An OLDER READER'S copy is served only
+  // when a read fails, and lacks what this reader holds. A tile missing a layer the model acts on is unread water
+  // (refused below); the layers are named here, because "the chart arrived without its depth areas" is the fact.
+  const ageD = encNow.readAt ? Math.max(0, Math.floor((Date.now() / 1000 - encNow.readAt) / 86400)) : null;
+  const staleL = encNow.stale || [], partL = encNow.partial || [];
+  const ageTxt = (ageD === null ? "" : "\n\nChart read: " + new Date(encNow.readAt * 1000).toISOString().slice(0, 10)
+                   + " (" + (ageD === 0 ? "today" : ageD + " day" + (ageD === 1 ? "" : "s") + " ago") + ", the oldest tile)"
+                   + (encNow.aged ? " - " + encNow.aged + " tile(s) past a week old, each being read again behind the copy "
+                                    + "in use; NOAA corrects its charts week by week" : ""))
+    + (staleL.length ? "\n\nOLDER CHART IN USE: " + staleL.join(" | ") + "." : "")
+    + (partL.length ? "\n\nNOT READ WHOLE: " + partL.join(", ") + " did not arrive. "
+                      + ((encNow.partialNamed || []).length
+                          ? (encNow.partialNamed || []).join(", ") + " the model acts on, so that water is unread (below) "
+                            + "until it is read again."
+                          : "None of them is a layer the model acts on; nothing is refused for it.") : "");
   const un = nogo.unread || [], unFailed = un.filter(r => r.failed).length;
   const unTxt = un.length ? "\n\nUnread water: " + un.length + " area(s) of this box " + (unFailed === un.length
       ? "whose chart could not be read (NOAA did not answer) - read again on the next command"
       : "no chart at any scale covers" + (unFailed ? ", " + unFailed + " of them because the chart could not be read" : ""))
       + ". Drawn gray with the zones; a route through, or within " + fmtDist(CHART_EDGE_M) + " of, one is refused." : "";
   return {text: n + " zones · floor " + floor + (skinN ? " · +" + skinN + " seabed" : "")
-                + (inkN ? " · +" + inkN + " chart" : "") + (wOff ? " · wrecks off" : "") + (un.length ? " · unread" : ""),
-    cls: (inkN || (sk && sk.refused) || un.length) ? "warn" : "",
-    title: "Chart read (ENC band " + band + bandsTxt + "): " + brk + "." + pastTxt + skinTxt + inkTxt + unTxt + offTxt + why};
+                + (inkN ? " · +" + inkN + " chart" : "") + (wOff ? " · wrecks off" : "") + (un.length ? " · unread" : "")
+                + (staleL.length ? " · old chart" : "") + (partL.length ? " · incomplete" : ""),
+    cls: (inkN || (sk && sk.refused) || un.length || staleL.length || partL.length) ? "warn" : "",
+    title: "Chart read (ENC band " + band + bandsTxt + "): " + brk + "." + ageTxt + pastTxt + skinTxt + inkTxt + unTxt + offTxt + why};
 }
 let lastNogoLogged = null;
 function updateNogoUI(){
@@ -11062,7 +11104,7 @@ async function planPassageNow(){
     corridorRead = toCorridor(st);
     passageStatus = "planning the passage…"; updateTransitPanel();
     const g = await passageGrids(st.tiles || []);
-    const res = await passageInWorker({grids: g.grids, floorDm: Math.round(floorM * 10), points});
+    const res = await passageInWorker({grids: g.grids, floorDm: Math.round(floorM * 10), airDm: Math.round(airNeedM() * 10), points});
     if(gen !== transitGen){ showBanner("Passage NOT planned: the line was edited while it was being planned - plan it again."); return; }
     if(res.error){ showBanner("Passage NOT planned: " + res.error + "."); return; }
     const fuelLegs = passageFuelLegs(points, res.legs);
@@ -11204,8 +11246,9 @@ const nogoLayer = makeLayer();
 function nogoLayerKeyNow(){
   const dr = nogoDR(), sd = depthRange(), enf = nogo.enf || {};
   // `wreck` too (2026-09-30): drawNogo leaves a disregarded wreck AREA unfilled, so the toggle changes the picture.
+  // The clearance she needs overhead too (2026-10-12): a hull switch at the same floor changes which spans are drawn.
   return [zoom, !!enf.land, !!enf.depth, enf.wreck !== false, dr.min, dr.max, sd.min, sd.max, !!currentPattern(),
-          (sea.waterOffset || 0).toFixed(3)].join("|");
+          (sea.waterOffset || 0).toFixed(3), airNeedM().toFixed(2)].join("|");
 }
 function drawNogoCached(toScreen, w, h, o){
   if(!nogoShow || !nogo.ready || !nogo.features) return;
@@ -11222,17 +11265,22 @@ function drawNogo(toScreen, ctx){
   const fill=(g,c)=>{ ctx.beginPath(); let any=false;
     eachRing(g,r=>{ any=true; r.forEach((p,i)=>{ const s=toScreen(p[1],p[0]); i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y); }); ctx.closePath(); });
     if(any){ ctx.fillStyle=c; ctx.fill("evenodd"); } };
+  // WHAT IS OVERHEAD AND TOO LOW FOR HER (2026-10-12) is a keep-out like a pier, drawn as one: the span's water filled,
+  // a cable stroked - the same test the model takes it by (overheadBlocks at airNeedM), so the drawing cannot disagree.
+  const airNeed = airNeedM();
+  const lowOver = f => (f.role==="bridge_span"||f.role==="overhead") && overheadBlocks(f, airNeed);
   for(const f of nogo.features){ const r=f.role, g=f.geometry;
     // A wreck AREA the operator disregards (Shipwrecks unchecked) is not a keep-out, so it is not drawn as one.
     if(f.cls==="Wreck_area" && nogo.enf.wreck===false) continue;
-    if(nogo.enf.land && (r==="land"||r==="dock"||r==="hazard_area")){ fill(g,"rgba(217,83,79,0.20)"); continue; }
-    if(r==="depth_area"){
+    if(nogo.enf.land && (r==="land"||r==="dock"||r==="hazard_area"||r==="bridge"||lowOver(f))){ fill(g,"rgba(217,83,79,0.20)"); continue; }
+    // The seabed's other Group 1 objects (2026-10-12): a dredged channel by its maintained depth, unsurveyed water always.
+    if(r==="depth_area"||r==="dredged"||r==="unsurveyed"){
       if(nogo.enf.depth && depthExcluded(f,floorDr)) fill(g,"rgba(217,83,79,0.20)");           // hard nogo (red)
       else if(hasPat && depthExcluded(f,surveyDr)) fill(g,"rgba(196,150,74,0.22)"); }          // outside survey window (amber)
   }
   ctx.strokeStyle="rgba(217,83,79,0.85)"; ctx.lineWidth=1.4;
   for(const f of nogo.features){ const r=f.role;
-    if(nogo.enf.land && (r==="shore_line"||r==="dock_line"))
+    if(nogo.enf.land && (r==="shore_line"||r==="dock_line"||r==="hazard_line"||r==="land_line"||lowOver(f)))
       eachPath(f.geometry,p=>{ ctx.beginPath(); p.forEach((c,i)=>{ const s=toScreen(c[1],c[0]); i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y); }); ctx.stroke(); }); }
   // ⚠ WATER NO CHART COVERS IS DRAWN GRAY (2026-10-11, the layered chart): the model holds nothing there, and a route
   // through it is refused - the operator sees where before planning. A square whose chart could not be READ is

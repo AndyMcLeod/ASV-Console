@@ -120,6 +120,11 @@ function depthRange() { return { min: SD.min, max: SD.max }; }
 function currentPattern() { return PAT; }
 // the page's depthExcluded corrects a feature's depth by the tide; so does this one, so the tide matters
 function depthExcluded(f, dr) { return (f.d + (sea.waterOffset || 0)) < dr.min; }
+// THE CLEARANCE SHE NEEDS OVERHEAD (2026-10-12): drawNogo fills a span too low for her - asked of the real keepouts.js -
+// and the zones layer's key names her need, so a hull switch at the same floor redraws it (check 11).
+let AIR = 0;
+function airNeedM() { return AIR; }
+const { overheadBlocks } = require("../static/js/keepouts.js");
 
 // the margin a layer is drawn with, read from the page so a change to it moves these checks with it
 const PAD = +(H.match(/const LAYER_PAD_PX = (\d+);/) || [])[1];
@@ -361,10 +366,11 @@ check("6. a refetch of the same water is a MISS - the data is compared by identi
     movesIt("a pattern up (the amber tier)", () => { PAT = { lines: [] }; }, () => { PAT = null; }),
     movesIt("the tide", () => { sea.waterOffset = 1.2; }, () => { sea.waterOffset = 0; }),
     movesIt("the zoom", () => { zoom = 14; }, () => { zoom = 13; }),
+    movesIt("her overhead need (a hull switch)", () => { AIR = 3.85; }, () => { AIR = 0; }),
   ];
   const stale = inputs.filter(x => !(x.d > 0)).map(x => x.label);
   check("11. its key names EVERY input drawNogo reads - the three enforce toggles it draws by, the depth floor, the survey window "
-        + "both ways, a pattern being up, the tide and the zoom each redraw it",
+        + "both ways, a pattern being up, the tide, the zoom and the clearance she needs overhead each redraw it",
         () => stale.length === 0,
         () => stale.length ? "HELD across: " + stale.join(", ") : inputs.length + " inputs, every one redraws");
 

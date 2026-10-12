@@ -2575,7 +2575,9 @@ export const ROCK_MARKED_M = 50;
  *  were passed on their shore side, a west cardinal on its east). A keep-out with no class (a synthetic world) is
  *  judged by its kind alone. */
 export const ROCK_CLASSES = new Set(['Underwater_Awash_Rock_point', 'Obstruction_point', 'Obstruction_area',
-  'Obstruction_line', 'Wreck_point', 'Wreck_area', 'Land_Area', 'Coastline_line', 'Depth_Area']);
+  'Obstruction_line', 'Wreck_point', 'Wreck_area', 'Land_Area', 'Coastline_line', 'Depth_Area',
+  // An islet charted as a point or a line (a keep-out since 2026-10-12) is an islet, which this list was always for.
+  'Land_Area_point', 'Land_Area_line']);
 
 /** How many times the lane is laid again round its rocks before what is left is the backstop's to judge. (A run of
  *  seven rocks, each near pass laying the line onto the next and the smoothing's widenings on top, took more than 8.) */
@@ -2618,9 +2620,12 @@ export const REACH_RUN_COS = Math.cos(20 * Math.PI / 180);
  * ⚠ A POLICY NUMBER, SAID OUT LOUD. The same chart layer holds regulations that cover a whole
  * waterway and bar nobody from it: the Piscataqua's no-discharge zone (40 CFR 140) is one
  * polygon of 18 km2 whose edge runs down the middle of the river, and read as a limit it
- * would hold every lane to one half of it. The service publishes no attribute that tells the
- * two apart (no RESTRN; CATREA blank on the Naval Shipyard's own area), so they are told
- * apart by size: the shipyard's restricted area is 0.16 km2, its security barriers 0.04.
+ * would hold every lane to one half of it. They are told apart by size: the shipyard's restricted area is 0.16 km2,
+ * its security barriers 0.04.
+ * ⚠ THIS SAID "THE SERVICE PUBLISHES NO ATTRIBUTE THAT TELLS THE TWO APART", AND IT DOES (corrected 2026-10-12): no
+ * RESTRN, and CATREA blank on both - but INFORM reads "40 CFR 140" on the no-discharge zone and "33 CFR 334.50" on the
+ * shipyard's area. The claim was measured through the server's own filter, which kept neither INFORM nor CATREA until
+ * today (asv_console.py ENC_KEEP_PROPS). The size rule stands; INFORM now reaches the page should a rule want it.
  */
 export const RESTRICTED_LOCAL_M2 = 1e6;
 

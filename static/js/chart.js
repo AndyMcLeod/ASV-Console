@@ -48,7 +48,7 @@ import { HAZ_UNKNOWN_EXTENT, WRECK_CLEAR_MARGIN_M, MARK_TAIL, CL_EXTEND_CAP_M,
          blocked, blockedInfo, clearanceM, legClear, firstBlockAlong,
          markId, markSystems, systemCenterline, extendCenterline, pairGates, channelPolys,
          buildKeepouts as coreBuildKeepouts, hazExtent as coreHazExtent,
-         hazPassable as coreHazPassable,
+         hazPassable as coreHazPassable, overheadBlocks, overheadClearance,
          depthExcluded as coreDepthExcluded, nogoKind as coreNogoKind } from "./keepouts.js";
 export { HAZ_UNKNOWN_EXTENT, WRECK_CLEAR_MARGIN_M, MARK_TAIL, CL_EXTEND_CAP_M,
          blocked, blockedInfo, clearanceM, legClear, firstBlockAlong,
@@ -83,8 +83,15 @@ export { HAZ_UNKNOWN_EXTENT, WRECK_CLEAR_MARGIN_M, MARK_TAIL, CL_EXTEND_CAP_M,
 // hazard passable, and this is the seam that decides whether one is dropped at all.
 function koOpts(){
   return {minDepthM: nogoDR().min, wreckRadiusM: V.WRECK_RADIUS_M,
-          bufferM: V.NOGO_BUFFER_M, waterOffsetM: sea.waterOffset};
+          bufferM: V.NOGO_BUFFER_M, waterOffsetM: sea.waterOffset, airNeedM: airNeedM()};
 }
+// THE CLEARANCE SHE NEEDS OVERHEAD (2026-10-12): her air draft plus the margin she keeps under a span or a cable, from
+// the vessel file (hull.air_draft_m, planning.overhead_clearance_m). 0 - no air draft declared - judges nothing
+// overhead. One function, because the keep-out model and the passage planner's grid levels must ask the same question.
+export function airNeedM(){
+  return V.AIR_DRAFT_M > 0 ? V.AIR_DRAFT_M + Math.max(0, V.OVERHEAD_CLEARANCE_M || 0) : 0;
+}
+export { overheadBlocks, overheadClearance };
 
   // shoreline+manmade+depth+hazards
 // CHARTED POINT HAZARDS HAVE AN EXTENT THE CHART DOES NOT GIVE US. A wreck symbol is a

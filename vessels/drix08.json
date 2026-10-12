@@ -8,6 +8,8 @@
     "beam_m": 0.824,
     "above_water_h_m": 0.84,
     "draft_m": 2.0,
+    "air_draft_m": 2.85,
+    "air_draft_source": "MEASURED OFF iXblue's DIMENSIONED STARBOARD VIEW (2026-10-12, the drawing in hull.wind_source): height overall 4.85 m keel down, less the 2.0 m draft, is 2.85 m from the design waterline to the antenna tips. A bridge or overhead line charted lower than this plus planning.overhead_clearance_m (1.0 m, ESTIMATED: US charts give vertical clearance at mean high water, and a spring tide, a surge or her pitch takes some of it) is a keep-out for her - New Castle's fixed bridges clear 1.8, 2.1, 2.4, 3.0 and 3.3 m.",
     "wind_cd": 1.0,
     "hull_cd": 1.0,
     "wind_area_side_m2": 6.5,
@@ -74,6 +76,7 @@
   "planning": {
     "nogo_buffer_m": 5.0,
     "under_keel_clearance_m": 0.9,
+    "overhead_clearance_m": 1.0,
     "channel_reach_m": 120,
     "min_survey_line_m": 80,
     "search": {

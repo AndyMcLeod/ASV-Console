@@ -168,7 +168,7 @@ hl = [[-70.70, 43.05], [SEAM, 43.05], [SEAM, 43.20], [-70.70, 43.20], [-70.70, 4
 hr = [[SEAM, 43.05], [-70.55, 43.05], [-70.55, 43.20], [SEAM, 43.20], [SEAM, 43.13], [SEAM, 43.08], [SEAM, 43.05]]
 # coastal: the whole tile except a strip along its north edge, y > 43.24 (no chart at any scale there)
 coast = [[-70.75, 43.0], [-70.5, 43.0], [-70.5, 43.24], [-70.75, 43.24], [-70.75, 43.0]]
-COV = {"enc_harbour": [[hl], [hr]], "enc_approach": [], "enc_coastal": [[coast]], "enc_general": []}
+COV = {"enc_harbour": [[hl], [hr]], "enc_approach": [], "enc_coastal": [[coast]], "enc_general": [], "enc_overview": []}
 idx = [A._cov_index(COV[b]) for b in A.ENC_BANDS]
 leaves = A._enc_leaves(tile, idx)
 LEAF = T / 2 ** A.ENC_LEAF_DEPTH
@@ -312,14 +312,18 @@ FEATS = {
     ],
 }
 FAIL_LAYER = {"on": False}
+EXTRA_COV = {}                  # band -> {"tiles": [...], "cov": polys}: the berthing and overview checks (6d, 6e)
+EXTRAS = []                     # (band, extras) of every fetch - every band reads every layer (6g)
 
 
 def fake_cov(band, t):
     calls["cov"] += 1
     if FAIL_LAYER.get("cov"):
         raise OSError("connection refused")
+    if band in EXTRA_COV and t in EXTRA_COV[band]["tiles"]:
+        return EXTRA_COV[band]["cov"]
     if t == [-70.75, 43.0, -70.5, 43.25]:
-        return COV[band]
+        return COV.get(band, [])
     if band == "enc_harbour" and t == [-71.0, 43.0, -70.75, 43.25]:
         return [[sq(-70.80, 43.05, -70.76, 43.20)]]          # a harbour cell in the west tile: it fetches the harbour too
     return [[coast]] if band == "enc_coastal" else []
@@ -327,8 +331,11 @@ def fake_cov(band, t):
 
 def fake_feat(region, md=0.0, band=None, extras=True, use_cache=True):
     calls["feat"] += 1
+    EXTRAS.append((band, extras))
     out = [dict(f) for f in FEATS.get(band, [])]
-    return {"band": band, "features": out, "partial": ["Depth_Area"] if FAIL_LAYER["on"] and band == "enc_harbour" else []}
+    if FAIL_LAYER["on"] and band == "enc_harbour":
+        return {"band": band, "features": out, "partial": [FAIL_LAYER.get("cls", "Depth_Area")]}
+    return {"band": band, "features": out, "partial": []}
 
 
 sav = (A._enc_coverage, A.fetch_enc_features, A._clip_feature)
@@ -402,14 +409,64 @@ try:
     breaker = A._enc_down_until > 0
     FAIL_LAYER["cov"] = False
     A._enc_down_until = 0.0
-    check("6c. A TILE WITH A FAILED LAYER is served once and NOT cached (`partial` says which); A COVERAGE THAT CANNOT "
-          "BE READ leaves the tile UNREAD - `unread_failed` over the box, no band, the offline breaker set - never "
-          "served as empty water",
+    check("6c. A TILE WITH A FAILED LAYER is served once and NOT cached (`partial` says which) - and since 2026-10-12, "
+          "a layer the model ACTS ON failing makes the tile UNREAD WATER (`unread_failed` over the box, `partial_named` "
+          "naming it) while its features are still served; A COVERAGE THAT CANNOT BE READ leaves the tile UNREAD - "
+          "`unread_failed` over the box, no band, the offline breaker set - never served as empty water",
           lambda: p["partial"] == ["Depth_Area"] and not p.get("complete") and not os.path.exists(tile_file)
+                  and p["unread_failed"] == [box] and p["partial_named"] == ["Depth_Area"] and p["features"]
                   and q["band"] is None and q["unread_failed"] == [[-71.20, 43.05, -71.05, 43.20]] and q["features"] == []
                   and breaker and "coverage could not be read" in (q.get("note") or ""),
-          lambda: "partial %s complete %s cached %s; failed tile band %s unread_failed %s note %r breaker %s"
-                  % (p["partial"], p.get("complete"), os.path.exists(tile_file), q["band"], q["unread_failed"], q.get("note"), breaker))
+          lambda: "partial %s named %s unread_failed %s complete %s cached %s; failed tile band %s unread_failed %s note %r breaker %s"
+                  % (p["partial"], p.get("partial_named"), p["unread_failed"], p.get("complete"), os.path.exists(tile_file),
+                     q["band"], q["unread_failed"], q.get("note"), breaker))
+    # -- 6f. a layer the model does NOT act on failing: reported, nothing refused
+    A._enc_tile_mem.clear()
+    FAIL_LAYER["on"], FAIL_LAYER["cls"] = True, "Building_Single_point"
+    pe = A.fetch_enc_layered(box, 2.0)
+    FAIL_LAYER["on"], FAIL_LAYER["cls"] = False, "Depth_Area"
+    check("6f. ... but a failed layer the model does NOT act on (an `extra`) is reported in `partial` and refuses "
+          "nothing: no unread square, no `partial_named`, and still not cached",
+          lambda: pe["partial"] == ["Building_Single_point"] and pe["partial_named"] == [] and pe["unread_failed"] == []
+                  and not pe.get("complete") and not os.path.exists(tile_file),
+          lambda: "partial %s named %s unread_failed %s" % (pe["partial"], pe.get("partial_named"), pe["unread_failed"]))
+    # -- 6d. THE BERTHING CHART, where it reaches: every layer, whole, beside the harbour - which is not cut
+    A._enc_tile_mem.clear()
+    berth_cell = sq(-70.665, 43.095, -70.655, 43.105)
+    EXTRA_COV["enc_berthing"] = {"tiles": [box], "cov": [[berth_cell]]}
+    FEATS["enc_berthing"] = [{"role": "dock", "cls": "Shoreline_Construction_area", "props": {}, "oid": 91,
+                              "geometry": {"type": "Polygon", "coordinates": [sq(-70.6605, 43.1002, -70.6601, 43.1004)]}}]
+    del EXTRAS[:]
+    cut_bands[:] = []
+    bd = A.fetch_enc_layered(box, 2.0)
+    berth = [f for f in bd["features"] if f["band"] == "enc_berthing"]
+    harb_b = [f for f in bd["features"] if f["band"] == "enc_harbour"]
+    check("6d. THE BERTHING CHART is read where its coverage reaches - every layer (extras), whole (no `clip`, never "
+          "cut), beside the harbour chart, which is not cut either; named in `supplement`; the harbour still `band`",
+          lambda: len(berth) == 1 and "clip" not in berth[0] and ("enc_berthing", True) in EXTRAS
+                  and "enc_berthing" not in cut_bands and "enc_harbour" not in cut_bands and len(harb_b) == 3
+                  and bd["supplement"] == ["enc_berthing"] and bd["band"] == "enc_harbour" and bd.get("complete"),
+          lambda: "berthing %d, extras %s, cut %s, harbour %d, supplement %s, band %s"
+                  % (len(berth), [e for e in EXTRAS if e[0] == "enc_berthing"], sorted(set(str(b) for b in cut_bands)),
+                     len(harb_b), bd["supplement"], bd["band"]))
+    del EXTRA_COV["enc_berthing"], FEATS["enc_berthing"]
+    # -- 6g. every band reads every layer (2026-10-12): a coarser band filling in was asked for its named roles only
+    check("6g. EVERY BAND READS EVERY LAYER: each fetch of the tile asked for the extras - the coastal fill-in "
+          "included, which until 2026-10-12 asked for its named roles alone",
+          lambda: EXTRAS and all(e for _, e in EXTRAS) and any(b == "enc_coastal" for b, _ in EXTRAS),
+          lambda: "fetches %s" % sorted(set(EXTRAS)))
+    # -- 6e. water only the OVERVIEW chart covers is READ, not unread
+    A._enc_tile_mem.clear()
+    ov_tile = [-70.0, 42.0, -69.75, 42.25]
+    EXTRA_COV["enc_overview"] = {"tiles": [ov_tile], "cov": [[sq(-70.0, 42.0, -69.75, 42.25)]]}
+    FEATS["enc_overview"] = [{"role": "depth_area", "cls": "Depth_Area", "props": {"DRVAL1": 50.0, "DRVAL2": 200.0},
+                              "oid": 71, "geometry": {"type": "Polygon", "coordinates": [sq(-70.0, 42.0, -69.75, 42.25)]}}]
+    od = A.fetch_enc_layered([-69.95, 42.05, -69.80, 42.20], 2.0)
+    del EXTRA_COV["enc_overview"], FEATS["enc_overview"]
+    check("6e. water only the OVERVIEW chart covers is READ at that scale (band enc_overview), not unread - it was "
+          "refused as uncharted until 2026-10-12",
+          lambda: od["band"] == "enc_overview" and od["unread"] == [] and od["features"] and od.get("complete"),
+          lambda: "band %s unread %d features %d" % (od["band"], len(od["unread"]), len(od["features"])))
 finally:
     A._enc_coverage, A.fetch_enc_features, A._clip_feature = sav
     A._enc_tile_mem.clear()

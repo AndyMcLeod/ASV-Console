@@ -14,7 +14,7 @@
 //   LV_CLEAR    nothing under the floor touches it
 //   LV_NEAR     clear, beside a cell that is not                   (a cell's width from any danger is not promised)
 //   LV_PARTLY   a danger touches it, its center is water
-//   LV_BLOCKED  its center is land, shallow, a float, or a structure
+//   LV_BLOCKED  its center is land, shallow, a float, or a structure - or something overhead is lower than she needs
 //   LV_UNREAD   no chart covers it - or its tile was not read
 // The search (searchLeg) is an 8-neighbor A* across the tiles, cost per meter by level (COST), no corner cut past a
 // cell it may not enter. A blocked cell is never entered - except inside a port's circle (PORT_R_M), where the detail
@@ -47,22 +47,34 @@ export const NARROW_MERGE_M = 1000;
 /** The most cells one leg's search may take off its queue before it is refused as too long to search. */
 export const SEARCH_POP_CAP = 30000000;
 
-/** A tile's grid file (asv_console.py _grid_bytes) -> {head, C, T}: Int16Arrays over the file's own bytes. */
+/**
+ * A tile's grid file (asv_console.py _grid_bytes, v2) -> {head, C, T, A}: Int16Arrays over the file's own bytes.
+ * A (2026-10-12) is the lowest overhead clearance touching each cell, decimeters (0: a span or line with no charted
+ * clearance; 32767: nothing overhead) - the third layer the v2 file carries.
+ */
 export function decodeGrid(buf) {
   const u8 = new Uint8Array(buf);
   if (u8.length < 8 || u8[0] !== 65 || u8[1] !== 83 || u8[2] !== 86 || u8[3] !== 71) throw new Error("not a grid file");
   const n = new DataView(buf).getUint32(4, true), N2 = GRID_N * GRID_N;
-  if (u8.length !== 8 + n + 4 * N2) throw new Error("a grid file of the wrong size");
+  if (u8.length !== 8 + n + 6 * N2) throw new Error("a grid file of the wrong size");
   const head = JSON.parse(new TextDecoder().decode(u8.subarray(8, 8 + n)));
-  return { head, C: new Int16Array(buf, 8 + n, N2), T: new Int16Array(buf, 8 + n + 2 * N2, N2) };
+  return { head, C: new Int16Array(buf, 8 + n, N2), T: new Int16Array(buf, 8 + n + 2 * N2, N2),
+           A: new Int16Array(buf, 8 + n + 4 * N2, N2) };
 }
 
-/** A tile's cells as levels at the floor `floorDm` (decimeters of water) - before LV_NEAR, which needs the neighbors. */
-export function tileLevels(C, T, floorDm) {
+/**
+ * A tile's cells as levels at the floor `floorDm` (decimeters of water) - before LV_NEAR, which needs the neighbors.
+ * `A`/`airDm` (2026-10-12): a cell something overhead crosses lower than `airDm` (her air draft plus her overhead
+ * clearance, decimeters - chart.js airNeedM) is BLOCKED, as keepouts.js holds such a span; airDm 0 judges nothing
+ * overhead, the hull that declares no air draft.
+ */
+export function tileLevels(C, T, floorDm, A = null, airDm = 0) {
   const out = new Uint8Array(C.length);
+  const air = A && airDm > 0;
   for (let j = 0; j < C.length; j++) {
     const c = C[j];
-    out[j] = c === GRID_UNREAD ? LV_UNREAD : c < floorDm ? LV_BLOCKED : T[j] < floorDm ? LV_PARTLY : LV_CLEAR;
+    out[j] = c === GRID_UNREAD ? LV_UNREAD : c < floorDm || (air && A[j] < airDm) ? LV_BLOCKED
+           : T[j] < floorDm ? LV_PARTLY : LV_CLEAR;
   }
   return out;
 }
@@ -81,12 +93,12 @@ export function cellLL(gx, gy) {
  * THE FIELD: the passage's tiles, each a level per cell, LV_NEAR marked across tile edges. `grids` [{head, C, T}].
  * A cell of no tile here is unread.
  */
-export function buildField(grids, floorDm) {
+export function buildField(grids, floorDm, airDm = 0) {
   const tiles = new Map(), list = [];
   for (const g of grids) {
     const [W, S] = g.head.tile;
     const tx = Math.round((W + 180) / TILE_DEG), ty = Math.round((S + 90) / TILE_DEG);
-    const t = { i: list.length, tx, ty, lv: tileLevels(g.C, g.T, floorDm), cosLat: Math.cos((S + TILE_DEG / 2) * Math.PI / 180) };
+    const t = { i: list.length, tx, ty, lv: tileLevels(g.C, g.T, floorDm, g.A, airDm), cosLat: Math.cos((S + TILE_DEG / 2) * Math.PI / 180) };
     tiles.set(tileKey(tx, ty), t);
     list.push(t);
   }
@@ -338,8 +350,8 @@ export function routeLengthM(pts) {
  * A leg that cannot be planned carries `error` ("unread": an end off the chart read; "blocked": no water way within
  * the tiles read; "too_long") and `at`, the point it is about; the rest are still planned.
  */
-export function planPassage({ grids, floorDm, points }) {
-  const field = buildField(grids.map((g) => (g.head ? g : decodeGrid(g))), floorDm);
+export function planPassage({ grids, floorDm, airDm = 0, points }) {
+  const field = buildField(grids.map((g) => (g.head ? g : decodeGrid(g))), floorDm, airDm);
   const cells = points.map((p) => ({ ...cellOf(p), port: !!p.port, lat: p.lat, lon: p.lon }));
   const legs = [];
   let total = 0;
