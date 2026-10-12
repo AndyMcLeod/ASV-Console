@@ -971,7 +971,7 @@ import { V, NOGO_ENF, nogo, sea } from "/static/js/state.js";
 import { cpa as cpaOf, cpaAlong, routeTrack, legGroundMs, hullBox, KN_TO_MS } from "/static/js/targets.js";
 // THE MISSION'S FUEL, AND THE POINT SHE MUST TURN FOR HOME (2026-10-11). Pure: the burn law, the walk of the mission and
 // the monitor's decision (fuel.js), and her WATER distance home (home_field.js, built in a worker). The page acts on them.
-import { energyModel, energyLevel, homeEnergy, rthLevel, projectMission, rthDecision, fuelWatch, passageFuel,
+import { energyModel, energyLevel, homeEnergy, rthLevel, projectMission, rthDecision, fuelWatch, pathEnergy, passageFuel,
          FUEL_RESERVE_FRAC, FUEL_REARM_FRAC } from "/static/js/fuel.js";
 // THE PASSAGE, PLANNED COARSE (2026-10-12): the circle round each port the console's own planner plans in detail. The
 // plan itself is made in a worker (coarse_worker.js); the page only draws and says it.
@@ -8052,8 +8052,14 @@ function homeFieldLanded(ev){
     ? {key: b.key, frame: b.frame, g: b.g, blk: null, dist: null, ms: 0, at: Date.now(), note: d.error || "the field's build failed: no answer"}
     : {key: b.key, frame: b.frame, g: b.g, blk: d.blk, dist: d.dist, ms: d.ms || 0, at: Date.now(), note: "ready"};
 }
-// HER DISTANCE HOME from a point, meters: by WATER where the field reaches it - else the straight line, which is SHORT
-// of the way home wherever land is in the way, so `water: false` and `why` are said on the card, never hidden.
+// HER DISTANCE HOME from a point, meters: by WATER where the field reaches it; else ALONG THE PASSAGE on the plan when
+// that leads home from there; else the straight line, which is SHORT of the way home wherever land is in the way, so
+// `water: false` and `why` are said on the card, never hidden.
+//   ⚠ ALONG THE PASSAGE (2026-10-12, Andy: "fix the fuel monitor's straight-line distance home"). The field covers only
+// the chart box round her, so on a passage - home tens or hundreds of km off - the monitor measured the straight line:
+// her RTH point too low wherever a headland stands between, and "home in range of a full tank" said of a way home a
+// full tank does not reach. With home at an end of the passage on the plan, the way home IS the passage - her RTH goes
+// home along it (homeRecord) - so it is measured as she would sail it: back to it, and its sections home (`line`).
 function homeDistFrom(ll){
   if(!S || !S.home || !ll) return null;
   let why = homeFldBuild ? "the water distance home is being measured" : homeFld.note;
@@ -8063,7 +8069,21 @@ function homeDistFrom(ll){
     why = cellOf(homeFld.g, homeFld.frame.toEN(ll)) ? "no water path home on the chart from there, at "
           + homeFld.g.cell.toFixed(0) + " m cells" : "outside the water measured round home";
   }
-  return {m: distTo(ll, S.home), water: false, why};
+  const ph = passageHome(ll);
+  if(ph && !ph.why){
+    const line = [{lat: ll.lat, lon: ll.lon}];
+    for(const c of ph.sections) line.push(...c.via, c.to);
+    let m = 0;
+    for(let i = 1; i < line.length; i++) m += distTo(line[i - 1], line[i]);
+    return {m, water: true, along: "passage", line};
+  }
+  return {m: distTo(ll, S.home), water: false, why: why + (ph && ph.why ? "; and not along the passage on the plan: " + ph.why : "")};
+}
+/** How her distance home was measured, in words: by water (the field round home), along the passage on the plan, or - short
+ *  of the way home - in a straight line, with why when `withWhy`. */
+function homeHowSay(h, withWhy){
+  return h.along === "passage" ? " along the passage" : h.water ? " by water"
+    : " in a STRAIGHT LINE" + (withWhy ? " (" + (h.why || "no water distance") + ")" : "");
 }
 let fuelModelMemo = {v: undefined, high: undefined, m: null};
 function fuelModel(){
@@ -8072,11 +8092,13 @@ function fuelModel(){
   return fuelModelMemo.m;
 }
 // THE ENERGY HOME from a point: her water distance home at the transit speed (an RTH flies the transit role), in the
-// set taken along the straight line home. {need, m, water, why, twKn}, or null with no home.
+// set taken along the straight line home - or, along the passage, along each of its stretches (fuel.js pathEnergy).
+// {need, m, water, along, why, twKn}, or null with no home.
 function fuelHomeNeed(model, ll){
   const hd = homeDistFrom(ll); if(!hd) return null;
   const st = (S && S.status) || {}, twKn = V.SPEED_KN[roleSpeed("transit")] || V.SPEED_KN.survey || 0;
   const drift = groundVel(st.env_set_deg, st.env_set_kn) || {e: 0, n: 0};
+  if(hd.line) return {need: pathEnergy(model, hd.line, twKn, drift), m: hd.m, water: true, along: hd.along, why: null, twKn};
   const h = planeFrame(ll).toEN(S.home), L = Math.hypot(h.e, h.n), u = L > 0 ? {e: h.e / L, n: h.n / L} : {e: 0, n: 0};
   return {need: homeEnergy(model, hd.m, twKn, drift, u), m: hd.m, water: hd.water, why: hd.why, twKn};
 }
@@ -8125,7 +8147,7 @@ function fuelPct(model, x){ return Math.round(100 * (x - model.floor) / (model.f
 function fuelSay(model, level, rth, h){
   const f = (x) => fuelFmt(model, x);
   return f(level) + " " + (model.kind === "fuel" ? "aboard" : "on the pack") + "; home is " + fmtDist(h.m)
-    + (h.water ? " by water" : " in a STRAIGHT LINE (" + (h.why || "no water distance") + ")") + " and takes " + f(h.need)
+    + homeHowSay(h, true) + " and takes " + f(h.need)
     + " at " + h.twKn + " kn, which leaves the " + f(model.reserve) + " reserve (" + Math.round(FUEL_RESERVE_FRAC * 100)
     + "% of " + (model.kind === "fuel" ? "the tank" : "the pack above its " + model.floor + " V alarm") + ") on arrival.";
 }
@@ -8137,7 +8159,7 @@ function fuelReserveOf(model){
 function fuelOutOfRangeSay(model, w){
   const h = w.h;
   return w.why === "far" ? "home is " + fmtDist(w.farM) + " away, further than the " + fmtDist(RTH_MAX_M) + " the console will route a return"
-    : w.why === "fuel" ? "home is " + fmtDist(h.m) + (h.water ? " by water" : " in a straight line") + " and takes " + fuelFmt(model, h.need)
+    : w.why === "fuel" ? "home is " + fmtDist(h.m) + homeHowSay(h, false).toLowerCase() + " and takes " + fuelFmt(model, h.need)
                          + ", so even a full " + (model.kind === "fuel" ? "tank" : "pack") + " does not get her there with the "
                          + Math.round(FUEL_RESERVE_FRAC * 100) + "% reserve"
     : (S && S.home) ? "the way home is not known" : "no home is set";
@@ -8221,7 +8243,7 @@ function renderFuelRows(){
     const home = P.home && Number.isFinite(P.home.need) ? P.home : null;
     t = "~" + f(P.used + (home ? home.need : 0));
     tip = "To the end of the plan: ~" + f(P.used) + " over ~" + fmtMS(P.seconds)
-      + (home ? "; home from there: " + f(home.need) + ", " + fmtDist(home.m) + (home.water ? " by water" : " in a STRAIGHT LINE") + " at " + home.twKn + " kn" : "")
+      + (home ? "; home from there: " + f(home.need) + ", " + fmtDist(home.m) + homeHowSay(home, false) + " at " + home.twKn + " kn" : "")
       + (P.levelEnd != null ? ". She has " + f(N.level) + " now." : ". The vessel reports no level, so what is left is not known.");
     if(P.levelEnd != null){
       const lv = P.levelEnd - (home ? home.need : 0);
@@ -8232,7 +8254,8 @@ function renderFuelRows(){
   setCellText(fe, t); if(fe.className !== cls) fe.className = cls;
   setTip(fe, "PROJECTED " + what.toUpperCase() + " FOR THE REST OF THE MISSION. " + tip + "\nEach leg at the speed the plan flies it "
     + "(survey, turn, transit), its time over the ground in the set now running, its burn at the speed through the water; "
-    + "home by water at the transit speed. Station-keeping at the end is not included. The percentage is of "
+    + "home by water at the transit speed - along the passage on the plan when home is past the water measured round it. "
+    + "Station-keeping at the end is not included. The percentage is of "
     + (model.kind === "fuel" ? "the tank." : "the pack above its " + model.floor + " V alarm.") + "\n" + lawTip);
   // 2. THE RTH POINT - in the row, the level and how far above it she is (or where on this plan she reaches it); in the
   // tip, the sentence the alert says. OUT OF RANGE the row is the LOW-FUEL ALERT instead (its label says so): the
@@ -8278,7 +8301,7 @@ function fuelPillLine(){
     return "\nLow-" + (N.model.kind === "fuel" ? "fuel" : "battery") + " alert: " + at + ", " + fuelReserveOf(N.model) + " - "
       + fuelOutOfRangeSay(N.model, N.w) + ", so the console alerts and does not send her home.";
   return "\nRTH point: " + at
-    + " - home " + fmtDist(N.h.m) + (N.h.water ? " by water" : " in a STRAIGHT LINE (" + (N.h.why || "no water distance") + ")") + ", arriving with the " + Math.round(FUEL_RESERVE_FRAC * 100) + "% reserve.";
+    + " - home " + fmtDist(N.h.m) + homeHowSay(N.h, true) + ", arriving with the " + Math.round(FUEL_RESERVE_FRAC * 100) + "% reserve.";
 }
 // THE REHEARSAL (sim only): the tank (or pack) put just below the RTH point, so the alert and the shift to RTH follow on
 // the next frame.
@@ -11581,16 +11604,27 @@ function sailOwnsHold(){
 // the low-fuel monitor send one only with home in range. Never to a ROC's home, which moves: the server drives
 // straight at it, whatever route it is sent. Refused, as Continue is, while what is aboard does not reach the first
 // port on the way with 20% of the tank.
+/** THE WAY HOME ALONG THE PASSAGE on the plan from `ll` (coarse.js homeSections, with the passage `P` and the sections it
+ *  runs along `G`) - or {why} when there is a passage but no way home along it from there, or null when there is no
+ *  passage. ONE answer for the RTH button (homeRecord) and the fuel monitor's distance home (homeDistFrom), so the
+ *  monitor reckons the way home the button would send her. */
+function passageHome(ll){
+  const P = mission && mission.passage;
+  if(!P || !ll || !S || !S.home) return null;
+  if(S.home_source != null) return {why: "home is the ROC's, and it moves"};
+  const G = P.kind === "rth" ? P.path : P.sections;
+  const h = homeSections(G, ll, S.home);
+  if(h.why === "far") return {why: "she is " + fmtDist(h.offM) + " off it"};
+  if(h.why) return {why: "home is at neither end of it"};
+  return {...h, P, G};
+}
 /** The way home along the passage on the plan: a passage record of kind "rth" - or {why} when there is a passage but
  *  she cannot go home along it, or null when there is none. */
 function homeRecord(){
-  const P = mission && mission.passage;
-  if(!P || !asv || !S.home) return null;
-  if(S.home_source != null) return {why: "home is the ROC's, and it moves"};
-  const G = P.kind === "rth" ? P.path : P.sections;
-  const h = homeSections(G, {lat: asv.lat, lon: asv.lon}, S.home);
-  if(h.why === "far") return {why: "she is " + fmtDist(h.offM) + " off it"};
-  if(h.why) return {why: "home is at neither end of it"};
+  if(!asv) return null;
+  const h = passageHome({lat: asv.lat, lon: asv.lon});
+  if(!h || h.why) return h;
+  const P = h.P, G = h.G;
   return {id: "H" + Date.now().toString(36), t: Date.now(), kind: "rth", kn: P.kn, floor_m: P.floor_m, points: P.points,
           sections: h.sections, path: G, home: {lat: S.home.lat, lon: S.home.lon}, homeEnd: h.homeEnd,
           from: {id: P.kind === "rth" && P.from ? P.from.id : P.id, sec: h.rejoin.sec},

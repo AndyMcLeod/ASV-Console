@@ -338,7 +338,7 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
       "homeFieldTick", "supervising", "showBanner", "logClient", "doRTH", "fuelSay", "fuelFmt", "fmtDist", "FUEL_AT_HOME_M",
       "FUEL_RESERVE_FRAC", "RTH_MAX_M",
       "let fuelRth = {acted: false, alerted: false};\nlet fuelNow = null, fuelErrSaid = false;\n" + grab("fuelTick")
-      + "\n" + grab("fuelWatchAt") + "\n" + grab("fuelOutOfRangeSay") + "\n" + grab("fuelReserveOf")
+      + "\n" + grab("fuelWatchAt") + "\n" + grab("fuelOutOfRangeSay") + "\n" + grab("fuelReserveOf") + "\n" + grab("homeHowSay")
       + "\nreturn {tick: fuelTick, latch: () => ({...fuelRth}), now: () => fuelNow};");
     w.api = mk(w.S, { lat: 0.01, lon: 0 }, () => m0, F.energyLevel,
       () => ({ need: w.need, m: 5000, water: true, twKn: 8 }), () => (w.far == null ? null : { m: w.far }), F.fuelWatch,
@@ -491,7 +491,7 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
   const mk = new Function("$", "fuelModel", "setCellText", "setTip", "fuelProjection", "fuelFmt", "fuelPct", "fmtMS", "fmtDist",
     "fuelSay", "S", "RTH_MAX_M", "FUEL_RESERVE_FRAC", "N0",
     "let fuelNow = N0;\n" + grab("renderFuelRows") + "\n" + grab("fuelPillLine") + "\n" + grab("fuelOutOfRangeSay") + "\n"
-    + grab("fuelReserveOf") + "\nreturn {rows: renderFuelRows, pill: fuelPillLine};");
+    + grab("fuelReserveOf") + "\n" + grab("homeHowSay") + "\nreturn {rows: renderFuelRows, pill: fuelPillLine};");
   const run = (N) => {
     const els = {}, $ = (s) => (els[s] = els[s] || { className: "vv", text: "", tip: "" });
     const api = mk($, () => model, (e, t) => { e.text = t; }, (e, t) => { e.tip = t; }, () => null, (m, x) => x.toFixed(1) + " L",
@@ -515,6 +515,105 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
               && hit.row === "REACHED · 50.0 L · find a port" && hit.cls === "vv critical"
               && inR.label === "RTH point" && inR.row === "61.0 L · 9.0 L above" && /^\nRTH point: 61\.0 L/.test(inR.pill),
         () => JSON.stringify({ out: [out.label, out.row], hit: [hit.row, hit.cls], inR: [inR.label, inR.row], pill: out.pill.slice(0, 90) }));
+}
+
+// ── 10. HOME ALONG THE PASSAGE, NOT THE STRAIGHT LINE (2026-10-12, Andy: "fix the fuel monitor's straight-line distance
+// home") ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+// The home field covers only the chart box round her, so on a passage the monitor measured the straight line home.
+// With home at an end of the passage on the plan, the way home is the passage (her RTH goes home along it): measured as
+// she would sail it, its fuel stretch by stretch in the set. The page's own homeDistFrom / passageHome / fuelHomeNeed /
+// homeHowSay / fuelSay, the real coarse.js homeSections and fuel.js, the field stubbed.
+{
+  const C = require(path.join(APP, "static", "js", "coarse.js"));
+  const v = vessel("drix08_em712"), m = F.energyModel(v, v.propulsion.speeds_kn.high);
+  const M = 111320, HOME = { lat: 43.07, lon: -70.71 };
+  const east = (p, d) => ({ lat: p.lat, lon: p.lon + d / (M * Math.cos(p.lat * Math.PI / 180)) });
+  const north = (p, d) => ({ lat: p.lat + d / M, lon: p.lon });
+  const flatD = (a, b) => Math.hypot((b.lat - a.lat) * M, (b.lon - a.lon) * M * Math.cos((a.lat + b.lat) / 2 * Math.PI / 180));
+
+  // 10. fuel.js pathEnergy: a stretch's own direction in the set, summed - worked by hand
+  const tw = 7, set = { e: 0, n: KN };                                 // a 1 kn set to the north
+  const P0 = HOME, P1 = north(HOME, 20000);
+  const outBack = F.pathEnergy(m, [P0, P1, P0], tw, set);               // 20 km north (8 kn made good) and back (6 kn)
+  const byHand = m.rateAt(tw) * (20000 / (8 * KN) + 20000 / (6 * KN)) / 3600;
+  const one = F.pathEnergy(m, [P0, P1], tw, set), oneHome = F.homeEnergy(m, flatD(P0, P1), tw, set, { e: 0, n: 1 });
+  // and 20 km EAST at 43 N in a 1 kn set to the east: 8 kn made good - its length measured at its own latitude
+  const eastLeg = F.pathEnergy(m, [P0, east(P0, 20000)], tw, { e: KN, n: 0 });
+  const eastByHand = m.rateAt(tw) * (20000 / (8 * KN)) / 3600;
+  check("10. A WAY HOME OF STRETCHES (fuel.js pathEnergy): each at the transit speed in the set along ITS OWN direction, "
+        + "summed - 20 km north with a 1 kn set and back against it, worked by hand (where the straight line home is NO "
+        + "distance at all), and 20 km east with it astern, measured at its latitude; one straight stretch exactly "
+        + "homeEnergy's",
+        () => near(outBack, byHand, 1e-6) && near(eastLeg, eastByHand, 1e-3) && near(one, oneHome, 1e-9)
+              && F.pathEnergy(m, [P0], tw, set) === 0 && F.pathEnergy(null, [P0, P1], tw, set) === null,
+        () => outBack.toFixed(3) + " L (by hand " + byHand.toFixed(3) + "), east " + eastLeg.toFixed(4) + " (by hand "
+              + eastByHand.toFixed(4) + "), one stretch " + one.toFixed(4) + " / " + oneHome.toFixed(4));
+
+  // the page: a passage that goes round a headland - 30 km east, then north to a point 30 km east of T1 by way of a
+  // turning point 5 km further out (a dogleg its turning points must keep), then west to T1, 25 km north of home
+  const A = east(HOME, 30000), T1 = north(HOME, 25000), B = north(A, 25000), D = east(north(A, 12500), 5000);
+  const secs = [{ from: HOME, to: A, via: [east(HOME, 15000)], end: "hold", port: null, lengthM: 30000 },
+                { from: A, to: B, via: [D], end: "hold", port: null, lengthM: 26926 },
+                { from: B, to: T1, via: [], end: "port", port: 1, lengthM: 30000 }];
+  const page = (o) => {
+    const w = Object.assign({ field: null, home_source: null, passage: { sections: secs, state: "running" } }, o || {});
+    const src = [
+      "const S = {home: w.home || HOME, home_source: w.home_source, status: {env_set_deg: 0, env_set_kn: 1}};",
+      "const FR = {toEN: () => ({e: 0, n: 0})}, mission = {passage: w.passage}, nogo = {frame: FR}, homeFldBuild = null;",
+      "const homeFld = w.field ? {dist: [1], frame: FR, key: 'k', g: {cell: 5}, note: 'ready'} : {dist: null, note: 'home is off the chart that was read'};",
+      "const homeFieldKey = () => 'k', fieldDistM = () => w.field, cellOf = () => true, HOME_FIELD_REACH_M = 300;",
+      "const V = {SPEED_KN: {transit: 7, survey: 5}}, roleSpeed = () => 'transit';",
+      "const groundVel = (deg, kn) => ({e: kn * KN * Math.sin(deg * Math.PI / 180), n: kn * KN * Math.cos(deg * Math.PI / 180)});",
+      "const planeFrame = (o) => ({toEN: (p) => ({e: (p.lon - o.lon) * M * Math.cos(o.lat * Math.PI / 180), n: (p.lat - o.lat) * M})});",
+      "const fmtDist = (x) => (x / 1000).toFixed(1) + ' km', fuelFmt = (md, x) => x.toFixed(1) + ' L';",
+      ["homeDistFrom", "homeHowSay", "passageHome", "fuelHomeNeed", "fuelSay"].map(grab).join("\n"),
+      "return {homeDistFrom, fuelHomeNeed, fuelSay};"].join("\n");
+    return new Function("w", "HOME", "M", "KN", "distTo", "homeSections", "homeEnergy", "pathEnergy", "FUEL_RESERVE_FRAC", src)(
+      w, HOME, M, KN, flatD, C.homeSections, F.homeEnergy, F.pathEnergy, F.FUEL_RESERVE_FRAC);
+  };
+  // she is on the last section, 3 km short of T1 - home is where the passage left from, the long way round behind her
+  const her = east(T1, 3000);
+  const P = page(), d = P.homeDistFrom(her), straight = flatD(her, HOME);
+  const alongM = 27000 + flatD(B, D) + flatD(D, A) + 30000;   // back east to B, south by the dogleg to A, west home
+  check("10b. OFF THE FIELD, ON A PASSAGE WITH HOME AT ITS END: the distance home is the way along the passage (back to "
+        + "it, its sections home: " + (alongM / 1000).toFixed(1) + " km, its dogleg kept), BY WATER, said as 'along the passage' - not the straight "
+        + "line (" + (straight / 1000).toFixed(1) + " km), which is short wherever a headland stands between",
+        () => d && d.along === "passage" && d.water === true && Math.abs(d.m - alongM) < 250 && d.line.length >= 4
+              && flatD(d.line[0], her) < 1 && flatD(d.line[d.line.length - 1], HOME) < 1 && d.m > 2 * straight,
+        () => JSON.stringify({ m: d && Math.round(d.m), along: d && d.along, pts: d && d.line && d.line.length, straight: Math.round(straight) }));
+  const noP = page({ passage: null }).homeDistFrom(her), offP = page().homeDistFrom(north(her, 30000));
+  const roc = page({ home_source: "roc-1" }).homeDistFrom(her), neither = page({ home: north(HOME, -40000) }).homeDistFrom(her);
+  const fld = page({ field: 4321 }).homeDistFrom(her);
+  check("10c. ...and the STRAIGHT LINE only where nothing better is known, saying why: no passage; she 30 km off it; a "
+        + "ROC's home (it moves); home at neither end - each 'not along the passage on the plan' and why; and where the "
+        + "field reaches, the field's water distance still wins",
+        () => [noP, offP, roc, neither].every((x) => x && x.water === false && !x.along && Math.abs(x.m - flatD(x === offP ? north(her, 30000) : her, x === neither ? north(HOME, -40000) : HOME)) < 1)
+              && /^home is off the chart that was read$/.test(noP.why)
+              && /not along the passage on the plan: she is 30\.0 km off it/.test(offP.why)
+              && /not along the passage on the plan: home is the ROC's/.test(roc.why)
+              && /not along the passage on the plan: home is at neither end of it/.test(neither.why)
+              && fld.m === 4321 && fld.water === true && !fld.along,
+        () => JSON.stringify([noP.why, offP.why, roc.why, neither.why, fld.m]));
+  // the fuel home along it: each stretch in the set along its own direction - the north-going 25 km stretch homeward
+  // runs SOUTH against the 1 kn set from the south... (env_set_deg 0: the set runs north)
+  const need = P.fuelHomeNeed(m, her);
+  const wantNeed = F.pathEnergy(m, d.line, 7, { e: 0, n: KN });
+  const sayAlong = P.fuelSay(m, 80, 30, need), sayStraight = P.fuelSay(m, 80, 30, page({ passage: null }).fuelHomeNeed(m, her));
+  check("10d. ITS FUEL along the passage, stretch by stretch in the set (fuel.js pathEnergy over the same line) - not the "
+        + "distance at the straight line's one heading; and the sentence the alert and the card say names how home was "
+        + "measured: 'along the passage', or a STRAIGHT LINE and why",
+        () => need && need.along === "passage" && near(need.need, wantNeed, 1e-9) && need.need > 0 && need.m === d.m
+              && sayAlong.includes("home is " + (need.m / 1000).toFixed(1) + " km along the passage and takes ")
+              && /in a STRAIGHT LINE \(home is off the chart that was read\)/.test(sayStraight),
+        () => (need ? need.need.toFixed(2) : "--") + " L (pathEnergy " + wantNeed.toFixed(2) + "); " + sayAlong.slice(0, 80));
+  // ONE ANSWER for the RTH button and the monitor
+  check("10e. ONE ANSWER TO 'THE WAY HOME ALONG THE PASSAGE': the RTH button (homeRecord) and the monitor's distance "
+        + "(homeDistFrom) both ask passageHome, and every sentence that says how home was measured asks homeHowSay",
+        () => /passageHome\(\{lat: asv\.lat, lon: asv\.lon\}\)/.test(grab("homeRecord")) && /passageHome\(ll\)/.test(grab("homeDistFrom"))
+              && !/homeSections\(/.test(grab("homeRecord")) && /homeSections\(G, ll, S\.home\)/.test(grab("passageHome"))
+              && ["fuelSay", "fuelOutOfRangeSay", "renderFuelRows", "fuelPillLine"].every((f) => /homeHowSay\(/.test(grab(f)))
+              && !/" by water"/.test(["fuelSay", "fuelOutOfRangeSay", "renderFuelRows", "fuelPillLine"].map(grab).join("\n")),
+        "homeRecord / homeDistFrom / passageHome / the four sentences");
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");

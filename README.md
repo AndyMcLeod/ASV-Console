@@ -3034,6 +3034,20 @@ of the operator.
    simulator, the chart menu's **Set fuel to the RTH point** puts the tank just below it,
    to rehearse the alert and the shift home (`/api/cmd/energy {level}`, sim only).
 
+   **Home along the passage, not the straight line (2026-10-12).** The field covers only the chart
+   box round her, so on a passage, with home tens or hundreds of km off, the monitor measured the
+   straight line home: her RTH point too low wherever a headland stands between, and a full tank
+   said to reach a home it does not. Now, past the field, when a passage on the plan has home at
+   one end and she is near it, her way home is measured **along the passage**, back to it and its
+   sections home: the way her RTH goes home along it (the same answer, `passageHome`, as the RTH
+   button). Its fuel is summed stretch by stretch, each in the set along its own direction
+   (`fuel.js pathEnergy`). The rows, the pill and the alert say "along the passage". The straight
+   line is left only where nothing better is known (no passage, she far off it, a ROC's home, home
+   at neither end), and it says why. The 50 km in-range test is the straight line still: it is the
+   test the automatic RTH is refused by. Live (scratch console, DriX): from the end of section 1
+   of a passage offshore of New Castle, "home 19.99 km along the passage" against a 19.25 km
+   straight line (the harbor approach's turning points). `tests/fuel_rth.js` 10-10e.
+
    **Home out of range: an alert at 20%, nothing commanded (2026-10-11, diesel hulls only).** On a
    diesel hull the automatic RTH applies only while home is **in range**: within the 50 km the console
    will route a return, and near enough that a full tank gets her there with the 20% reserve.

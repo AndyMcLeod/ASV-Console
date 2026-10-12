@@ -36,6 +36,7 @@ import { legGroundMs } from "./targets.js";
 
 /** Knots to meters per second (targets.js's figure, restated so this module reads alone). */
 const FUEL_KN_MS = 0.514444;
+const M_PER_DEG = 111320;                // meters a degree of latitude (pathEnergy's stretches)
 
 /** What she must have left on arrival home: Andy, "projected having 20% fuel on arrival home". */
 export const FUEL_RESERVE_FRAC = 0.20;
@@ -113,6 +114,23 @@ export function homeEnergy(model, distM, twKn, drift, u) {
   if (!model || !Number.isFinite(distM)) return null;
   if (distM <= 0) return 0;
   return legEnergy(model, distM, twKn, legGroundMs(twKn * FUEL_KN_MS, drift, u || { e: 0, n: 0 }, FUEL_MIN_GROUND_MS));
+}
+
+/**
+ * The energy home along a WAY HOME of stretches, `pts` [{lat, lon}] from the point to home (2026-10-12: home along a
+ * passage, which bends round headlands for hundreds of km): each stretch at `twKn` in the set `drift` taken along ITS
+ * OWN direction - homeEnergy summed, so a way home of one straight stretch is exactly homeEnergy's. Each stretch is
+ * measured flat at its own mean latitude.
+ */
+export function pathEnergy(model, pts, twKn, drift) {
+  if (!model || !Array.isArray(pts)) return null;
+  let sum = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i], k = Math.cos((a.lat + b.lat) / 2 * Math.PI / 180);
+    const e = (b.lon - a.lon) * M_PER_DEG * k, n = (b.lat - a.lat) * M_PER_DEG, L = Math.hypot(e, n);
+    if (L > 0) sum += homeEnergy(model, L, twKn, drift, { e: e / L, n: n / L });
+  }
+  return sum;
 }
 
 /** THE RTH POINT: the level at which she must turn for home to arrive with the reserve - `need` the energy home. */

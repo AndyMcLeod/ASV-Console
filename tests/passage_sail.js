@@ -191,7 +191,7 @@ console.log("The passage, sailed:");
       ["sailRecord", "sailPortName", "sailRefusal", "sailSegM", "sectionRest", "sailOwns", "sailGuardQuiet", "sailLeftM", "sailSend",
        "sailPassage", "sailAppend", "sailAtEnd", "sailBreakOff", "passageTick", "sailRestM", "sailFuelShort", "continueRefusal",
        "continuePassage", "divertPassage", "dropPassage", "renderPassageControls", "sailLine", "sailOwnsHold", "drawSail",
-       "rthTooFar", "doRTH", "homeRecord", "sailHome"].map(grab).join("\n"),
+       "rthTooFar", "doRTH", "passageHome", "homeRecord", "sailHome"].map(grab).join("\n"),
       "const api = {sailRecord, sailRefusal, sectionRest, sailPassage, passageTick, sailAtEnd, continuePassage, continueRefusal, divertPassage,",
       "  dropPassage, renderPassageControls, sailOwnsHold, sailLine, drawSail, doRTH, homeRecord,",
       "  st: () => ({mission, runRoute, planIntent, planGen, passage, sailBusy, rthChainFailed}), set: (k, v) => { eval(k + ' = v'); }};",
