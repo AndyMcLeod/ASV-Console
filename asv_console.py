@@ -55,6 +55,7 @@ import re
 import shutil
 import socket
 import ssl
+import struct
 import subprocess
 import sys
 import threading
@@ -2986,8 +2987,9 @@ def _enc_tile_build_child(tile):
     if time.monotonic() < _enc_down_until and not os.path.exists(legacy):
         return dict(fail, note="ENC offline (no cache for this tile)")
     out = "%s.%d.%d.build" % (_tile_path(tile), os.getpid(), threading.get_ident())
+    gout = "%s.%d.%d.build" % (_grid_path(tile), os.getpid(), threading.get_ident())   # its grid (THE PASSAGE GRID)
     cmd = [sys.executable, os.path.abspath(__file__), "--enc-tile-worker", "--tile=" + ",".join(repr(float(v)) for v in tile),
-           "--enc-dir", ENC_DIR, "--out", out]
+           "--enc-dir", ENC_DIR, "--out", out, "--grid-out", gout]
     try:
         r = subprocess.run(cmd, timeout=ENC_TILE_BUILD_TIMEOUT_S, cwd=APP_DIR)
     except subprocess.TimeoutExpired:
@@ -2996,20 +2998,25 @@ def _enc_tile_build_child(tile):
         return dict(fail, note="the chart reader could not be started (%s)" % e)
     got = _read_tile_jsonl(out) if r.returncode == 0 else None
     if got is None:
-        try:
-            os.remove(out)
-        except OSError:
-            pass
+        for f in (out, gout):
+            try:
+                os.remove(f)
+            except OSError:
+                pass
         return dict(fail, note="the chart reader failed (exit %s)" % r.returncode)
     if got.pop("offline", False):
         _enc_down_until = time.monotonic() + 30.0
     try:
         if got.get("complete"):
             _replace_retrying(out, _tile_path(tile))
+            if os.path.exists(gout):
+                _replace_retrying(gout, _grid_path(tile))
             if os.path.exists(legacy):           # carried over (the worker's header): the one-JSON copy goes
                 os.remove(legacy)
         else:
-            os.remove(out)
+            for f in (out, gout):
+                if os.path.exists(f):
+                    os.remove(f)
     except OSError as e:
         print("[enc] could not keep tile %s: %s" % (_bbox_key(tile), e), file=sys.stderr)
     got.pop("n", None)
@@ -3028,6 +3035,7 @@ def _enc_tile_worker_main(argv):
     ap.add_argument("--tile", required=True)   # =W,S,E,N - a western longitude reads as an option otherwise
     ap.add_argument("--enc-dir", required=True)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--grid-out")              # the tile's planning grid, when it is read whole (THE PASSAGE GRID)
     a = ap.parse_args(argv)
     tile = [float(v) for v in a.tile.split(",")]
     ENC_DIR = a.enc_dir
@@ -3066,6 +3074,8 @@ def _enc_tile_worker_main(argv):
         got = _enc_tile_build(tile)
     got["offline"] = time.monotonic() < _enc_down_until
     _write_tile_jsonl(a.out, got)
+    if a.grid_out and got.get("complete"):
+        _write_grid(a.grid_out, got)
     return int(F.get("exit_after_write", 0)) if fake else 0
 
 
@@ -3245,11 +3255,12 @@ def corridor_start(body):
     same job: one already running is rejoined, one finished is read again - its cached tiles answer at once and the
     ones that failed are tried again."""
     route, half = _corridor_parse(body)
+    grids = bool(body.get("grids"))              # each tile's planning grid made too (THE PASSAGE GRID)
     tiles = _corridor_tiles(route, half * 1000.0)
     if len(tiles) > ENC_CORRIDOR_MAX_TILES:
         raise ValueError("that corridor reaches %d chart tiles; at most %d are read at once - read it in parts"
                          % (len(tiles), ENC_CORRIDOR_MAX_TILES))
-    jid = hashlib.sha1(json.dumps(tiles).encode("utf-8")).hexdigest()[:12]
+    jid = hashlib.sha1((json.dumps(tiles) + ("|grids" if grids else "")).encode("utf-8")).hexdigest()[:12]
     # ⚠ THE STATUS IS READ AFTER THE LOCK IS LET GO: corridor_status takes the same lock, which is not reentrant - a
     # running job rejoined from inside it hung the request for good (tests/enc_corridor.py 4 found it).
     with _corridor_lock:
@@ -3264,7 +3275,7 @@ def corridor_start(body):
             _corridor_jobs.pop(old, None)
         job = {"id": jid, "tiles": tiles, "route": route, "half_m": half * 1000.0, "total": len(tiles), "done": 0,
                "failed": [], "bands": {}, "unread": [], "unread_n": 0, "state": "running", "cancel": False,
-               "started": time.time(), "finished": None}
+               "started": time.time(), "finished": None, "grids": grids}
         _corridor_jobs[jid] = job
     threading.Thread(target=_corridor_run, args=(job,), daemon=True, name="corridor-" + jid).start()
     return corridor_status(jid)
@@ -3319,6 +3330,13 @@ def _near_route(job, r):
 def _corridor_one(job, tile):
     if job["cancel"]:
         return None
+    if job.get("grids"):
+        # A GRID'S HEADER CARRIES THE TALLY (bands, unread squares, whole or not): a passage already gridded is planned
+        # again without reading a tile's 5-32 MB into this process.
+        head, raw = fetch_enc_grid(tile)
+        if head is None:
+            return {"failed": True, "note": raw, "bands": [], "unread": [], "unread_failed": [tile]}
+        return dict(head, failed=bool(head.get("unread_failed")))
     d = fetch_enc_tile(tile)
     return dict(d, failed=bool(d.get("unread_failed")))
 
@@ -3342,10 +3360,286 @@ def corridor_status(jid):
         now = job["finished"] or time.time()
         secs = now - job["started"]
         eta = (secs / job["done"] * (job["total"] - job["done"])) if job["done"] and job["state"] == "running" else None
-        return {"id": job["id"], "state": job["state"], "total": job["total"], "done": job["done"],
-                "failed": list(job["failed"]), "bands": dict(job["bands"]), "unread": list(job["unread"]),
-                "unread_n": job["unread_n"], "half_km": job["half_m"] / 1000.0, "seconds": round(secs, 1),
-                "eta_s": round(eta, 1) if eta is not None else None}
+        st = {"id": job["id"], "state": job["state"], "total": job["total"], "done": job["done"],
+              "failed": list(job["failed"]), "bands": dict(job["bands"]), "unread": list(job["unread"]),
+              "unread_n": job["unread_n"], "half_km": job["half_m"] / 1000.0, "seconds": round(secs, 1),
+              "eta_s": round(eta, 1) if eta is not None else None}
+        if job.get("grids"):                     # the tiles whose grids the passage planner fetches (/api/enc/grid)
+            st["grids"] = True
+            st["tiles"] = [list(t) for t in job["tiles"]]
+        return st
+
+
+# --------------------------------------------------------------------------- #
+#  THE PASSAGE GRID: each tile as a plan of the water (2026-10-12)             #
+# --------------------------------------------------------------------------- #
+# Andy, 2026-10-12: "Step 4" of the long-transit plan - a passage planner, coarse over the whole passage, the console's
+# own planner only where the detail is (departure, arrival, fuel stops, narrow water). A 500 nm passage is 60-80 tiles
+# of 5-32 MB, and along this coast the HARBOR chart covers nearly all of it (measured on the cached Gulf of Maine
+# tiles: 95-100% of each tile's features) - so a coarse plan cannot be read off the coarse charts, which the layered
+# read has cut away there. It is read off the tile ITSELF, made small: a GRID of ENC_GRID_N x ENC_GRID_N cells
+# (0.25/256 deg: 108 m north-south, ~80 m east-west at 43 N), two layers, each cell the SHALLOWEST danger
+#   C  at the cell's CENTER (an area containing it), and
+#   T  TOUCHING the cell anywhere (an area, its edges, a line, a point),
+# in decimeters of water, judged the way the page's keep-out model judges (static/js/keepouts.js buildKeepouts):
+#   land, docks, bridge supports, shoreline, dock lines, lateral marks, buoys, piles  -> GRID_HARD (never water);
+#   a depth area                         -> its DEEPEST depth (DRVAL2, else DRVAL1) - shallow only when even that is
+#                                           under the floor (depthExcluded);
+#   a rock, wreck or obstruction         -> its VALSOU less WRECK_CLEAR_MARGIN (the page passes one only with a meter
+#                                           of water over it: hazPassable), GRID_HARD with no VALSOU;
+#   a cell no depth area and no land reaches  -> GRID_NODATA (a gap in the seabed: a float - skin.js);
+#   the squares no chart covers          -> GRID_UNREAD.
+# The page then needs only its floor: a cell is BLOCKED where C is under it, PARTLY where only T is, CLEAR otherwise.
+# Built in the tile's own child process (_enc_tile_worker_main: 0.4-2.2 s a tile, measured), or from a cached tile in
+# a child of its own (_enc_grid_worker_main), and kept beside it: grid_v1_<key>.bin = b"ASVG", a uint32 header length,
+# a JSON header (the tile's bands, unread squares, completeness) padded to an even length, then C and T as int16 LE.
+ENC_GRID_N = 256
+_ENC_GRID_FMT = "grid_v1_%s.bin"
+GRID_HARD, GRID_NODATA, GRID_UNREAD, GRID_NONE = -30000, -31000, -32000, 32767
+GRID_HAZ_MARGIN_M = 1.0          # keepouts.js WRECK_CLEAR_MARGIN_M
+_GRID_HARD_ROLES = ("land", "dock", "bridge", "shore_line", "dock_line", "chan_mark")
+_GRID_HAZ_ROLES = ("hazard_point", "hazard_area", "hazard_line")
+
+
+def _grid_path(tile):
+    return os.path.join(ENC_DIR, _ENC_GRID_FMT % _bbox_key(tile))
+
+
+def _grid_danger(ft):
+    """The water a feature leaves, decimeters (GRID_HARD: none at all), or None for a feature that is no danger."""
+    r, p = ft.get("role"), ft.get("props") or {}
+    if r in _GRID_HARD_ROLES:
+        return GRID_HARD
+    if r == "depth_area":
+        v = p.get("DRVAL2") if isinstance(p.get("DRVAL2"), (int, float)) else p.get("DRVAL1")
+        return max(-29000, min(32000, int(round(v * 10)))) if isinstance(v, (int, float)) and math.isfinite(v) else None
+    if r in _GRID_HAZ_ROLES:
+        v = p.get("VALSOU")
+        if isinstance(v, (int, float)) and math.isfinite(v):
+            return max(-29000, min(32000, int(round((v - GRID_HAZ_MARGIN_M) * 10))))
+        return GRID_HARD
+    return None
+
+
+def _tile_grid(got):
+    """A tile (fetch_enc_tile's dict) as its planning grid: (C, T) arrays of int16, row 0 the southern edge."""
+    from array import array
+    N = ENC_GRID_N
+    W, S, E, Nn = got["tile"]
+    dx, dy = (E - W) / N, (Nn - S) / N
+    C = array("h", [GRID_NONE]) * (N * N)
+    T = array("h", [GRID_NONE]) * (N * N)
+    wet = bytearray(N * N)                      # a depth area's interior reaches the cell's center
+
+    def mark_t(j, v):
+        if v < T[j]:
+            T[j] = v
+
+    def walk(pts, v):
+        """Every cell a polyline passes through (sampled at half a cell)."""
+        for k in range(len(pts) - 1):
+            x0, y0 = (pts[k][0] - W) / dx, (pts[k][1] - S) / dy
+            x1, y1 = (pts[k + 1][0] - W) / dx, (pts[k + 1][1] - S) / dy
+            n = int(max(abs(x1 - x0), abs(y1 - y0)) * 2) + 1
+            last = -1
+            for s in range(n + 1):
+                cx, cy = int(math.floor(x0 + (x1 - x0) * s / n)), int(math.floor(y0 + (y1 - y0) * s / n))
+                if 0 <= cx < N and 0 <= cy < N:
+                    j = cy * N + cx
+                    if j != last:
+                        if v is not None:
+                            mark_t(j, v)
+                        last = j
+
+    def fill(rings, v):
+        """Even-odd over every ring of one polygon, at the cells' centers."""
+        ys = [q[1] for ring in rings for q in ring]
+        if not ys:
+            return
+        r0 = max(0, int(math.floor((min(ys) - S) / dy - 0.5)))
+        r1 = min(N - 1, int(math.ceil((max(ys) - S) / dy - 0.5)))
+        rows = {}
+        for ring in rings:
+            for k in range(len(ring) - 1):
+                x0, y0 = ring[k][0], ring[k][1]
+                x1, y1 = ring[k + 1][0], ring[k + 1][1]
+                if y0 == y1:
+                    continue
+                if y0 > y1:
+                    x0, y0, x1, y1 = x1, y1, x0, y0
+                a = max(r0, int(math.ceil((y0 - S) / dy - 0.5)))
+                b = min(r1, int(math.ceil((y1 - S) / dy - 0.5)) - 1)
+                slope = (x1 - x0) / (y1 - y0)
+                for row in range(a, b + 1):
+                    rows.setdefault(row, []).append(x0 + (S + (row + 0.5) * dy - y0) * slope)
+        for row, xs in rows.items():
+            xs.sort()
+            base = row * N
+            for i in range(0, len(xs) - 1, 2):
+                c0 = max(0, int(math.ceil((xs[i] - W) / dx - 0.5)))
+                c1 = min(N - 1, int(math.floor((xs[i + 1] - W) / dx - 0.5)))
+                for col in range(c0, c1 + 1):
+                    j = base + col
+                    if v is None:
+                        wet[j] = 1
+                        continue
+                    if v < C[j]:
+                        C[j] = v
+                    mark_t(j, v)
+                    if v != GRID_HARD:
+                        wet[j] = 1
+
+    for ft in got.get("features") or []:
+        r = ft.get("role")
+        v = _grid_danger(ft)
+        if v is None and r != "depth_area":
+            continue
+        g = ft.get("geometry") or {}
+        ty, co = g.get("type"), g.get("coordinates")
+        if not co:
+            continue
+        if ty in ("Polygon", "MultiPolygon"):
+            for rings in ([co] if ty == "Polygon" else co):
+                fill(rings, v)
+                for ring in rings:
+                    walk(ring, v)
+        elif ty in ("LineString", "MultiLineString"):
+            for ln in ([co] if ty == "LineString" else co):
+                walk(ln, v)
+        elif ty in ("Point", "MultiPoint") and v is not None:
+            for q in ([co] if ty == "Point" else co):
+                cx, cy = int(math.floor((q[0] - W) / dx)), int(math.floor((q[1] - S) / dy))
+                if 0 <= cx < N and 0 <= cy < N:
+                    mark_t(cy * N + cx, v)
+    for j in range(N * N):                      # neither land nor a depth area: a gap in the seabed, a float
+        if C[j] == GRID_NONE and not wet[j]:
+            C[j] = GRID_NODATA
+            mark_t(j, GRID_NODATA)
+    for u in (got.get("unread") or []) + (got.get("unread_failed") or []):
+        c0, c1 = max(0, int(math.floor((u[0] - W) / dx + 1e-9))), min(N, int(math.ceil((u[2] - W) / dx - 1e-9)))
+        r0, r1 = max(0, int(math.floor((u[1] - S) / dy + 1e-9))), min(N, int(math.ceil((u[3] - S) / dy - 1e-9)))
+        for row in range(r0, r1):
+            for col in range(c0, c1):
+                C[row * N + col] = T[row * N + col] = GRID_UNREAD
+    return C, T
+
+
+def _grid_bytes(got):
+    """The grid file's bytes for a tile (the block header)."""
+    C, T = _tile_grid(got)
+    if sys.byteorder != "little":
+        C.byteswap()
+        T.byteswap()
+    head = {"v": 1, "n": ENC_GRID_N, "tile": got["tile"], "bands": got.get("bands") or [],
+            "unread": got.get("unread") or [], "unread_failed": got.get("unread_failed") or [],
+            "partial": got.get("partial") or [], "complete": bool(got.get("complete"))}
+    hb = json.dumps(head).encode("utf-8")
+    hb += b" " * (len(hb) % 2)                  # the arrays start on an even byte: an Int16Array needs it
+    return b"ASVG" + struct.pack("<I", len(hb)) + hb + C.tobytes() + T.tobytes()
+
+
+def _grid_read(path):
+    """A grid file's (header, bytes), or None when it is missing or not whole."""
+    try:
+        with open(path, "rb") as f:
+            raw = f.read()
+    except OSError:
+        return None
+    if len(raw) < 8 or raw[:4] != b"ASVG":
+        return None
+    n = struct.unpack("<I", raw[4:8])[0]
+    try:
+        head = json.loads(raw[8:8 + n].decode("utf-8"))
+    except ValueError:
+        return None
+    if not isinstance(head, dict) or len(raw) != 8 + n + 4 * ENC_GRID_N * ENC_GRID_N:
+        return None
+    return head, raw
+
+
+def _write_grid(path, got):
+    tmp = "%s.%d.%d.part" % (path, os.getpid(), threading.get_ident())
+    try:
+        with open(tmp, "wb") as f:
+            f.write(_grid_bytes(got))
+        _replace_retrying(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _enc_grid_worker_main(argv):
+    """`asv_console.py --enc-grid-worker --tile=W,S,E,N --enc-dir DIR --out PATH`: a CACHED tile's grid, made here so
+    the tile's 5-32 MB are read by this process, not the console's. Exit 4: the tile is not cached whole."""
+    global ENC_DIR
+    import argparse as _ap
+    ap = _ap.ArgumentParser()
+    ap.add_argument("--tile", required=True)
+    ap.add_argument("--enc-dir", required=True)
+    ap.add_argument("--out", required=True)
+    a = ap.parse_args(argv)
+    tile = [float(v) for v in a.tile.split(",")]
+    ENC_DIR = a.enc_dir
+    got = _read_tile_jsonl(_tile_path(tile))
+    if got is None or not got.get("complete"):
+        return 4
+    _write_grid(a.out, got)
+    return 0
+
+
+_enc_grid_locks = {}
+
+
+def fetch_enc_grid(tile):
+    """A tile's grid: (header, bytes) - or (None, note) when the tile cannot be read whole. From disk; else made from
+    the cached tile in a child; else the tile read (fetch_enc_tile, whose child makes the grid too)."""
+    key = _bbox_key(tile)
+    with _enc_tile_locks_lock:
+        lk = _enc_grid_locks.setdefault(key, threading.Lock())
+    with lk:
+        got = _grid_read(_grid_path(tile))
+        if got is not None:
+            return got
+        if _read_tile_head(_tile_path(tile)) is None:
+            d = fetch_enc_tile(tile)
+            if not d.get("complete"):
+                return None, d.get("note") or ("the tile was not read whole: " + ", ".join(d.get("partial") or [])
+                                               if d.get("partial") else "the tile was not read")
+            got = _grid_read(_grid_path(tile))
+            if got is not None:
+                return got
+        out = "%s.%d.%d.build" % (_grid_path(tile), os.getpid(), threading.get_ident())
+        cmd = [sys.executable, os.path.abspath(__file__), "--enc-grid-worker",
+               "--tile=" + ",".join(repr(float(v)) for v in tile), "--enc-dir", ENC_DIR, "--out", out]
+        try:
+            r = subprocess.run(cmd, timeout=ENC_TILE_BUILD_TIMEOUT_S, cwd=APP_DIR)
+        except (subprocess.TimeoutExpired, OSError) as e:
+            return None, "the grid for this tile could not be made (%s)" % type(e).__name__
+        got = _grid_read(out) if r.returncode == 0 else None
+        if got is None:
+            try:
+                os.remove(out)
+            except OSError:
+                pass
+            return None, "the grid for this tile could not be made (exit %s)" % r.returncode
+        try:
+            _replace_retrying(out, _grid_path(tile))
+        except OSError as e:
+            print("[enc] could not keep the grid %s: %s" % (key, e), file=sys.stderr)
+        return got
+
+
+def _read_tile_head(path):
+    """A tile file's header line (everything but the features), or None - without reading the features."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            head = json.loads(f.readline())
+    except (OSError, ValueError):
+        return None
+    return head if isinstance(head, dict) else None
 
 
 # --- CHART SOURCE (the S-57 META objects = an ENC's answer to a paper title block)
@@ -7733,6 +8027,8 @@ class Handler(BaseHTTPRequestHandler):
             self._serve_events()
         elif self.path.startswith("/tiles/"):
             self._serve_tile()
+        elif self.path.startswith("/api/enc/grid"):          # BEFORE /api/enc, which would take it
+            self._serve_grid()
         elif self.path.startswith("/api/enc/corridor"):      # BEFORE /api/enc, which would take it
             self._serve_corridor()
         elif self.path.startswith("/api/enc"):
@@ -7967,6 +8263,21 @@ class Handler(BaseHTTPRequestHandler):
         if st is None:
             return self._send(404, json.dumps({"error": "no such corridor read (usage: /api/enc/corridor?id=<job>)"}))
         self._send(200, json.dumps(st))
+
+    def _serve_grid(self):
+        # /api/enc/grid?tile=W,S,E,N -> a tile's planning grid (THE PASSAGE GRID), as made by a corridor read with
+        # `grids` - served from disk only: a grid that is not made yet is a 404, never a chart read held in a GET.
+        q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        try:
+            tile = [float(v) for v in q["tile"][0].split(",")]
+            if len(tile) != 4 or not all(math.isfinite(v) for v in tile):
+                raise ValueError("four edges")
+        except (KeyError, ValueError, IndexError):
+            return self._send(400, json.dumps({"error": "usage: /api/enc/grid?tile=W,S,E,N (one 0.25 degree chart tile)"}))
+        got = _grid_read(_grid_path(tile))
+        if got is None:
+            return self._send(404, json.dumps({"error": "no grid for that tile: read the chart along the passage first"}))
+        self._send(200, got[1], "application/octet-stream")
 
     def _serve_chartinfo(self):
         # /api/chartinfo?bbox=W,S,E,N -> ENC cells + zone-of-confidence polygons
@@ -9592,4 +9903,6 @@ if __name__ == "__main__":
     # A CHART TILE BUILT FOR THE CONSOLE in a process of its own (_enc_tile_build_child) - nothing else starts.
     if len(sys.argv) > 1 and sys.argv[1] == "--enc-tile-worker":
         sys.exit(_enc_tile_worker_main(sys.argv[2:]))
+    if len(sys.argv) > 1 and sys.argv[1] == "--enc-grid-worker":       # a cached tile's grid (THE PASSAGE GRID)
+        sys.exit(_enc_grid_worker_main(sys.argv[2:]))
     main()

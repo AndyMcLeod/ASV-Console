@@ -188,6 +188,34 @@ export function projectMission(model, legs, drift, level0, homeNeedAt) {
 }
 
 /**
+ * THE PASSAGE'S FUEL, LEG BY LEG (Andy, 2026-10-12, step 4 of the long-transit plan: "fuel stops with a per-leg check
+ * that each arrives with 20%"). `legs` [{lengthM}] - the passage cut at its fuel stops - each flown at `twKn` through
+ * still water (a passage's set is not known days ahead); the first from `level0` (her level now, or null: a full tank),
+ * each after a fuel stop from a FULL tank. Per leg:
+ *
+ *   { start, used, arrive, ok, reachM, hours, arriveFrac }
+ *
+ * `ok`: she arrives with the reserve (floor + 20% of the tank). `reachM`: how far she goes before she is down to it -
+ * where, on a leg that fails, a fuel stop has to come first. `arriveFrac` is the arrival as a fraction of the usable
+ * span (the card's percent). Null when the speed is not known.
+ */
+export function passageFuel(model, legs, twKn, level0) {
+  const ms = (twKn || 0) * FUEL_KN_MS;
+  if (!model || !(ms > 0) || !legs) return null;
+  const perM = legEnergy(model, 1, twKn, ms);
+  const reserveLevel = model.floor + model.reserve, span = model.full - model.floor;
+  return legs.map((g, i) => {
+    const start = i === 0 && Number.isFinite(level0) ? Math.min(level0, model.full) : model.full;
+    const used = perM * (g.lengthM || 0), arrive = start - used;
+    return {
+      start, used, arrive, ok: arrive >= reserveLevel,
+      reachM: start > reserveLevel ? (start - reserveLevel) / perM : 0,
+      hours: (g.lengthM || 0) / ms / 3600, arriveFrac: span > 0 ? (arrive - model.floor) / span : null,
+    };
+  });
+}
+
+/**
  * WHAT THE MONITOR DOES ON THIS FRAME, given her level, the RTH point, and the console's state. Pure; the page acts on
  * it. `o`: {level, rth, model, armed, estop, behavior, atHome, acted}. `acted` is the page's latch: the console has
  * already sent her home for this crossing, or found her already going.

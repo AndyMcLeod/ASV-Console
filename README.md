@@ -2404,6 +2404,32 @@ of the operator.
    too, and the old copy removed. A child that fails, or runs past 15 minutes, leaves the tile
    unread with the reason, as a chart that could not be read does. `tests/chart_read_stall.py`.
 
+   **Plan passage: a long passage, its fuel leg by leg (2026-10-12, diesel hulls).** The transit
+   panel's **Plan passage** plans the transit line as a passage of any length: her position (or T1
+   with no fix) is the departure, the last point the arrival, and a **click on a point** makes it a
+   **fuel stop** (an amber ring and "FUEL"; click again to undo). It reads the chart along the line
+   (as Read chart) with each tile's **planning grid** made, then plans the whole passage coarse in a
+   background worker, off the guard's thread: a route of straight runs through water that is clear
+   at this vessel's depth floor, round islands and headlands, kept off water a danger touches where
+   there is room. Then the fuel, leg by leg between fuel stops, at the transit speed in still water:
+   the first leg from what is aboard now, each leg after a fuel stop from a full tank. A leg that
+   arrives with less than **20% of the tank** says how far she gets before she is down to it, marked
+   red on the chart: put a fuel stop before there. The plan is drawn (pale dashed), with a circle
+   round each port and a yellow mark on each narrow stretch, and said on the banner and the panel.
+   **What it does not plan**: the water within 4 km of each port, and the narrow stretches, are left
+   to the console's own planner (lanes, the chart image, moored AIS) as she comes to them; the
+   coarse route runs on cells of about 100 m, so the route she sails will be a little longer. A
+   battery hull is refused ("long passages are for the diesel hulls"). Nothing moves the boat.
+   Measured: a 287 nm passage, Portsmouth to the New York approaches (39 tiles), read from NOAA in
+   8.6 minutes the first time and planned in 0.8 s. **The grid** (`asv_console.py`, "THE PASSAGE
+   GRID"): each tile becomes 256 x 256 cells, about 108 m by 80 m at 43 N. Each cell holds the
+   shallowest danger at its center and anywhere touching it, judged as the keep-out model judges: a
+   depth area by its deepest depth, a rock by its sounding less a meter, land, structures and buoys
+   always. It is built in the tile's own child process (0.4-2.2 s a tile), or from a tile already
+   read in a child of its own, and kept as `charts/enc/grid_v1_<key>.bin` beside the tile. The
+   corridor read takes `grids: true` (`POST /api/enc/corridor`), and `GET /api/enc/grid?tile=W,S,E,N`
+   serves a grid. `tests/passage_grid.py`, `tests/passage_plan.js`.
+
    The vessel-status card's **Nogo** row names which of four things is true, because they
    are not interchangeable: *reading chart… 6 s* (with the seconds climbing, so a chart
    service that has stopped answering doesn't look like a slow first fetch), *334 zones ·

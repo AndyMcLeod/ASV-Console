@@ -615,6 +615,8 @@
     <div class="phint" id="tr_hint">Click the chart to drop transit points (1+). Then Follow.</div>
     <button class="ctl small" id="tr_read" disabled title="Read the chart along the line now - every chart tile within 5 km of the boat and the line's points, at whatever scale charts it - and keep it, so the passage's chart is on hand (offline too). A route through water no chart covers is refused; this shows where that is before you plan. Moves nothing.">Read chart</button>
     <div class="phint" id="tr_read_st"></div>
+    <button class="ctl small" id="tr_plan" disabled title="Plan the line as a PASSAGE (diesel hulls): read the chart along it, plan it coarse over the whole length, and check her fuel leg by leg - each leg between fuel stops must arrive with 20% of the tank. Click a point to make it a fuel stop. The water round each port and the narrow stretches are planned in detail as she comes to them. Moves nothing.">Plan passage</button>
+    <div class="phint" id="tr_plan_st"></div>
   </div>
 
   <!-- ROC / HOME card: track each Remote Operations Center (shore or ship/Mothership)
@@ -964,8 +966,11 @@ import { V, NOGO_ENF, nogo, sea } from "/static/js/state.js";
 import { cpa as cpaOf, cpaAlong, routeTrack, legGroundMs, hullBox, KN_TO_MS } from "/static/js/targets.js";
 // THE MISSION'S FUEL, AND THE POINT SHE MUST TURN FOR HOME (2026-10-11). Pure: the burn law, the walk of the mission and
 // the monitor's decision (fuel.js), and her WATER distance home (home_field.js, built in a worker). The page acts on them.
-import { energyModel, energyLevel, homeEnergy, rthLevel, projectMission, rthDecision, fuelWatch,
+import { energyModel, energyLevel, homeEnergy, rthLevel, projectMission, rthDecision, fuelWatch, passageFuel,
          FUEL_RESERVE_FRAC, FUEL_REARM_FRAC } from "/static/js/fuel.js";
+// THE PASSAGE, PLANNED COARSE (2026-10-12): the circle round each port the console's own planner plans in detail. The
+// plan itself is made in a worker (coarse_worker.js); the page only draws and says it.
+import { PORT_R_M as PASSAGE_PORT_R_M } from "/static/js/coarse.js";
 import { homeGrid, fieldDistM, cellOf } from "/static/js/home_field.js";
 // AIS CONTACTS AS KEEP-OUTS (2026-09-25): the hull box each broadcasts (20 x 8 m assumed where it
 // broadcasts none), dead-reckoned between polls and swept over the guard's look-ahead while she is
@@ -6530,6 +6535,7 @@ function render(){
   drawPattern(toScreen);
   drawSearch(toScreen);
   drawTransit(toScreen);
+  drawPassage(toScreen);
   // the uploaded ENC-routed run path (approach from the boat + obstacle detours),
   // so the operator sees the real path the ASV will take, clear of land. Only the
   // portion STILL AHEAD of the boat is drawn (from the boat to the next unreached
@@ -10681,9 +10687,11 @@ function drawTransit(toScreen){                   // the transit DRAFT being dra
   }
   ctx.font="10px Consolas,monospace";
   transit.forEach((p,i)=>{ const s=toScreen(p.lat,p.lon);   // numbered vertices
+    if(p.fuel){                                    // a FUEL STOP (THE PASSAGE): an amber ring round the point
+      ctx.beginPath(); ctx.arc(s.x,s.y,9,0,2*Math.PI); ctx.lineWidth=2.5; ctx.strokeStyle="#ff9f40"; ctx.stroke(); }
     ctx.beginPath(); ctx.arc(s.x,s.y,5,0,2*Math.PI); ctx.fillStyle="#39c0ff"; ctx.fill();
     ctx.lineWidth=1.5; ctx.strokeStyle="#0a141c"; ctx.stroke();
-    ctx.fillStyle="#39c0ff"; ctx.fillText("T"+(i+1), s.x+7, s.y-6); });
+    ctx.fillStyle = p.fuel ? "#ff9f40" : "#39c0ff"; ctx.fillText("T"+(i+1) + (p.fuel ? " FUEL" : ""), s.x+7, s.y-6); });
   ctx.restore();
 }
 // --- the measurement overlay ---------------------------------------------- //
@@ -10759,15 +10767,22 @@ function clearMeasures(){ measures = []; measPend = null; render(); }
 function updateTransitPanel(){
   $("#tr_count").textContent = transit.length;
   const rd = $("#tr_read"), rs = $("#tr_read_st"), c = corridorRead;
-  if(rd){ rd.disabled = !transit.length || corridorBusy; rd.textContent = corridorBusy ? "Reading chart…" : "Read chart"; }
+  if(rd){ rd.disabled = !transit.length || corridorBusy || passageBusy; rd.textContent = corridorBusy ? "Reading chart…" : "Read chart"; }
+  const pb = $("#tr_plan"), ps = $("#tr_plan_st"), pwhy = passageRefusal();
+  if(pb){
+    pb.disabled = !transit.length || passageBusy || corridorBusy || !!pwhy;
+    pb.textContent = passageBusy ? "Planning passage…" : "Plan passage";
+    if(pwhy) pb.title = "Not for this vessel: " + pwhy + ".";
+  }
+  if(ps) ps.textContent = passageBusy ? passageStatus : passage ? passageLine(passage) : "";
   if(rs) rs.textContent = !c ? "" : c.state === "running"
     ? "reading chart: " + c.done + " of " + c.total + " tiles" + (c.eta_s != null ? " · ~" + fmtMS(c.eta_s) + " left" : "")
     : "chart read: " + c.total + " tiles" + (c.unread_n ? " · " + c.unread_n + " unread" : "")
       + (c.failed && c.failed.length ? " · " + c.failed.length + " NOT read" : "") + (c.state === "canceled" ? " · stopped" : "");
   $("#tr_follow").disabled = !(transit.length>=1 && S.armed && !S.estop);
   $("#tr_hint").textContent = transit.length
-    ? (S.armed ? "Follow to drive the transit (ENC-routed), or click to add more points."
-               : "ARM to Follow. Click to add more points.")
+    ? (S.armed ? "Follow to drive the transit (ENC-routed), or click to add more points. Click a point to make it a fuel stop."
+               : "ARM to Follow. Click to add more points; click a point to make it a fuel stop.")
     : "Click the chart to drop transit points (1+). Then Follow.";
 }
 // ── THE CHART ALONG A ROUTE (2026-10-11, step 3 of the long-transit plan) ──────────────────────────────────────────
@@ -10857,6 +10872,254 @@ function corridorAheadTick(s){
   corridorAhead = {at: here, route: rr};
   postCorridor({route: routeAhead(here, rr, window._wpIndex || 0, CORRIDOR_AHEAD_M), half_km: NOGO_RADIUS_M / 1000})
     .catch(() => {});                          // a read that fails is read again by the box reads themselves
+}
+// ── THE PASSAGE, PLANNED COARSE (2026-10-12, step 4 of the long-transit plan) ──────────────────────────────────────
+// Andy: "Step 4" - a passage planner for the DIESEL hulls, with FUEL STOPS and a check that every leg between them
+// arrives with 20%. The transit line is the passage: her position (or T1) the departure, the last point the arrival,
+// and any point he clicks a FUEL STOP. PLAN PASSAGE reads the chart along it with each tile's grid made (the corridor
+// read, `grids`), fetches the grids, and plans it coarse in a worker (coarse.js over asv_console.py's grids, ~100 m
+// cells) - so a passage of hundreds of miles is planned in seconds, off the guard's thread, without the 1.5 degree
+// chart box. Then the fuel, leg by leg between ports (fuel.js passageFuel): the first leg from what is aboard now, each
+// after a fuel stop from a full tank, at the transit speed in still water; a leg that arrives under the reserve says
+// how far she gets before she is down to it, marked red, for a fuel stop to go before it.
+// WHAT IS NOT PLANNED HERE, AND SAID: the water round each port (PASSAGE_PORT_R_M) and the narrow stretches (cells a
+// danger touches) are planned in detail by the console's own planner as she approaches them, against the guard's own
+// chart - lanes, the chart image and moored AIS included. Nothing here moves the boat: the plan is drawn and said.
+const PASSAGE_HALF_KM = 5;                     // the corridor read either side of the line, as Read chart
+const PASSAGE_GRID_FETCHES = 6;                // grids fetched at once
+let passage = null;                            // the last plan (drawn and summarized); an edit of the line drops it
+let passageBusy = false, passageStatus = "";
+let passageWorker = null, passageSeq = 0;
+let transitGen = 0;                            // bumped by every edit of the line
+/** An edit of the transit line: any passage planned from the line before is no longer the line's. */
+function transitEdited(){ transitGen++; passage = null; }
+/** The transit point within a few pixels of a world-pixel point, or -1. */
+function transitPointAt(wx, wy){
+  for(let i = transit.length - 1; i >= 0; i--){
+    const s = worldPx(transit[i].lat, transit[i].lon, zoom);
+    if(Math.hypot(s.x - wx, s.y - wy) < 9) return i;
+  }
+  return -1;
+}
+/** A click ON a transit point makes it a FUEL STOP, or makes it one no longer (Andy: ports are his click - the chart
+ *  does not carry fuel docks reliably). The last point is the arrival, a port already. */
+function toggleFuelStop(i){
+  if(i === transit.length - 1){ flashNote("T" + (i + 1) + " is the arrival - the passage ends in port there already."); return; }
+  transit[i].fuel = !transit[i].fuel;
+  transitEdited();
+  flashNote(transit[i].fuel ? "T" + (i + 1) + " is a FUEL STOP: the passage's fuel is checked to there, and from a full tank after it."
+                            : "T" + (i + 1) + " is no longer a fuel stop.");
+}
+/** Why this vessel cannot plan a passage, or null. Diesel hulls only (Andy, 2026-10-11: "Long range missions are not
+ *  to be undertaken by the battery powered units. Consider this only for the diesel powered ASV"). */
+function passageRefusal(){
+  const m = fuelModel();
+  if(!m) return "this vessel's file carries no fuel model to check a passage's fuel by";
+  if(m.kind !== "fuel") return "long passages are for the diesel hulls - this one runs on a battery";
+  if(!(V.SPEED_KN[roleSpeed("transit")] > 0)) return "no transit speed is set";
+  return null;
+}
+/** The passage's points: her position (the departure) when she has a fix, else T1; the drawn points; the last the
+ *  arrival. `port` marks the departure, the fuel stops and the arrival. `t` is the point's number (0: her position). */
+function passagePoints(){
+  const pts = transit.map((p, i) => ({lat: p.lat, lon: p.lon, port: !!p.fuel || i === transit.length - 1, t: i + 1}));
+  if(asv) pts.unshift({lat: asv.lat, lon: asv.lon, port: true, t: 0});
+  else if(pts.length) pts[0].port = true;
+  return pts;
+}
+function passageName(p){ return p && p.t ? "T" + p.t : "her position"; }
+/** The passage cut at its ports into FUEL LEGS: [{from, to, lengthM, legs: [the coarse legs' indexes], whole}].
+ *  `whole` false: part of it could not be planned, so its length - and its fuel - is not known. */
+function passageFuelLegs(points, legs){
+  const out = [];
+  let cur = null;
+  legs.forEach((g, k) => {
+    if(!cur) cur = {from: points[k], lengthM: 0, legs: [], whole: true};
+    cur.lengthM += g.lengthM || 0;
+    cur.legs.push(k);
+    if(g.error) cur.whole = false;
+    if(points[k + 1] && points[k + 1].port){ cur.to = points[k + 1]; out.push(cur); cur = null; }
+  });
+  if(cur){ cur.to = points[points.length - 1]; out.push(cur); }
+  return out;
+}
+/** The point `m` meters into a fuel leg, along its coarse legs' routes (each leg's own length shares out its line). */
+function passageAlong(plan, fl, m){
+  let left = m;
+  for(const k of fl.legs){
+    const g = plan.legs[k];
+    if(!g || !g.pts || g.pts.length < 2) continue;
+    if(left > g.lengthM){ left -= g.lengthM; continue; }
+    let L = 0; const seg = [];
+    for(let q = 1; q < g.pts.length; q++){ const d = distTo(g.pts[q - 1], g.pts[q]); seg.push(d); L += d; }
+    let want = L > 0 ? left * L / g.lengthM : 0;
+    for(let q = 1; q < g.pts.length; q++){
+      if(want <= seg[q - 1] && seg[q - 1] > 0){
+        const t = want / seg[q - 1], a = g.pts[q - 1], b = g.pts[q];
+        return {lat: a.lat + (b.lat - a.lat) * t, lon: a.lon + (b.lon - a.lon) * t};
+      }
+      want -= seg[q - 1];
+    }
+    return g.pts[g.pts.length - 1];
+  }
+  return null;
+}
+const PASSAGE_LEG_WHY = {
+  unread: "the chart is not read there - a tile that could not be read, or water no chart covers",
+  blocked: "no water way within the chart read along the line - add a point to lead round what is in the way",
+  too_long: "too long to search as one leg - add points along it",
+};
+/** The plan in words: the whole, the fuel leg by leg against the 20% reserve, what could not be planned, and what is
+ *  planned in detail as she approaches it. */
+function passageSummary(plan){
+  const m = plan.model, f = (x) => fuelFmt(m, x), pct = (x) => fuelPct(m, x) + "%";
+  const ok = plan.legs.filter(g => !g.error), bad = plan.legs.filter(g => g.error);
+  const stops = plan.points.filter((p, i) => p.port && i > 0 && i < plan.points.length - 1).map(passageName);
+  const hours = plan.fuel ? plan.fuel.reduce((s, x) => s + (x ? x.hours : 0), 0) : 0;
+  const Cap = (p) => { const n = passageName(p); return n.charAt(0).toUpperCase() + n.slice(1); };
+  let t = (bad.length ? "PASSAGE PLANNED IN PART, COARSE: " + fmtDist(plan.lengthM) + " of it" : "PASSAGE PLANNED, COARSE: "
+    + fmtDist(plan.lengthM)) + " from " + passageName(plan.points[0]) + " to " + passageName(plan.points[plan.points.length - 1])
+    + " at " + plan.twKn + " kn" + (bad.length ? "" : ", " + fmtDur(hours * 3600) + " under way")
+    + (stops.length ? ", through fuel stop" + (stops.length > 1 ? "s " : " ") + stops.join(", ") : "") + ". ";
+  (plan.fuelLegs || []).forEach((fl, k) => {
+    const x = plan.fuel && plan.fuel[k];
+    if(!fl.whole){ t += Cap(fl.from) + " to " + passageName(fl.to) + ": its fuel is NOT checked - part of it could not be planned. "; return; }
+    if(!x) return;
+    t += Cap(fl.from) + " to " + passageName(fl.to) + ": " + fmtDist(fl.lengthM) + ", " + fmtDur(x.hours * 3600)
+      + ", from " + (k === 0 && plan.level0 != null ? f(x.start) + " aboard now" : "a full tank (" + f(x.start) + ")")
+      + ", arrives with " + f(x.arrive) + " (" + pct(x.arrive) + ")"
+      + (x.ok ? "" : " - BELOW THE " + Math.round(FUEL_RESERVE_FRAC * 100) + "% RESERVE: she is down to it " + fmtDist(x.reachM)
+        + " along (marked red); make a point before there a fuel stop") + ". ";
+  });
+  for(const g of bad)
+    t += Cap(plan.points[g.i]) + " to " + passageName(plan.points[g.i + 1]) + " could NOT be planned: "
+      + (PASSAGE_LEG_WHY[g.error] || g.error) + ". ";
+  const narrow = ok.reduce((s, g) => s + g.narrow.length, 0), narrowM = ok.reduce((s, g) => s + g.narrow.reduce((q, n) => q + n.lenM, 0), 0);
+  t += "Planned in detail as she comes to them, by the console's own planner against the guard's chart: the water within "
+    + fmtDist(PASSAGE_PORT_R_M) + " of " + plan.points.filter(p => p.port).map(passageName).join(", ")
+    + (narrow ? ", and " + narrow + " narrow stretch" + (narrow > 1 ? "es" : "") + " (" + fmtDist(narrowM) + " in all, yellow)" : "") + ". ";
+  if(plan.missing || plan.failedTiles)
+    t += (plan.failedTiles || plan.missing) + " chart tile(s) could not be read - that water counts as unread. ";
+  t += "The coarse route runs on ~100 m cells; the route she sails will be a little longer.";
+  return t;
+}
+/** The panel's one line for a plan. */
+function passageLine(plan){
+  const bad = plan.legs.filter(g => g.error).length, short = (plan.fuel || []).filter(x => x && !x.ok).length;
+  const unchecked = (plan.fuelLegs || []).filter(fl => !fl.whole).length;
+  return "passage: " + fmtDist(plan.lengthM) + (bad ? " planned" : "") + " · " + (plan.fuelLegs || []).length + " fuel leg(s)"
+    + (bad ? " · " + bad + " leg(s) NOT planned" : "") + (short ? " · " + short + " short of the 20% reserve" : "")
+    + (unchecked ? " · " + unchecked + " fuel leg(s) NOT checked" : short ? "" : " · all arrive above 20%");
+}
+/** The plan, in the worker (coarse_worker.js): {legs, lengthM, ports, ms} or {error}. The grids are transferred. */
+function passageInWorker(msg){
+  return new Promise((resolve) => {
+    try{
+      if(!passageWorker) passageWorker = new Worker("/static/js/coarse_worker.js", {type: "module"});
+    }catch(e){ resolve({error: "no worker to plan the passage in (" + e + ")"}); return; }
+    const id = ++passageSeq, w = passageWorker;
+    const done = (r) => { w.onmessage = null; w.onerror = null; resolve(r); };
+    w.onmessage = (ev) => { const d = (ev && ev.data) || {}; if(d.id === id) done(d); };
+    w.onerror = (e) => { passageWorker = null; done({error: "the passage's worker failed: " + ((e && e.message) || "error")}); };
+    w.postMessage({id, ...msg}, msg.grids);
+  });
+}
+async function passageGrids(tiles){
+  const grids = [];
+  let missing = 0;
+  for(let k = 0; k < tiles.length; k += PASSAGE_GRID_FETCHES){
+    const got = await Promise.all(tiles.slice(k, k + PASSAGE_GRID_FETCHES).map(t =>
+      fetch("/api/enc/grid?tile=" + t.join(",")).then(r => r.ok ? r.arrayBuffer() : null).catch(() => null)));
+    for(const b of got){ if(b) grids.push(b); else missing++; }
+  }
+  return {grids, missing};
+}
+/** PLAN PASSAGE: the chart along the line with its grids, the coarse plan in the worker, the fuel leg by leg. */
+async function planPassageNow(){
+  if(passageBusy) return;
+  const why = passageRefusal();
+  if(why){ showBanner("Passage NOT planned: " + why + "."); return; }
+  if(!transit.length){ flashNote("Draw the passage as a transit line first - the last point is the arrival. Then Plan passage."); return; }
+  const points = passagePoints();
+  if(points.length < 2){ flashNote("A passage needs somewhere to go: add a point, or wait for her position."); return; }
+  const model = fuelModel(), twKn = V.SPEED_KN[roleSpeed("transit")], floorM = nogoDR().min, gen = transitGen;
+  passageBusy = true; passage = null; passageStatus = "reading the chart along the passage…";
+  updateTransitPanel(); render();
+  try{
+    let st = await postCorridor({route: points.map(p => ({lat: p.lat, lon: p.lon})), half_km: PASSAGE_HALF_KM, grids: true});
+    if(!st || st.error){ showBanner("Passage NOT planned: " + corridorSummary(st)); return; }
+    logClient("passage_plan", {state: "reading", id: st.id, tiles: st.total, points: points.length});
+    while(st && !st.error && st.state === "running"){
+      passageStatus = "reading chart: " + st.done + " of " + st.total + " tiles" + (st.eta_s != null ? " · ~" + fmtMS(st.eta_s) + " left" : "");
+      corridorRead = toCorridor(st); updateTransitPanel(); render();
+      await new Promise(r => setTimeout(r, CORRIDOR_POLL_MS));
+      st = await getCorridor(st.id);
+    }
+    if(!st || st.error || st.state !== "done"){
+      showBanner("Passage NOT planned: the chart read along it " + (st && st.state === "canceled" ? "was stopped" : "failed: " + ((st && st.error) || "no answer")) + ".");
+      return;
+    }
+    corridorRead = toCorridor(st);
+    passageStatus = "planning the passage…"; updateTransitPanel();
+    const g = await passageGrids(st.tiles || []);
+    const res = await passageInWorker({grids: g.grids, floorDm: Math.round(floorM * 10), points});
+    if(gen !== transitGen){ showBanner("Passage NOT planned: the line was edited while it was being planned - plan it again."); return; }
+    if(res.error){ showBanner("Passage NOT planned: " + res.error + "."); return; }
+    const fuelLegs = passageFuelLegs(points, res.legs);
+    const level0 = asv ? energyLevel(model, S && S.status) : null;
+    // a fuel leg part of which could not be planned has no length to judge its fuel by: not checked, and said so
+    const fuel = (passageFuel(model, fuelLegs, twKn, level0) || []).map((x, k) => fuelLegs[k].whole ? x : null);
+    const plan = {points, legs: res.legs, lengthM: res.lengthM, fuelLegs, model, twKn, floorM, level0, fuel,
+                  tiles: (st.tiles || []).length, missing: g.missing, failedTiles: (st.failed || []).length, ms: res.ms,
+                  at: Date.now(), gen};
+    plan.reserveAt = fuel.map((x, k) => !x || x.ok ? null : passageAlong(plan, fuelLegs[k], x.reachM));
+    passage = plan;
+    showBanner(passageSummary(plan));
+    logClient("passage_plan", {state: "planned", id: st.id, nm: +(plan.lengthM / 1852).toFixed(1), kn: twKn, floor_m: floorM,
+      points: points.map(p => [+p.lat.toFixed(5), +p.lon.toFixed(5), p.port ? 1 : 0]),
+      legs: res.legs.length, not_planned: res.legs.filter(x => x.error).map(x => ({i: x.i, why: x.error})),
+      fuel: fuel.map((x, k) => ({from: passageName(fuelLegs[k].from), to: passageName(fuelLegs[k].to),
+        nm: +(fuelLegs[k].lengthM / 1852).toFixed(1), arrive: x ? +x.arrive.toFixed(1) : null, ok: x ? x.ok : null})),
+      narrow: res.legs.reduce((s, x) => s + (x.narrow ? x.narrow.length : 0), 0), tiles: plan.tiles, ms: res.ms});
+  }catch(e){ showBanner("Passage NOT planned: " + ((e && e.message) || e) + "."); }
+  finally{ passageBusy = false; passageStatus = ""; updateTransitPanel(); render(); }
+}
+/** The plan on the chart: the coarse route (pale, dashed), its narrow stretches (yellow), the circle round each port
+ *  the console plans in detail, a leg that could not be planned (red, straight), and the reserve marks (red). */
+function drawPassage(toScreen){
+  const P = passage;
+  if(!P) return;
+  ctx.save();
+  for(const g of P.legs){
+    if(g.error){
+      const a = toScreen(g.from.lat, g.from.lon), b = toScreen(g.to.lat, g.to.lon);
+      ctx.setLineDash([3, 4]); ctx.strokeStyle = "rgba(255,80,80,0.9)"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); ctx.setLineDash([]);
+      continue;
+    }
+    ctx.setLineDash([8, 5]); ctx.strokeStyle = "rgba(190,230,255,0.95)"; ctx.lineWidth = 2;
+    ctx.beginPath(); g.pts.forEach((p, i) => { const s = toScreen(p.lat, p.lon); i ? ctx.lineTo(s.x, s.y) : ctx.moveTo(s.x, s.y); });
+    ctx.stroke(); ctx.setLineDash([]);
+    for(const n of g.narrow){                 // a narrow stretch: a short thick mark at its middle, its length long
+      const s = toScreen(n.at.lat, n.at.lon);
+      ctx.beginPath(); ctx.arc(s.x, s.y, 5, 0, 2 * Math.PI); ctx.fillStyle = "#ffd84d"; ctx.fill();
+      ctx.lineWidth = 1.2; ctx.strokeStyle = "#0a141c"; ctx.stroke();
+    }
+  }
+  for(const p of P.points.filter(q => q.port)){
+    const s = toScreen(p.lat, p.lon), n = toScreen(p.lat + PASSAGE_PORT_R_M / M_PER_DEG_LAT, p.lon);
+    ctx.setLineDash([4, 4]); ctx.strokeStyle = "rgba(190,230,255,0.6)"; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.arc(s.x, s.y, Math.abs(s.y - n.y), 0, 2 * Math.PI); ctx.stroke(); ctx.setLineDash([]);
+  }
+  ctx.font = "bold 11px Consolas,monospace";
+  (P.reserveAt || []).forEach((at) => {
+    if(!at) return;
+    const s = toScreen(at.lat, at.lon);
+    ctx.beginPath(); ctx.arc(s.x, s.y, 6, 0, 2 * Math.PI); ctx.fillStyle = "#ff4d4d"; ctx.fill();
+    ctx.lineWidth = 1.5; ctx.strokeStyle = "#0a141c"; ctx.stroke();
+    ctx.fillStyle = "#ff4d4d"; ctx.fillText(Math.round(FUEL_RESERVE_FRAC * 100) + "%", s.x + 8, s.y + 4);
+  });
+  ctx.restore();
 }
 async function doTransit(){
   if(transit.length<1){ flashNote("Draw a transit line first (click the chart)."); return; }
@@ -13561,8 +13824,10 @@ window.addEventListener("mouseup", e=>{
     if(kind){ rocPost({op:"add", kind, lat:ll.lat, lon:ll.lon}); }
     const p=$("#rocPanel");                      // make sure the card is up to edit + confirm it
     if(p && p.style.display==="none"){ showPanel(p, true); $("#rocBtn").classList.add("on"); }
-  } else if(mode === "transit"){                 // click drops a transit vertex
-    transit.push({lat:ll.lat, lon:ll.lon});
+  } else if(mode === "transit"){                 // click drops a transit vertex - or, ON one, makes it a fuel stop
+    const hit = transitPointAt(o.x + (e.clientX - r.left), o.y + (e.clientY - r.top));
+    if(hit >= 0) toggleFuelStop(hit);
+    else { transit.push({lat:ll.lat, lon:ll.lon}); transitEdited(); }
     updateTransitPanel(); render();
   // (the "goto" and "spawn" MODES are gone with their toolbar buttons — the right-click
   //  menu carries the point, so there was nothing left to arm and no way to reach them.)
@@ -14000,8 +14265,9 @@ $("#sr_reset").onclick = resetSearch;
 $("#tranBtn").onclick = ()=>setMode("transit");
 $("#tr_follow").onclick = doTransit;
 $("#tr_read").onclick = () => readCorridor();
-$("#tr_undo").onclick = ()=>{ transit.pop(); updateTransitPanel(); render(); };
-$("#tr_clr").onclick = ()=>{ transit=[]; updateTransitPanel(); render(); };
+$("#tr_undo").onclick = ()=>{ transit.pop(); transitEdited(); updateTransitPanel(); render(); };
+$("#tr_clr").onclick = ()=>{ transit=[]; transitEdited(); updateTransitPanel(); render(); };
+$("#tr_plan").onclick = () => planPassageNow();
 $("#areaBtn").onclick = ()=>setBoundaryShow(!boundaryShow);
 $("#bnd_close").onclick = closeBoundary;
 $("#bnd_clr").onclick = clearBoundary;
