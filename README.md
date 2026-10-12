@@ -2490,6 +2490,22 @@ of the operator.
    were sent as RTHs (the console: behavior rth, a 295 m hold disc). A reload kept the way home.
    `tests/passage_sail.js` 12-14e, `tests/water_along.py`, `tests/mission_store.py` 17e-17f.
 
+   **A section's chart image, read where it can find something (2026-10-12).** Every passage
+   section raised "CHART IMAGE NOT COMPARED - the area is too large to read the chart image ...
+   command it again once the chart has drawn in": a 20 km section's one box is past the image
+   read's 256-tile budget at any useful zoom, so nothing was compared, and commanding again would
+   ask for the same box. A section is now read as an Upload reads its transits, leg by leg in boxes
+   that fit, and **only the boxes where the read can keep anything**. The read keeps a mark only
+   when it is attached to charted land, a shoreline or a dock (one end within the larger of 6 m
+   and the mark's own length), and no mark is longer than the box it is read in. So a box with
+   none of those within its own diagonal of it cannot add to the keep-out model, and is not read.
+   Open water raises no warning; the water near a shore is read at the detail each box allows. A
+   refusal for a box too large to read no longer says "command it again" (for any command), and
+   a section the console sent itself is never told to. Live (scratch console, DriX): leaving New
+   Castle, section 1 was read in 3 of its 5 stretches (156-207 tiles at z17; 4 small uncharted
+   marks found and kept), the 2 offshore not read; the 20 km section home offshore: 4 stretches, all
+   open water, nothing read, no warning. `tests/ink_reads.js` 9-13, `tests/chart_ink.js` 14g, 22f.
+
    **Every layer read, and what each charted thing means to each hull (2026-10-12).** A review of
    how the console reads the chart and what its keep-out model makes of it found charted things that
    reached the model as nothing - each measured on the cached Portsmouth tiles with the code as it

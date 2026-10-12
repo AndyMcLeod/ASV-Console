@@ -1028,7 +1028,7 @@ import { normalizeSurveys, surveyPoints, pathThroughSurveys,
          runBackwards, surveyStartIdx, waypointsFrom, addCoverage, coveredM, splitAtHold, svOf } from "/static/js/surveys.js";
 // EVERY CHART READ OF THE EXTRACT, KEPT AND MERGED (2026-10-02): what is already read, the reads as one set of
 // structures, and a plan too big for one read cut into boxes that are not. See the module header.
-import { INK_READS_MAX, boxAround, coveringRead, mergeReads, pathBoxes } from "/static/js/inkreads.js";
+import { INK_PATH_MAX_BOXES, INK_READS_MAX, boxAround, coveringRead, mergeReads, pathBoxes } from "/static/js/inkreads.js";
 "use strict";
 const $ = s => document.querySelector(s);
 
@@ -11285,12 +11285,14 @@ async function sailSend(P, k, from, bo, append){
   const c = P.sections[k], home = P.kind === "rth";
   const pts = bo ? [bo.at, ...sectionRest(c, bo.at), c.to] : [...c.via, c.to];
   const wasGen = planGen, rrWas = runRoute;
-  await ensureNogoCovers([from, ...pts]);
+  // ITS CHART IMAGE READ ALONG IT, where the read can find something (`route`: readRouteInk) - its one box is past the
+  // read's budget, and the console, not the operator, sends it - and so is any wider read the planning makes.
+  await ensureNogoCovers([from, ...pts], null, {route: true});
   // AT THE WATER IT WILL HAVE (step 6): the lowest predicted along it while she sails it - not the boat's level now,
   // which the guard's own chart keeps (sectionWater, atWaterLevel).
   const lv = await sectionWater(P, from, pts, append);
   let ht = null;
-  const plan = await planInsideChart([from, ...pts], undefined, () => atWaterLevel(lv.m, () => {
+  const plan = await planInsideChart([from, ...pts], {route: true}, () => atWaterLevel(lv.m, () => {
     ht = holdTarget(c.to, holdOpts());
     if(ht.error) return null;
     return routePlan(from, [...pts.slice(0, -1), ht.to], true, transitStandoffM());
@@ -12836,6 +12838,9 @@ const INK_PAINT_REACH_PX = 16;
 const inkYield = () => new Promise(r => setTimeout(r, 0));
 /** How long the painting runs before it gives the page a turn. */
 const INK_SLICE_MS = 40;
+/** The charted STRUCTURES a mark read off the chart must be attached to, to be kept: scanChartInk's attachment pool, and
+ *  what inkCanFind looks for near a box. */
+const INK_STRUCT_ROLES = new Set(["dock", "dock_line", "land", "shore_line"]);
 /** A feature's lat/lon box, walked once per feature object: a new extract is new objects, so it cannot go stale. */
 const featLLBoxes = new WeakMap();
 /** A coarser chart's piece, ring or line `cs`, in the runs that are NOT its cut: a segment lying along an edge of its
@@ -12942,13 +12947,13 @@ function inkTileGrid(bb){
     if(nx * ny <= CHART_INK_MAX_TILES) return {z, x0, y0, nx, ny};
     if(z <= CHART_INK_MIN_Z)
       return {refused:"the area is too large to read the chart image at a useful scale ("
-                      + (nx*ny) + " tiles at z" + z + ")", z, nx, ny};
+                      + (nx*ny) + " tiles at z" + z + ")", size: true, z, nx, ny};
   }
 }
 async function scanChartInk(bb){
   if(!bb || !nogo.features || !nogo.features.length) return null;
   const grid = inkTileGrid(bb);
-  if(grid.refused) return {refused: grid.refused};
+  if(grid.refused) return {refused: grid.refused, size: true};
   const {z, x0, y0, nx, ny} = grid;
   const W = nx * TILE, H = ny * TILE, t0 = Date.now();
   const cv = document.createElement("canvas"); cv.width = W; cv.height = H;
@@ -12983,7 +12988,7 @@ async function scanChartInk(bb){
   // is the commonest unexplained mark on any chart. The disc has to cover the text.
   const paintPt = (c)=>{ const q=toPx(c[1],c[0]); mc.beginPath();
     mc.arc(q.x, q.y, 14, 0, Math.PI*2); mc.fill(); };
-  const STRUCT_ROLES = new Set(["dock", "dock_line", "land", "shore_line"]);
+  const STRUCT_ROLES = INK_STRUCT_ROLES;
   const segs = [];
   const addSegs = (cs)=>{ for(let i=1;i<cs.length;i++)
     segs.push({a:toPx(cs[i-1][1], cs[i-1][0]), b:toPx(cs[i][1], cs[i][0])}); };
@@ -13080,7 +13085,7 @@ function inkNote(m, last){
         + "nothing charted and are NOT enforced - look at them" : "")
     + (refused ? "; ⚠ the last water asked for was NOT read (" + refused + ") and is checked against the ENC only" : "");
 }
-async function ensureChartInk(bb){
+async function ensureChartInk(bb, opts){
   if(!bb || !nogo.ready || chartInk.busy) return chartInk;
   const key = [bb.W,bb.S,bb.E,bb.N].map(v=>v.toFixed(5)).join(",") + "|" + (nogo.band||"");
   // ALREADY READ HERE, at the detail this water would be read at (or detail enough - INK_GOOD_Z): nothing to do. A box
@@ -13099,11 +13104,14 @@ async function ensureChartInk(bb){
       // they were a moment ago, so they stay, and the readout says this water was not read (inkRefused).
       inkRefused = {bb, why: (r && r.refused) || "no chart to read"};
       refoldInk(); rebuildNogo(); updateNogoUI();
+      // ⚠ THE ADVICE FITS THE REFUSAL (2026-10-12). A box too LARGE to read is as large when it is commanded again, and a
+      // route the console sends itself (`again: false` - a passage's section) is not commanded at all: only tiles still
+      // arriving are helped by a second try.
       if(r && r.refused) showBanner("⚠ CHART IMAGE NOT COMPARED — " + r.refused + ". "
         + (chartReads.length ? "The structures already read over other water are kept; this water is checked against "
                                + "the ENC only"
                              : "The plan is checked against the ENC only")
-        + "; command it again once the chart has drawn in.");
+        + (r.size || (opts && opts.again === false) ? "." : "; command it again once the chart has drawn in."));
       return chartInk;
     }
     chartReads.push({key, bb, z: r.z, ms: r.ms, got: r.got, tiles: r.tiles, seq: ++chartReadSeq,
@@ -13176,7 +13184,66 @@ const INK_SURVEY_PAD_M = 100;
  *   * then EACH SURVEY'S OWN WATER at its own detail (surveyPoints), unless a read already holds it finely enough -
  *     which the punch's own read usually does, so in the common case nothing more is read than before.
  */
+// ── A ROUTE'S CHART IMAGE, WHERE THE READ CAN FIND SOMETHING (2026-10-12) ───────────────────────────────────────
+// Andy: "fix the chart image warning on long sections". A passage's section is ~20 km, and its one box is past the
+// read's budget at any useful zoom: every section raised "CHART IMAGE NOT COMPARED - the area is too large ... command
+// it again once the chart has drawn in", nothing was compared, and commanding again asks for the same box. A ROUTE
+// (`opts.route`: a passage's section, sent by the console itself) is read as an Upload reads its transits - leg by leg,
+// in boxes that can each be read (pathBoxes) - and only where the read can find something. The read keeps a mark only
+// ATTACHED to a charted structure: one end within the larger of ATTACH_M and the mark's own length (chartink.js
+// classify; a footprint on the same rule), its chain grown only from marks so kept - and no mark is longer than the
+// box it is read in. So a box with no charted land, shoreline or dock within its own diagonal (plus ATTACH_M) can add
+// NOTHING to the keep-out model: open water is not read; water near a shore is, at the detail the box allows.
+/** Does the segment a-b ([lon, lat]) meet the box B? (Liang-Barsky) */
+function segMeetsBox(a, b, B){
+  let t0 = 0, t1 = 1;
+  const dx = b[0] - a[0], dy = b[1] - a[1];
+  for(const [p, q] of [[-dx, a[0] - B.W], [dx, B.E - a[0]], [-dy, a[1] - B.S], [dy, B.N - a[1]]]){
+    if(p === 0){ if(q < 0) return false; continue; }
+    const t = q / p;
+    if(p < 0){ if(t > t1) return false; if(t > t0) t0 = t; }
+    else { if(t < t0) return false; if(t < t1) t1 = t; }
+  }
+  return true;
+}
+/** Can a read of the chart image over `bb` keep anything? Is a segment of a charted structure (INK_STRUCT_ROLES, its cut
+ *  left out as scanChartInk leaves it) within the box's own diagonal, plus ATTACH_M, of the box? */
+function inkCanFind(bb){
+  const k = Math.cos((bb.S + bb.N) / 2 * Math.PI / 180);
+  const r = Math.hypot((bb.N - bb.S) * M_PER_DEG_LAT, (bb.E - bb.W) * M_PER_DEG_LAT * k) + INK_ATTACH_M;
+  const dLat = r / M_PER_DEG_LAT, dLon = r / (M_PER_DEG_LAT * k);
+  const E = {W: bb.W - dLon, S: bb.S - dLat, E: bb.E + dLon, N: bb.N + dLat};
+  for(const f of nogo.features || []){
+    if(!INK_STRUCT_ROLES.has(f.role)) continue;
+    const fb = featureLLBox(f);
+    if(fb.E < E.W || fb.W > E.E || fb.N < E.S || fb.S > E.N) continue;
+    let hit = false;
+    const test = (cs) => {
+      for(const u of (f.clip ? uncutRuns(cs, f.clip) : [cs]))
+        for(let i = 1; i < u.length && !hit; i++) if(segMeetsBox(u[i - 1], u[i], E)) hit = true;
+    };
+    eachPath(f.geometry, test); eachRing(f.geometry, test);
+    if(hit) return true;
+  }
+  return false;
+}
+/** A ROUTE's chart image (opts.route): its one box when that can be read, else leg by leg in boxes that can (pathBoxes,
+ *  uncapped) - of those, only the ones inkCanFind, at most INK_PATH_MAX_BOXES, and what that leaves unread said. A box
+ *  refused while its tiles arrive says so without "command it again": nothing commanded it. {read, open, left}. */
+async function readRouteInk(b, pad, pts){
+  const all = inkTileGrid(b).refused ? pathBoxes(pts, pad, bb => !inkTileGrid(bb).refused, Infinity).boxes : [b];
+  const want = all.filter(inkCanFind);
+  const take = want.slice(0, INK_PATH_MAX_BOXES), left = want.length - take.length;
+  for(const bb of take) await ensureChartInk(bb, {again: false});
+  if(left)
+    showBanner("⚠ CHART IMAGE NOT COMPARED over the whole route — " + want.length + " stretches of it lie near charted "
+      + "land or a dock, and the last " + left + " past the " + INK_PATH_MAX_BOXES + " a route reads are checked against "
+      + "the ENC only. Verify that water visually.");
+  logClient("route_ink", {boxes: all.length, read: take.length, open: all.length - want.length, left});
+  return {read: take.length, open: all.length - want.length, left};
+}
 async function readPlanInk(b, pad, pts, opts){
+  if(opts && opts.route){ await readRouteInk(b, pad, pts); return; }
   if(!(opts && opts.plan)){ await ensureChartInk(b); return; }
   const wps = pts.slice(1);
   if(inkTileGrid(b).refused){

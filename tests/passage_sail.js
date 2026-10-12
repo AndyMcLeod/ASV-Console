@@ -650,7 +650,9 @@ console.log("The passage, sailed:");
     plannedAt: W14.levels.length === 1 && W14.levels[0] === 0.35,
     kept: P14 && P14.sections[0].water_m === 0.35 && /^\+0\.35 m, the lowest predicted/.test(P14.sections[0].water),
     said: P14 && /planned at \+0\.35 m/.test(W14.api.sailLine(P14)),
-    wrapped: /planInsideChart\(\[from, \.\.\.pts\], undefined, \(\) => atWaterLevel\(lv\.m, \(\) => \{\s*\n\s*ht = holdTarget\(c\.to, holdOpts\(\)\);/.test(grab("sailSend")),
+    wrapped: /planInsideChart\(\[from, \.\.\.pts\], \{route: true\}, \(\) => atWaterLevel\(lv\.m, \(\) => \{\s*\n\s*ht = holdTarget\(c\.to, holdOpts\(\)\);/.test(grab("sailSend")),
+    // its chart read along it as a ROUTE, where the read can find something - and any wider read the planning makes
+    routeInk: /await ensureNogoCovers\(\[from, \.\.\.pts\], null, \{route: true\}\);/.test(grab("sailSend")),
     oneWriter: (H.match(/sea\.waterOffset\s*=(?!=)/g) || []).length === 1,
     endpoint: /"\/api\/water\/along\?pts="/.test(grab("sectionWater")),
   };

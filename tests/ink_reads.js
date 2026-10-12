@@ -263,6 +263,109 @@ console.log("Every chart read kept and merged, and a plan too big for one read r
         () => up8.banners.some((t) => /CHART IMAGE NOT COMPARED over the whole route/.test(t) && /the last \d+ are checked/.test(t)),
         () => (up8.banners[0] || "no banner").slice(0, 140));
 
+  // ── 9-13. a ROUTE's chart image - a passage's section - read where the read can find something (2026-10-12) ─────
+  // Andy: "fix the chart image warning on long sections". A section's one box is past the budget, so every section
+  // said CHART IMAGE NOT COMPARED and read nothing. The page's own inkCanFind / readRouteInk / readPlanInk over its real
+  // inkTileGrid and featureLLBox, ensureChartInk stubbed to record what was asked for and how.
+  const CG = require("../static/js/core_geometry.js");
+  const CI = require("../static/js/chartink.js");
+  const rAsked = [], rBanners = [], rLogs = [];
+  const rNogo = { features: [] };
+  // eslint-disable-next-line no-new-func
+  const rp = new Function("worldPx", "TILE", "pathBoxes", "boxAround", "INK_PATH_MAX_BOXES", "INK_ATTACH_M", "M_PER_DEG_LAT",
+    "nogo", "eachPath", "eachRing", "eachPoint", "ensureChartInk", "showBanner", "logClient",
+    "\"use strict\";\n"
+    + decl(/^const CHART_INK_Z = [^;]*;/m) + "\n" + decl(/^const CHART_INK_MIN_Z = [^;]*;/m) + "\n"
+    + decl(/^const CHART_INK_MAX_TILES = [^;]*;/m) + "\n" + decl(/^const INK_STRUCT_ROLES = [^;]*;/m) + "\n"
+    + decl(/^const featLLBoxes = [^;]*;/m) + "\n"
+    + ["inkTileGrid", "uncutRuns", "featureLLBox", "segMeetsBox", "inkCanFind", "readRouteInk", "readPlanInk"].map(grab).join("\n")
+    + "\nreturn { inkCanFind, readRouteInk, readPlanInk, inkTileGrid };")(
+    G.worldPx, G.TILE, IR.pathBoxes, IR.boxAround, IR.INK_PATH_MAX_BOXES, CI.ATTACH_M, G.M_PER_DEG_LAT, rNogo,
+    CG.eachPath, CG.eachRing, CG.eachPoint, async (bb, opts) => { rAsked.push({ bb, opts }); },
+    (t) => rBanners.push(t), (k, d) => rLogs.push([k, d]));
+  const LL = (p) => [p.lon, p.lat];
+  const shore = (a, b) => ({ role: "shore_line", geometry: { type: "LineString", coordinates: [LL(a), LL(b)] } });
+  const ringOf = (role, e0, n0, e1, n1, extra) => ({ role, ...(extra || {}), geometry: { type: "Polygon", coordinates:
+    [[LL(at(e0, n0)), LL(at(e1, n0)), LL(at(e1, n1)), LL(at(e0, n1)), LL(at(e0, n0))]] } });
+  const routeRead = async (pts, feats) => {
+    rAsked.length = 0; rBanners.length = 0; rLogs.length = 0; rNogo.features = feats;
+    const b = IR.boxAround(pts, 300);
+    const r = await rp.readRouteInk(b, 300, pts);
+    return { b, r, asked: rAsked.slice(), banners: rBanners.slice(), log: (rLogs[0] || [])[1] };
+  };
+  // A 20 km section east-southeast, as a passage cuts them: its one box is past the budget at every useful zoom.
+  const sect = [at(0, 0), at(10000, -1500), at(20000, -3000)];
+  const sea9 = await routeRead(sect, [ringOf("depth_area", -2000, -5000, 22000, 2000)]);
+  const fitsR = (bb) => !rp.inkTileGrid(bb).refused;
+  const cut9 = IR.pathBoxes(sect, 300, fitsR, Infinity).boxes;
+  check("9. A SECTION IN OPEN WATER - its one box past the budget, no charted land, shoreline or dock near it - reads "
+        + "NOTHING and says nothing: the read can only keep a mark attached to a charted structure (a depth area is not "
+        + "one); logged, every stretch counted open",
+        () => rp.inkTileGrid(sea9.b).refused && sea9.asked.length === 0 && sea9.banners.length === 0
+              && sea9.log && sea9.log.boxes === cut9.length && cut9.length >= 2 && sea9.log.open === cut9.length && sea9.log.read === 0,
+        () => JSON.stringify(sea9.log) + "; " + sea9.banners.length + " banner(s)");
+  // the same section leaving a harbor: a shoreline 400 m west of its start, running north-south
+  const coast = shore(at(-400, -1500), at(-400, 1500));
+  const near10 = await routeRead(sect, [coast]);
+  // its stretches, and how far each is from that shoreline (meters, in the world's plane) against the box's diagonal
+  const toEN = (p) => G.toEN(p, O);
+  const boxGapM = (bb) => {                // the shoreline x = -400 m, n -1500..1500, to the box's nearest point
+    const sw = toEN({ lat: bb.S, lon: bb.W }), ne = toEN({ lat: bb.N, lon: bb.E });
+    const dx = Math.max(sw.e - (-400), 0, -400 - ne.e), dy = Math.max(sw.n - 1500, 0, -1500 - ne.n);
+    return { gap: Math.hypot(dx, dy), diag: Math.hypot(ne.e - sw.e, ne.n - sw.n) };
+  };
+  const g10 = cut9.map(boxGapM);
+  const readIdx = cut9.map((bb) => near10.asked.some((a) => a.bb.W === bb.W && a.bb.S === bb.S && a.bb.E === bb.E && a.bb.N === bb.N));
+  check("10. LEAVING A HARBOR, only the stretches the shoreline is within reach of are read - each a box that fits the "
+        + "budget, asked for WITHOUT 'command it again' (nothing commanded it) - and every stretch farther than its own "
+        + "diagonal (+ATTACH_M) from it is not; the read ones are exactly the cut's own boxes",
+        () => near10.asked.length >= 1 && near10.asked.length < cut9.length
+              && near10.asked.every((a) => fitsR(a.bb) && a.opts && a.opts.again === false)
+              && g10.every((g, i) => g.gap <= g.diag + CI.ATTACH_M ? readIdx[i] : true)
+              && g10.every((g, i) => g.gap > (g.diag + CI.ATTACH_M) * Math.SQRT2 + 1 ? !readIdx[i] : true)
+              && near10.banners.length === 0 && near10.log.read === near10.asked.length,
+        () => g10.map((g, i) => (readIdx[i] ? "READ " : "open ") + Math.round(g.gap) + "/" + Math.round(g.diag)).join(", "));
+  // 11. the test itself, on one box: what counts as a structure within reach, and what does not
+  const bb11 = IR.boxAround([at(0, 0), at(600, 600)], 0);
+  const d11 = boxGapM(bb11).diag, R11 = d11 + CI.ATTACH_M;
+  const eastLine = (gap) => shore(at(600 + gap, -500), at(600 + gap, 1100));
+  const can = (feats) => { rNogo.features = feats; return rp.inkCanFind(bb11); };
+  const cutOnly = ringOf("land", 600 + R11 - 20, -3000, 600 + R11 + 3000, 3000,
+                         { clip: [at(600 + R11 - 20, 0).lon, at(0, -3000).lat, at(600 + R11 + 3000, 0).lon, at(0, 3000).lat] });
+  const notCut = { ...cutOnly, clip: undefined };
+  const ell = { role: "shore_line", geometry: { type: "LineString", coordinates:
+    [LL(at(-6000, 6000)), LL(at(6000, 6000)), LL(at(6000, -6000))] } };     // its box holds bb11; its segments 5 km off
+  const c11 = { inside: can([eastLine(R11 - 5)]), beyond: can([eastLine(R11 + 60)]), cut: can([cutOnly]), uncut: can([notCut]),
+                depth: can([ringOf("depth_area", 600 + R11 - 20, -500, 600 + R11 + 200, 1100)]), ell: can([ell]),
+                dock: can([{ role: "dock_line", geometry: { type: "LineString", coordinates: [LL(at(100, 100)), LL(at(300, 100))] } }]),
+                none: can([]) };
+  check("11. WITHIN REACH, exactly: a shoreline 5 m inside the box's diagonal + ATTACH_M (" + R11.toFixed(0) + " m) counts, "
+        + "60 m beyond it does not; a coarser chart's CUT is not a structure (the scan leaves it out too) but the same edge "
+        + "uncut is; a depth area is not one; a coastline whose box covers the water but whose lines are 5 km off does not "
+        + "count; a dock line in the box does",
+        () => c11.inside && !c11.beyond && !c11.cut && c11.uncut && !c11.depth && !c11.ell && c11.dock && !c11.none,
+        () => JSON.stringify(c11));
+  // 12. a route that fits one box: that box, when the read can find something there
+  const short = [at(0, 0), at(800, 300)];
+  const s12a = await routeRead(short, [coast]), s12b = await routeRead(short, []);
+  check("12. A SHORT ROUTE, one box: read whole near a shoreline (without 'command it again'), not at all in open water",
+        () => !rp.inkTileGrid(s12a.b).refused && s12a.asked.length === 1 && s12a.asked[0].bb === s12a.b
+              && s12a.asked[0].opts.again === false && s12b.asked.length === 0,
+        () => s12a.asked.length + " / " + s12b.asked.length);
+  // 13. a route along a coast past the most a route reads, and readPlanInk's route branch
+  const longCoast = [at(0, 0), at(400000, 0)];         // 32 stretches of ~12.5 km, a shoreline 300 m off all of them
+  const s13 = await routeRead(longCoast, [shore(at(-1000, 300), at(401000, 300))]);
+  rAsked.length = 0; rLogs.length = 0; rNogo.features = [coast];
+  await rp.readPlanInk(IR.boxAround(sect, 300), 300, sect, { route: true });
+  const viaPlan = rAsked.length;
+  check("13. A ROUTE ALONG A COAST past the " + IR.INK_PATH_MAX_BOXES + " stretches a route reads: those read, and the rest "
+        + "SAID - how many lie near charted land and how many are left to the ENC alone; readPlanInk sends a route "
+        + "(opts.route) here and nowhere else",
+        () => s13.asked.length === IR.INK_PATH_MAX_BOXES && s13.r.left > 0
+              && s13.banners.some((t) => /CHART IMAGE NOT COMPARED over the whole route — \d+ stretches of it lie near charted land or a dock, and the last \d+ past the 16 a route reads/.test(t))
+              && viaPlan === near10.asked.length && rLogs.length === 1 && rLogs[0][0] === "route_ink",
+        () => s13.asked.length + " read, " + s13.r.left + " left; via readPlanInk " + viaPlan);
+
   __finished = true;
   console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
   process.exit(fails ? 1 : 0);

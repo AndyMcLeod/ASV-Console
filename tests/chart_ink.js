@@ -895,7 +895,7 @@ check("20e. ... and a SMALL comb is not a footprint either — a keep-out area h
   {
     const i = H.indexOf("async function scanChartInk(bb){");
     const scan = H.slice(i, H.indexOf("\n}", i));
-    const j = H.indexOf("async function ensureChartInk(bb){");
+    const j = H.indexOf("async function ensureChartInk(bb, opts){");
     const ens = H.slice(j, H.indexOf("\n}", j));
     const k = H.indexOf("async function doUpload(");
     const up = H.slice(k, H.indexOf("\n}", k));
@@ -904,6 +904,10 @@ check("20e. ... and a SMALL comb is not a footprint either — a keep-out area h
           + "Upload's routing",
           () => /await scanChartSliced\(rgba, W, H, explained, segs, mPerPx, \{\}, inkYield\)/.test(scan)
                 && /if\(!paint && !isStruct\) continue;/.test(scan)
+                // (its attachment pool's roles are the ONE set inkCanFind looks for near a route's stretch - 2026-10-12,
+                // tests/ink_reads.js 9-13: a stretch with none of them near is not read at all)
+                && /const STRUCT_ROLES = INK_STRUCT_ROLES;/.test(scan)
+                && /^const INK_STRUCT_ROLES = new Set\(\["dock", "dock_line", "land", "shore_line"\]\);$/m.test(H)
                 // (each path and ring through `runs` since 2026-10-11: a coarser chart's piece leaves out its cut -
                 // tests/unread_water.js 6 - and everything else is painted and gathered whole, as before)
                 && /const runs = \(cs\) => f\.clip \? uncutRuns\(cs, f\.clip\) : \[cs\];/.test(scan)
@@ -1047,6 +1051,34 @@ check("20e. ... and a SMALL comb is not a footprint either — a keep-out area h
           && /chartInk = \{key:null, lines:\[\], areas:\[\], detached:\[\], note:null, z:null, ms:0, busy:false\};\s*if\(!wider\)\{ chartReads = \[\]; inkRefused = null; \}/.test(rn)
           && /if\(wider\) refoldInk\(\);[^\n]*\n[\s\S]{0,700}?rebuildNogo\(\);/.test(rn),
           "refreshNogo in static/asv.html");
+
+    // 14g. THE ADVICE FITS THE REFUSAL (2026-10-12, Andy: "fix the chart image warning on long sections"). "Command it
+    // again once the chart has drawn in" was said for EVERY refusal - for a box too LARGE to read too, which is as large
+    // when commanded again, and for a passage's section, which the console sends and nobody commands.
+    const said = async (scanAnswer, opts) => {
+      const w = inkWorld(() => scanAnswer);
+      await w.run(B, opts);
+      return w.banners.find((b) => /NOT COMPARED/.test(b)) || "";
+    };
+    const tooBig = await said({ refused: "the area is too large to read the chart image at a useful scale (2430 tiles at z17)", size: true });
+    const slow = await said({ refused: "only 3 of 48 chart tiles arrived in 15 s" });
+    const slowRoute = await said({ refused: "only 3 of 48 chart tiles arrived in 15 s" }, { again: false });
+    const gridSays = (() => {
+      // eslint-disable-next-line no-new-func
+      const g = new Function("worldPx", "TILE", "\"use strict\";\n" + [declOf(/^const CHART_INK_Z = [^;]*;/m),
+        declOf(/^const CHART_INK_MIN_Z = [^;]*;/m), declOf(/^const CHART_INK_MAX_TILES = [^;]*;/m), fnSrc("inkTileGrid")].join("\n")
+        + "\nreturn inkTileGrid;")(G.worldPx, G.TILE);
+      return g(box(43.0, -70.8, 0.4));
+    })();
+    check("14g. THE ADVICE FITS THE REFUSAL: a box too LARGE to read (inkTileGrid marks it `size`; scanChartInk passes it "
+          + "on) gives no 'command it again' - it would be as large; tiles still arriving do, unless nothing commanded it "
+          + "(again: false, a passage's section) - each still says the plan is checked against the ENC only",
+          () => gridSays.refused && gridSays.size === true
+                && /\{refused: grid\.refused, size: true\}/.test(fnSrc("scanChartInk"))
+                && /The plan is checked against the ENC only\.$/.test(tooBig) && !/command it again/.test(tooBig)
+                && /The plan is checked against the ENC only; command it again once the chart has drawn in\.$/.test(slow)
+                && /The plan is checked against the ENC only\.$/.test(slowRoute),
+          () => JSON.stringify({ tooBig: tooBig.slice(-60), slow: slow.slice(-70), slowRoute: slowRoute.slice(-45), size: gridSays.size }));
   }
 
   // ── 23. A DASH THAT ENDS IN A DOT IS A LINE SYMBOL, NOT A STRUCTURE ─────────────────────────────────────────────
