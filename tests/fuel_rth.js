@@ -335,14 +335,14 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
     const m0 = mdl || model;
     const w = { banners: [], logs: [], sent: [], sup: true, need: 11, far: null, S: { home: { lat: 0, lon: 0 } } };
     const mk = new Function("S", "asv", "fuelModel", "energyLevel", "fuelHomeNeed", "rthTooFar", "fuelWatch", "rthLevel", "rthDecision",
-      "homeFieldTick", "supervising", "showBanner", "logClient", "doRTH", "fuelSay", "fuelFmt", "fmtDist", "FUEL_AT_HOME_M",
+      "homeFieldTick", "coarseHomeTick", "supervising", "showBanner", "logClient", "doRTH", "fuelSay", "fuelFmt", "fmtDist", "FUEL_AT_HOME_M",
       "FUEL_RESERVE_FRAC", "RTH_MAX_M",
       "let fuelRth = {acted: false, alerted: false};\nlet fuelNow = null, fuelErrSaid = false;\n" + grab("fuelTick")
       + "\n" + grab("fuelWatchAt") + "\n" + grab("fuelOutOfRangeSay") + "\n" + grab("fuelReserveOf") + "\n" + grab("homeHowSay")
       + "\nreturn {tick: fuelTick, latch: () => ({...fuelRth}), now: () => fuelNow};");
     w.api = mk(w.S, { lat: 0.01, lon: 0 }, () => m0, F.energyLevel,
       () => ({ need: w.need, m: 5000, water: true, twKn: 8 }), () => (w.far == null ? null : { m: w.far }), F.fuelWatch,
-      F.rthLevel, F.rthDecision, () => {}, () => w.sup,
+      F.rthLevel, F.rthDecision, () => {}, () => {}, () => w.sup,
       (t) => w.banners.push(t), (k, d) => w.logs.push([k, d]),
       (o) => { w.sent.push(o); return Promise.resolve(); }, () => "the sentence", (m, x) => x.toFixed(1) + " L",
       (m) => (m / 1000).toFixed(1) + " km", AT_HOME, F.FUEL_RESERVE_FRAC, RTH_MAX);
@@ -563,11 +563,13 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
       "const homeFld = w.field ? {dist: [1], frame: FR, key: 'k', g: {cell: 5}, note: 'ready'} : {dist: null, note: 'home is off the chart that was read'};",
       "const homeFieldKey = () => 'k', fieldDistM = () => w.field, cellOf = () => true, HOME_FIELD_REACH_M = 300;",
       "const V = {SPEED_KN: {transit: 7, survey: 5}}, roleSpeed = () => 'transit';",
+      "let coarseHome = w.coarse || {key: null, hf: null, note: null, busy: false};",
+      "const nogoDR = () => ({min: 3.15}), airNeedM = () => 4.85, coarseHomeDistM = w.coarseDist || (() => null);",
       "const groundVel = (deg, kn) => ({e: kn * KN * Math.sin(deg * Math.PI / 180), n: kn * KN * Math.cos(deg * Math.PI / 180)});",
       "const planeFrame = (o) => ({toEN: (p) => ({e: (p.lon - o.lon) * M * Math.cos(o.lat * Math.PI / 180), n: (p.lat - o.lat) * M})});",
       "const fmtDist = (x) => (x / 1000).toFixed(1) + ' km', fuelFmt = (md, x) => x.toFixed(1) + ' L';",
-      ["homeDistFrom", "homeHowSay", "passageHome", "fuelHomeNeed", "fuelSay"].map(grab).join("\n"),
-      "return {homeDistFrom, fuelHomeNeed, fuelSay};"].join("\n");
+      ["fineHomeDist", "homeDistFrom", "homeHowSay", "coarseHomeKey", "passageHome", "fuelHomeNeed", "fuelSay"].map(grab).join("\n"),
+      "return {homeDistFrom, fuelHomeNeed, fuelSay, key: coarseHomeKey};"].join("\n");
     return new Function("w", "HOME", "M", "KN", "distTo", "homeSections", "homeEnergy", "pathEnergy", "FUEL_RESERVE_FRAC", src)(
       w, HOME, M, KN, flatD, C.homeSections, F.homeEnergy, F.pathEnergy, F.FUEL_RESERVE_FRAC);
   };
@@ -614,7 +616,238 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
               && ["fuelSay", "fuelOutOfRangeSay", "renderFuelRows", "fuelPillLine"].every((f) => /homeHowSay\(/.test(grab(f)))
               && !/" by water"/.test(["fuelSay", "fuelOutOfRangeSay", "renderFuelRows", "fuelPillLine"].map(grab).join("\n")),
         "homeRecord / homeDistFrom / passageHome / the four sentences");
+  // 10f. the coarse grid's distance KEEPS ITS NAME through fuelHomeNeed into the sentence (found live: fuelHomeNeed
+  // passed `along` only for the passage, and the coarse grid's 34.67 km round Cape Ann was said plain "by water")
+  const Pc = page({ passage: null });
+  const Pk = page({ passage: null, coarse: { key: Pc.key(), hf: {}, note: "ready", busy: false }, coarseDist: () => 31000 });
+  const nC = Pk.fuelHomeNeed(m, her), sC = Pk.fuelSay(m, 80, 30, nC);
+  check("10f. THE COARSE GRID'S DISTANCE through fuelHomeNeed keeps its name - the sentence the card and the alert say "
+        + "reads 'by water (coarse grid)', its fuel at that distance",
+        () => nC && nC.along === "coarse" && nC.m === 31000 && nC.water === true && /home is 31\.0 km by water \(coarse grid\) and takes /.test(sC),
+        () => JSON.stringify({ along: nC && nC.along, m: nC && nC.m }) + "; " + sC.slice(0, 70));
 }
 
-console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
-process.exit(fails ? 1 : 0);
+// ── 11. THE COARSE HOME FIELD (2026-10-12, Andy: "build the coarse home field") ──────────────────────────────────────
+// Past the field round home, with no passage leading home, the distance home was the straight line - short wherever
+// land is in the way, so the RTH point came late. coarse.js coarseHomeField searches outward from home over the tiles'
+// planning grids at the coarse planner's own costs; the page reads the chart along the way home with its grids and
+// builds it in the coarse worker. Over synthetic grids, against distances worked by hand; the page's own functions
+// with the console, the corridor read and the worker stubbed.
+(async () => {
+  const C = require(path.join(APP, "static", "js", "coarse.js"));
+  const N = C.GRID_N, N2 = N * N, CD = C.CELL_DEG, M = 111320;
+  const grid = (tx, ty) => { const W = tx * C.TILE_DEG - 180, S = ty * C.TILE_DEG - 90;
+    return { head: { tile: [W, S, W + C.TILE_DEG, S + C.TILE_DEG] }, C: new Int16Array(N2).fill(300), T: new Int16Array(N2).fill(300),
+             A: new Int16Array(N2).fill(32767), tx, ty }; };
+  const TX = Math.round((-70.75 + 180) / C.TILE_DEG), TY = Math.round((43.0 + 90) / C.TILE_DEG);
+  const ll = (g, c, r) => ({ lat: (g.ty * N + r + 0.5) * CD - 90, lon: (g.tx * N + c + 0.5) * CD - 180 });
+  const flatD = (a, b) => Math.hypot((b.lat - a.lat) * M, (b.lon - a.lon) * M * Math.cos((a.lat + b.lat) / 2 * Math.PI / 180));
+  const field = (gs) => C.buildField(gs, 30);       // a 3 m floor: a cell charted at 300 dm is water, at 0 is land
+  const CELL_M = CD * M;                             // a cell's height, meters (~109)
+
+  // 11. open water, and round a wall
+  const open = [0, 1, 2].flatMap((i) => [0, 1].map((j) => grid(TX + i, TY + j)));
+  const home = ll(open[0], 20, 20), hfO = C.coarseHomeField(field(open), home);
+  const probes = [ll(open[5], 200, 200), ll(open[4], 128, 10), ll(open[1], 10, 250), { lat: home.lat + 0.12, lon: home.lon + 0.31 }];
+  const ratios = probes.map((p) => C.coarseHomeDistM(hfO, p) / flatD(p, home));
+  // her position need not be a cell's center: 0.4 of a cell north of one, her length home is the center's plus the 43 m
+  const P0 = probes[0], Q0 = { lat: P0.lat + 0.4 * CD, lon: P0.lon };
+  const offBy = C.coarseHomeDistM(hfO, Q0) - C.coarseHomeDistM(hfO, P0);
+  const wall = [0, 1, 2].map((i) => grid(TX + i, TY));
+  for (let r = 0; r < 230; r++) for (let c = 100; c < 103; c++) wall[1].C[r * N + c] = 0;          // land, rows 0-229
+  const hW = ll(wall[0], 128, 50), far = ll(wall[2], 128, 50), top = ll(wall[1], 101, 231);
+  const mW = C.coarseHomeDistM(C.coarseHomeField(field(wall), hW), far), aroundW = flatD(hW, top) + flatD(top, far);
+  check("11. THE COARSE HOME FIELD (coarse.js coarseHomeField): across open water within 4% of the straight line (the 16 "
+        + "moves - 8 neighbors alone run 8% long) and never short of it by more than half a cell, her offset from her "
+        + "cell's center counted; round a wall of land, "
+        + "the way round it worked by hand (" + (aroundW / 1000).toFixed(1) + " km, the straight line "
+        + (flatD(hW, far) / 1000).toFixed(1) + "), within 2%",
+        () => ratios.every((q) => q >= 1 - 70 / 20000 && q < 1.04) && hfO.reached === 6 * N2
+              && mW >= aroundW - CELL_M && mW < aroundW * 1.02 && Math.abs(offBy - flatD(Q0, P0)) < 0.5,
+        () => "open " + ratios.map((q) => "+" + (100 * (q - 1)).toFixed(2) + "%").join(" ") + "; round the wall "
+              + (mW / 1000).toFixed(2) + " km; off a cell's center by " + flatD(Q0, P0).toFixed(1) + " m, " + offBy.toFixed(1) + " m more");
+
+  // 11b. home's port circle, corners, unread water, the planner's costs
+  const ring = (g, cx, cy, rad) => { for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+    const d = Math.hypot(c - cx, r - cy); if (d >= rad && d < rad + 2) g.C[r * N + c] = 0; } };
+  const inPort = [grid(TX, TY), grid(TX + 1, TY)];
+  ring(inPort[0], 128, 128, 15);                    // home in a walled harbor ~1.6 km across: inside its 4 km circle
+  const hP = ll(inPort[0], 128, 128), outP = ll(inPort[1], 128, 128);
+  const portOK = C.coarseHomeDistM(C.coarseHomeField(field(inPort), hP), outP);
+  const shut = [grid(TX, TY), grid(TX + 1, TY)];
+  ring(shut[1], 128, 128, 15);                      // HER in a walled pond 25 km from home: not home's circle - shut
+  const shutM = C.coarseHomeDistM(C.coarseHomeField(field(shut), ll(shut[0], 128, 128)), ll(shut[1], 128, 128));
+  const diag = [grid(TX, TY), grid(TX + 1, TY)];
+  for (let k = 0; k < N; k++) { diag[0].C[k * N + (N - 1 - k)] = 0; }   // a diagonal of land cells meeting only at corners
+  for (let r = 0; r < N; r++) diag[1].C[r * N + 0] = 0;                // closed off on the east, so no way round
+  const diagM = C.coarseHomeDistM(C.coarseHomeField(field(diag), ll(diag[0], 10, 10)), ll(diag[0], 240, 240));
+  const gap = [grid(TX, TY), grid(TX + 2, TY)];     // the tile between them never read
+  const gapM = C.coarseHomeDistM(C.coarseHomeField(field(gap), ll(gap[0], 128, 128)), ll(gap[1], 128, 128));
+  const homeUnread = C.coarseHomeField(field([grid(TX, TY)]), ll(grid(TX + 3, TY), 5, 5));
+  // THE PLANNER'S COSTS, BOTH WAYS. A band of water a danger touches (PARTLY: COST 3 a meter) ACROSS EVERY ROW, 20 cells
+  // wide: there is no way round, so the way home crosses it - and its LENGTH is the meters, not the cost (a field that
+  // kept the cost would read it ~12% long). And a band 61 cells wide over rows 0-59 only, home and her at row 30: through
+  // it costs ~10 km more, round its end ~1.7 km more length - so the way home goes ROUND (a field without the costs
+  // would go straight through).
+  const band = [grid(TX, TY), grid(TX + 1, TY)];
+  for (let r = 0; r < N; r++) for (let c = 100; c < 120; c++) { band[1].T[r * N + c] = 10; }
+  const hB = ll(band[0], 128, 30), fB = ll(band[1], 200, 30), mB = C.coarseHomeDistM(C.coarseHomeField(field(band), hB), fB);
+  const bandR = [grid(TX, TY), grid(TX + 1, TY)];
+  for (let r = 0; r < 60; r++) for (let c = 100; c < 161; c++) { bandR[1].T[r * N + c] = 10; }
+  const mR = C.coarseHomeDistM(C.coarseHomeField(field(bandR), hB), fB);
+  check("11b. THE PLANNER'S RULES: home inside a walled harbor is reached - a blocked cell is crossed in HOME'S OWN port "
+        + "circle - but a boat walled in 25 km off is not; no way through a diagonal of land meeting only at corners; "
+        + "water never read is never entered, and home's own tile unread is said; water a danger touches costs three times "
+        + "clear water - crossed where there is no way round, its LENGTH the meters, and gone ROUND where that is cheaper",
+        () => Number.isFinite(portOK) && shutM === null && diagM === null && gapM === null && homeUnread.error === "unread"
+              && Number.isFinite(mB) && mB < flatD(hB, fB) * 1.04 && mR > flatD(hB, fB) * 1.04 && mR < flatD(hB, fB) * 1.12,
+        () => JSON.stringify({ port: portOK && Math.round(portOK), shut: shutM, diag: diagM, gap: gapM, home: homeUnread.error,
+                               across: mB && Math.round(mB), round: mR && Math.round(mR), straight: Math.round(flatD(hB, fB)) }));
+
+  // 11c. the worker: kind "home" builds it, the lengths transferred back
+  const WSRC = fs.readFileSync(path.join(APP, "static", "js", "coarse_worker.js"), "utf8");
+  const posted = [];
+  const fakeSelf = { postMessage: (m, xfer) => posted.push({ m, xfer }) };
+  // eslint-disable-next-line no-new-func
+  new Function("self", "buildField", "coarseHomeField", "decodeGrid", "planPassage",
+    WSRC.replace(/^import[^\n]*\n/m, ""))(fakeSelf, C.buildField, C.coarseHomeField, C.decodeGrid, C.planPassage);
+  fakeSelf.onmessage({ data: { id: 7, kind: "home", grids: open, floorDm: 30, airDm: 0, home } });
+  const wm = posted[0] || {};
+  check("11c. THE WORKER (coarse_worker.js, kind 'home'): the field built over the grids sent, its tiles' lengths "
+        + "TRANSFERRED back (not copied), answered by id; a passage plan unchanged",
+        () => wm.m && wm.m.id === 7 && wm.m.tiles && wm.m.tiles.length === 6 && wm.xfer && wm.xfer.length === 6
+              && wm.xfer[0] === wm.m.tiles[0].len.buffer && Math.abs(C.coarseHomeDistM({ tiles: wm.m.tiles }, probes[0]) - C.coarseHomeDistM(hfO, probes[0])) < 1e-6,
+        () => JSON.stringify({ id: wm.m && wm.m.id, tiles: wm.m && wm.m.tiles && wm.m.tiles.length, xfer: wm.xfer && wm.xfer.length }));
+
+  // 11d. the page: when it is built, and how
+  const RTH_MAX = 10 * +(/const NOGO_RADIUS_M = ([\d.]+);/.exec(H) || [])[1];
+  const d = (re) => { const m = re.exec(H); if (!m) throw new Error("anchor gone: " + re); return m[0]; };
+  const HOMEP = { lat: 43.07, lon: -70.71 };
+  const tickWorld = (o) => {
+    const w = Object.assign({ fineM: null, here: { lat: 43.07, lon: -70.40 }, builds: [], coarse: { key: null, hf: null, at: 0, note: null, busy: false },
+                              fldBuild: null }, o || {});
+    const src = [
+      "const S = {home: w.home || HOME}, asv = w.here, homeFldBuild = w.fldBuild, RTH_MAX_M = " + RTH_MAX + ";",
+      "let coarseHome = w.coarse;",
+      "const fineHomeDist = () => (w.fineM != null ? {m: w.fineM} : {why: 'off the field'});",
+      "const nogoDR = () => ({min: 3.15}), airNeedM = () => 4.85;",
+      "const coarseHomeBuild = async (key, here) => { w.builds.push({key, here}); };",
+      d(/const COARSE_HOME_RETRY_MS = [^;]*;/), grab("coarseHomeKey"), grab("coarseHomeTick"),
+      "return {tick: coarseHomeTick, key: coarseHomeKey};"].join("\n");
+    w.api = new Function("w", "HOME", "distTo", "coarseHomeDistM", src)(w, HOMEP, flatD, C.coarseHomeDistM);
+    return w;
+  };
+  const t1 = tickWorld(); t1.api.tick();                                              // 25 km out, off the field: built
+  const tFine = tickWorld({ fineM: 9000 }); tFine.api.tick();                         // the field round home answers
+  const tFar = tickWorld({ here: { lat: 43.07, lon: -69.9 } }); tFar.api.tick();      // ~66 km: out of range
+  const tBusy = tickWorld({ coarse: { key: null, hf: null, at: 0, note: null, busy: true } }); tBusy.api.tick();
+  const tFld = tickWorld({ fldBuild: { id: 1 } }); tFld.api.tick();                   // the fine field is being built
+  const tSoon = tickWorld(); Object.assign(tSoon.coarse, { tried: tSoon.api.key(), at: Date.now() - 1000, note: "failed" }); tSoon.api.tick();
+  const holds = { tiles: [{ tx: Math.floor(((-70.40 + 180) / CD) / N), ty: Math.floor(((43.07 + 90) / CD) / N), len: new Float32Array(N2).fill(5000) }] };
+  const tHold = tickWorld(); tHold.coarse.key = tHold.api.key(); tHold.coarse.hf = holds; tHold.api.tick();
+  // home moved (or her floor) a few seconds after the last build: built again AT ONCE - live, the minute's wait held the
+  // straight line over a home moved to the far side of Cape Ann
+  const tMoved = tickWorld({ coarse: { key: "another home", tried: "another home", hf: holds, at: Date.now() - 1000, note: "ready", busy: false } });
+  tMoved.api.tick();
+  check("11d. WHEN IT IS BUILT (coarseHomeTick, on every frame): she past the field round home and within RTH_MAX_M of "
+        + "home - and not while the field round home answers, she is out of range, a build is running or the field round "
+        + "home is being built, within a minute of trying for this same home, or with a field built for this home that "
+        + "holds her; at once when home (or her floor) moved",
+        () => t1.builds.length === 1 && t1.builds[0].key === t1.api.key() && [tFine, tFar, tBusy, tFld, tSoon, tHold].every((w) => w.builds.length === 0)
+              && tMoved.builds.length === 1,
+        () => JSON.stringify([t1, tFine, tFar, tBusy, tFld, tSoon, tHold, tMoved].map((w) => w.builds.length)));
+
+  const buildWorld = (o) => {
+    const w = Object.assign({ posts: [], gets: 0, workerMsgs: [], logs: [], st0: { id: "c1", state: "running", total: 8 },
+                              stDone: { id: "c1", state: "done", total: 8, tiles: [[1, 2, 3, 4], [5, 6, 7, 8]] },
+                              res: null, coarse: { key: "old", hf: { tiles: [] }, at: 0, note: "ready", busy: false } }, o || {});
+    const src = [
+      "const S = {home: w.home || HOME};",
+      "let coarseHome = w.coarse;",
+      "const postCorridor = async (b) => { w.posts.push(b); return w.st0; };",
+      "const getCorridor = async (id) => { w.gets++; return w.stDone; };",
+      "const CORRIDOR_POLL_MS = 0, passageGrids = async (tiles) => ({grids: tiles.map((t) => ({tile: t})), missing: 0});",
+      "const coarseHomeInWorker = async (m) => { w.workerMsgs.push(m); return w.res || {tiles: [{tx: 1, ty: 2, len: new Float32Array(4)}], reached: 3, ms: 5}; };",
+      "const nogoDR = () => ({min: 3.15}), airNeedM = () => 4.85, logClient = (k, dd) => w.logs.push([k, dd]);",
+      ["COARSE_HOME_HALF_MIN_KM", "COARSE_HOME_HALF_FRAC", "COARSE_HOME_HALF_MAX_KM", "COARSE_HOME_MAX_TILES"].map((n) => d(new RegExp("const " + n + " = [^;]*;"))).join("\n"),
+      "async " + grab("coarseHomeBuild"),          // (grab takes the function from its `function` keyword)
+      "return {build: coarseHomeBuild, now: () => coarseHome};"].join("\n");
+    w.api = new Function("w", "HOME", "distTo", "coarseHomeDistM", src)(w, HOMEP, flatD, C.coarseHomeDistM);
+    return w;
+  };
+  const near = { lat: 43.07, lon: -70.60 }, mid = { lat: 43.07, lon: -70.40 }, farIn = { lat: 43.07, lon: -70.13 };
+  const b1 = buildWorld(); await b1.api.build("K1", mid);
+  const bNear = buildWorld(); await bNear.api.build("K", near);
+  const bFar = buildWorld(); await bFar.api.build("K", farIn);
+  const halfOf = (w) => w.posts[0] && w.posts[0].half_km;
+  const ok1 = b1.api.now();
+  check("11e. THE BUILD (coarseHomeBuild): the chart read along the way home - home to her - WITH its grids, either side "
+        + "40% of her distance home (5 to 25 km), waited out, its tiles' grids to the worker as kind 'home' at her floor and "
+        + "air draft from home; the field kept with its key and said ready, logged",
+        () => b1.posts.length === 1 && b1.posts[0].grids === true && b1.posts[0].route.length === 2
+              && flatD(b1.posts[0].route[0], HOMEP) < 1 && flatD(b1.posts[0].route[1], mid) < 1
+              && Math.abs(halfOf(b1) - 0.4 * flatD(mid, HOMEP) / 1000) < 0.01 && halfOf(bNear) === 5 && halfOf(bFar) < 25 && halfOf(bFar) > 15
+              && b1.gets >= 1 && b1.workerMsgs.length === 1 && b1.workerMsgs[0].kind === "home" && b1.workerMsgs[0].grids.length === 2
+              && b1.workerMsgs[0].floorDm === 32 && b1.workerMsgs[0].airDm === 49 && flatD(b1.workerMsgs[0].home, HOMEP) < 1
+              && ok1.key === "K1" && ok1.note === "ready" && ok1.busy === false && ok1.hf.tiles.length === 1
+              && b1.logs.some((l) => l[0] === "coarse_home" && l[1].ok === true),
+        () => JSON.stringify({ half: [halfOf(bNear), halfOf(b1) && +halfOf(b1).toFixed(2), halfOf(bFar) && +halfOf(bFar).toFixed(2)],
+                               worker: b1.workerMsgs[0] && [b1.workerMsgs[0].kind, b1.workerMsgs[0].floorDm, b1.workerMsgs[0].airDm], now: [ok1.key, ok1.note] }));
+  const bErr = buildWorld({ st0: { error: "refused" } }); await bErr.api.build("K2", mid);
+  const bBig = buildWorld({ st0: { id: "c", state: "running", total: 400 } }); await bBig.api.build("K2", mid);
+  const bStop = buildWorld({ stDone: { id: "c", state: "canceled" } }); await bStop.api.build("K2", mid);
+  const bWk = buildWorld({ res: { error: "unread" } }); await bWk.api.build("K2", mid);
+  const failed = [bErr, bBig, bStop, bWk].map((w) => w.api.now());
+  check("11f. A BUILD THAT FAILS says why - the read refused, too many tiles (the read STOPPED, not left reading), the read "
+        + "not done, home's own tile unread - is tried again later (`at`), and KEEPS the field it had",
+        () => failed.every((c) => c.busy === false && c.at > 0 && c.key === "old" && c.hf && c.note !== "ready")
+              && /could not be read \(refused\)/.test(failed[0].note) && /400 chart tiles/.test(failed[1].note) && bBig.gets === 0
+              && bBig.posts.length === 2 && bBig.posts[1].cancel === "c" && bErr.posts.length === 1
+              && /canceled/.test(failed[2].note) && /home's own chart tile could not be read/.test(failed[3].note),
+        () => JSON.stringify(failed.map((c) => c.note)));
+
+  // 11g. the order: the field round home, the coarse grid, the passage, the straight line - and said
+  const HOME = { lat: 43.07, lon: -70.71 };
+  const pageW = (o) => {
+    const w = Object.assign({ field: null, passage: null, coarse: { key: null, hf: null, note: null, busy: false }, coarseDist: null }, o || {});
+    const src = [
+      "const S = {home: HOME, home_source: null};",
+      "const FR = {toEN: () => ({e: 0, n: 0})}, mission = {passage: w.passage}, nogo = {frame: FR}, homeFldBuild = null;",
+      "const homeFld = w.field ? {dist: [1], frame: FR, key: 'k', g: {cell: 5}, note: 'ready'} : {dist: null, note: 'home is off the chart that was read'};",
+      "const homeFieldKey = () => 'k', fieldDistM = () => w.field, cellOf = () => true, HOME_FIELD_REACH_M = 300;",
+      "let coarseHome = w.coarse;",
+      "const nogoDR = () => ({min: 3.15}), airNeedM = () => 4.85, coarseHomeDistM = () => w.coarseDist;",
+      "const fmtDist = (x) => (x / 1000).toFixed(1) + ' km';",
+      ["fineHomeDist", "homeDistFrom", "homeHowSay", "coarseHomeKey", "passageHome"].map(grab).join("\n"),
+      "return {dist: homeDistFrom, how: homeHowSay, key: coarseHomeKey};"].join("\n");
+    return new Function("w", "HOME", "distTo", "homeSections", src)(w, HOME, flatD, C.homeSections);
+  };
+  const her = { lat: 43.07, lon: -70.40 };
+  const kNow = pageW().key();
+  const gC = pageW({ coarse: { key: kNow, hf: {}, note: "ready", busy: false }, coarseDist: 31000 }).dist(her);
+  const gF = pageW({ field: 26000, coarse: { key: kNow, hf: {}, note: "ready", busy: false }, coarseDist: 31000 }).dist(her);
+  const gOld = pageW({ coarse: { key: "another home", hf: {}, note: "ready", busy: false }, coarseDist: 31000 }).dist(her);
+  const gBusy = pageW({ coarse: { key: null, hf: null, note: null, busy: true } }).dist(her);
+  const gFail = pageW({ coarse: { key: null, hf: null, note: "the chart read along the way canceled", busy: false } }).dist(her);
+  const P = pageW();
+  check("11g. THE ORDER: the field round home first; then the COARSE GRID (said 'by water (coarse grid)'); a coarse field "
+        + "built for another home not used; then the passage, then the straight line - saying the coarse grid is being "
+        + "read, or why its build failed",
+        () => gF.m === 26000 && !gF.along && gC.m === 31000 && gC.along === "coarse" && gC.water === true
+              && P.how(gC, true) === " by water (coarse grid)" && gOld.water === false && Math.abs(gOld.m - flatD(her, HOME)) < 1
+              && /; the coarse grid is being read$/.test(gBusy.why) && /; the coarse grid: the chart read along the way canceled$/.test(gFail.why)
+              && !/coarse/.test(gOld.why),
+        () => JSON.stringify({ F: gF.m, C: [gC.m, gC.along], old: gOld.why, busy: gBusy.why, fail: gFail.why }));
+
+  // 11h. the wiring
+  check("11h. THE WIRING: the monitor builds it on every frame after the field round home; its own worker, so a passage "
+        + "being planned is never answered with it; the coarse home field imported from coarse.js",
+        () => /homeFieldTick\(\);\s*\n\s*coarseHomeTick\(\);/.test(grab("fuelTick"))
+              && /new Worker\("\/static\/js\/coarse_worker\.js", \{type: "module"\}\)/.test(grab("coarseHomeInWorker"))
+              && /coarseHomeWorker/.test(grab("coarseHomeInWorker")) && !/passageWorker/.test(grab("coarseHomeInWorker"))
+              && /import \{ PORT_R_M as PASSAGE_PORT_R_M, homeSections, coarseHomeDistM \} from "\/static\/js\/coarse\.js";/.test(H),
+        "fuelTick / coarseHomeInWorker / the import");
+
+  console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
+  process.exit(fails ? 1 : 0);
+})().catch((e) => { console.log("  FAIL 0. the suite itself CRASHED before finishing - " + (e && e.stack ? e.stack.split("\n").slice(0, 3).join(" | ") : e)); console.log("\n1 CHECK(S) FAILED (crashed before finishing)"); process.exit(1); });

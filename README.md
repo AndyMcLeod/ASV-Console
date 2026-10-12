@@ -3048,6 +3048,23 @@ of the operator.
    of a passage offshore of New Castle, "home 19.99 km along the passage" against a 19.25 km
    straight line (the harbor approach's turning points). `tests/fuel_rth.js` 10-10e.
 
+   **The coarse home field: by water past the chart box, passage or none (2026-10-12).** With no
+   passage leading home, the distance past the field was still the straight line - an RTH point too
+   late wherever land stands between. Now, while she is within the 50 km the monitor sends her home
+   in and the field round home does not reach her, the console reads the chart along the way between
+   home and her (the corridor read, with each tile's planning grid; tiles already read answer at
+   once) and searches outward from home over those grids in the coarse worker, at the coarse
+   planner's own costs (~100 m cells, a blocked cell crossed only in home's own 4 km circle, unread
+   water never entered, no corner cut, knight's moves so open water is within ~3% of straight). Her
+   distance home is then read off it: **"by water (coarse grid)"**. The order is the field round
+   home, the coarse grid, the passage, the straight line; the straight line says when the coarse
+   grid is being read or why its build failed. It is built in the background, again at once when
+   home or her floor moves, and a failed build keeps the field it had and is tried again after a
+   minute. Live (scratch console, DriX): off Plum Island with home in Gloucester Harbor, the far side
+   of Cape Ann, "home 34.67 km by water (coarse grid)" against a 24.51 km straight line - round the
+   Cape, the Annisquam cut shut at her 3.15 m floor; 4 tiles, the search 0.1-0.2 s.
+   `static/js/coarse.js` coarseHomeField / coarseHomeDistM, `tests/fuel_rth.js` 10f, 11-11h.
+
    **Home out of range: an alert at 20%, nothing commanded (2026-10-11, diesel hulls only).** On a
    diesel hull the automatic RTH applies only while home is **in range**: within the 50 km the console
    will route a return, and near enough that a full tank gets her there with the 20% reserve.

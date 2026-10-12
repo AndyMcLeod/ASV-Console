@@ -975,7 +975,7 @@ import { energyModel, energyLevel, homeEnergy, rthLevel, projectMission, rthDeci
          FUEL_RESERVE_FRAC, FUEL_REARM_FRAC } from "/static/js/fuel.js";
 // THE PASSAGE, PLANNED COARSE (2026-10-12): the circle round each port the console's own planner plans in detail. The
 // plan itself is made in a worker (coarse_worker.js); the page only draws and says it.
-import { PORT_R_M as PASSAGE_PORT_R_M, homeSections } from "/static/js/coarse.js";
+import { PORT_R_M as PASSAGE_PORT_R_M, homeSections, coarseHomeDistM } from "/static/js/coarse.js";
 import { homeGrid, fieldDistM, cellOf } from "/static/js/home_field.js";
 // AIS CONTACTS AS KEEP-OUTS (2026-09-25): the hull box each broadcasts (20 x 8 m assumed where it
 // broadcasts none), dead-reckoned between polls and swept over the guard's look-ahead while she is
@@ -8052,23 +8052,34 @@ function homeFieldLanded(ev){
     ? {key: b.key, frame: b.frame, g: b.g, blk: null, dist: null, ms: 0, at: Date.now(), note: d.error || "the field's build failed: no answer"}
     : {key: b.key, frame: b.frame, g: b.g, blk: d.blk, dist: d.dist, ms: d.ms || 0, at: Date.now(), note: "ready"};
 }
-// HER DISTANCE HOME from a point, meters: by WATER where the field reaches it; else ALONG THE PASSAGE on the plan when
-// that leads home from there; else the straight line, which is SHORT of the way home wherever land is in the way, so
-// `water: false` and `why` are said on the card, never hidden.
+// HER DISTANCE HOME from a point, meters: by WATER where the field reaches it; else by water on the COARSE grid (the
+// coarse home field, below); else ALONG THE PASSAGE on the plan when that leads home from there; else the straight line,
+// which is SHORT of the way home wherever land is in the way, so `water: false` and `why` are said on the card, never
+// hidden.
 //   ⚠ ALONG THE PASSAGE (2026-10-12, Andy: "fix the fuel monitor's straight-line distance home"). The field covers only
 // the chart box round her, so on a passage - home tens or hundreds of km off - the monitor measured the straight line:
 // her RTH point too low wherever a headland stands between, and "home in range of a full tank" said of a way home a
 // full tank does not reach. With home at an end of the passage on the plan, the way home IS the passage - her RTH goes
 // home along it (homeRecord) - so it is measured as she would sail it: back to it, and its sections home (`line`).
-function homeDistFrom(ll){
-  if(!S || !S.home || !ll) return null;
+/** The field round home (home_field.js): {m} by water, or {why} it cannot answer from `ll`. */
+function fineHomeDist(ll){
   let why = homeFldBuild ? "the water distance home is being measured" : homeFld.note;
   if(homeFld.dist && homeFld.frame === nogo.frame && homeFld.key === homeFieldKey()){
     const m = fieldDistM(homeFld.g, homeFld.dist, homeFld.blk, homeFld.frame.toEN(ll), HOME_FIELD_REACH_M);
-    if(m != null) return {m, water: true};
+    if(m != null) return {m};
     why = cellOf(homeFld.g, homeFld.frame.toEN(ll)) ? "no water path home on the chart from there, at "
           + homeFld.g.cell.toFixed(0) + " m cells" : "outside the water measured round home";
   }
+  return {why};
+}
+function homeDistFrom(ll){
+  if(!S || !S.home || !ll) return null;
+  const fine = fineHomeDist(ll);
+  if(fine.m != null) return {m: fine.m, water: true};
+  const cm = coarseHome.hf && coarseHome.key === coarseHomeKey() ? coarseHomeDistM(coarseHome.hf, ll) : null;
+  if(cm != null) return {m: cm, water: true, along: "coarse"};
+  const why = fine.why + (coarseHome.busy ? "; the coarse grid is being read"
+                          : coarseHome.note && coarseHome.note !== "ready" ? "; the coarse grid: " + coarseHome.note : "");
   const ph = passageHome(ll);
   if(ph && !ph.why){
     const line = [{lat: ll.lat, lon: ll.lon}];
@@ -8079,11 +8090,79 @@ function homeDistFrom(ll){
   }
   return {m: distTo(ll, S.home), water: false, why: why + (ph && ph.why ? "; and not along the passage on the plan: " + ph.why : "")};
 }
-/** How her distance home was measured, in words: by water (the field round home), along the passage on the plan, or - short
- *  of the way home - in a straight line, with why when `withWhy`. */
+/** How her distance home was measured, in words: by water (the field round home), by water on the coarse grid, along the
+ *  passage on the plan, or - short of the way home - in a straight line, with why when `withWhy`. */
 function homeHowSay(h, withWhy){
-  return h.along === "passage" ? " along the passage" : h.water ? " by water"
+  return h.along === "passage" ? " along the passage" : h.along === "coarse" ? " by water (coarse grid)" : h.water ? " by water"
     : " in a STRAIGHT LINE" + (withWhy ? " (" + (h.why || "no water distance") + ")" : "");
+}
+// ── HOME, COARSE: HER WATER DISTANCE HOME PAST THE CHART BOX (2026-10-12) ───────────────────────────────────────────
+// Andy: "build the coarse home field". The field above covers the chart box round her (~10 km); past it, with no
+// passage leading home, the distance home was the straight line - short wherever land is in the way, so the RTH point
+// came LATE. While she is within RTH_MAX_M of home (the range the monitor sends her home in) and the field round home
+// does not reach her, the chart is read along the way between them with each tile's planning grid (the corridor read,
+// `grids`: tiles already read answer at once), and coarse.js coarseHomeField searches outward from home over those
+// grids in the coarse worker - at the coarse planner's own costs, ~100 m cells - for her length home from every cell.
+// In the background, one build at a time, again when home or her floor changes or she leaves what it holds; a build
+// that fails is tried again after COARSE_HOME_RETRY_MS, and the field it had is kept meanwhile.
+const COARSE_HOME_HALF_MIN_KM = 5;      // the read either side of the line home-to-her: at least this,
+const COARSE_HOME_HALF_FRAC = 0.4;      // ... and this fraction of her distance home (the way round a headland),
+const COARSE_HOME_HALF_MAX_KM = 25;     // ... at most the corridor's own limit (asv_console.py ENC_CORRIDOR_MAX_HALF_KM)
+const COARSE_HOME_MAX_TILES = 60;       // a read past this many tiles is not made (the search is ~50 ms a tile)
+const COARSE_HOME_RETRY_MS = 60000;
+// `key` the field's, `tried` the last build's (one that failed keeps the field it had), `note` why that failed, or "ready"
+let coarseHome = {key: null, hf: null, at: 0, tried: null, note: null, busy: false};
+let coarseHomeWorker = null, coarseHomeSeq = 0;
+/** What a coarse field is built for: home, and the floor and air draft its cells were judged at. */
+function coarseHomeKey(){
+  return S && S.home ? [S.home.lat.toFixed(5), S.home.lon.toFixed(5), Math.round(nogoDR().min * 10), Math.round(airNeedM() * 10)].join("|") : null;
+}
+/** On every state frame (fuelTick): build the coarse field when she needs it and has none that holds her. */
+function coarseHomeTick(){
+  if(!S || !S.home || !asv || coarseHome.busy || homeFldBuild) return;
+  const here = {lat: asv.lat, lon: asv.lon};
+  if(fineHomeDist(here).m != null || distTo(here, S.home) > RTH_MAX_M) return;   // the field round home answers; or out of range
+  const key = coarseHomeKey();
+  if(coarseHome.key === key && coarseHome.hf && coarseHomeDistM(coarseHome.hf, here) != null) return;   // built, and holds her
+  // tried for THIS home within the minute: not again yet - a new home (or floor) is built at once
+  if(coarseHome.tried === key && Date.now() - coarseHome.at < COARSE_HOME_RETRY_MS) return;
+  coarseHomeBuild(key, here).catch((e) => { coarseHome = {...coarseHome, busy: false, at: Date.now(), note: "failed: " + ((e && e.message) || e)}; });
+}
+/** One coarse search in its own worker (the passage's has one message handler per plan in flight). */
+function coarseHomeInWorker(msg){
+  return new Promise((resolve) => {
+    try{ if(!coarseHomeWorker) coarseHomeWorker = new Worker("/static/js/coarse_worker.js", {type: "module"}); }
+    catch(e){ resolve({error: "no worker to search in (" + e + ")"}); return; }
+    const id = ++coarseHomeSeq, w = coarseHomeWorker;
+    w.onmessage = (ev) => { const d = (ev && ev.data) || {}; if(d.id === id) resolve(d); };
+    w.onerror = (e) => { coarseHomeWorker = null; resolve({error: "the worker failed: " + ((e && e.message) || "error")}); };
+    w.postMessage({id, ...msg}, msg.grids);
+  });
+}
+/** THE BUILD: the chart along the way home with its grids, the grids, the search - and the field kept with its key. */
+async function coarseHomeBuild(key, here){
+  coarseHome = {...coarseHome, busy: true, tried: key};
+  const home = {lat: S.home.lat, lon: S.home.lon}, t0 = Date.now();
+  const halfKm = Math.min(COARSE_HOME_HALF_MAX_KM, Math.max(COARSE_HOME_HALF_MIN_KM, COARSE_HOME_HALF_FRAC * distTo(here, home) / 1000));
+  const fail = (note) => { coarseHome = {...coarseHome, busy: false, at: Date.now(), note}; logClient("coarse_home", {ok: false, note}); };
+  let st = await postCorridor({route: [home, here], half_km: halfKm, grids: true});
+  if(!st || st.error) return fail("the chart along the way could not be read (" + ((st && st.error) || "no answer") + ")");
+  if((st.total || 0) > COARSE_HOME_MAX_TILES){                  // the read is stopped, not left reading for nothing
+    if(st.id && st.state === "running") postCorridor({cancel: st.id}).catch(() => {});
+    return fail("the way home is " + st.total + " chart tiles, past the " + COARSE_HOME_MAX_TILES + " it is measured over");
+  }
+  while(st && !st.error && st.state === "running"){
+    await new Promise(r => setTimeout(r, CORRIDOR_POLL_MS));
+    st = await getCorridor(st.id);
+  }
+  if(!st || st.error || st.state !== "done") return fail("the chart read along the way " + ((st && st.state) || "failed"));
+  const g = await passageGrids(st.tiles || []);
+  const res = await coarseHomeInWorker({kind: "home", grids: g.grids, floorDm: Math.round(nogoDR().min * 10),
+                                        airDm: Math.round(airNeedM() * 10), home});
+  if(res.error) return fail(res.error === "unread" ? "home's own chart tile could not be read" : res.error);
+  coarseHome = {key, hf: {tiles: res.tiles}, at: Date.now(), note: "ready", busy: false, tried: key};
+  logClient("coarse_home", {ok: true, tiles: res.tiles.length, missing: g.missing, half_km: +halfKm.toFixed(1),
+                            reached: res.reached, ms: Date.now() - t0, search_ms: res.ms, m: coarseHomeDistM(coarseHome.hf, here)});
 }
 let fuelModelMemo = {v: undefined, high: undefined, m: null};
 function fuelModel(){
@@ -8100,7 +8179,7 @@ function fuelHomeNeed(model, ll){
   const drift = groundVel(st.env_set_deg, st.env_set_kn) || {e: 0, n: 0};
   if(hd.line) return {need: pathEnergy(model, hd.line, twKn, drift), m: hd.m, water: true, along: hd.along, why: null, twKn};
   const h = planeFrame(ll).toEN(S.home), L = Math.hypot(h.e, h.n), u = L > 0 ? {e: h.e / L, n: h.n / L} : {e: 0, n: 0};
-  return {need: homeEnergy(model, hd.m, twKn, drift, u), m: hd.m, water: hd.water, why: hd.why, twKn};
+  return {need: homeEnergy(model, hd.m, twKn, drift, u), m: hd.m, water: hd.water, along: hd.along || null, why: hd.why, twKn};
 }
 // IS HOME IN RANGE FROM A POINT, and so which level she is watched against there (fuel.js fuelWatch): the energy home
 // (fuelHomeNeed) and the distance doRTH refuses a return by (rthTooFar) - the one test, so the monitor can never send an
@@ -8171,6 +8250,7 @@ let fuelRth = {acted: false, alerted: false};
 let fuelNow = null, fuelErrSaid = false;
 function fuelTick(s){
   homeFieldTick();
+  coarseHomeTick();
   const model = fuelModel(), st = (s && s.status) || {};
   if(!model){ fuelNow = null; return; }
   const level = energyLevel(model, st);

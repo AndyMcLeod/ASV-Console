@@ -578,3 +578,102 @@ export function homeSections(sections, at, home) {
   out.forEach((c) => { c.lengthM = Math.round(c.lengthM); });
   return { sections: out, homeEnd: e, rejoin: { sec: j, at: q, offM: best.d }, lengthM: out.reduce((a, c) => a + c.lengthM, 0) };
 }
+
+// ── HOME, COARSE: HER WATER DISTANCE HOME PAST THE CHART BOX (2026-10-12) ────────────────────────────────────────
+// Andy: "build the coarse home field". The fuel monitor's water distance home (home_field.js) is a field over the
+// chart box round her, ~10 km; past it, with no passage leading home, it was the straight line - short of the way home
+// wherever land is in the way, so her RTH point came LATE. This is the same question asked of the tiles' planning grids
+// (the passage planner's): a search outward from HOME over every cell of the tiles read, at the coarse planner's own
+// costs (searchLeg's - each level's COST per meter, a blocked cell crossed only in home's own port circle at
+// PORT_BLOCKED_COST, unread water never entered, no corner cut), with the 16 moves of home_field.js (knight's moves
+// too, so a way across open water is within ~3% of straight, where 8 neighbors alone run up to 8% long). Each cell
+// keeps the LENGTH, in meters, of the cheapest way home from it - the way the coarse planner would take, measured.
+
+/** The 16 moves: [dx, dy, the cells it passes between or through, as [dx, dy] pairs] (home_field.js HF_MOVES). */
+const CH_MOVES = (() => {
+  const out = [];
+  for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) out.push([dx, dy, []]);
+  for (const [dx, dy] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) out.push([dx, dy, [[dx, 0], [0, dy]]]);
+  for (const [dx, dy] of [[2, 1], [2, -1], [-2, 1], [-2, -1], [1, 2], [-1, 2], [1, -2], [-1, -2]])
+    out.push([dx, dy, Math.abs(dx) === 2 ? [[dx / 2, 0], [dx / 2, dy]] : [[0, dy / 2], [dx, dy / 2]]]);
+  return out;
+})();
+
+/**
+ * THE COARSE HOME FIELD over `field` (buildField's) from `home` {lat, lon}: {tiles: [{tx, ty, len: Float32Array}],
+ * reached} - each cell's length home in meters (Infinity: no way home through the tiles read) - or {error: "unread"}
+ * when home's own tile is not among them.
+ */
+export function coarseHomeField(field, home) {
+  const N2 = GRID_N * GRID_N, h = cellOf(home);
+  const th = field.tiles.get(tileKey(Math.floor(h.gx / GRID_N), Math.floor(h.gy / GRID_N)));
+  if (!th) return { error: "unread" };
+  // ONE DENSE PLANE over the tiles' bounding box (a cell of no tile: unread, never entered): the search reads flat
+  // arrays, as home_field.js does - per-cell tile lookups held 30 tiles for 14 s
+  let tx0 = Infinity, ty0 = Infinity, tx1 = -Infinity, ty1 = -Infinity;
+  for (const t of field.list) { tx0 = Math.min(tx0, t.tx); ty0 = Math.min(ty0, t.ty); tx1 = Math.max(tx1, t.tx); ty1 = Math.max(ty1, t.ty); }
+  const W = (tx1 - tx0 + 1) * GRID_N, H = (ty1 - ty0 + 1) * GRID_N, gx0 = tx0 * GRID_N, gy0 = ty0 * GRID_N;
+  const cc = new Float32Array(W * H).fill(Infinity);           // the cost per meter of entering each cell
+  for (const t of field.list) {
+    const ox = t.tx * GRID_N - gx0, oy = t.ty * GRID_N - gy0;
+    for (let r = 0; r < GRID_N; r++) for (let c = 0; c < GRID_N; c++) cc[(oy + r) * W + ox + c] = COST[t.lv[r * GRID_N + c]];
+  }
+  // home's port circle: a blocked cell there is crossed at PORT_BLOCKED_COST (searchLeg's cellCost); home itself, 1
+  const hx = h.gx - gx0, hy = h.gy - gy0, ry = Math.ceil(PORT_R_M / (CELL_DEG * M_PER_DEG)) + 1;
+  const rx = Math.ceil(ry / Math.max(0.05, Math.cos(home.lat * Math.PI / 180)));
+  for (let y = Math.max(0, hy - ry); y <= Math.min(H - 1, hy + ry); y++)
+    for (let x = Math.max(0, hx - rx); x <= Math.min(W - 1, hx + rx); x++) {
+      const i = y * W + x, gx = x + gx0, gy = y + gy0;
+      if (field.level(gx, gy) === LV_BLOCKED && cellDistM(gx, gy, h.gx, h.gy) <= PORT_R_M) cc[i] = PORT_BLOCKED_COST;
+    }
+  cc[hy * W + hx] = 1;
+  // each row's move lengths in meters (its latitude's), and the moves as flat offsets
+  const M = CH_MOVES.length, off = new Int32Array(M), v1 = new Int32Array(M), v2 = new Int32Array(M);
+  const mdx = new Int32Array(M), mdy = new Int32Array(M), nv = new Uint8Array(M);
+  CH_MOVES.forEach(([dx, dy, via], m) => {
+    mdx[m] = dx; mdy[m] = dy; off[m] = dy * W + dx; nv[m] = via.length;
+    if (via.length) { v1[m] = via[0][1] * W + via[0][0]; v2[m] = via[1][1] * W + via[1][0]; }
+  });
+  const ky = CELL_DEG * M_PER_DEG, mlen = new Float64Array(H * M);
+  for (let y = 0; y < H; y++) {
+    const kx = ky * Math.cos(((y + gy0) + 0.5) * CELL_DEG * Math.PI / 180 - Math.PI / 2);
+    for (let m = 0; m < M; m++) mlen[y * M + m] = Math.hypot(mdx[m] * kx, mdy[m] * ky);
+  }
+  const cost = new Float64Array(W * H).fill(Infinity), len = new Float64Array(W * H).fill(Infinity), done = new Uint8Array(W * H);
+  const Hp = makeHeap(), s0 = hy * W + hx;
+  cost[s0] = 0; len[s0] = 0; Hp.push(0, s0);
+  let reached = 0;
+  while (Hp.size) {
+    const i = Hp.pop();
+    if (done[i]) continue;
+    done[i] = 1; reached++;
+    const x = i % W, y = (i - x) / W, here = cc[i], c0 = cost[i], l0 = len[i];
+    for (let m = 0; m < M; m++) {
+      const nx = x + mdx[m], ny = y + mdy[m];
+      if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+      const j = i + off[m], there = cc[j];
+      if (there === Infinity || done[j]) continue;
+      if (nv[m] && (cc[i + v1[m]] === Infinity || cc[i + v2[m]] === Infinity)) continue;   // no corner cut
+      const d = mlen[y * M + m], cn = c0 + d * (here + there) / 2;
+      if (cn >= cost[j]) continue;
+      cost[j] = cn; len[j] = l0 + d; Hp.push(cn, j);
+    }
+  }
+  const tiles = field.list.map((t) => {
+    const out = new Float32Array(N2), ox = t.tx * GRID_N - gx0, oy = t.ty * GRID_N - gy0;
+    for (let r = 0; r < GRID_N; r++) for (let c = 0; c < GRID_N; c++) out[r * GRID_N + c] = len[(oy + r) * W + ox + c];
+    return { tx: t.tx, ty: t.ty, len: out };
+  });
+  return { tiles, reached };
+}
+
+/** Her length home from `ll` on a coarse home field `hf` ({tiles: [{tx, ty, len}]}): the length from her cell, and from
+ *  her to that cell's center; null where the field has no way home (off its tiles, or no water way from there). */
+export function coarseHomeDistM(hf, ll) {
+  if (!hf || !hf.tiles || !ll) return null;
+  if (!hf.byKey) hf.byKey = new Map(hf.tiles.map((t) => [tileKey(t.tx, t.ty), t]));
+  const c = cellOf(ll), t = hf.byKey.get(tileKey(Math.floor(c.gx / GRID_N), Math.floor(c.gy / GRID_N)));
+  if (!t) return null;
+  const v = t.len[(c.gy - t.ty * GRID_N) * GRID_N + (c.gx - t.tx * GRID_N)];
+  return Number.isFinite(v) ? v + flatM(ll, cellLL(c.gx, c.gy)) : null;
+}

@@ -514,8 +514,9 @@ const FLOOR = 30;
     click: /const hit = transitPointAt\(.*\);\s*\n\s*if\(hit >= 0\) toggleFuelStop\(hit\);\s*\n\s*else \{ transit\.push\(\{lat:ll\.lat, lon:ll\.lon\}\); transitEdited\(\); \}/.test(H),
     undo: /transit\.pop\(\); transitEdited\(\);/.test(H) && /transit=\[\]; transitEdited\(\);/.test(H),
     every_edit: (H.match(/transit\.push\(|transit\.pop\(|transit=\[\]/g) || []).length === 3,
-    imports: /passageFuel,\s*\n\s*FUEL_RESERVE_FRAC, FUEL_REARM_FRAC \} from "\/static\/js\/fuel\.js"/.test(H) && /import \{ PORT_R_M as PASSAGE_PORT_R_M, homeSections \} from "\/static\/js\/coarse\.js"/.test(H),
-    worker: /new Worker\("\/static\/js\/coarse_worker\.js", \{type: "module"\}\)/.test(H) && /import \{ planPassage \} from "\.\/coarse\.js"/.test(WK) && /id: d\.id/.test(WK),
+    imports: /passageFuel,\s*\n\s*FUEL_RESERVE_FRAC, FUEL_REARM_FRAC \} from "\/static\/js\/fuel\.js"/.test(H) && /import \{ PORT_R_M as PASSAGE_PORT_R_M, homeSections, coarseHomeDistM \} from "\/static\/js\/coarse\.js"/.test(H),
+    // (the worker imports the coarse home field's functions too since 2026-10-12 - tests/fuel_rth.js 11)
+    worker: /new Worker\("\/static\/js\/coarse_worker\.js", \{type: "module"\}\)/.test(H) && /import \{[^}]*\bplanPassage\b[^}]*\} from "\.\/coarse\.js"/.test(WK) && /id: d\.id/.test(WK),
   };
   check("19. THE WIRING: the Plan passage button and its handler; the plan drawn right after the transit draft; a click "
         + "on a point a fuel stop, elsewhere a point - and every edit of the line (add, undo, clear) drops the plan; the "
