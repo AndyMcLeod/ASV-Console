@@ -144,7 +144,8 @@ console.log("Water no chart covers:");
     const mk = new Function("nogo", "beyondChart", "beyondChartSay", "fmtDist", "boxAround", "encSpanRefusal", "bbUnion",
       "ensureNogoCovers", "readPassageAis", "aisKeepoutsNow", "showBanner", "takeDownBanner", "sizeWhy", "STALL_TICK_MS",
       "CHART_WIDEN_ROUNDS", "CHART_WIDEN_PAD_M",
-      grab("planInsideChart") + "\nreturn planInsideChart;");
+      // the busy report before each route search (2026-10-12): the console is not here - tests/supervisor_page.js
+      "const supervisorBusy = async () => {}; let supPlanEnd = 0;\n" + grab("planInsideChart") + "\nreturn planInsideChart;");
     w.fn = mk(nogo, P.beyondChart, P.beyondChartSay, (m) => Math.round(m) + " m", () => box, () => null, (a) => a,
       async () => { w.reads++; return true; }, async () => {}, () => {}, (t) => w.banners.push(t), () => {}, () => "",
       0, 3, 1000);

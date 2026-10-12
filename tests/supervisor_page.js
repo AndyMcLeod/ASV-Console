@@ -116,9 +116,15 @@ function makeWorld(role) {
     decl(/^let supBeatMs = [^;]*;/m),
     decl(/^let supLastReport = [^;]*;/m),
     decl(/^const VIEW_ONLY_LIVE = [^;]*;/m),
-    ["supervising", "applySupervisor", "supervisorBeat", "supervisorStreamed", "supervisorStreamLost",
+    // the busy report before a route search, and the stamp its end leaves (2026-10-12)
+    decl(/^const SUPERVISOR_BUSY_S = [^;]*;/m),
+    decl(/^let supPlanEnd = [^;]*;/m),
+    "const AbortController = function(){ this.signal = {aborted: false}; this.abort = () => { this.signal.aborted = true; }; };",
+    "const setTimeout = () => 0, clearTimeout = () => {};",
+    ["supervising", "applySupervisor", "supervisorBeat", "supervisorBusy", "supervisorStreamed", "supervisorStreamLost",
      "supervisorReport", "supervisorSlept", "cmd", "cmdLabel", "canCommand", "applyViewOnly"].map(grab).join("\n"),
-    "return { CLIENT_ID, supervising, applySupervisor, cmd, canCommand, applyViewOnly,",
+    "return { CLIENT_ID, supervising, applySupervisor, cmd, canCommand, applyViewOnly, supervisorBusy,",
+    "         planned: () => { supPlanEnd = Date.now(); },",
     // what onFrame does for a frame the ladder ran on, and what the console's idle tick does
     "         stream: () => { supervisorStreamed(); supervisorReport(); },",
     "         streamLost: supervisorStreamLost,",
@@ -190,12 +196,19 @@ W5.applySupervisor({ holder: "another-tab", stale: false, tabs: 2 });
 const pill5 = { display: W5.els["#supPill"].style.display, text: W5.els["#supPill"].textContent };
 W5.applySupervisor({ holder: "another-tab", stale: false, tabs: 2 });
 W5.applySupervisor({ holder: W5.CLIENT_ID, stale: false, tabs: 2 });
+const pill5b = { display: W5.els["#supPill"].style.display, text: W5.els["#supPill"].textContent, tip: W5.els["#supPill"].title };
+W5.applySupervisor({ holder: W5.CLIENT_ID, stale: false, tabs: 1 });
 check("5. the top bar offers TAKE OVER while this tab is view-only, says it once rather than every frame, and the "
-      + "offer goes away the moment this tab has the post",
+      + "offer goes away the moment this tab has the post - in its place, while ANOTHER chart tab is open, how many "
+      + "are (2026-10-12: a second tab took his planning tab's post, and nothing in his tab said it was there), and "
+      + "nothing once it is the only one",
       () => pill5.display === "" && /VIEW ONLY/.test(pill5.text) && /TAKE OVER/.test(pill5.text)
             && W5.banners.filter((b) => /VIEW ONLY/.test(b)).length === 1
+            && pill5b.display === "" && pill5b.text === "⚠ 2 CHART TABS" && !/TAKE OVER/.test(pill5b.text)
+            && /1 other chart tab is open/.test(pill5b.tip) && /Close the chart tabs you are not using/.test(pill5b.tip)
             && W5.els["#supPill"].style.display === "none",
-      () => "pill '" + pill5.text + "'; banners " + W5.banners.length + "; now " + W5.els["#supPill"].style.display);
+      () => "pill '" + pill5.text + "'; banners " + W5.banners.length + "; holding with 2 tabs '" + pill5b.text
+            + "'; alone " + W5.els["#supPill"].style.display);
 
 // 6. nobody supervising is not the same as somebody else supervising
 const W6 = makeWorld("main");
@@ -347,6 +360,58 @@ check("8c. every state frame is a pulse, taken BEFORE the ladder runs; a report 
       + "frame - one whose ladder threw is no report - and what is not a state frame is neither",
       () => calls.join(",") === "pulse,ladder,report,pulse,ladder",
       () => calls.join(","));
+
+// ── 9. A TAB THAT IS PLANNING KEEPS ITS POST (2026-10-12) ─────────────────────────────────────────────────────
+// Andy: "another browser tab is grabbing the process so cannot start a mission". His Go-To's route search held the
+// supervising page 11 s and then 17.8 s; it could not report, the console handed the post to his other chart tab, and
+// the Go-To was refused when it went. The page now says it is about to plan; the console's half is tests/supervisor.py 13.
+const W9 = makeWorld("main");
+W9.applySupervisor({ holder: W9.CLIENT_ID, stale: false, tabs: 2 });
+W9.supervisorBusy();
+const busyPost = W9.reports().map((p) => ({ body: JSON.parse(p.opt.body), signal: !!p.opt.signal }));
+const W9v = makeWorld("main");
+W9v.applySupervisor({ holder: "another-tab", stale: false, tabs: 2 });
+W9v.supervisorBusy();
+const W9c = makeWorld("controls");
+W9c.supervisorBusy();
+W9v.applySupervisor({ holder: "another-tab", stale: false, busy: true, tabs: 2 });
+const busyPill = W9v.els["#supPill"].textContent;
+check("9. ABOUT TO PLAN: the supervising chart tab tells the console - its id and busy_s " + "60 - with the wait bounded "
+      + "(an abort signal), and a view-only tab or the controls window says nothing; a view-only tab whose supervisor "
+      + "is planning says so on its pill",
+      () => busyPost.length === 1 && busyPost[0].body.id === W9.CLIENT_ID && busyPost[0].body.busy_s === 60
+            && busyPost[0].signal && W9v.reports().length === 0 && W9c.reports().length === 0
+            && busyPill === "👁 VIEW ONLY · the other tab is planning",
+      () => JSON.stringify(busyPost) + "; view-only " + W9v.reports().length + ", controls " + W9c.reports().length
+            + "; pill '" + busyPill + "'");
+// 9b. a gap that ends as a plan ends is the plan, not sleep - no ASLEEP banner; recorded as planning
+const W9b = makeWorld("main");
+W9b.applySupervisor({ holder: W9b.CLIENT_ID, stale: false, tabs: 1 });
+W9b.show("hidden");
+W9b.stream();
+W9b.advance(18000);
+W9b.planned();
+W9b.stream();
+const planGap = W9b.asleep();
+const W9s = makeWorld("main");
+W9s.applySupervisor({ holder: W9s.CLIENT_ID, stale: false, tabs: 1 });
+W9s.show("hidden");
+W9s.stream();
+W9s.advance(18000);
+W9s.stream();
+check("9b. A GAP THAT ENDS AS A ROUTE SEARCH ENDS is the search, not sleep: no 'THIS TAB WAS ASLEEP' (said of his Go-To "
+      + "at 18:49:59), recorded as planning - while the same gap with no search behind it is still called a sleep",
+      () => !W9b.banners.some((b) => /ASLEEP/.test(b)) && planGap.length === 1 && planGap[0].data.planning === true
+            && W9s.banners.some((b) => /THIS TAB WAS ASLEEP for 18 s/.test(b)),
+      () => JSON.stringify(planGap) + "; without a plan: " + (W9s.banners.find((b) => /ASLEEP/.test(b)) || "no banner").slice(0, 40));
+// 9c. the wiring: each route search in planInsideChart is preceded by the report and followed by the stamp
+const pic = grab("planInsideChart");
+const before9 = (pic.match(/await supervisorBusy\(\);[^\n]*\n\s*(let )?p = plan\(\)/g) || []).length;
+const after9 = (pic.match(/p = plan\(\)[^\n]*\n\s*supPlanEnd = Date\.now\(\);/g) || []).length;
+check("9c. THE WIRING: both route searches in planInsideChart - the first and the one after a wider chart read - are "
+      + "preceded by the busy report and followed by the stamp",
+      () => before9 === 2 && after9 === 2 && (pic.match(/plan\(\)/g) || []).length === 2,
+      () => "busy before " + before9 + " of 2, stamp after " + after9 + " of 2");
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
 process.exit(fails ? 1 : 0);

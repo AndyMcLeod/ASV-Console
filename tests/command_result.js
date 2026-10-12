@@ -455,6 +455,8 @@ function world(opts) {
                            // read takes nothing and each plan is laid in the chart's model; the read itself is
                            // tests/chart_box.js's subject (10). The banner's words for what one names are the page's own.
                            + 'const readPassageAis = async () => {};' + "\n" + grab("mooredNote") + "\n"
+                           // the busy report before each route search (2026-10-12): the console is not here - tests/supervisor_page.js
+                           + 'const supervisorBusy = async () => {}; let supPlanEnd = 0;' + "\n"
                            // its first question - are the command's own points inside the box the chart was read
                            // over? - needs a model; this one has no box, so nothing is judged (as with no extract)
                            + 'const nogo = W.nogo || {ready: true, bbox: null};' + "\n"

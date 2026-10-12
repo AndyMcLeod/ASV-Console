@@ -319,5 +319,78 @@ tb = exception_lines(server_out)
 check("12. and it logged NO exception while serving any of it",
       not tb, ("%d line(s), first: %s" % (len(tb), tb[0][:90])) if tb else "")
 
+# 13. A TAB THAT IS PLANNING KEEPS ITS POST (2026-10-12). Andy: "another browser tab is grabbing the process so cannot start
+# a mission". His Go-To's route search held the supervising page 11 s, then 17.8 s; a page that is computing cannot report,
+# so the post went stale, his other chart tab - steady - took it, and the Go-To was refused when it went. The page now says
+# it is about to plan (`busy_s`); here the console's half, on the Supervision class itself with its own clock.
+import contextlib  # noqa: E402
+import io  # noqa: E402
+import asv_console as A  # noqa: E402
+
+T = 1000.0
+
+
+def steady(sv, tab, t):
+    sv.beat(tab, now=t - 1.0)            # a tab reporting a beat apart: steady
+    return sv.beat(tab, now=t)
+
+
+sv = A.Supervision()
+sv.beat("planner", now=T)
+steady(sv, "other", T + 1)
+sv.beat("planner", busy_s=60, now=T + 2)            # about to plan
+mid = steady(sv, "other", T + 25)                   # 23 s of silence: stale but for the plan
+late = steady(sv, "other", T + 63)                  # the plan's 60 s run out, still silent: stale now
+sv2 = A.Supervision()
+sv2.beat("planner", now=T)
+sv2.beat("planner", busy_s=60, now=T + 1)
+sv2.beat("planner", now=T + 3)                      # its next ordinary report: the plan is done
+back = steady(sv2, "other", T + 15)                 # 12 s silent after it: stale, and handed over as ever
+sv3 = A.Supervision()
+sv3.beat("planner", now=T)
+sv3.beat("planner", busy_s=1000, now=T + 1)         # asked for more than the most
+capped = steady(sv3, "other", T + 63)
+sv4 = A.Supervision()
+sv4.beat("planner", now=T)
+sv4.beat("other", busy_s=60, now=T + 1)             # a tab that is NOT the supervisor says it is planning: nothing
+sv4.beat("other", now=T + 2)
+notHolder = steady(sv4, "other", T + 13)
+sv5 = A.Supervision()
+sv5.beat("planner", now=T)
+sv5.beat("planner", busy_s=60, now=T + 1)
+took = sv5.beat("other", take=True, now=T + 5)      # a deliberate TAKE OVER still moves it
+check("13. A TAB THAT IS PLANNING KEEPS ITS POST: a supervisor that said it is about to plan is not stale - and no steady "
+      "tab takes the post - for as long as it said (busy in the state, not stale); then the old rule; its next ordinary "
+      "report ends it; at most SUPERVISOR_BUSY_MAX_S; a non-supervisor's word is nothing; a TAKE OVER still moves it",
+      lambda: mid["holder"] == "planner" and mid["busy"] is True and mid["stale"] is False
+      and late["holder"] == "other" and back["holder"] == "other" and capped["holder"] == "other"
+      and A.SUPERVISOR_BUSY_MAX_S == 60 and notHolder["holder"] == "other" and took["holder"] == "other"
+      and took["busy"] is False,
+      lambda: json.dumps({"mid": [mid["holder"], mid["busy"], mid["stale"]], "late": late["holder"], "back": back["holder"],
+                          "capped": capped["holder"], "notHolder": notHolder["holder"], "took": [took["holder"], took["busy"]]}))
+
+# 13b. the console says a long plan ONCE as what it is - no lapse - and a lapse once the plan's time is out
+sv6 = A.Supervision()
+sv6.beat("planner", now=T)
+sv6.beat("planner", busy_s=30, now=T + 1)
+said = io.StringIO()
+with contextlib.redirect_stdout(said), contextlib.redirect_stderr(said):
+    for k in range(5, 45, 2):
+        sv6.check_once(now=T + k)
+out6 = said.getvalue()
+check("13b. ... and the console SAYS a plan that outlasts the stale time once, as a plan - no lapse while it holds - and "
+      "the lapse once its time is out",
+      lambda: out6.count("is planning a route") == 1 and out6.count("has not reported for") == 1
+      and out6.index("is planning a route") < out6.index("has not reported for"),
+      lambda: " | ".join(l[:70].encode("ascii", "replace").decode() for l in out6.splitlines()))
+
+# 13c. the report's busy_s, read
+vals = {"60": A._busy_seconds(60), "2.5": A._busy_seconds(2.5), "str": A._busy_seconds("60"), "bool": A._busy_seconds(True),
+        "nan": A._busy_seconds(float("nan")), "neg": A._busy_seconds(-5), "zero": A._busy_seconds(0), "none": A._busy_seconds(None)}
+check("13c. a report's busy_s is a finite positive number of seconds or nothing - a string, a boolean, a NaN, a negative "
+      "or a zero say nothing",
+      lambda: vals["60"] == 60.0 and vals["2.5"] == 2.5 and all(vals[k] is None for k in ("str", "bool", "nan", "neg", "zero", "none")),
+      lambda: json.dumps(vals))
+
 print(("\n%d CHECK(S) FAILED (%d ran)" % (fails, ran)) if fails else ("\nall checks passed (%d)" % ran))
 sys.exit(1 if fails else 0)

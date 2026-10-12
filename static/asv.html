@@ -13557,7 +13557,10 @@ async function planInsideChart(pts, opts, plan, what){
   }
   await readPassageAis(pts);                     // the vessels not under way along it, for passageKo (2026-10-07)
   aisKeepoutsNow();
+  // THE SEARCH HOLDS THE PAGE'S THREAD: said to the console first, so this tab keeps supervision through it (2026-10-12)
+  await supervisorBusy();
   let p = plan(), why = null, cause = null, round = 0;
+  supPlanEnd = Date.now();
   while(p && p.uncharted){
     if(p.uncharted.where === "unread"){                // no wider read charts it: said at once (the advice: unchartedTip)
       cause = p.uncharted.failed ? "failed" : "unread"; break;
@@ -13588,7 +13591,9 @@ async function planInsideChart(pts, opts, plan, what){
     showBanner(what + ": planning again over the chart read along the route" + n);
     await new Promise(r=>setTimeout(r,50));             // the rebuild's paint, and this banner's, before the routing takes the thread
     aisKeepoutsNow();                                   // the contacts, in the frame the new extract set
+    await supervisorBusy();                             // and again: this search holds the thread as the first did
     p = plan();
+    supPlanEnd = Date.now();
   }
   if(p && p.uncharted){
     p.uncharted.say = beyondChartSay(p.uncharted, fmtDist) + (why ? " - " + why : "");
@@ -16523,12 +16528,21 @@ function applySupervisor(sup){
   const pill = $("#supPill");
   if(pill){
     const viewOnly = !supervising();
-    pill.style.display = viewOnly ? "" : "none";
+    // ⚠ AND THE SUPERVISING TAB SAYS WHEN ANOTHER CHART TAB IS OPEN (2026-10-12): a second chart tab is what took the
+    // post from his planning tab, and nothing in the tab he was using said it was there.
+    const others = SUPERVISES && !viewOnly && sup.tabs > 1 ? sup.tabs - 1 : 0;
+    pill.style.display = viewOnly || others ? "" : "none";
     if(viewOnly){
-      pill.textContent = "👁 VIEW ONLY · TAKE OVER";
+      pill.textContent = sup.busy ? "👁 VIEW ONLY · the other tab is planning" : "👁 VIEW ONLY · TAKE OVER";
       pill.title = "Another browser tab is supervising this console: its clearance guard and speed governor are the "
         + "ones commanding the boat. This tab shows everything and commands nothing, except Stop, Pause and E-STOP, "
-        + "which are taken from any tab. Click to take supervision over here.";
+        + "which are taken from any tab. Click to take supervision over here."
+        + (sup.busy ? "\nThat tab is planning a route just now, and keeps supervision while it does." : "");
+    } else if(others){
+      pill.textContent = "⚠ " + (others + 1) + " CHART TABS";
+      pill.title = "This tab supervises. " + others + " other chart tab" + (others > 1 ? "s are" : " is") + " open on this "
+        + "console: " + (others > 1 ? "they watch" : "it watches") + " and alarm" + (others > 1 ? "" : "s") + ", commands "
+        + "nothing, and can take supervision over. Close the chart tabs you are not using.";
     }
   }
   if(!supervising() && !supSaidViewOnly){
@@ -16561,6 +16575,24 @@ function supervisorStreamed(){
 }
 // A gap that spans a broken stream is the console's, not this page's: the first event after a reconnect measures nothing.
 function supervisorStreamLost(){ supLastStream = 0; }
+// ⚠ ABOUT TO PLAN (2026-10-12): a route search holds this page's thread for seconds - 11 s and 17.8 s on his Go-To up
+// the Piscataqua - and a page that is computing cannot report in. Said to the console first (asv_console.py
+// SUPERVISOR_BUSY_MAX_S), so it keeps this tab's post rather than handing it to another open chart tab and then
+// refusing the very command the plan was for. Bounded, so a console that does not answer costs the plan at most that.
+const SUPERVISOR_BUSY_S = 60, SUPERVISOR_BUSY_WAIT_MS = 1500;
+let supPlanEnd = 0;                                  // when this page's last route search ended (supervisorSlept)
+async function supervisorBusy(){
+  if(!SUPERVISES || !supervising()) return;
+  const ac = typeof AbortController === "function" ? new AbortController() : null;
+  const t = ac ? setTimeout(() => ac.abort(), SUPERVISOR_BUSY_WAIT_MS) : null;
+  try{
+    const r = await fetch("/api/supervisor", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({id: CLIENT_ID, busy_s: SUPERVISOR_BUSY_S}), signal: ac ? ac.signal : undefined});
+    const j = await r.json().catch(() => ({}));
+    if(j && j.supervisor) applySupervisor(j.supervisor);
+  }catch(e){}
+  finally{ if(t) clearTimeout(t); }
+}
 // Handling the stream IS the report: one per beat, however many frames arrive in it.
 function supervisorReport(){
   if(!SUPERVISES) return;
@@ -16572,6 +16604,15 @@ function supervisorReport(){
 function supervisorSlept(gapMs, beganHidden){
   const gap = Math.round(gapMs / 1000);
   const wasSupervising = supervising();
+  // ⚠ A ROUTE SEARCH IS NOT SLEEP (2026-10-12): the gap that ends as a plan ends was this page planning - on screen or
+  // not - and "THIS TAB WAS ASLEEP" said of it (as it was, at 18:49:59) sends the operator after the browser's
+  // settings for nothing. Recorded as what it was; stallWatch says an on-screen stall in its own words.
+  if(Date.now() - supPlanEnd < 2000){
+    fetch("/api/logevent", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({kind:"page_asleep", data:{gap_s: gap, supervising: wasSupervising, began_hidden: beganHidden,
+                                                      planning: true}})}).catch(()=>{});
+    return;
+  }
   // ⚠ ONE EVENT, ONE BANNER. A gap that began ON SCREEN is the page's own STALL, and stallWatch (review #29) says that
   // in its own words with what the page was doing. One that began off screen is the browser putting the tab to sleep,
   // which is this banner's - whether or not the operator is looking by the time the page wakes. The record is written

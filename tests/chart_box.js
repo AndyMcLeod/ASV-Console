@@ -241,6 +241,9 @@ const { distTo } = require("../static/js/geodesy.js");
 const passageReadCenters = eval("(" + grab("passageReadCenters") + ")");
 // eslint-disable-next-line no-eval
 const readPassageAis = eval("(" + grab("readPassageAis") + ")");
+// the busy report before each route search (2026-10-12): the console is not here - tests/supervisor_page.js
+const supervisorBusy = async () => {};
+let supPlanEnd = 0;
 // eslint-disable-next-line no-eval
 const planInsideChart = eval("(" + grab("planInsideChart") + ")");
 const fresh = () => { banners = []; downs = []; covers = []; aisTaken = 0; coverAnswer = null; };

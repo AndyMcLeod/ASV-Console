@@ -1908,18 +1908,22 @@ check("17. the guard runs on every telemetry frame, before the readouts are draw
   const spliceAt = eval("(" + grab(H, "spliceAt") + ")");
   const sA = spliceAt({ state: { wp_total: 7 } }, 2, 4) === 3, sB = spliceAt({ state: { wp_total: 6 } }, 2, 4) === 2,
         sC = spliceAt({}, 2, 4) === 2, sD = spliceAt({ state: { wp_total: 2 } }, 2, 4) === 2, sE = spliceAt(null, 5, 1) === 5;
-  const posts = ["goto", "rth", "transit", "reapproach"].map((c) => new RegExp('await routeCmd\\("/api/cmd/' + c + '"').test(H));
+  // (and since 2026-10-12, step 5 of the long-transit plan, a passage's section - posted as a Transit, or as an RTH on
+  // the way home along it - which records her first leg's start the same way: the fifth `legStartsHere(0, r)`)
+  const posts = ["goto", "rth", "transit", "reapproach"].map((c) => new RegExp('await routeCmd\\("/api/cmd/' + c + '"').test(H))
+    .concat([/const r = await routeCmd\(home \? "\/api\/cmd\/rth" : "\/api\/cmd\/transit", /.test(grab(H, "sailSend"))
+             && /legStartsHere\(0, r\);/.test(grab(H, "sailSend"))]);
   const starts = (H.match(/legStartsHere\(0, r\);/g) || []).length;
   const asked = /window\._wpIndex = s\.wp_index \|\| 0;\s*\n\s*trackLegStart\(s, seqMoved\);/.test(H);
   const splices = ["runRoute.slice(0, spliced), ...tail", "rr.slice(0, spliced), ...tail",
                    "rr0.slice(0, spliced), ...route", "rr.slice(0, spliced), ...route"]
     .map((s) => H.indexOf("runRoute = [..." + s + "];") >= 0);
   check("19g. spliceAt: the reply's count less the tail (7 - 4 at index 2 -> 3, the vessel had advanced; 6 - 4 -> 2), the " +
-        "page's index without a usable count; Go-To, RTH, transit and re-approach post through routeCmd and record her first " +
-        "leg's start; onState asks trackLegStart of every frame; the four amend sites splice at `spliced`",
-        () => sA && sB && sC && sD && sE && posts.every(Boolean) && starts === 4 && asked && splices.every(Boolean),
+        "page's index without a usable count; Go-To, RTH, transit, re-approach and a passage's section post through routeCmd " +
+        "and record her first leg's start; onState asks trackLegStart of every frame; the four amend sites splice at `spliced`",
+        () => sA && sB && sC && sD && sE && posts.every(Boolean) && starts === 5 && asked && splices.every(Boolean),
         "spliceAt " + [sA, sB, sC, sD, sE].map((x) => x ? "ok" : "NO").join("/") + "; routeCmd at " + posts.filter(Boolean).length
-            + " of 4 posts; legStartsHere(0, r) x" + starts + "; trackLegStart from onState " + asked + "; splice sites "
+            + " of 5 posts; legStartsHere(0, r) x" + starts + "; trackLegStart from onState " + asked + "; splice sites "
             + splices.filter(Boolean).length + " of 4");
   // THE COUNTER ITSELF, through the real routeCmd over a cmd() this block controls - LAST in the block, because the
   // decrement lands on a microtask and every frame above would otherwise read a command still in flight.

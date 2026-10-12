@@ -1063,6 +1063,18 @@ put to **sleep** is the lapse — when it wakes it says how long it was gone and
 just come back from a silence of its own cannot take supervision on that report
 (`tests/supervisor.py`, `tests/supervisor_page.js`).
 
+**A tab that is planning keeps the post (2026-10-12).** A Go-To's route search runs on the page
+itself, and over a wide chart it can hold the page for many seconds; a page that is computing
+cannot report in. On a Go-To up the Piscataqua the supervising tab went silent for 11 s and then
+17.8 s, a second chart tab took the post each time, and the Go-To was refused when it went. The
+supervising tab now tells the console just before each search that it is planning, and the
+console keeps its post through the silence (at most 60 s; its next report ends that), says on its
+own window that the tab is planning rather than that it stopped, and the page does not call the
+gap a sleep. Meanwhile a view-only tab's pill reads **👁 VIEW ONLY · the other tab is planning**,
+and TAKE OVER still moves the post at once. While another chart tab is open, the supervising
+tab's top bar shows **⚠ 2 CHART TABS**: close the chart tabs you are not using
+(`tests/supervisor.py` 13-13c, `tests/supervisor_page.js` 5 and 9-9c).
+
 **Two waters are not a reversal (2026-09-25).** When the chart splits a line into runs on both
 sides of a land mass, Punch Out's order finishes one side and crosses to the other, and the join
 between the last run on one side and the first on the other used to be judged a *reversal* by

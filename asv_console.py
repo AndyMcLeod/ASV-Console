@@ -8971,7 +8971,7 @@ class Handler(BaseHTTPRequestHandler):
             # A tab reporting in (review #14). `take` claims the post; `release` gives it up on unload.
             cid = body.get("id")
             snap = (SUPERVISION.release(cid) if body.get("release")
-                    else SUPERVISION.beat(cid, take=bool(body.get("take"))))
+                    else SUPERVISION.beat(cid, take=bool(body.get("take")), busy_s=_busy_seconds(body.get("busy_s"))))
             return 200, {"ok": True, "supervisor": snap, "you": bool(cid and snap.get("holder") == str(cid)[:64])}
         if path == "/api/logevent":
             # Client-supplied structured event for the session log (e.g. the
@@ -9843,9 +9843,18 @@ STORAGE = StorageWatch()
 #     (its previous report within SUPERVISOR_STALE_S); the first report after a silence only says the tab is back.
 # And SUPERVISOR_STALE_S went from 6 s to 10 s: every lapse in that session was 6.3-6.9 s old - one late beat - and a
 # page carrying his plan (465 waypoints, 1,460 keep-out features) was measured stalling 1.5-4.1 s at a time while idle.
+#
+# ⚠ AND A TAB THAT IS PLANNING IS NOT A TAB THAT STOPPED (2026-10-12). Andy: "another browser tab is grabbing the
+# process so cannot start a mission". His Go-To up the Piscataqua held the supervising page's thread 11 s, read the
+# chart wider, and held it 17.8 s more (the route search runs on the page's thread); a page that is computing cannot
+# report in, so each time the post went STALE and the other open chart tab - steady - took it, and the Go-To the
+# planning tab then sent was REFUSED as another tab's. So the page now says it is about to plan (`busy_s` on its
+# report, just before each search), and while that holds - at most SUPERVISOR_BUSY_MAX_S - the post is not handed
+# away and its silence is not called a lapse. Its next ordinary report ends it. A deliberate TAKE OVER still moves it.
 SUPERVISOR_BEAT_S = 2.0          # what a supervising page keeps to - published, so one number governs both ends
 SUPERVISOR_STALE_S = 10.0        # no report for this long and that tab is not running its ladder - published too
 SUPERVISOR_FORGET_S = 120.0      # silent this long and the tab is forgotten: it was closed
+SUPERVISOR_BUSY_MAX_S = 60.0     # the longest a supervising tab may say it will be busy planning
 SUPERVISOR_ANY = ("/api/cmd/stop", "/api/cmd/pause", "/api/cmd/estop")
 LOG_QUIET_POSTS = ("/api/supervisor",    # the heartbeat is not a command; the registry logs what matters about it
                    "/api/enc/corridor")  # a chart read moves nothing; the page logs the operator's own (corridor_read)
@@ -9858,18 +9867,21 @@ class Supervision:
         self._since = None           # when it took charge
         self._seen = {}              # every tab that has spoken -> when it last did
         self._said_stale = False
+        self._busy_until = 0.0       # the holder said it is planning until then (0: it did not)
+        self._said_busy = False
 
     def _prune(self, now):
         for cid in [c for c, t in self._seen.items() if now - t > SUPERVISOR_FORGET_S]:
             del self._seen[cid]
             if cid == self._holder:  # the supervising tab was closed or crashed: the post is open again
                 self._holder, self._since, self._said_stale = None, None, False
+                self._busy_until, self._said_busy = 0.0, False
 
-    def beat(self, client_id, take=False, now=None):
+    def beat(self, client_id, take=False, busy_s=None, now=None):
         """A tab reports in. It becomes the supervisor if the post is empty, if it asked to TAKE OVER, or if the
         holder has gone stale while this tab has been reporting steadily - a tab that is not running its ladder
         cannot keep the post from one that is, and a tab that has only just come back from its own silence is not
-        yet one that is."""
+        yet one that is. A holder that has SAID it is planning (`busy_s`) is not stale until that runs out."""
         now = time.time() if now is None else now
         cid = str(client_id or "")[:64]
         if not cid:
@@ -9879,19 +9891,25 @@ class Supervision:
             self._seen[cid] = now
             self._prune(now)
             held = self._holder
-            stale = held is not None and held != cid and (now - self._seen.get(held, 0.0)) > SUPERVISOR_STALE_S
+            stale = (held is not None and held != cid and (now - self._seen.get(held, 0.0)) > SUPERVISOR_STALE_S
+                     and now >= self._busy_until)
             # ⚠ STEADY, NOT MERELY PRESENT (2026-09-16): two throttled windows woke once a minute, each found the other
             # stale, took the post, and went quiet again - ten handovers in twelve minutes. A tab's first report after
             # a silence of its own proves it is back, not that it will stay; its next one, within a beat, does.
             steady = prev is not None and now - prev <= SUPERVISOR_STALE_S
             if held != cid and (held is None or take or (stale and steady)):
                 self._holder, self._since, self._said_stale = cid, now, False
+                self._busy_until, self._said_busy = 0.0, False
                 why = "took over from a tab that had stopped reporting" if stale else (
                     "took over" if take else "is supervising")
                 print("[supervisor] a browser tab %s (%s)" % (why, cid[:8]), flush=True)
                 if LOG is not None:
                     LOG.event("supervisor_took", tab=cid[:8], took_over=bool(take or stale),
                               from_tab=(held or "")[:8], stale=bool(stale))
+            if self._holder == cid:   # the holder's own report: planning for a while, or (any other report) done
+                self._busy_until = now + min(float(busy_s), SUPERVISOR_BUSY_MAX_S) if busy_s else 0.0
+                if not busy_s:
+                    self._said_busy = False
         return self.snapshot(now)
 
     def release(self, client_id, now=None):
@@ -9902,6 +9920,7 @@ class Supervision:
             self._seen.pop(cid, None)
             if self._holder == cid:
                 self._holder, self._since, self._said_stale = None, None, False
+                self._busy_until, self._said_busy = 0.0, False
                 if LOG is not None:
                     LOG.event("supervisor_released", tab=cid[:8])
         return self.snapshot(now)
@@ -9912,10 +9931,11 @@ class Supervision:
             held, since = self._holder, self._since
             last = self._seen.get(held) if held else None
             tabs = sum(1 for t in self._seen.values() if now - t <= SUPERVISOR_STALE_S)
+            busy = bool(held is not None and now < self._busy_until)
         age = round(now - last, 1) if last else None
-        return {"holder": held, "since": since, "age_s": age, "tabs": tabs,
-                "stale": bool(held is not None and age is not None and age > SUPERVISOR_STALE_S),
-                "beat_s": SUPERVISOR_BEAT_S, "stale_s": SUPERVISOR_STALE_S}
+        return {"holder": held, "since": since, "age_s": age, "tabs": tabs, "busy": busy,
+                "stale": bool(held is not None and age is not None and age > SUPERVISOR_STALE_S and not busy),
+                "beat_s": SUPERVISOR_BEAT_S, "stale_s": SUPERVISOR_STALE_S, "busy_max_s": SUPERVISOR_BUSY_MAX_S}
 
     def is_holder(self, client_id):
         with self._lock:
@@ -9934,6 +9954,13 @@ class Supervision:
             if snap["holder"] is None:
                 self._said_stale = False
                 return snap
+            # planning past the stale time: said once, as what it is - not a lapse, and no tab takes the post
+            if snap["busy"] and (snap["age_s"] or 0) > SUPERVISOR_STALE_S and not self._said_busy:
+                self._said_busy = True
+                print("[supervisor] the supervising tab is planning a route (silent %.0f s): its clearance guard runs "
+                      "again when the plan is done. It keeps supervision meanwhile." % (snap["age_s"] or 0), flush=True)
+                if LOG is not None:
+                    LOG.event("supervisor_busy", tab=(snap["holder"] or "")[:8], age_s=snap["age_s"])
             if snap["stale"] and not self._said_stale:
                 self._said_stale = True
                 print("[supervisor] ⚠ the supervising tab has not reported for %.0f s - the page's clearance guard "
@@ -9960,6 +9987,12 @@ class Supervision:
 
 
 SUPERVISION = Supervision()
+
+
+def _busy_seconds(v):
+    """A report's `busy_s` ("about to plan, for this long"): a finite positive number of seconds, or None - a string, a
+    boolean, a NaN or a negative says nothing."""
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and v > 0 else None
 
 
 def supervisor_refusal(path, client_id):

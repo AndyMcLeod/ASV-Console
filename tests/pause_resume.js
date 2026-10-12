@@ -226,6 +226,8 @@ eval([
   "function aisKeepoutsNow(){ return aisKoDrawn; }",
   // the vessels along a passage (2026-10-07): no AIS proxy answers here, so the read takes nothing - tests/chart_box.js 10
   "async function readPassageAis(){}",
+  // the busy report before each route search (2026-10-12): the console is not here - tests/supervisor_page.js
+  "async function supervisorBusy(){}", "let supPlanEnd = 0;",
   grab("planInsideChart"),
   // review #14: the guard and the governor act only in the SUPERVISING tab; this world is that tab. A view-only one is tests/supervisor_page.js's subject.
   "const supervising = () => true;",
