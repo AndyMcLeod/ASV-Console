@@ -21,7 +21,7 @@ THE ENDPOINT'S OWN CONTRACTS (read from fetch_enc_features, asserted hermeticall
     edges, non-numeric, unparseable min_depth - is a 400 naming the ENC usage string,
     never a 502 from downstream.
   * The extract is LAYERED since 2026-10-11 (tests/enc_layered.py): read in fixed tiles, each
-    cached as `charts/enc/tile_v<N>_<key>.json`, and SERVED from that cache - proven with a
+    cached as `charts/enc/tile_v<N>_<key>.jsonl`, and SERVED from that cache - proven with a
     sentinel tile seeded at a mid-ocean bbox that upstream would answer "no coverage" for, so
     only the cache can be the source.
   * THE RETAG IS PER-REQUEST, THE FETCH IS NOT: every depth_area feature gets
@@ -147,14 +147,14 @@ KEY = "%.4f_%.4f_%.4f_%.4f" % BBOX
 _SRC = open(os.path.join(APP, "asv_console.py"), encoding="utf-8").read()
 # THE ENDPOINT IS LAYERED (2026-10-11): it reads TILES, so the sentinel is a tile - the one the box lies in, on the
 # grid the source declares - and its prefix is read from the source too.
-_CVER = re.search(r'"(tile_v\d+)_%s\.json"', _SRC)
+_CVER = re.search(r'_ENC_TILE_FMT = "(tile_v\d+)_%s\.jsonl"', _SRC)
 _TDEG = re.search(r'^ENC_TILE_DEG = ([\d.]+)', _SRC, re.M)
 if not _CVER or not _TDEG:
     raise SystemExit("test setup: cannot find the tile cache version or the tile size in asv_console.py")
 _T = float(_TDEG.group(1))
 import math as _m                                              # noqa: E402
 TILE = [_m.floor(BBOX[0] / _T) * _T, _m.floor(BBOX[1] / _T) * _T, (_m.floor(BBOX[0] / _T) + 1) * _T, (_m.floor(BBOX[1] / _T) + 1) * _T]
-CACHE = os.path.join(ENC_DIR, _CVER.group(1) + "_%s.json" % ("%.4f_%.4f_%.4f_%.4f" % tuple(TILE)))
+CACHE = os.path.join(ENC_DIR, _CVER.group(1) + "_%s.jsonl" % ("%.4f_%.4f_%.4f_%.4f" % tuple(TILE)))
 SENTINEL = {
     # a mid-ocean tile no chart covers - so a band, and these two features, can only have come from this file
     "tile": TILE, "bands": ["enc_general"], "unread": [], "unread_failed": [], "partial": [], "complete": True,
@@ -194,8 +194,11 @@ try:
         raise SystemExit(1)
 
     os.makedirs(ENC_DIR, exist_ok=True)
+    # a tile file as the console keeps one (2026-10-11): a header line, then one feature per line
     with open(CACHE, "w", encoding="utf-8") as f:
-        json.dump(SENTINEL, f)
+        f.write(json.dumps(dict({k: v for k, v in SENTINEL.items() if k != "features"}, n=len(SENTINEL["features"]))) + "\n")
+        for _ft in SENTINEL["features"]:
+            f.write(json.dumps(_ft) + "\n")
 
     # 2. EVERY malformed spelling is a 400 naming the ENC usage - never a 502 from
     # downstream, and never the OTHER endpoint's usage (2c: the dedup shares the parse,

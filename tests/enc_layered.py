@@ -116,6 +116,9 @@ APP_ENC = os.path.join(APP, "charts", "enc")
 before = set(os.listdir(APP_ENC)) if os.path.isdir(APP_ENC) else set()
 TMP = tempfile.mkdtemp(prefix="asv_enc_layered_")
 A.ENC_DIR = TMP
+# the service is stubbed IN THIS PROCESS, so the tile is built here too (the console builds it in a child process -
+# tests/chart_read_stall.py; the child runs this same _enc_tile_build)
+A.ENC_TILE_IN_PROCESS = True
 
 print("The chart in layers:")
 
@@ -349,7 +352,7 @@ try:
     land_area = sum(geom_area(f["geometry"]) for f in land)
     full_land = 0.23 * 0.03
     harbour_part = 0.15 * 0.03
-    tile_file = os.path.join(TMP, "tile_v1_%s.json" % A._bbox_key(box))
+    tile_file = A._tile_path(box)
     check("6. THE TILE: the harbour chart WHOLE (no `clip`), the coastal land CUT AWAY inside the harbour's coverage - "
           "kept outside it and in the one-square strip along its edge (area %.5f of %.5f, the harbour's part %.5f) - the "
           "unread strip reported, the depth floor tagged (DRVAL1 1 m < 2 m shallow), and the complete tile cached"
@@ -370,7 +373,7 @@ try:
     d2 = A.fetch_enc_layered(box, 0.5)
     A._enc_tile_mem.clear()
     d3 = A.fetch_enc_layered(box, 0.5)
-    cached = json.load(open(tile_file, encoding="utf-8"))
+    cached = A._read_tile_jsonl(tile_file)
     mem = [f for t in A._enc_tile_mem.values() for f in t.get("features", [])]
     check("6a. read again it comes from memory, then from the disk, with NO service call - and the floor is per request: "
           "at 0.5 m the same depth area is not shallow, and neither the cached tile on disk nor the one held in memory "

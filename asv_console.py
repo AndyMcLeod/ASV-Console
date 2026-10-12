@@ -44,6 +44,7 @@ opens a browser tab. See --help.
 import argparse
 import atexit
 import calendar
+import gc
 import gzip
 import hashlib
 import json
@@ -2874,6 +2875,200 @@ def _enc_tile_build(tile):
     return out
 
 
+# ── A CHART READ MUST NOT STOP THE CONSOLE (2026-10-11, Andy: "the telemetry-pause fix") ─────────────────────────────
+# Measured (scratchpad stall_probe.py, a 4 Hz thread standing in for the telemetry loop): opening a cached tile -
+# `json.load` of a 29.6 MB file - held the GIL 1.5 s in ONE C call, and the ticker with it; a fresh build parses each of
+# NOAA's answers the same way (0.15-0.35 s apiece) and a live read runs about two dozen at once, so the telemetry
+# stream stopped for 2-6 s at a time - the page said TELEMETRY STALE, and for those seconds the clearance guard judged
+# nothing. Three changes, each measured:
+#   A TILE IS BUILT IN A CHILD PROCESS (`asv_console.py --enc-tile-worker`, _enc_tile_build_child): NOAA's answers
+#   are fetched, parsed, classified and cut there, and the console waits on the process, which holds nothing;
+#   A TILE IS KEPT ONE FEATURE PER LINE (tile_v2_<key>.jsonl, _write_tile_jsonl / _read_tile_jsonl): read back as
+#   thousands of small parses, between which the interpreter hands the other threads their turn;
+#   THE GARBAGE COLLECTOR is held while a tile is read, and the tile frozen out of its walk after (_GcHeld, below).
+# A tile kept the old way (tile_v1_<key>.json) is carried over by the child, not read from NOAA again.
+# ENC_TILE_IN_PROCESS builds in this process instead - for the suites that stub the service here (enc_layered.py).
+ENC_TILE_IN_PROCESS = False
+ENC_TILE_BUILD_TIMEOUT_S = 900
+_ENC_TILE_FMT = "tile_v2_%s.jsonl"
+
+
+def _tile_path(tile):
+    return os.path.join(ENC_DIR, _ENC_TILE_FMT % _bbox_key(tile))
+
+
+def _legacy_tile_path(tile):
+    """A tile as kept before 2026-10-11: one JSON file. Not read here - the worker carries it over (its header)."""
+    return os.path.join(ENC_DIR, "tile_v1_%s.json" % _bbox_key(tile))
+
+
+def _write_tile_jsonl(path, got):
+    """A tile, whole or not at all: a header line (everything but the features, with their count `n`), then one feature
+    per line. Each writer has its own temp, and the replace retries (as _write_json_atomic)."""
+    d = os.path.dirname(path)
+    if d:
+        os.makedirs(d, exist_ok=True)
+    head = {k: v for k, v in got.items() if k != "features"}
+    feats = got.get("features") or []
+    head["n"] = len(feats)
+    tmp = "%s.%d.%d.part" % (path, os.getpid(), threading.get_ident())
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(json.dumps(head) + "\n")
+            for ft in feats:
+                f.write(json.dumps(ft) + "\n")
+        _replace_retrying(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
+# ⚠ AND THE GARBAGE COLLECTOR HELD, THEN TOLD TO LEAVE THE TILE BE. Read line by line, a 22 MB tile still stopped a
+# 20 Hz thread 0.45 s: three FULL collections ran while its features arrived (0.29, 0.36, 0.43 s - each walks every
+# object in the process, and cannot be interrupted). Held, the worst gap was 0.18 s. But a hold only DEFERS: a tile
+# then lives in memory (ENC_TILE_MEM_MAX of them), and the collections after walk its million-odd objects - with three
+# tiles held, the first collection after a read took 0.98 s, and a full one at any later moment 0.93 s. So what was
+# read is FROZEN (gc.freeze): later collections skip it, and the same full collection took 0.014 s (scratchpad
+# freeze_probe.py). Its features hold no cycles, so a tile dropped from memory is still freed, by its references. The
+# cost: whatever is cyclic garbage at the moment of a freeze is frozen with it and never freed - a few objects, once
+# per tile read from disk. Counted, because three tiles are read at once.
+_gc_hold_lock = threading.Lock()
+_gc_hold = {"n": 0, "was": True}
+
+
+class _GcHeld:
+    def __enter__(self):
+        with _gc_hold_lock:
+            if _gc_hold["n"] == 0:
+                _gc_hold["was"] = gc.isenabled()
+                gc.disable()
+            _gc_hold["n"] += 1
+
+    def __exit__(self, *exc):
+        with _gc_hold_lock:
+            _gc_hold["n"] -= 1
+            if _gc_hold["n"] == 0:
+                gc.freeze()
+                if _gc_hold["was"]:
+                    gc.enable()
+        return False
+
+
+def _read_tile_jsonl(path):
+    """A tile written by _write_tile_jsonl, read back line by line - or None when it is missing, unreadable, or not
+    whole (a line that does not parse, or fewer features than its header counts): a tile not read is read again."""
+    try:
+        f = open(path, "r", encoding="utf-8")
+    except OSError:
+        return None
+    with f, _GcHeld():
+        try:
+            got = json.loads(f.readline())
+            feats = [json.loads(line) for line in f if line.strip()]
+        except (ValueError, OSError):
+            return None
+    if not isinstance(got, dict) or got.get("n") != len(feats):
+        return None
+    got["features"] = feats
+    return got
+
+
+def _enc_tile_build_child(tile):
+    """_enc_tile_build in a CHILD PROCESS (the block header): the result comes back as a tile file, read here line by
+    line; a complete one is moved into the cache. A child that fails, or runs past ENC_TILE_BUILD_TIMEOUT_S, leaves the
+    tile unread (failed), as a coverage that cannot be read does; one that found NOAA unreachable trips the breaker."""
+    global _enc_down_until
+    fail = {"tile": tile, "features": [], "unread": [], "unread_failed": [tile], "bands": [], "partial": []}
+    legacy = _legacy_tile_path(tile)
+    if time.monotonic() < _enc_down_until and not os.path.exists(legacy):
+        return dict(fail, note="ENC offline (no cache for this tile)")
+    out = "%s.%d.%d.build" % (_tile_path(tile), os.getpid(), threading.get_ident())
+    cmd = [sys.executable, os.path.abspath(__file__), "--enc-tile-worker", "--tile=" + ",".join(repr(float(v)) for v in tile),
+           "--enc-dir", ENC_DIR, "--out", out]
+    try:
+        r = subprocess.run(cmd, timeout=ENC_TILE_BUILD_TIMEOUT_S, cwd=APP_DIR)
+    except subprocess.TimeoutExpired:
+        return dict(fail, note="the chart read for this tile ran past %d s" % ENC_TILE_BUILD_TIMEOUT_S)
+    except OSError as e:
+        return dict(fail, note="the chart reader could not be started (%s)" % e)
+    got = _read_tile_jsonl(out) if r.returncode == 0 else None
+    if got is None:
+        try:
+            os.remove(out)
+        except OSError:
+            pass
+        return dict(fail, note="the chart reader failed (exit %s)" % r.returncode)
+    if got.pop("offline", False):
+        _enc_down_until = time.monotonic() + 30.0
+    try:
+        if got.get("complete"):
+            _replace_retrying(out, _tile_path(tile))
+            if os.path.exists(legacy):           # carried over (the worker's header): the one-JSON copy goes
+                os.remove(legacy)
+        else:
+            os.remove(out)
+    except OSError as e:
+        print("[enc] could not keep tile %s: %s" % (_bbox_key(tile), e), file=sys.stderr)
+    got.pop("n", None)
+    return got
+
+
+def _enc_tile_worker_main(argv):
+    """`asv_console.py --enc-tile-worker --tile=W,S,E,N --enc-dir DIR --out PATH`: build one tile (_enc_tile_build), or
+    carry over the one kept before 2026-10-11, and write it to PATH as a tile file - complete or not; the console
+    decides what to keep. ASV_ENC_TILE_FAKE (a JSON file:
+    coverage / features / partial per band, `offline`, `crash`, or `exit_after_write`: a tile written, then a failing
+    exit) stands in for NOAA, for tests/chart_read_stall.py."""
+    global ENC_DIR
+    import argparse as _ap
+    ap = _ap.ArgumentParser()
+    ap.add_argument("--tile", required=True)   # =W,S,E,N - a western longitude reads as an option otherwise
+    ap.add_argument("--enc-dir", required=True)
+    ap.add_argument("--out", required=True)
+    a = ap.parse_args(argv)
+    tile = [float(v) for v in a.tile.split(",")]
+    ENC_DIR = a.enc_dir
+    fake = os.environ.get("ASV_ENC_TILE_FAKE")
+    if fake:
+        with open(fake, "r", encoding="utf-8") as f:
+            F = json.load(f)
+        if F.get("crash"):
+            return 3
+        g = globals()
+
+        def cov(band, t):
+            if F.get("offline"):
+                raise OSError("fake: the chart service is unreachable")
+            return F.get("coverage", {}).get(band, [])
+        g["_enc_coverage"] = cov
+
+        def feats(region, md=0.0, band=None, extras=True, use_cache=True):
+            if F.get("parse_mb"):                  # an answer as big as NOAA's, parsed as one (the stall it moves here)
+                json.loads("[" + ",".join(["[1.2345678, 42.1234567]"] * int(F["parse_mb"] * 40000)) + "]")
+            return {"band": band, "features": [dict(x) for x in F.get("features", {}).get(band, [])],
+                    "partial": F.get("partial", {}).get(band, [])}
+        g["fetch_enc_features"] = feats
+    # A TILE KEPT BEFORE THIS CHANGE (tile_v1, one JSON) IS CARRIED OVER, not read from NOAA again: its one big parse
+    # is made here, where it stops nothing, and the console keeps it as a tile file and removes the old copy. Without
+    # this, every passage read before the change would have no chart offline until it was read again.
+    got = None
+    try:
+        with open(_legacy_tile_path(tile), "r", encoding="utf-8") as f:
+            got = json.load(f)
+        if not (isinstance(got, dict) and got.get("complete") and isinstance(got.get("features"), list)):
+            got = None
+    except (OSError, ValueError):
+        got = None
+    if got is None:
+        got = _enc_tile_build(tile)
+    got["offline"] = time.monotonic() < _enc_down_until
+    _write_tile_jsonl(a.out, got)
+    return int(F.get("exit_after_write", 0)) if fake else 0
+
+
 def fetch_enc_tile(tile):
     """One tile, from memory, from disk, or read - complete tiles only are kept."""
     key = _bbox_key(tile)
@@ -2884,14 +3079,20 @@ def fetch_enc_tile(tile):
             got = _enc_tile_mem.get(key)
         if got is not None:
             return got
-        path = os.path.join(ENC_DIR, "tile_v1_%s.json" % key)
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                got = json.load(f)
-        except (OSError, ValueError):
-            got = _enc_tile_build(tile)
-            if got.get("complete"):
-                _cache_json(path, got)
+        path = _tile_path(tile)
+        got = _read_tile_jsonl(path)
+        if got is not None:
+            got.pop("n", None)
+        else:
+            if ENC_TILE_IN_PROCESS:
+                got = _enc_tile_build(tile)
+                if got.get("complete"):
+                    try:
+                        _write_tile_jsonl(path, got)
+                    except OSError as e:
+                        print("[cache] could not write %s: %s" % (os.path.basename(path), e), file=sys.stderr)
+            else:
+                got = _enc_tile_build_child(tile)
         if got.get("complete"):
             with _enc_tile_locks_lock:
                 _enc_tile_mem[key] = got
@@ -9388,4 +9589,7 @@ def main():
 
 
 if __name__ == "__main__":
+    # A CHART TILE BUILT FOR THE CONSOLE in a process of its own (_enc_tile_build_child) - nothing else starts.
+    if len(sys.argv) > 1 and sys.argv[1] == "--enc-tile-worker":
+        sys.exit(_enc_tile_worker_main(sys.argv[2:]))
     main()

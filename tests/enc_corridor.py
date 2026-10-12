@@ -235,9 +235,12 @@ def http(port, path, body=None):
 ENC_DIR = os.path.join(APP, "charts", "enc")
 os.makedirs(ENC_DIR, exist_ok=True)
 TILE = [-150.0, 20.0, -149.75, 20.25]
-SEED = os.path.join(ENC_DIR, "tile_v1_%s.json" % ("%.4f_%.4f_%.4f_%.4f" % tuple(TILE)))
-json.dump({"tile": TILE, "features": [], "bands": ["enc_general"], "unread": [], "unread_failed": [], "partial": [],
-           "complete": True}, open(SEED, "w", encoding="utf-8"))
+_sav_dir = A.ENC_DIR
+A.ENC_DIR = ENC_DIR                       # the console's own tile file name and format, read from the module
+SEED = A._tile_path(TILE)
+A.ENC_DIR = _sav_dir
+A._write_tile_jsonl(SEED, {"tile": TILE, "features": [], "bands": ["enc_general"], "unread": [], "unread_failed": [],
+                          "partial": [], "complete": True})
 STATE = ConsoleState()
 port = free_port()
 log = tempfile.TemporaryFile(mode="w+")

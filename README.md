@@ -2385,6 +2385,25 @@ of the operator.
    again rejoin it) and `GET /api/enc/corridor?id=` for its progress; it reads at most 600 tiles at
    once and is not logged as a command.
 
+   **A chart read no longer stops the console (2026-10-11).** Reading the chart used to stop the
+   telemetry stream for seconds at a time. Opening a cached tile (one JSON file of up to 30 MB) held
+   the Python interpreter 1.5 s in a single call, and a fresh read parsed each of NOAA's answers the
+   same way, a couple of dozen at once, so the frames stopped for 2 to 6 s. The page said TELEMETRY
+   STALE, and for those seconds the clearance guard judged nothing. Three changes, each measured:
+   a tile is **built in a child process** (`asv_console.py --enc-tile-worker`; the console starts it,
+   nothing to run by hand), so NOAA's answers are parsed there; a tile is **kept one feature per
+   line** (`charts/enc/tile_v2_<key>.jsonl`), read back in thousands of small parses the other
+   threads run between; and the **garbage collector is held** while a tile is read, and what was read
+   is frozen out of its later walks (with three tiles in memory, a full collection took 0.93 s before
+   and 0.014 s after). A thread ticking at 20 Hz in place of the telemetry loop: reading a 22 MB tile,
+   worst gap 0.06 s (1.6 to 2 s as one parse); a build whose answers are as big as NOAA's, 0.05 s
+   (about 1 s in the console's own process). On a live console (frames every 0.25 s; 0.40 s worst
+   with no read at all): a fresh corridor read from NOAA, five tiles and 77 MB, worst gap 0.57 s; a
+   box read carrying over two old tiles, 0.74 s. The page calls the telemetry stale at 2 s. A tile
+   kept the old way (`tile_v1_<key>.json`) is carried over the first time it is asked for, offline
+   too, and the old copy removed. A child that fails, or runs past 15 minutes, leaves the tile
+   unread with the reason, as a chart that could not be read does. `tests/chart_read_stall.py`.
+
    The vessel-status card's **Nogo** row names which of four things is true, because they
    are not interchangeable: *reading chart… 6 s* (with the seconds climbing, so a chart
    service that has stopped answering doesn't look like a slow first fetch), *334 zones ·
