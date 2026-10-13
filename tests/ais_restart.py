@@ -317,5 +317,80 @@ check("9. the watchdog outlives a look that raises - it says so and keeps lookin
       lambda: len(looks) >= 3 and "a look that went wrong" in err_buf.getvalue(),
       lambda: "%d looks after the fault; said: %s" % (len(looks), err_buf.getvalue().strip()[:70]))
 
+# 10. THE AIS AREA FOLLOWS A SPAWN (Andy, 2026-10-13: "on spawn, the app should read charts associated with new position
+#     and reference from there"). The service subscribed round the port's spawn; a click-spawn outside that box left it
+#     streaming the water she had left. On a third copy of the module, whose real start launches a fake process.
+_spec3 = _ilu.spec_from_file_location("asv_console_ais_follow", os.path.join(APP, "asv_console.py"))
+_F = _ilu.module_from_spec(_spec3)
+_spec3.loader.exec_module(_F)
+_F.use_state_dir(STATE.dir)
+_F.LOG = _Log()
+_F._ais_watchdog = "held by the suite"
+_F._ais_local_port = lambda: ("127.0.0.1", 9)
+_F._port_alive = lambda h, p: False
+fspawned = []
+
+
+class _FPopen:
+    def __init__(self, cmd, **kw):
+        self.cmd, self.code = cmd, None
+        fspawned.append(self)
+
+    def poll(self):
+        return self.code
+
+    def terminate(self):
+        self.code = -15
+
+    def wait(self, timeout=None):
+        return self.code
+
+    def kill(self):
+        self.code = -9
+
+
+_F.subprocess = type("S", (), {"Popen": _FPopen, "DEVNULL": -3, "STDOUT": -2})
+_F.atexit = type("A", (), {"register": staticmethod(lambda *a, **k: None)})
+_F.SPAWN_LAT, _F.SPAWN_LON = 43.073, -70.71                   # New Castle
+
+
+def _sub(p):
+    """(center, box) of the box a fake service was started with."""
+    w, s, e, n = (float(x) for x in [a for a in p.cmd if a.startswith("--bbox=")][0][7:].split(","))
+    return ((s + n) / 2, (w + e) / 2), (w, s, e, n)
+
+
+with redirect_stdout(io.StringIO()):
+    _F._start_ais_service()
+    n0 = len(fspawned)
+    near = _F._ais_follow(43.04, -70.66)                       # 6 km off: inside the subscribed box
+    n_near = len(fspawned)
+    far = _F._ais_follow(38.78, -75.14)                        # Lewes: another sea
+    c_far, area_far = _sub(fspawned[-1])[0], _F.AIS_AREA
+    erie = _F._ais_follow(42.10, -80.10)                       # Lake Erie: the whole lake
+    box_erie = _sub(fspawned[-1])[1]
+    back = _F._ais_follow(_F.SPAWN_LAT, _F.SPAWN_LON, at_spawn=True)   # a Reset: back at the configured spawn
+    c_back, area_back = _sub(fspawned[-1])[0], _F.AIS_AREA
+a_, b_, c_, d_ = _F.GREAT_LAKES_BOXES["erie"]
+want_erie = (c_, a_, d_, b_)
+import inspect                                                  # noqa: E402
+import re                                                       # noqa: E402
+_post = inspect.getsource(_F.Handler._dispatch_post)
+wired = (bool(re.search(r'ENGINE\.reset\(spawn=\{"lat": slat, "lon": slon\}\)\s+_ais_follow\(slat, slon\)', _post))
+         and bool(re.search(r"ENGINE\.reset\(\)\s+_ais_follow\(SPAWN_LAT, SPAWN_LON, at_spawn=True\)", _post)))
+check("10. THE AIS AREA FOLLOWS A SPAWN: one inside the subscribed box restarts nothing; one outside it (Lewes) "
+      "re-points the subscription round HER, the old service stopped; on a Great Lake round the whole lake; a Reset "
+      "back round the configured spawn; and the spawn and reset commands both ask (_ais_follow)",
+      lambda: (n0 == 1 and near is False and n_near == 1 and far is True and abs(c_far[0] - 38.78) < 1e-3
+               and abs(c_far[1] + 75.14) < 1e-3 and area_far == (38.78, -75.14) and fspawned[0].code == -15
+               and erie is True and all(abs(x - y) < 1e-3 for x, y in zip(box_erie, want_erie))
+               and back is True and abs(c_back[0] - 43.073) < 1e-3 and abs(c_back[1] + 70.71) < 1e-3
+               and area_back is None and wired),
+      lambda: "started %d; 6 km off: %s (%d started); Lewes: %s, centered %s, area %s, the first stopped %s; Erie: %s %s "
+              "(want %s); Reset: %s, centered %s, area %s; wired %s"
+              % (n0, near, n_near, far, tuple(round(x, 3) for x in c_far), area_far, fspawned[0].code == -15, erie,
+                 tuple(round(x, 2) for x in box_erie), tuple(round(x, 2) for x in want_erie), back,
+                 tuple(round(x, 3) for x in c_back), area_back, wired))
+
 print("\n" + ("%d CHECK(S) FAILED (%d ran)" % (fails, ran) if fails else "all checks passed (%d)" % ran))
 sys.exit(1 if fails else 0)

@@ -314,6 +314,62 @@ check("15. a console restarted under an OPEN page gives up the plan it drew ther
         () => held === null,
         () => "after " + wait + " ms the store holds: " + (held === null ? "nothing" : held));
 
+  // ── 16-16d. A SPAWN READS THE CHART WHERE SHE NOW IS (Andy, 2026-10-13: "on spawn, the app should read charts
+  //            associated with new position and reference from there") ──
+  // The page's own chartForSpawn, DRIVEN, with refreshNogo recording what the model was when the read was asked for
+  // (and, as the page's does, landing a model centered where it was asked).
+  const { bboxContains, bboxAround } = require("../static/js/geometry.js");
+  const SPAWN_DECL = /^const SPAWN_READ_SAME_M = [^;]*;/m.exec(H);
+  const spawnWorld = (nogo0) => {
+    const w = { nogo: nogo0, reads: [], renders: 0 };
+    // eslint-disable-next-line no-new-func
+    w.go = new Function("w", "bboxContains", "distTo",
+      "\"use strict\"; let nogo = w.nogo; const updateNogoUI = () => {}, render = () => { w.renders++; };\n"
+      + "async function refreshNogo(ll, bbox, ask){ w.reads.push({ll, readyThen: nogo.ready, hadFeatures: !!nogo.features, say: ask && ask.say});\n"
+      + "  nogo.busy = true; await new Promise(r => setTimeout(r, 20));\n"
+      + "  Object.assign(nogo, {busy: false, ready: true, center: {lat: ll.lat, lon: ll.lon}, features: ['new'], bbox: w.box(ll)}); }\n"
+      + (SPAWN_DECL ? SPAWN_DECL[0] : "") + "\nasync " + grab("chartForSpawn") + "\nreturn (ll) => chartForSpawn(ll);")(w, bboxContains, G.distTo);
+    w.box = (ll) => bboxAround(ll, 5000);
+    return w;
+  };
+  const HOME = { lat: 43.0730, lon: -70.7100 }, NEAR = { lat: 43.0640, lon: -70.7000 }, FAR = { lat: 42.0535, lon: -70.1991 };
+  const readyAt = (c) => ({ ready: true, busy: false, center: c, bbox: bboxAround(c, 5000), features: ["old"], note: "ok" });
+  // far: another sea - the old model goes BEFORE the read, and the read is at the spawn point
+  const Wf = spawnWorld(readyAt(HOME));
+  await Wf.go(FAR);
+  check("16. A SPAWN OUTSIDE THE CHART READ: the old model goes first (another sea's - not ready, no features, when the "
+        + "read is asked for) and the chart is read round the SPAWN POINT, saying so; the model it leaves is centered there",
+        () => Wf.reads.length === 1 && Wf.reads[0].ll === FAR && Wf.reads[0].readyThen === false && !Wf.reads[0].hadFeatures
+              && /spawn point/.test(Wf.reads[0].say) && Wf.nogo.center.lat === FAR.lat && Wf.renders >= 1,
+        () => JSON.stringify(Wf.reads.map((r) => ({ at: [r.ll.lat, r.ll.lon], readyThen: r.readyThen, features: r.hadFeatures, say: r.say }))));
+  // near: the same water - it stands until the new read lands, and the read is still re-centered on the spawn point
+  const Wn = spawnWorld(readyAt(HOME));
+  await Wn.go(NEAR);
+  check("16b. A SPAWN INSIDE THE CHART READ: the model of the same water stands while the read runs, and the read is "
+        + "still round the spawn point - the model referenced there",
+        () => Wn.reads.length === 1 && Wn.reads[0].ll === NEAR && Wn.reads[0].readyThen === true && Wn.reads[0].hadFeatures
+              && Wn.nogo.center.lat === NEAR.lat,
+        () => JSON.stringify(Wn.reads.map((r) => ({ at: [r.ll.lat, r.ll.lon], readyThen: r.readyThen }))));
+  // a model that was NOT ready (a read that failed): the old re-extract never fired for it - this reads all the same
+  const Wu = spawnWorld({ ready: false, busy: false, center: HOME, bbox: bboxAround(HOME, 5000), features: null, note: "no ENC coverage" });
+  await Wu.go(NEAR);
+  check("16c. ... and after a read that FAILED - a model not ready, which the frame's re-extract never reads past - the "
+        + "spawn still reads its chart",
+        () => Wu.reads.length === 1 && Wu.reads[0].ll === NEAR && Wu.nogo.ready === true,
+        () => Wu.reads.length + " read(s)");
+  // an extract in flight that lands centered on the spawn point (the first frame there began it): not read twice
+  const Wi = spawnWorld({ ...readyAt(HOME), busy: true });
+  setTimeout(() => Object.assign(Wi.nogo, { busy: false, ready: true, center: { lat: NEAR.lat + 0.0002, lon: NEAR.lon } }), 150);
+  await Wi.go(NEAR);
+  const DOSPAWN2 = code(grab("doSpawn"));
+  check("16d. an extract already in flight is waited out, and one that lands centered on the spawn point is not read "
+        + "again; and doSpawn asks for the read only past its ok gate",
+        () => Wi.reads.length === 0 && Wi.nogo.busy === false
+              && DOSPAWN2.indexOf("await chartForSpawn(ll)") > DOSPAWN2.indexOf("if(!took(r)) return;")
+              && DOSPAWN2.indexOf("if(!took(r)) return;") >= 0,
+        () => Wi.reads.length + " read(s) after the extract in flight landed; chartForSpawn in doSpawn at "
+            + DOSPAWN2.indexOf("await chartForSpawn(ll)") + ", the ok gate at " + DOSPAWN2.indexOf("if(!took(r)) return;"));
+
   console.log("\n" + (fails ? fails + " CHECK(S) FAILED" : "all " + ran + " checks passed"));
   process.exit(fails ? 1 : 0);
 })();

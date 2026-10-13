@@ -7154,8 +7154,18 @@ class Engine:
             # sees the id change and drops the previous trail)
             self.boot_id = "%d-%d" % (os.getpid(), int(time.time() * 1000))
             self.link = self.LINK_IDLE
-            self._stop.clear()
-            self._thread = threading.Thread(target=self._run, daemon=True)
+            # ⚠⚠ A STOP FLAG OF ITS OWN FOR EACH LOOP, AND THE OLD LINK'S FRAMES DROPPED (Andy, 2026-10-13: "spawn means
+            # reseting home. review that process"). disconnect() waits 2 s for the old loop to finish the frame it is
+            # on, and a frame can take longer - this process has measured large chart JSON holding the GIL 0.5-8.6 s
+            # (_json_body_yielding). The flag was SHARED and cleared here, so a loop that outlived the wait was handed
+            # the new link's clear flag and ran on beside the new loop; and the frame it was holding - the OLD boat's -
+            # was applied after reset() cleared home, which seeded home where the boat no longer was, for good (home is
+            # seeded only while empty). Now the old loop keeps its own flag, set, and stops at its next look; and a new
+            # link is a command like any other (_commanded): a frame read before it is never applied after it.
+            # tests/run_link_control.py 18.
+            self._commanded()
+            self._stop = threading.Event()
+            self._thread = threading.Thread(target=self._run, args=(self._stop,), daemon=True)
             self._thread.start()
         if LOG is not None:
             LOG.event("connect", mode=mode, host=host or None,
@@ -8058,10 +8068,10 @@ class Engine:
         if now - self._idle_home_since >= LOG.quiet_after_s and not LOG.quiet:
             LOG.quiet_on("sim boat home and idle for %d s" % int(LOG.quiet_after_s))
 
-    def _run(self):
-        while not self._stop.is_set():
+    def _run(self, stop):
+        while not stop.is_set():                # THIS loop's flag, never the next link's (connect)
             try:
-                self._run_loop()
+                self._run_loop(stop)
                 return
             except Exception as e:      # noqa: BLE001 - reported and survived, never swallowed
                 self._loop_faulted(e)
@@ -8115,10 +8125,10 @@ class Engine:
         if LOG is not None:
             LOG.event("loop_recovered", error=gone["error"], count=gone["count"])
 
-    def _run_loop(self):
+    def _run_loop(self, stop):
         period = 1.0 / self.TICK_HZ
         last = time.time()
-        while not self._stop.is_set():
+        while not stop.is_set():
             time.sleep(period)
             now = time.time()
             dt = now - last
@@ -8750,15 +8760,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, json.dumps({"ok": False, "vessels": [], "count": 0,
                               "area": {"mode": "none"}, "note": "no position for the AIS area"}))
         lake = _lake_of(lat, lon)
+        bbox = _ais_query_bbox(lat, lon)              # the whole lake, or the COLLECT box (_ais_follow asks the same)
         if lake:                                     # whole enclosed lake
-            a, b, c, d = GREAT_LAKES_BOXES[lake]
-            bbox = (c, a, d, b)                       # W,S,E,N
             area = {"mode": "lake", "name": "Lake " + lake.capitalize()}
         else:                                         # open water: the COLLECT box
-            rm = AIS_COLLECT_RADIUS_KM * 1000.0
-            dlat = rm / 111320.0
-            dlon = rm / (111320.0 * max(0.15, math.cos(math.radians(lat))))
-            bbox = (lon - dlon, lat - dlat, lon + dlon, lat + dlat)
             # NO display string here. The lake branch's "name" is a real place name the
             # client cannot derive; this one used to be "%g km", which put the CLIENT's
             # choice of unit in the server and made one field mean two different things.
@@ -9282,6 +9287,8 @@ class Handler(BaseHTTPRequestHandler):
                 return 200, {"ok": True, "vessel": v, "count": len(AIS_TEST_CONTACTS)}
             elif path == "/api/cmd/reset":             # sim power-cycle: full energy, spawn, clean slate
                 ENGINE.reset()
+                _ais_follow(SPAWN_LAT, SPAWN_LON, at_spawn=True)   # back at the spawn: the AIS area too
+                                                                  # (a click-spawn may have moved it)
             elif path == "/api/cmd/spawn":             # sim: place the boat at a clicked point
                 try:
                     slat = float(body.get("lat")); slon = float(body.get("lon"))
@@ -9290,6 +9297,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not (-90.0 <= slat <= 90.0 and -180.0 <= slon <= 180.0):
                     raise VcuProtocolError("spawn lat/lon out of range")
                 ENGINE.reset(spawn={"lat": slat, "lon": slon})
+                _ais_follow(slat, slon)                # outside the subscribed box: the AIS area follows her
             elif path == "/api/cmd/berth":             # the launch grant (R16): latch, or drop
                 # ⚠ THE SERVER STORES IT AND DOES NOT INTERPRET IT. Every rule about what a
                 # grant covers, where it applies and when it ends is the page's, against the
@@ -10026,6 +10034,51 @@ _ais_restarts = 0
 _ais_watchdog = None
 
 
+# WHERE THE SUBSCRIPTION IS, AND WHERE A SPAWN PUT IT (Andy, 2026-10-13: "on spawn, the app should read charts associated
+# with new position and reference from there"). The service subscribes to a box round the port's or vessel's spawn; a
+# click-spawn outside that box left it streaming the water she had left. `AIS_AREA` is where a spawn moved it (None: the
+# spawn), and `_ais_sub_bbox` the box the service this console started subscribed to (W, S, E, N).
+AIS_AREA = None
+_ais_sub_bbox = None
+
+
+def _ais_sub_bbox_for(lat, lon):
+    """The box a service started for (lat, lon) subscribes to: the whole lake on a Great Lake, else the COLLECT radius
+    (+20% margin) with the historical 1.5 deg as a floor - the wide net; the display radius is filtered out of it later
+    and never needs the subscription to change."""
+    lake = _lake_of(lat, lon)
+    if lake:
+        a, b, c, d = GREAT_LAKES_BOXES[lake]
+        return (c, a, d, b)
+    dlat = max(1.5, (AIS_COLLECT_RADIUS_KM * 1000.0 / 111320.0) * 1.2)
+    dlon = max(1.5, (AIS_COLLECT_RADIUS_KM * 1000.0 / (111320.0 * max(0.15, math.cos(math.radians(lat))))) * 1.2)
+    return (lon - dlon, lat - dlat, lon + dlon, lat + dlat)
+
+
+def _ais_query_bbox(lat, lon):
+    """The box /api/ais asks the service about for a boat at (lat, lon): the whole lake, or the COLLECT box round her."""
+    lake = _lake_of(lat, lon)
+    if lake:
+        a, b, c, d = GREAT_LAKES_BOXES[lake]
+        return (c, a, d, b)
+    rm = AIS_COLLECT_RADIUS_KM * 1000.0
+    dlat = rm / 111320.0
+    dlon = rm / (111320.0 * max(0.15, math.cos(math.radians(lat))))
+    return (lon - dlon, lat - dlat, lon + dlon, lat + dlat)
+
+
+def _ais_follow(lat, lon, at_spawn=False):
+    """A spawn (or a sim Reset, `at_spawn`: back at the configured spawn) put the boat at (lat, lon): re-point the
+    subscription when the water /api/ais will ask about round her is not inside the box it subscribed to. True when it
+    was re-pointed. Never a service this console did not start (_rescope_ais_service)."""
+    have, need = _ais_sub_bbox, _ais_query_bbox(lat, lon)
+    if (have is not None and have[0] <= need[0] and have[1] <= need[1]
+            and have[2] >= need[2] and have[3] >= need[3]):
+        return False
+    _rescope_ais_service(None if at_spawn else (lat, lon))
+    return True
+
+
 def _ais_local_port():
     """(host, port) if AIS_BASE is a local service we should auto-start, else None."""
     try:
@@ -10054,7 +10107,7 @@ def _start_ais_service():
     scopes the aisstream subscription to the operating area (whole lake on a Great
     Lake, else a box around spawn), and is reaped when the console exits (the service
     runs a --parent-pid watchdog, robust to a hard kill)."""
-    global _ais_proc, _ais_wanted
+    global _ais_proc, _ais_wanted, _ais_sub_bbox
     hp = _ais_local_port()
     if not hp:
         return                                    # remote --ais: the user runs their own
@@ -10068,19 +10121,9 @@ def _start_ais_service():
     if not os.path.isfile(script):
         print("[ais] ais_service.py not found next to the console; AIS layer stays offline")
         return
-    lake = _lake_of(SPAWN_LAT, SPAWN_LON)
-    if lake:                                      # subscribe to the whole lake
-        a, b, c, d = GREAT_LAKES_BOXES[lake]
-        bbox = "%.4f,%.4f,%.4f,%.4f" % (c, a, d, b)
-    else:
-        # At sea: a box around spawn covering the COLLECT radius (+20% margin), with the
-        # historical 1.5 deg as a floor. This is the wide net; the operator's display radius
-        # is filtered out of it later and never needs the subscription to change.
-        dlat = max(1.5, (AIS_COLLECT_RADIUS_KM * 1000.0 / 111320.0) * 1.2)
-        dlon = max(1.5, (AIS_COLLECT_RADIUS_KM * 1000.0 /
-                         (111320.0 * max(0.15, math.cos(math.radians(SPAWN_LAT))))) * 1.2)
-        bbox = "%.4f,%.4f,%.4f,%.4f" % (SPAWN_LON - dlon, SPAWN_LAT - dlat,
-                                        SPAWN_LON + dlon, SPAWN_LAT + dlat)
+    # Round the spawn - or where a spawn put her since (AIS_AREA, _ais_follow).
+    sub = _ais_sub_bbox_for(*(AIS_AREA or (SPAWN_LAT, SPAWN_LON)))
+    bbox = "%.4f,%.4f,%.4f,%.4f" % sub
     try:
         os.makedirs(LOG_DIR, exist_ok=True)
         logf = open(os.path.join(LOG_DIR, "ais_service.log"), "a", encoding="utf-8")
@@ -10101,6 +10144,7 @@ def _start_ais_service():
             _ais_proc = subprocess.Popen(cmd, cwd=APP_DIR, stdout=logf,
                                          stderr=subprocess.STDOUT)
             _ais_wanted_now(_ais_proc)
+            _ais_sub_bbox = sub
         atexit.register(_stop_ais_service)
         print("[ais] auto-started ais_service.py on %s:%d (source %s, bbox %s)"
               % (host, port, AIS_SOURCE_ARG, bbox))
@@ -10176,8 +10220,9 @@ def _stop_ais_service():
         _ais_proc = None
 
 
-def _rescope_ais_service():
-    """Re-point the AIS subscription after the OPERATING AREA moves (a vessel switch).
+def _rescope_ais_service(at=None):
+    """Re-point the AIS subscription after the OPERATING AREA moves (a vessel switch, a port change - round the new
+    spawn - or a click-spawn outside the subscribed box, `at` = where she now is: _ais_follow).
 
     The service subscribes ONCE, at start, to a box around the then-current spawn. A
     live vessel switch can move the boat a continent away - the shipped profiles spawn
@@ -10188,11 +10233,12 @@ def _rescope_ais_service():
 
     Only ever restarts a service THIS console started; a remote --ais or one the
     operator is running themselves is left alone, with a note that its area is stale."""
-    global _ais_proc
+    global _ais_proc, AIS_AREA
+    AIS_AREA = at
     if _ais_proc is None:
         hp = _ais_local_port()
         if hp and _port_alive(*hp):
-            print("[ais] vessel moved the operating area, but the AIS service is not ours "
+            print("[ais] the operating area moved, but the AIS service is not ours "
                   "to restart - its subscription still covers the previous area")
         return
     _stop_ais_service()

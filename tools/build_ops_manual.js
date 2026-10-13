@@ -282,7 +282,7 @@ c.push(NOTE("CHECK WHERE YOU PUT IT — RETURN-TO-HOME DRIVES THERE",
   "HOME is not a label, it is a destination. A HOME on land, inside a charted structure, or in water too shallow for this vessel is a return that will be REFUSED — and you will find that out mid-mission, at the moment it is least useful. The console checks the point you choose against the same keep-out model every behavior routes by and WARNS on the banner if it is not water the vessel can sit in; it does not stop you, because the point you picked is the point you asked for. Read that banner. If you want HOME on a dock, a tender or a ship, place a Remote Operations Center instead (section 12): those are confirmed before they take effect, and a ship-borne one lets HOME move."));
 c.push(H2("8.6  Simulator-only controls"));
 c.push(TBL(["Control", "Does"], [
-  ["SPAWN HERE (chart menu)", "Right-click a point to place the vessel there — a clean slate where you choose"],
+  ["SPAWN HERE (chart menu)", "Right-click a point to place the vessel there — a clean slate where you choose. HOME becomes the spawn point, the chart is read round it at once (the old area's keep-outs are dropped first when the spawn is outside them), and the AIS feed is re-pointed round her when she lands outside the area it covers"],
   ["`Reset`", "Power-cycle the simulator: full energy, back at the profile's spawn, plans cleared, SAFE. It asks first - the one simulator confirmation that does not answer itself, with CLR PLAN and dropping a held survey"],
   ["energy pill", "Click to report energy as full and stop the drain, for rehearsing a long mission quickly"],
 ], [1500, 7860]));

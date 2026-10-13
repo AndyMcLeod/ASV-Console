@@ -19192,8 +19192,29 @@ async function doSpawn(ll){
   // click at once rather than a quarter-second later.
   clearTrack();
   giveUpRoute("this page respawned the boat"); updateMissionCard();
-  flashNote("Spawned at "+fmtLL(ll.lat, ll.lon)+" — energy full, SAFE, no plan.");
+  flashNote("Spawned at "+fmtLL(ll.lat, ll.lon)+" — energy full, SAFE, no plan; home is the spawn point.");
   render();
+  await chartForSpawn(ll);
+}
+// ⚠ A SPAWN READS THE CHART WHERE SHE NOW IS, AND THE MODEL IS REFERENCED THERE (Andy, 2026-10-13: "on spawn, the app
+// should read charts associated with new position and reference from there"). The keep-out model - its features and the
+// plane its geometry is measured in (nogo.frame, taken from the extract's own box) - described the water of the last read,
+// and nothing read the new water until a frame found her NOGO_RADIUS_M x 0.6 off that read's center, and then only if
+// that model was READY: after a read that had failed, a spawn was never read at all. Now the spawn reads the chart round
+// the spawn point at once. Outside the old read's box the old model goes first - it is another sea's, as a port change's
+// is (resetForNewArea); inside it, it stands until the new read lands, since it is a model of the same water. Home needs
+// nothing here: the console clears it and plants it at the spawn point on her first fix (asv_console.py Engine.reset).
+const SPAWN_READ_SAME_M = 50;      // a read already centered this close to the spawn point is the read it wants
+async function chartForSpawn(ll){
+  if(!(nogo.ready && nogo.bbox && bboxContains(nogo.bbox, {W: ll.lon, S: ll.lat, E: ll.lon, N: ll.lat}))){
+    nogo.ready = false; nogo.features = null; nogo.skin = null; nogo.note = "nogo not loaded";
+    updateNogoUI(); render();
+  }
+  // An extract in flight - the old area's, or one the first frame at the spawn point began (onState's re-extract) -
+  // is waited out, bounded as resetForNewArea's is; one that has landed centered on the spawn point is not read again.
+  for(let i = 0; i < 80 && nogo.busy; i++) await new Promise(r => setTimeout(r, 100));
+  if(nogo.ready && !nogo.busy && nogo.center && distTo(nogo.center, ll) <= SPAWN_READ_SAME_M) return;
+  await refreshNogo(ll, undefined, {say: "Reading the chart round the spawn point…"});
 }
 // ⚠ IT ASKS, IN THE SIMULATOR TOO (review #11). This button only exists in the simulator, and there every
 // guiConfirm answered yes by itself - so one click wiped the saved plan and the trail with no question asked.

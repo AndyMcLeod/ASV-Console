@@ -800,6 +800,54 @@ try:
         sys.stderr = real_err
         _fault["mode"] = None
         E.unsubscribe(q)
+
+    # ── 18. A SPAWN THAT LANDS WHILE THE OLD BOAT'S FRAME IS STILL IN FLIGHT (Andy, 2026-10-13: "spawn means reseting
+    #        home. review that process") ──
+    # connect() waits 2 s for the old link's loop to finish the frame it is on, and a frame can take longer: this
+    # console has measured large chart JSON holding the GIL 0.5-8.6 s. Past that wait the old loop was handed the
+    # SHARED stop flag connect() had just cleared for the new one, so it ran on beside the new loop - and the frame it
+    # was holding, the OLD boat's, landed after reset() cleared home: home seeded where the boat no longer was, for good
+    # (it is seeded only while empty), and the old position in `status`. Here the old link's frame is held 4 s, past
+    # that wait, while the spawn lands.
+    import threading
+    E.connect("sim", "", _C.DEFAULT_VCU_PORT, "tcp")
+    t0 = time.time()
+    while not E.home and time.time() - t0 < 10:
+        time.sleep(0.05)
+    home0 = dict(E.home or {"lat": 0.0, "lon": 0.0})
+    old_link, old_loop = E._link, E._thread
+    held, inside = threading.Event(), threading.Event()
+    real_tick = old_link.tick
+
+    def _held_tick(dt):
+        t = real_tick(dt)
+        inside.set()
+        held.wait(4.0)
+        return t
+
+    old_link.tick = _held_tick
+    inside.wait(3.0)
+    SP = {"lat": home0["lat"] - 0.05, "lon": home0["lon"] + 0.05}           # ~6.9 km off
+    E.reset(spawn=SP)                       # its wait for the old loop runs out: that loop still holds its frame
+    held.set()
+    t0 = time.time()
+    while old_loop.is_alive() and time.time() - t0 < 3.0:
+        time.sleep(0.05)
+    time.sleep(1.0)                         # frames from the new boat
+    h, st = dict(E.home or {}), dict(E.status or {})
+    home_off = dist_m((h["lat"], h["lon"]), (SP["lat"], SP["lon"])) if h else None
+    pos_off = (dist_m((st["lat_deg"], st["lon_deg"]), (SP["lat"], SP["lon"]))
+               if st.get("lat_deg") is not None else None)
+    old_alive = old_loop.is_alive()
+    check("18. A SPAWN LANDING WHILE THE OLD BOAT'S FRAME IS STILL IN FLIGHT, past connect()'s wait for that loop: home "
+          "re-arms AT THE SPAWN POINT and she reports there - the old frame is dropped, not applied - and the old loop "
+          "stops for good rather than running on beside the new one",
+          lambda: home_off is not None and home_off < 50 and pos_off is not None and pos_off < 50 and not old_alive
+                  and E._thread is not old_loop,
+          "home %s m from the spawn point (the old home was %.0f m off it); she reports %s m from it; the old loop "
+          "alive=%s" % (None if home_off is None else round(home_off), dist_m((home0["lat"], home0["lon"]),
+                                                                             (SP["lat"], SP["lon"])),
+                        None if pos_off is None else round(pos_off), old_alive))
 finally:
     try:
         E.disconnect()

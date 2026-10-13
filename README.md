@@ -545,11 +545,18 @@ and compare.
 Each profile also carries its own **spawn** position, so a vessel comes up in its own
 work area — `zboat_1800hs` in **Erie** (Presque Isle Bay) and both DriX profiles at **Lewes**
 (the UDel facility on the Lewes-Rehoboth Canal). To place the boat anywhere else,
-press **Spawn** in the command bar and click the chart: the sim boat comes up there
+right-click the chart and choose **Spawn here**: the sim boat comes up there
 instead, with the same clean slate as Reset (full energy, SAFE, no plan or home).
 That override lasts for the current sim boot only — the profile's spawn is untouched
 and is restored on the next start or vessel switch. Sim only; a real boat can't be
-teleported.
+teleported. **A spawn makes the new position the reference** (2026-10-13): HOME is planted
+at the spawn point on her first fix (a mothership that owned home is released), the chart
+is read round the spawn point at once - outside the last read's box the old keep-out model
+is dropped first, since it describes other water - so the model and the plane it is measured
+in are referenced there, and the AIS subscription is re-pointed round her when she lands
+outside the box it covers (a Reset puts it back round the profile's spawn). And a frame of
+the OLD boat still in flight when the spawn lands is dropped, not applied: it had seeded home
+at the old position for good.
 
 Real link (Phase 2+, once the protocol is known), serial-over-IP by default:
 
