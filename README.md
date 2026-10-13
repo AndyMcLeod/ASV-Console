@@ -1081,7 +1081,9 @@ worker (`static/js/route_worker.js`), so the chart, the clearance guard, the con
 supervision's report keep running while it searches. The worker runs the planner's own code and its
 answer is the page's own, field for field: on a Go-To from New Castle up the Piscataqua, the
 299-waypoint route the worker returned was identical to the same search run on the page. The chart's
-keep-out model is copied to the worker once per model (a fraction of a second). On a two-core
+keep-out model goes to the worker once per model, its points packed into one array of numbers and
+handed over rather than copied: a few hundredths of a second, where copying it took up to 0.7 s.
+Reading the chart wider still pauses the page about a second while it takes the read in. On a two-core
 laptop the search itself takes somewhat longer in the worker than it did on the page, because the
 page keeps working beside it. If the worker cannot answer, the page plans on its own thread as
 before, and `?route_worker=off` on the page's address does that every time. **A Stop, Pause, Hold or

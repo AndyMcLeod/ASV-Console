@@ -1018,7 +1018,7 @@ import { CHART_EDGE_M, LANE_FRAC, SEG_LEN_M, beyondChart, beyondChartSay, buoyCh
          routeAround, routeAroundSeg, routePlan, smoothTrack, stampSeg } from "/static/js/passage.js";
 // THE ROUTE SEARCH OFF THIS PAGE'S THREAD (2026-10-12): the model's feature count, which the worker checks the model it
 // holds against on every search (route_job.js; planOffThread).
-import { koCount as routeKoCount } from "/static/js/route_job.js";
+import { koCount as routeKoCount, packKo as routePackKo } from "/static/js/route_job.js";
 import { HAZ_UNKNOWN_EXTENT, MARK_TAIL, WATER_FAR_KM, WATER_REMOTE_KM, WATER_STALE_S,
          WRECK_CLEAR_MARGIN_M, airNeedM, blocked, blockedInfo, bufferFloor, buildKeepouts, clearanceM,
          channelPolys, depthExcluded, effectiveWaterOffset, firstBlockAlong, hazExtent, overheadBlocks,
@@ -13636,7 +13636,10 @@ async function planOffThread(job, here, adopt = (out) => out, L = "cmd"){
                              ROUTE_WORKER_TIMEOUT_MS);
     lane.jobs.set(id, {done: (x) => { clearTimeout(timer); lane.jobs.delete(id); resolve(x); }});
     try{
-      w.postMessage(msg);
+      // ⚠ A MODEL GOES PACKED AND TRANSFERRED (2026-10-12): its ring and line points in one Float64Array whose buffer is
+      // handed over, not copied - 17 ms to pack the Piscataqua chart's against 227-684 ms to clone it (route_job.js packKo)
+      msg.models = models.map((x) => ({id: x.id, packed: routePackKo(x.ko)}));
+      w.postMessage(msg, msg.models.map((x) => x.packed.xy.buffer));
       lane.held = new Set(keep);                             // as the worker will hold it once this search is done
     }catch(e){ lane.jobs.get(id).done({ok: false, error: "the search could not be sent: " + ((e && e.message) || e)}); }
   });

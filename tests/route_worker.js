@@ -40,7 +40,7 @@ const { V, nogo, sea } = require(JS("state.js"));
 const { planeFrame } = require(JS("geodesy.js"));
 const { buildKeepouts } = require(JS("chart.js"));
 const P = require(JS("passage.js"));
-const { koCount } = require(JS("route_job.js"));
+const { koCount, packKo, unpackKo } = require(JS("route_job.js"));
 const { bbOf } = require(JS("geometry.js"));
 
 let fails = 0, ran = 0;
@@ -133,7 +133,14 @@ function makeWorkerClass(rec) {
       this.w.on("error", (e) => this.onerror && this.onerror({ message: e.message }));
       this.w.unref();
     }
-    postMessage(m) { rec.posted.push(m); this.w.postMessage(m); }
+    // (what each model was BEFORE the post - its count, and the very array it went in - since a transferred buffer is
+    // emptied by the post: 7c reads that it was)
+    postMessage(m, t) {
+      rec.posted.push({ ...m, models: (m.models || []).map((x) => ({ id: x.id, packed: !!x.packed, xy: x.packed && x.packed.xy,
+        bytes: x.packed ? x.packed.xy.byteLength : 0, n: koCount(x.packed ? unpackKo(x.packed) : x.ko) })),
+        transfer: (t || []).length });
+      this.w.postMessage(m, t);
+    }
     terminate() { rec.terminated++; this.w.terminate(); }
   };
 }
@@ -158,8 +165,8 @@ function makePage(opt = {}) {
     "return { planOffThread, routeStopPressed, routeLanes, planEnd: () => supPlanEnd };",
   ].join("\n");
   // eslint-disable-next-line no-new-func
-  const page = new Function("V", "nogo", "sea", "routeKoCount", "Worker", "location", "rec", body)(
-    V, nogo, sea, koCount, Worker, { search: opt.search || "" }, rec);
+  const page = new Function("V", "nogo", "sea", "routeKoCount", "routePackKo", "Worker", "location", "rec", body)(
+    V, nogo, sea, koCount, packKo, Worker, { search: opt.search || "" }, rec);
   page.rec = rec;
   page.close = () => { for (const L of Object.values(page.routeLanes)) if (L.w) { try { L.w.terminate(); } catch (e) {} } };
   return page;
@@ -247,7 +254,7 @@ const goto = (from, to, o) => ({ op: "nogo", args: { from, to, opts: o } });
   const o4 = { ...O, standoffM: 12, ko: koIn, flyThrough: true };
   const n0 = page.rec.posted.length;
   const c4 = await ask(goto(from, up, o4), () => P.planNogoRoute(from, up, o4));
-  const sent4 = page.rec.posted[n0].models.map((m) => koCount(m.ko));
+  const sent4 = page.rec.posted[n0].models.map((m) => m.n);
   const n1 = page.rec.posted.length;
   await page.planOffThread(goto(from, up, o1), () => P.planNogoRoute(from, up, o1));
   const sent4b = page.rec.posted[n1].models.length;
@@ -330,6 +337,29 @@ const goto = (from, to, o) => ({ op: "nogo", args: { from, to, opts: o } });
               && !!diff(r7b.d.route, atDefault.route),
         () => (diff(r7b.w, r7b.d) || "identical") + "; the narrow lane at 400 m " + r7b.d.how.narrow + ", at the default "
               + atDefault.how.narrow + "; routes " + (diff(r7b.d.route, atDefault.route) ? "differ" : "THE SAME"));
+
+  // 7c. THE MODEL GOES PACKED AND TRANSFERRED (2026-10-12, Andy: "go ahead with the transfer change"). Cloned as objects
+  // the Piscataqua chart's model cost the page 227-684 ms a time; its points now go as one Float64Array whose buffer is
+  // handed over. Every model posted went that way - packed, its buffer in the transfer list and EMPTIED on the page by the
+  // post (a copy would leave it whole) - and a model packed and unpacked is the model, field for field: the chart's own
+  // (marks, buoy systems, charted channels, rocks), at another water, with a contact's hull, with a fold's own fields on a
+  // ring (the chart image's), and an empty one; and packing leaves the page's model as it was.
+  const posts = page.rec.posted.filter((m) => m.models.length);
+  const allPacked = posts.every((m) => m.models.every((x) => x.packed && x.bytes > 0 && x.xy.byteLength === 0) && m.transfer === m.models.length);
+  const folded = { ...KO, polys: [...KO.polys, { ring: hull, bb: bbOf(hull), kind: "a structure read off the chart", fromChart: true }],
+                   lines: [...KO.lines, { pts: [{ e: 1, n: 2 }, { e: -0, n: 3.5 }], bb: bbOf([{ e: 1, n: 2 }, { e: 0, n: 3.5 }]), kind: "a line read off the chart", fromChart: true }] };
+  const empty = { polys: [], lines: [], points: [] };
+  const before7c = JSON.stringify(KO);
+  const rt = [["the chart's", KO], ["at +2.5 m", KO2], ["with a contact", koIn], ["with the chart image's", folded], ["empty", empty]]
+    .map(([name, k]) => ({ name, d: diff(unpackKo(packKo(k)), k) }));
+  check("7c. THE MODEL GOES PACKED AND TRANSFERRED: every model posted went as one Float64Array of its points, in the "
+        + "transfer list and EMPTIED on the page by the post (handed over, not copied); and packed and unpacked a model is the "
+        + "model, field for field - the chart's own, one at another water, one with a contact's hull, one with the chart "
+        + "image's structures (a -0 among them), an empty one - with the page's own left as it was",
+        () => posts.length >= 4 && allPacked && rt.every((x) => !x.d) && JSON.stringify(KO) === before7c,
+        () => posts.length + " posts carried a model, " + (allPacked ? "every one packed and transferred" : "NOT all transferred: "
+              + JSON.stringify(posts.map((m) => m.models.map((x) => [x.packed, x.bytes, x.xy && x.xy.byteLength]))))
+              + "; round trips: " + rt.map((x) => x.name + " " + (x.d || "same")).join(", "));
 
   // 8. THE PAGE'S THREAD IS FREE while the worker searches - and is not while it searches here (the control).
   const ticks = async (run) => { let n = 0; const iv = setInterval(() => n++, 5); const t0 = Date.now();

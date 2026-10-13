@@ -32,6 +32,38 @@ export function koCount(ko){
 }
 /** The ids this side holds now (tests/route_worker.js). */
 export function heldModels(){ return [...models.keys()]; }
+
+// ── THE MODEL GOES OVER AS ONE ARRAY OF NUMBERS (2026-10-12, Andy: "go ahead with the transfer change") ───────────────
+// Copied as objects - a structured clone of every ring point - the Piscataqua chart's model (2,033 keep-outs, 222,280
+// ring and line points) cost the page 227-684 ms each time it went to the worker, on top of the read's own work; the
+// model's own build is 67-94 ms. Packed, every ring and line point goes into ONE Float64Array whose
+// buffer is TRANSFERRED - handed over, not copied, the page's own array emptied by the post - and only the small records
+// beside it are cloned: 17 ms to pack and 6 ms to clone the rest, on the same model. Exact: a point is {e, n} wherever a
+// model is built (geodesy toEN/llEN, the contacts' hulls), and a Float64Array holds each double as it is.
+/** The model `ko` packed: {xy: Float64Array of every polys[].ring and lines[].pts point, e then n, polys/lines: their
+ *  records without the points but with where they lie in `xy` (s..e, in numbers), rest: every other field of `ko`}. */
+export function packKo(ko){
+  const polys = ko.polys || [], lines = ko.lines || [];
+  let n = 0;
+  for(const q of polys) n += q.ring.length;
+  for(const q of lines) n += q.pts.length;
+  const xy = new Float64Array(n * 2);
+  let k = 0;
+  const put = (pts) => { const s = k; for(const p of pts){ xy[k++] = p.e; xy[k++] = p.n; } return [s, k]; };
+  const pr = polys.map((q) => { const [s, e] = put(q.ring); const r = {...q}; delete r.ring; return {r, s, e}; });
+  const lr = lines.map((q) => { const [s, e] = put(q.pts); const r = {...q}; delete r.pts; return {r, s, e}; });
+  const rest = {...ko}; delete rest.polys; delete rest.lines;
+  return {xy, polys: pr, lines: lr, rest, hasPolys: "polys" in ko, hasLines: "lines" in ko};
+}
+/** The model `packKo` packed, as the page built it: the same fields, each ring and line its own array of {e, n}. */
+export function unpackKo(pk){
+  const xy = pk.xy;
+  const pts = (s, e) => { const out = new Array((e - s) / 2); for(let i = s, j = 0; i < e; i += 2, j++) out[j] = {e: xy[i], n: xy[i + 1]}; return out; };
+  const ko = {...pk.rest};
+  if(pk.hasPolys) ko.polys = pk.polys.map(({r, s, e}) => ({...r, ring: pts(s, e)}));
+  if(pk.hasLines) ko.lines = pk.lines.map(({r, s, e}) => ({...r, pts: pts(s, e)}));
+  return ko;
+}
 function modelOf(ref){
   const ko = models.get(ref.id);
   if(!ko) throw new Error("the keep-out model " + ref.id + " is not one this side holds");
@@ -59,14 +91,15 @@ function run(op, a){
 
 /**
  * One message from the page, answered: {id, ok: true, out, sea: {laneUsed, lanePartial}, ms} or {id, ok: false, error}.
- * `m`: {id, op, args, ko: {id, n} (the model the search stands on as nogo.ko), models: [{id, ko}] (any not yet sent),
+ * `m`: {id, op, args, ko: {id, n} (the model the search stands on as nogo.ko), models: [{id, packed}] (any not yet sent,
+ *       packKo'd - or {id, ko} as objects),
  *       keep: [ids] (what to hold after it), state: {V, nogo: {ready, buffer, bbox, unread, ais}, frameRef,
  *       laneUsed, lanePartial}}.
  */
 export function routeReply(m){
   const t0 = Date.now();
   try{
-    for(const x of (m && m.models) || []) models.set(x.id, x.ko);
+    for(const x of (m && m.models) || []) models.set(x.id, x.packed ? unpackKo(x.packed) : x.ko);
     const s = (m && m.state) || {};
     Object.assign(V, s.V || {});
     const n = s.nogo || {};
