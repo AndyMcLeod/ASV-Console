@@ -589,7 +589,14 @@ keep-out is **dead-reckoned** between polls and **swept** over the guard's look-
 water she will occupy within the next 45 s — so a contact crossing ahead holds the boat
 before her track and one bearing down reads in extremis while there is still water to escape
 in. The contacts are polled whenever the console is armed, **layer or no layer**, and drawn in
-the keep-out red whenever the guard has them (dashed where it is the sweep). They reach the
+the keep-out red whenever the guard has them (dashed where it is the sweep). **The poll rides the
+telemetry stream** (2026-10-13): every frame asks whether one is due, as the guard itself runs once a
+frame. It ran on a timer, and a chart window covered by the controls window - one screen - has its
+timers throttled by the browser while its telemetry still arrives, so the guard ran on contacts gone
+stale: **AIS KEEP-OUTS BLIND**, and a test contact ahead was driven through. A poll that never answers
+is abandoned after 15 s rather than holding out every later one, and the **controls window polls
+nothing**: it never knows where the boat is, so its own poll ranged everything from New Castle (a
+contact under a mile away read 26 nm and never closed); its AIS card is the chart's. They reach the
 **guard's model only** while they are under way: the punch, the router and the plan never see one, so **a ship
 crossing the survey area reconfigures nothing**. A vessel **not under way** - moored, at anchor or stopped - is
 the one exception, and only for a **passage** (2026-10-07): a Go-To, an RTH, a drawn transit and an Upload's

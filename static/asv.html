@@ -5596,6 +5596,20 @@ let aisBeyondRpts = [];
 // was, which is how the guard tells a feed that has stopped from a sea that is empty.
 let aisPolledAt = 0;
 const AIS_POLL_MS = 5000;
+// ⚠ THE POLL RIDES THE STREAM, NOT A TIMER (Andy, 2026-10-13, on another computer: "AIS KEEP-OUTS BLIND" on a Go-To from
+// New Castle to Provincetown, and of a test contact placed under a nautical mile ahead, "ASV did not avoid. Drove right
+// through it"). The guard runs on the telemetry stream, once a frame; this poll ran on setInterval. A browser keeps
+// delivering the stream to a window that is covered or hidden - on one screen the controls window sits in front of the
+// chart - while it throttles that window's timers (measured on a hidden tab: one wake-up in 30 s against 121 frames,
+// review #14). So the guard kept running while its contacts aged past AIS_KO_STALE_S, and a stale model is an empty one:
+// blind. Measured on a hidden page (headless Edge, a background target): after its first minute this poll went out 0-1
+// times in each 30 s, gaps up to 60 s; asked by the frames, 5-6 in each 30 s, never more than 9 s apart. Now every frame asks aisPollTick whether a poll is due, as the supervision report rides the stream; the timer
+// stays only for a page the stream is not reaching.
+// ⚠ AND A POLL THAT NEVER ANSWERS CANNOT HOLD OUT THE NEXT ONE: aisBusy kept every later poll out for good. The tick
+// aborts one older than AIS_POLL_TIMEOUT_MS - from the stream too, since a timer set to abort it is throttled the same.
+const AIS_POLL_TIMEOUT_MS = 15000;
+const AIS_TICK_MS = 1000;            // the timer's look: it only asks whether a poll is due
+let aisPollBegun = 0, aisPollCtl = null;
 // Link status so the table can say WHY it's empty instead of a bare "no vessels":
 //   idle -> not polling * connecting -> toggled on, first reply not back yet *
 //   offline -> console can't reach the AIS service * error -> service reached but the
@@ -12176,9 +12190,16 @@ function aisAreaLabel(){
 // e-stopped), whether or not the layer is showing.
 function aisGuardWanted(){ return !!(S && S.armed && !S.estop); }
 function aisWanted(){ return aisShow || aisGuardWanted(); }
-async function pollAIS(){ if(!aisWanted() || aisBusy) return; aisBusy=true;
+// ⚠ THE CONTROLS WINDOW POLLS NOTHING (2026-10-13). It runs no app logic and opens no stream, so it never has the boat's
+// position: aisCenter() gave it the literal `center`, New Castle, and its own poll every 5 s showed the contacts within
+// range of New Castle and ranged the rest from there - a test contact under a mile from the boat read 26 nm and never
+// changed as she closed it, and the traffic round her was missing. Its card is the chart's, mirrored (UI_BRIDGED).
+async function pollAIS(){ if(UIROLE === "controls" || !aisWanted() || aisBusy) return; aisBusy=true;
+  aisPollBegun = Date.now();
+  const ac = typeof AbortController === "function" ? new AbortController() : null;
+  aisPollCtl = ac;
   try{ const c=aisCenter();
-    const r=await fetch(`/api/ais?center=${c.lat.toFixed(5)},${c.lon.toFixed(5)}${aisHeldQuery()}`);
+    const r=await fetch(`/api/ais?center=${c.lat.toFixed(5)},${c.lon.toFixed(5)}${aisHeldQuery()}`, ac ? {signal: ac.signal} : undefined);
     const d=await r.json();
     aisVessels = (d && Array.isArray(d.vessels)) ? d.vessels : [];
     aisBeyondRpts = (d && Array.isArray(d.beyond)) ? d.beyond : [];
@@ -12207,8 +12228,16 @@ async function pollAIS(){ if(!aisWanted() || aisBusy) return; aisBusy=true;
     else                                      aisState = "connecting";
     aisNote = (d && d.ok===false) ? (d.note || "AIS service offline")
             : (allErr ? ((aisSrc && aisSrc.note) || "all sources erroring") : "");
-  }catch(e){ aisVessels=[]; aisBeyondRpts=[]; aisState="offline"; aisSrc=null; aisSrcName=null; aisNote="AIS query failed"; }
-  finally{ aisBusy=false; renderAisTable(); render(); }
+  }catch(e){ aisVessels=[]; aisBeyondRpts=[]; aisState="offline"; aisSrc=null; aisSrcName=null;
+             aisNote = (e && e.name === "AbortError") ? "AIS query timed out" : "AIS query failed"; }
+  finally{ aisBusy=false; aisPollCtl=null; renderAisTable(); render(); }
+}
+/** Is a poll due? Asked on every telemetry frame (onFrame) and by the timer: polls when AIS_POLL_MS have passed since the
+ *  last one began, and aborts one still out after AIS_POLL_TIMEOUT_MS. */
+function aisPollTick(){
+  const now = Date.now();
+  if(aisBusy){ if(aisPollCtl && now - aisPollBegun > AIS_POLL_TIMEOUT_MS) aisPollCtl.abort(); return; }
+  if(now - aisPollBegun >= AIS_POLL_MS) pollAIS();
 }
 (function(){ const el=$("#aisRange"); if(!el) return;
   el.onchange = ()=> setAisRange(el.value);
@@ -12221,8 +12250,9 @@ function setAIS(on){ aisShow=on; const btn=$("#aisBtn"); if(btn) btn.classList.t
   // off must not empty the model the keep-outs are built from.
   else { if(!aisGuardWanted()) aisVessels=[]; aisNote=""; $("#aisTip").style.display="none"; setAisTable(false); render(); } }
 // ONE CLOCK FOR BOTH CONSUMERS of the contacts - the layer and the guard's keep-outs - so the guard
-// is fed whether or not the layer is showing; pollAIS itself answers whether anyone wants a poll.
-aisTimer = setInterval(pollAIS, AIS_POLL_MS);
+// is fed whether or not the layer is showing; pollAIS itself answers whether anyone wants a poll. The stream asks too
+// (onFrame), and is what keeps the guard fed in a window the browser has throttled - see AIS_POLL_TIMEOUT_MS.
+aisTimer = setInterval(aisPollTick, AIS_TICK_MS);
 // The AIS traffic TABLE: opens with the layer, closable to a reopen chip (open/close
 // at will). Lists the in-range vessels by range, with bearing / SOG.
 let aisTableShown=false;
@@ -19555,6 +19585,7 @@ function onFrame(ev){
   consoleHealth();
   buildCheck();
   storageCheck();
+  aisPollTick();                        // the guard's contacts ride the stream, not a timer (see AIS_POLL_TIMEOUT_MS)
 }
 // ⚠ A DRIVE THE CONSOLE WRITES TO IS RUNNING OUT (review #24, 2026-09-15). The console measures logs/ and charts/ and the
 // room left, on its own thread (S.storage). NOTHING IS EVER DELETED; the only retention the console has is the one Andy

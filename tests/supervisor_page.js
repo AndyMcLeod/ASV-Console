@@ -345,6 +345,7 @@ const onFrame = new Function("calls", "flags", [
   "const supervisorStreamed = () => { calls.push('pulse'); };",
   "const supervisorReport = () => { calls.push('report'); };",
   "const onState = (m) => { calls.push('ladder'); if (flags.throwIt) throw new TypeError('guard fell over'); };",
+  "const aisPollTick = () => { flags.aisAsked = (flags.aisAsked || 0) + 1; };",   // 8d
   decl(/^const FRAME_FAULT_AFTER = [^;]*;/m),
   decl(/^let frameFaults = [^;]*;/m),
   grab("onFrame"),
@@ -360,6 +361,15 @@ check("8c. every state frame is a pulse, taken BEFORE the ladder runs; a report 
       + "frame - one whose ladder threw is no report - and what is not a state frame is neither",
       () => calls.join(",") === "pulse,ladder,report,pulse,ladder",
       () => calls.join(","));
+// 8d. THE AIS POLL RIDES THE STREAM TOO (Andy, 2026-10-13: "AIS KEEP-OUTS BLIND" ... "Drove right through it"): a covered
+// window's timers are throttled while its stream still arrives, so every state frame asks whether a poll is due - the
+// one whose ladder threw as well, since the contacts must be fresh when the ladder runs again (tests/ais_avoid.js 12d-12f
+// drive the poll itself). And the page's timer only asks the same question.
+check("8d. every state frame asks for the AIS poll (aisPollTick) - the one whose ladder threw too - and what is not a "
+      + "state frame does not; the page's timer asks the same question rather than polling outright",
+      () => flags.aisAsked === 2 && /aisTimer = setInterval\(aisPollTick, AIS_TICK_MS\);/.test(H)
+            && !/setInterval\(pollAIS\b/.test(H),
+      () => "asked on " + (flags.aisAsked || 0) + " of 2 state frames; timer " + ((H.match(/aisTimer = setInterval\([^)]*\)/) || ["none"])[0]));
 
 // ── 9. A TAB THAT IS PLANNING KEEPS ITS POST (2026-10-12) ─────────────────────────────────────────────────────
 // Andy: "another browser tab is grabbing the process so cannot start a mission". His Go-To's route search held the

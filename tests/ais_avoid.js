@@ -408,6 +408,9 @@ eval([
   grab("resumeHereAt"), grab("legOfLine"), grab("lineOfLeg"), grab("alongAsRun"), grab("gateResumeHere"), grab("resumeFromHere"),
   grab("patClipBufM"), "const guardStandoffM = G.guardStandoffM;",
   grab("aisWanted"), grab("pollAIS"), grab("setAIS"),
+  // the poll rides the stream (2026-10-13): the frame's tick, its period and the limit on one that never answers
+  grabDecl("AIS_POLL_MS"), grabDecl("AIS_POLL_TIMEOUT_MS"), grab("aisPollTick"),
+  "function __aisPollConsts(){ return { AIS_POLL_MS, AIS_POLL_TIMEOUT_MS }; }",
   // the escape rung runs to its POST here (guard_resume stops at the refused search), so its helper
   grab("notTookSay"),
   "function __clearCap(){ return CLEAR_CAP_M; }",
@@ -470,6 +473,8 @@ const LINE_E = { a: ll(-200, 0), b: ll(200, 0) };
 const { blockedInfo } = require("../static/js/keepouts.js");
 var AIS_KEY = "asv_ais_show_v1";
 var aisArea = null, aisState = "idle", aisSrc = null, aisSrcName = null, aisNote = "", aisBusy = false;
+var aisPollBegun = 0, aisPollCtl = null;   // the poll's start and its abort (2026-10-13), here so 12d-12f can read them
+var UIROLE = "main";                       // the chart window; 12f is the controls window
 function aisCenter() { return asv ? { lat: asv.lat, lon: asv.lon } : { lat: 0, lon: 0 }; }
 function renderAisTable() {}
 function setAisTable() {}
@@ -1071,6 +1076,62 @@ const wayInOf = (rte, from, tail = 3) => [from, ...viaOf(rte, tail), rejoinOf(rt
   S.armed = false; setAIS(false);
   check("12c. turning the layer off keeps the contacts while the console is armed, and drops them once it is not",
         () => keptArmed === 1 && aisVessels.length === 0, () => "armed: " + keptArmed + " kept; disarmed: " + aisVessels.length);
+}
+
+// ── 12d-12f. THE POLL RIDES THE STREAM (Andy, 2026-10-13, on another computer: "AIS KEEP-OUTS BLIND", and of a test
+//             contact under a mile ahead, "ASV did not avoid. Drove right through it") ──────────────────────────────
+// The guard runs on the telemetry stream; the poll ran on setInterval, and a covered window's timers are throttled while
+// its stream still arrives. Here the window's timers NEVER fire: only the frames ask (onFrame -> aisPollTick; that onFrame
+// asks on every frame is tests/supervisor_page.js 8d).
+{
+  const C = __aisPollConsts();
+  const flush = async () => { for (let i = 0; i < 4; i++) await new Promise((r) => setImmediate(r)); };
+  const realFetch = globalThis.fetch;
+  let asked = 0;
+  const answering = () => { asked++; return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(
+    { ok: true, vessels: [contact(34, -5, { sog: 0, cog: null, heading: 90 })], area: { mode: "sea" }, sources: { nmea: { state: "ok" } } }) }); };
+  surveying(7, [], { polledAt: 0 }); aisShow = false; UIROLE = "main";
+  aisPollBegun = 0; aisPollCtl = null; aisBusy = false;
+  globalThis.fetch = answering;
+  let worstAge = 0, blindFrames = 0;
+  for (let k = 0; k < 360; k++) {                          // 90 s of frames, four a second
+    clock += 250; aisPollTick(); await flush();
+    aisKeepoutsNow();                                       // the guard's own question, every frame
+    if (aisKoStale) blindFrames++;
+    worstAge = Math.max(worstAge, clock - aisPolledAt);
+  }
+  check("12d. A WINDOW WHOSE TIMERS NEVER FIRE STILL POLLS: the frames alone ask (aisPollTick), a poll every AIS_POLL_MS - "
+        + "18 in 90 s - the contacts never older than one period, and the guard's model never stale (blind) on any frame",
+        () => asked === 18 && worstAge <= C.AIS_POLL_MS + 250 && blindFrames === 0 && aisKoDrawn.length === 1,
+        () => asked + " polls; the oldest the contacts got " + worstAge + " ms; " + blindFrames + " blind frame(s); "
+            + aisKoDrawn.length + " contact(s) modelled");
+  // a poll that never answers: before, aisBusy held every later one out for good
+  let hung = 0, aborted = 0;
+  globalThis.fetch = (u, o) => { hung++; return new Promise((res, rej) => {
+    if (o && o.signal) o.signal.addEventListener("abort", () => { aborted++; const e = new Error("aborted"); e.name = "AbortError"; rej(e); }); }); };
+  clock += C.AIS_POLL_MS; aisPollTick(); await flush();
+  const out = aisBusy && hung === 1;
+  clock += C.AIS_POLL_TIMEOUT_MS - 1000; aisPollTick(); await flush();
+  const waited = aisBusy && aborted === 0 && hung === 1;
+  clock += 2000; aisPollTick(); await flush();
+  const noteThen = aisNote;
+  const freed = !aisBusy && aborted === 1 && noteThen === "AIS query timed out" && aisState === "offline";
+  asked = 0; globalThis.fetch = answering;
+  clock += 250; aisPollTick(); await flush();
+  check("12e. A POLL THAT NEVER ANSWERS IS ABORTED AFTER AIS_POLL_TIMEOUT_MS by the stream's own tick, said as timed out, "
+        + "and the next poll goes out on the next frame - it no longer holds every later poll out for good",
+        () => out && waited && freed && asked === 1 && !aisBusy && aisState === "ok",
+        () => "out " + out + ", still out before the limit " + waited + ", freed after it " + freed + " ('" + noteThen
+            + "'), then " + asked + " poll(s), state " + aisState);
+  // THE CONTROLS WINDOW: no boat position, so its own poll ranged everything from New Castle (26 nm, unchanging)
+  UIROLE = "controls"; asked = 0; aisPollBegun = 0;
+  for (let k = 0; k < 40; k++) { clock += 250; aisPollTick(); await flush(); }
+  await pollAIS();                                          // the explicit callers too: the layer turned on, a test contact placed
+  UIROLE = "main";
+  check("12f. THE CONTROLS WINDOW POLLS NOTHING - not on its timer, not when asked outright: it never has the boat's "
+        + "position, and its card is the chart's, mirrored",
+        () => asked === 0, () => asked + " poll(s) from the controls window");
+  globalThis.fetch = realFetch;
 }
 
 // ── 17. ROUTE ROUND HER ON DEMAND (2026-09-27: "no button or right-click selection to initiate or manually
