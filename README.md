@@ -66,7 +66,7 @@ read the effect on the vessel card's **Wind / Sea / Set·crab** rows (sim only; 
 boat feels real weather). There is no ENV card — override or disable the forcing over
 the API (`POST /api/env`); disabled, the simulator applies no wind, no waves and no tidal
 stream, which is what a calm, repeatable rehearsal needs. A **wind rose** sits on the chart itself — a graduated
-compass ring with the wind needle and the speed and from-direction at its centre,
+compass ring with the wind needle and `wind N.N kn DDD°` (speed, from-direction) beneath it,
 drawn with a transparent background (no card, no chip) and **draggable anywhere on
 the chart**; it remembers where you put it and is clamped back into view if the
 window shrinks.
@@ -326,7 +326,7 @@ attributes now, and a cycle whose frames land outside the hours its file names g
 refused in words rather than cached misdated. `GET /api/currents` (`?force=1` to
 kick a refresh) serves the same reading headlessly. The **chart's wind rose carries it
 too**: a single-headed **sea-blue arrow** riding the ring, pointing where the water goes,
-with `current N.NN kn DDD°` beneath the wind's reading - the **Current** row's reading, labeled
+with `current N.NN kn DDD°` beneath the wind's line, in the same format - the **Current** row's reading, labeled
 so (it said `set`, and read as a second, disagreeing **Set / crab** row: that one is the whole set,
 the wind's and the sea's leeway in it). It is a different *shape* from the
 wind needle on purpose — wind is named by where it blows **from**, a current's set is

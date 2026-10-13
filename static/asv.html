@@ -6708,12 +6708,14 @@ function render(){
 // meteorological convention the readouts already use), speed in knots at the center.
 const ROSE_KEY = "asv_windrose_v1";
 const ROSE_R = 92;                                    // the ONE dimension; everything derives
-// WHERE THE READINGS HANG BELOW THE HUB, in R: the wind's speed, its direction, the current's line (each the TOP of
-// its text). Below the "S" (Andy, 2026-10-08: "The south 'S' in the compass rose is being covered by the wind speed
-// and set notice. Move that down"): the letter is centered at 1.20 R, 0.24 R high, and the speed hung from 1.02 R.
-// roseCentre's clamp reads the same table, so the drawn extent and the clamp cannot part. The fourth is the vessel's
-// SET (2026-10-08, beside the current's line).
-const ROSE_READ = [1.40, 1.76, 2.06, 2.36];
+// WHERE THE READINGS HANG BELOW THE HUB, in R: the wind's line, the current's, the vessel's SET (each the TOP of its
+// text). Below the "S" (Andy, 2026-10-08: "The south 'S' in the compass rose is being covered by the wind speed and
+// set notice. Move that down"): the letter is centered at 1.20 R, 0.24 R high, and the speed hung from 1.02 R.
+// roseCentre's clamp reads the same table, so the drawn extent and the clamp cannot part. THREE LINES, ONE FORMAT
+// (Andy, 2026-10-13: "compass rose wind speed and direction should have the same format as the current and set"):
+// the wind was a large bold speed with its direction on a line of its own; it is now `wind N.N kn DDD°`, the same
+// size and spacing as the two below it.
+const ROSE_READ = [1.40, 1.70, 2.00];
 // Ring + lettering ink (Andy, 2026-08-10: "make the rings and lettering black"). Kept as
 // named constants so the two are changed together and neither drifts into a literal.
 const ROSE_INK = "rgba(8,14,20,0.92)";                // rings, ticks, cardinal letters
@@ -6954,18 +6956,20 @@ function drawWindRose(){
   ctx.beginPath(); ctx.arc(0,0, R*0.13, 0, 2*Math.PI);
   ctx.fillStyle = "rgba(10,20,28,0.90)"; ctx.fill();
   ctx.lineWidth = R*0.030; ctx.strokeStyle = ROSE_INK; ctx.stroke();
-  const txt = simOff ? "sim only" : (kn != null ? kn.toFixed(0) + " kn" : (roseEnv && roseEnv.enabled ? "calm" : "off"));
-  const sub = (from != null && kn != null) ? String(Math.round(from)).padStart(3,"0") + "°" : "";
-  ctx.font = "700 " + (R*0.30).toFixed(1) + "px Consolas,monospace";
+  // The wind's line, in the current's and the set's format: labeled, speed, direction (FROM, as the card's Wind row
+  // reads it). One decimal, not two: the console rounds the wind to 0.1 kn (the current to 0.01), and the card's
+  // Wind row prints it as it comes.
+  const txt = "wind " + (simOff ? "sim only"
+    : kn != null ? kn.toFixed(1) + " kn" + (from != null ? " " + String(Math.round(from)).padStart(3,"0") + "°" : "")
+    : (roseEnv && roseEnv.enabled ? "calm" : "off"));
+  ctx.font = "600 " + (R*0.20).toFixed(1) + "px Consolas,monospace";
   // Dark ink like the rings, over a LIGHT halo - the inverse of the chart's other labels.
-  // A NOAA harbour tile is pale, so black-on-light is the legible pairing here; the halo
+  // A NOAA harbor tile is pale, so black-on-light is the legible pairing here; the halo
   // is what carries it across a dark depth-area fill or the boat's own track.
   ctx.fillStyle = live ? ROSE_INK : "rgba(60,72,84,0.75)";
   ctx.textAlign = "center"; ctx.textBaseline = "top";
-  ctx.strokeStyle = "rgba(255,255,255,0.85)"; ctx.lineWidth = R*0.075;
+  ctx.strokeStyle = "rgba(255,255,255,0.85)"; ctx.lineWidth = R*0.070;
   ctx.strokeText(txt, 0, R*ROSE_READ[0]); ctx.fillText(txt, 0, R*ROSE_READ[0]);
-  if(sub){ ctx.font = "600 " + (R*0.22).toFixed(1) + "px Consolas,monospace";
-    ctx.strokeText(sub, 0, R*ROSE_READ[1]); ctx.fillText(sub, 0, R*ROSE_READ[1]); }
   // The current's own line, BELOW the wind's and LABELED. Two speeds in knots stacked
   // unlabelled would be a guessing game. A projected value keeps the same `~` it carries
   // in the vessel card.
@@ -6982,7 +6986,7 @@ function drawWindRose(){
     ctx.font = "600 " + (R*0.20).toFixed(1) + "px Consolas,monospace";
     ctx.fillStyle = cproj ? "rgba(120,96,20,0.95)" : "rgba(12,74,120,0.95)";
     ctx.strokeStyle = "rgba(255,255,255,0.85)"; ctx.lineWidth = R*0.070;
-    ctx.strokeText(ct, 0, R*ROSE_READ[2]); ctx.fillText(ct, 0, R*ROSE_READ[2]);
+    ctx.strokeText(ct, 0, R*ROSE_READ[1]); ctx.fillText(ct, 0, R*ROSE_READ[1]);
   }
   // ... and the SET's, below it, in its arrow's amber, worded as the card's SET row reads ("stream" where the link
   // reports no set of its own and the console fills in the forecast - with_forecast_set). With no current line it
@@ -6990,7 +6994,7 @@ function drawWindRose(){
   if(sk != null && sdeg != null){
     const stx = "set " + sk.toFixed(2) + " kn " + String(Math.round(sdeg)).padStart(3,"0") + "°"
               + (roseSet.src === "stream" ? " (stream)" : "");
-    const sy = R*ROSE_READ[(cs != null && cset != null) ? 3 : 2];
+    const sy = R*ROSE_READ[(cs != null && cset != null) ? 2 : 1];
     ctx.font = "600 " + (R*0.20).toFixed(1) + "px Consolas,monospace";
     ctx.fillStyle = "rgba(140,80,10,0.95)";
     ctx.strokeStyle = "rgba(255,255,255,0.85)"; ctx.lineWidth = R*0.070;

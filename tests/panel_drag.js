@@ -582,8 +582,8 @@ check("26c no call site hard-codes a display any more - every one derives it",
   // THIS RUNS roseCentre RATHER THAN PATTERN-MATCHING IT. The first version asserted the
   // literal `Math.max(ROSE_R` and so failed the moment the clamp was IMPROVED - widened
   // to the rose's true drawn extent, which reaches past R (cardinal letters at 1.20 R,
-  // the wind and current readings hanging below them - ROSE_READ, to 2.06 R and 0.20 R tall
-  // since 2026-10-08, moved down off the "S"). A check that pins the shape
+  // the wind, current and set lines hanging below them - ROSE_READ, to 2.00 R and 0.20 R tall
+  // since 2026-10-13, all three one format; moved down off the "S" 2026-10-08). A check that pins the shape
   // of an expression fails on correct changes and passes on wrong ones with the same
   // shape; the property is what matters, so drive the function and look at the answer.
   {
