@@ -363,6 +363,8 @@ var FAKE = { "#v_nogo": ROW,
 function $(sel) { return FAKE[sel] || null; }
 function buildKeepouts() { return { polys: [{ kind: "land" }], lines: [],
                                     points: [{ kind: "a charted hazard" }] }; }
+// (deep water first's margin layer, hung beside the model by rebuildNogo, 2026-10-12 - tests/deep_first.js is its suite)
+function buildMargin() { return { polys: [], lines: [], points: [] }; }
 var FETCH = null;
 // ⚠ THE BOX IS PASSED THROUGH, because check 19 asks WHICH box a caller fetched - and a
 // stub that swallowed its argument would let a refresh fetch the wrong water and stay green.

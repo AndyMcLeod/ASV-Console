@@ -2996,6 +2996,23 @@ of the operator.
    from the Rule 9 marks ("2 offshore marks kept between her and their dangers"), and
    one NOT so kept is always said (`tests/offshore_marks.js`).
 
+   **Deep water first (2026-10-12).** The chart is an excellent source of data but can be
+   wrong, so a passage (a Go-To, an RTH, a transit, the leg into a survey) is planned
+   first keeping **2 m of water over her depth floor and 50 m off charted rocks and shoal
+   soundings**. Today's floor and buffer are used only on stretches with no deeper way
+   (none within half again the distance, or 1 km more), and where a deeper way would put
+   a buoy on its wrong hand: a buoy outranks the chart's margin. Each such stretch is
+   said on the banner ("deep water first: 1.34 km at her floor (1 with no deeper way, 1
+   for a buoy's proper hand)") and listed with its position on the Intent card, as a
+   warning where it lies between her start and her end. Where she starts or ends in
+   shallower water she leaves it the short way; the hold point is unchanged, and the
+   clearance guard never sees the margin. On the Go-To past Thacher Island the route now
+   passes between Oak Rock Buoy 2 and Thacher Island Buoy 1 clear of the 5.4-9.1 m patch,
+   and over that whole 61 km Go-To the water within the margin fell from 2,981 m in six
+   stretches to 1,340 m in two, for a route 1.0 % longer. Maneuvers (the way round a
+   contact, back onto a line or onto station) and a survey's own lines are laid as before
+   (`tests/deep_first.js`).
+
    > **History.** This replaced two earlier designs that both rode the *wrong side of
    > the buoys* on the water: a color buoy lane that inferred direction from IALA
    > numbering, and a geometric keep-right that measured its offset by probing for the

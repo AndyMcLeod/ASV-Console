@@ -1012,7 +1012,7 @@ import { easeOffered } from "/static/js/turns.js";
 import { MAX_HALF_M, SKEW_LIMIT_DEG, arcPts, cornerSlowPlan, minTurnRadiusM, shortenSeg,
          teardropTurn, turnWithRetry, joinBreaches, SPEED_CMD_LATENCY_S } from "/static/js/turns.js";
 import { CHART_EDGE_M, LANE_FRAC, SEG_LEN_M, beyondChart, beyondChartSay, buoyChannelLane, buoyageNote, channelLaneRoute,
-         channelSpanKeepouts, channelTurnKeepouts, dilateGrid, gateLegClear, offshoreNote,
+         channelSpanKeepouts, channelTurnKeepouts, deepNote, deepWhy, dilateGrid, gateLegClear, offshoreNote,
          holdTarget, junctionKnot, legPath, narrowChannelLane, planNogoRoute, pruneJunctionKnots,
          pruneStitch, rasterKeepouts, regionOrder,
          routeAround, routeAroundSeg, routePlan, smoothTrack, stampSeg } from "/static/js/passage.js";
@@ -1020,7 +1020,7 @@ import { CHART_EDGE_M, LANE_FRAC, SEG_LEN_M, beyondChart, beyondChartSay, buoyCh
 // holds against on every search (route_job.js; planOffThread).
 import { koCount as routeKoCount, packKo as routePackKo } from "/static/js/route_job.js";
 import { HAZ_UNKNOWN_EXTENT, MARK_TAIL, WATER_FAR_KM, WATER_REMOTE_KM, WATER_STALE_S,
-         WRECK_CLEAR_MARGIN_M, airNeedM, blocked, blockedInfo, bufferFloor, buildKeepouts, clearanceM,
+         WRECK_CLEAR_MARGIN_M, airNeedM, blocked, blockedInfo, bufferFloor, buildKeepouts, buildMargin, clearanceM,
          channelPolys, depthExcluded, effectiveWaterOffset, firstBlockAlong, hazExtent, overheadBlocks,
          legClear, legReason, legReasons, markId, markSystems, nogoDR, nogoKind,
          nogoKindCounts, pairGates, qualityAt, snapClearLL, systemCenterline, waterTrust } from "/static/js/chart.js";
@@ -2032,6 +2032,7 @@ function setPlanIntent(kind, plan, route){
   // OFFSHORE MARKS (2026-10-12, routing.js offshoreDangerSide): kept between her and the danger each marks - no Rule 9 claim,
   // so said whether or not a lane was ridden; and one NOT so kept is a warning, lane or no lane (offshoreWhy).
   w.push(...offshoreWhy(plan));
+  w.push(...deepWhy(plan.deep, fmtDist));             // deep water first (passage.js deepFirst), asked of every plan
   const un = (plan.unroutable||[]).length;
   if(un){ planIntent.unsafe = un;
     w.push({t:"bad", s:un + " leg(s) had NO clear detour and are flagged red - they are not safe to run"}); }
@@ -10208,6 +10209,9 @@ function rebuildNogo(){                         // (re)build the keep-out model 
   // against the bare-ref model over a mixed extract before the switch.
   nogo.frame = planeFrame(featuresBboxRef(feats) || (asv?{lat:asv.lat,lon:asv.lon}:center));
   nogo.ko = buildKeepouts(nogo.frame, nogo.enf, nogoDR(), feats);   // depth floor fixed (navigability)
+  // DEEP WATER FIRST'S MARGIN LAYER (2026-10-12, chart.js buildMargin): beside the model, read by nothing but the planner
+  // (passage.js deepFirst) - the guard, the punch and the readouts never see it.
+  nogo.ko.margin = buildMargin(nogo.frame, nogo.enf, nogoDR(), feats, undefined, nogo.ko);
   // The water level this model credits the vessel with - buildKeepouts reads it only now.
   // applyWaterOffset rebuilds once the live level moves TIDE_REBUILD_M away from it.
   nogo.builtOffset = sea.waterOffset;
@@ -10642,7 +10646,7 @@ async function doGoTo(target){
   plan.coast = gCoast;
   runRoute = plan.route; runUnsafe = []; setPlanIntent("goto", plan, plan.route); updateMissionCard();   // draw the transit line + waypoints like a survey
   legStartsHere(0, r);                           // her first leg begins where she is (SimVcu.start), not at a waypoint
-  const note = [buoyageNote(plan.lane, plan.partial, plan.how), offshoreNote(plan.how), mooredNote(plan)].filter(Boolean).join(" \u00b7 ");   // this plan's lane, not the last plan's
+  const note = [buoyageNote(plan.lane, plan.partial, plan.how), offshoreNote(plan.how), deepNote(plan.deep, fmtDist), mooredNote(plan)].filter(Boolean).join(" \u00b7 ");   // this plan's lane, not the last plan's
   if(plan.heldOff) showBanner("Go-To: "+heldOffWhy(plan.heldOff)+" — holding "+fmtDist(plan.heldOff.m)
     +" off it, at the nearest clear water"+(plan.routed?(", routed via "+plan.route.length+" waypoints"):"")+(note?" · "+note:"")+".");
   else if(plan.routed || note || plan.insideStandoff) showBanner("Go-To: "+(plan.routed?("routed around nogo zone(s) via "+plan.route.length+" waypoints"):"direct")+(note?" \u00b7 "+note:"")+(plan.insideStandoff?" ⚠ inside the "+(+plan.standoffM).toFixed(1)+" m transit standoff (no route at that clearance) — expect the guard to slow or hold her there":"")+".");
@@ -10813,7 +10817,7 @@ async function doRTH(opts){
   plan.coast = rCoast;
   runRoute = plan.route; runUnsafe = []; setPlanIntent("rth", plan, plan.route); updateMissionCard();   // draw the transit line + waypoints like a survey
   legStartsHere(0, r);                           // see doGoTo
-  const note = [buoyageNote(plan.lane, plan.partial, plan.how), offshoreNote(plan.how), mooredNote(plan)].filter(Boolean).join(" \u00b7 ");   // this plan's lane, not the last plan's
+  const note = [buoyageNote(plan.lane, plan.partial, plan.how), offshoreNote(plan.how), deepNote(plan.deep, fmtDist), mooredNote(plan)].filter(Boolean).join(" \u00b7 ");   // this plan's lane, not the last plan's
   if(plan.heldOff) showBanner(why+"RTH: Home "+heldOffWhy(plan.heldOff)+" — holding "+fmtDist(plan.heldOff.m)
     +" off it, at the nearest clear water"+(plan.routed?(", routed via "+plan.route.length+" waypoints"):"")+(note?" · "+note:"")+".");
   else if(plan.routed || note || plan.insideStandoff) showBanner(why+"RTH: "+(plan.routed?("routed around nogo zone(s) via "+plan.route.length+" waypoints"):"direct")+(note?" \u00b7 "+note:"")+(plan.insideStandoff?" ⚠ inside the "+(+plan.standoffM).toFixed(1)+" m transit standoff (no route at that clearance) — expect the guard to slow or hold her there":"")+".");
@@ -11858,7 +11862,9 @@ async function sectionWater(P, from, pts, append){
 /** The guard's chart built at another water level (chart.js buildKeepouts' `waterOffsetM`: the live level keeps its
  *  one writer), the structures read off the chart image folded in as rebuildNogo folds them, and Punch Out its own. */
 function nogoModelAt(m){
-  const ko = buildKeepouts(nogo.frame, nogo.enf, nogoDR(), nogo.features || sea.enc.features || [], m);
+  const feats = nogo.features || sea.enc.features || [];
+  const ko = buildKeepouts(nogo.frame, nogo.enf, nogoDR(), feats, m);
+  ko.margin = buildMargin(nogo.frame, nogo.enf, nogoDR(), feats, m, ko);   // (deep water first's, at the same water)
   foldChartInk(ko, nogo.frame);
   return ko;
 }
@@ -11947,7 +11953,7 @@ async function doTransit(){
   legStartsHere(0, r);                           // see doGoTo
   if(plan.heldOff) showBanner("Transit: the last point "+heldOffWhy(plan.heldOff)+" — holding "+fmtDist(plan.heldOff.m)+" off it, in water a boat can sit in.");
   const added = plan.route.length - transit.length;
-  const note = [buoyageNote(plan.lane, plan.partial, plan.how), offshoreNote(plan.how), mooredNote(plan)].filter(Boolean).join(" \u00b7 ");   // accumulated over every leg of THIS plan
+  const note = [buoyageNote(plan.lane, plan.partial, plan.how), offshoreNote(plan.how), deepNote(plan.deep, fmtDist), mooredNote(plan)].filter(Boolean).join(" \u00b7 ");   // accumulated over every leg of THIS plan
   if(added>0 || note) showBanner("Transit: "+(added>0?("routed clear of ENC obstacles ("+added+" detour waypoint(s) added)"):"clear")+(note?" \u00b7 "+note:"")+".");
   setMode("pan"); render();
 }

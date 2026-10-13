@@ -24,10 +24,14 @@
  *          routing.js relies on it over-approximating and legPath never
  *          re-checks a raster-clear leg. Measured: three commanded legs whose
  *          closest approach was 1.80 m at a 3 m buffer.
+ *       2. rasterKeepouts paints an ARMED MARGIN LAYER (`ko.deep`, deep water
+ *          first, 2026-10-12) on a grid of its own, clears the cells its
+ *          released stretches hold whole, and folds it in. asv_core has no
+ *          such layer. Covered by tests/deep_first.js.
  *
- * The body here is asv_core's own, pulled across at 2a0b53d, so this copy is
- * NOT carrying a private fix -- it is ahead of nothing. The header is what
- * stops a future `vendor.py` run from being harmless-looking.
+ * Item 1 is asv_core's own, pulled across at 2a0b53d; item 2 is this repo's
+ * alone, and a `vendor.py` run would delete it. The header is what stops such
+ * a run from being harmless-looking.
  * ======================================================================== */
 /* ========================================================================
  * VENDORED FROM asv_core -- DO NOT EDIT THIS COPY.
@@ -243,4 +247,32 @@ export function rasterKeepouts(blk, W, H, x0, y0, cell, ko, buffer) {
   }
 
   dilateGrid(blk, W, H, rad);
+
+  // THE MARGIN LAYER, WHERE A PLANNER ARMED IT (keepouts.js deepKeepouts, passage.js deepFirst): painted on a grid of its
+  // own and dilated alike, its released stretches cleared - only a cell the release holds WHOLE, a cell and a half inside
+  // its edge, so this grid still never under-approximates what `blocked` refuses - and folded in.
+  if (ko.deep) {
+    const d = new Uint8Array(W * H);
+    rasterKeepouts(d, W, H, x0, y0, cell, ko.deep, buffer);
+    for (const c of ko.deep.release || []) {
+      const r = c.r - 1.5 * cell;
+      if (!(r > 0)) continue;
+      const gx0 = Math.max(0, Math.floor((c.bb.x0 - r - x0) / cell)), gx1 = Math.min(W - 1, Math.ceil((c.bb.x1 + r - x0) / cell));
+      const gy0 = Math.max(0, Math.floor((c.bb.y0 - r - y0) / cell)), gy1 = Math.min(H - 1, Math.ceil((c.bb.y1 + r - y0) / cell));
+      for (let gy = gy0; gy <= gy1; gy++) {
+        for (let gx = gx0; gx <= gx1; gx++) {
+          const i = gy * W + gx;
+          if (!d[i]) continue;
+          const e = x0 + gx * cell, n = y0 + gy * cell;
+          for (let k = 1; k < c.pts.length; k++) {
+            const a = c.pts[k - 1], b = c.pts[k], dx = b.e - a.e, dy = b.n - a.n, l2 = dx * dx + dy * dy || 1;
+            let t = ((e - a.e) * dx + (n - a.n) * dy) / l2;
+            t = t < 0 ? 0 : t > 1 ? 1 : t;
+            if (Math.hypot(e - (a.e + t * dx), n - (a.n + t * dy)) < r) { d[i] = 0; break; }
+          }
+        }
+      }
+    }
+    for (let i = 0; i < W * H; i++) if (d[i]) blk[i] = 1;
+  }
 }

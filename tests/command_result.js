@@ -283,6 +283,8 @@ const PRELUDE = [
   "const buoyageNote = () => ''; const heldOffWhy = () => 'it is a dock / pier';",
   // (the offshore marks' words, 2026-10-12: none in this world's plans - tests/offshore_marks.js 8 is theirs)
   "const offshoreNote = () => '';",
+  // (deep water first's words, 2026-10-12: no margin layer in this world - tests/deep_first.js is theirs)
+  "const deepNote = () => '';",
   "const fmtDist = (m) => Math.round(m) + ' m';",
   // doRTH now asks rthTooFar() before it routes (2026-09-23), and that needs a distance. The
   // page's distTo is an import from geodesy.js, which a new Function cannot reach; this is

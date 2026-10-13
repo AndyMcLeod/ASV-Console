@@ -26,9 +26,13 @@ import { planNogoRoute, routePlan, holdTarget } from "./passage.js";
 
 const models = new Map();
 
-/** A model's feature count: the check that the model held under an id is the one the page planned on. */
+/** A model's feature count: the check that the model held under an id is the one the page planned on - its margin
+ *  layer's too (deep water first, passage.js deepFirst), so a model held without its layer is not taken for it. */
 export function koCount(ko){
-  return ko ? (ko.polys || []).length + (ko.lines || []).length + (ko.points || []).length : -1;
+  if(!ko) return -1;
+  const m = ko.margin;
+  return (ko.polys || []).length + (ko.lines || []).length + (ko.points || []).length
+       + (m ? (m.polys || []).length + (m.lines || []).length + (m.points || []).length : 0);
 }
 /** The ids this side holds now (tests/route_worker.js). */
 export function heldModels(){ return [...models.keys()]; }
@@ -41,27 +45,43 @@ export function heldModels(){ return [...models.keys()]; }
 // beside it are cloned: 17 ms to pack and 6 ms to clone the rest, on the same model. Exact: a point is {e, n} wherever a
 // model is built (geodesy toEN/llEN, the contacts' hulls), and a Float64Array holds each double as it is.
 /** The model `ko` packed: {xy: Float64Array of every polys[].ring and lines[].pts point, e then n, polys/lines: their
- *  records without the points but with where they lie in `xy` (s..e, in numbers), rest: every other field of `ko`}. */
+ *  records without the points but with where they lie in `xy` (s..e, in numbers), rest: every other field of `ko`,
+ *  margin: its margin layer's the same way, in the same `xy` (deep water first: 599 areas and 65,554 ring points on his
+ *  61 km Go-To's chart, which a clone would have copied point by point)}. */
 export function packKo(ko){
   const polys = ko.polys || [], lines = ko.lines || [];
+  const mg = ko.margin || null, mpolys = (mg && mg.polys) || [], mlines = (mg && mg.lines) || [];
   let n = 0;
   for(const q of polys) n += q.ring.length;
   for(const q of lines) n += q.pts.length;
+  for(const q of mpolys) n += q.ring.length;
+  for(const q of mlines) n += q.pts.length;
   const xy = new Float64Array(n * 2);
   let k = 0;
   const put = (pts) => { const s = k; for(const p of pts){ xy[k++] = p.e; xy[k++] = p.n; } return [s, k]; };
-  const pr = polys.map((q) => { const [s, e] = put(q.ring); const r = {...q}; delete r.ring; return {r, s, e}; });
-  const lr = lines.map((q) => { const [s, e] = put(q.pts); const r = {...q}; delete r.pts; return {r, s, e}; });
-  const rest = {...ko}; delete rest.polys; delete rest.lines;
-  return {xy, polys: pr, lines: lr, rest, hasPolys: "polys" in ko, hasLines: "lines" in ko};
+  const packP = (q) => { const [s, e] = put(q.ring); const r = {...q}; delete r.ring; return {r, s, e}; };
+  const packL = (q) => { const [s, e] = put(q.pts); const r = {...q}; delete r.pts; return {r, s, e}; };
+  const pr = polys.map(packP), lr = lines.map(packL);
+  const rest = {...ko}; delete rest.polys; delete rest.lines; delete rest.margin;
+  let margin = null;
+  if(mg){
+    const mr = {...mg}; delete mr.polys; delete mr.lines;
+    margin = {polys: mpolys.map(packP), lines: mlines.map(packL), rest: mr, hasPolys: "polys" in mg, hasLines: "lines" in mg};
+  }
+  return {xy, polys: pr, lines: lr, rest, hasPolys: "polys" in ko, hasLines: "lines" in ko, margin};
 }
 /** The model `packKo` packed, as the page built it: the same fields, each ring and line its own array of {e, n}. */
 export function unpackKo(pk){
   const xy = pk.xy;
   const pts = (s, e) => { const out = new Array((e - s) / 2); for(let i = s, j = 0; i < e; i += 2, j++) out[j] = {e: xy[i], n: xy[i + 1]}; return out; };
-  const ko = {...pk.rest};
-  if(pk.hasPolys) ko.polys = pk.polys.map(({r, s, e}) => ({...r, ring: pts(s, e)}));
-  if(pk.hasLines) ko.lines = pk.lines.map(({r, s, e}) => ({...r, pts: pts(s, e)}));
+  const unpack = (p, rest) => {
+    const o = {...rest};
+    if(p.hasPolys) o.polys = p.polys.map(({r, s, e}) => ({...r, ring: pts(s, e)}));
+    if(p.hasLines) o.lines = p.lines.map(({r, s, e}) => ({...r, pts: pts(s, e)}));
+    return o;
+  };
+  const ko = unpack(pk, pk.rest);
+  if(pk.margin) ko.margin = unpack(pk.margin, pk.margin.rest);
   return ko;
 }
 function modelOf(ref){

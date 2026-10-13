@@ -59,7 +59,7 @@ import { blockedInfo, firstBlockAlong, legClear } from "./chart.js";
 import { HOLD_RADIUS_MIN_M, holdClearM, holdMarginM, snapCapM, snapClearRadial } from "./hold.js";
 // The vessels NOT under way, laid round by a passage as a pier is (passageKo, 2026-10-07).
 import { aisMooredKeepouts } from "./ais_keepout.js";
-import { clearanceM } from "./keepouts.js";
+import { DEEP_BERTH_M, DEEP_MARGIN_M, bbOf, blocked, clearanceM } from "./keepouts.js";
 // The shared routing layer. `legPath` is used below by planNogoRoute and routePlan; the
 // rest pass straight through to this console's importers, which are untouched.
 import { LANE_FRAC, SEG_LEN_M, buoyChannelLane, narrowChannelLane, smoothTrack,
@@ -564,6 +564,272 @@ export function mooredPassed(routeLL, ref, moored){
   return moored.filter((q) => pts.some((p) => clearanceM(p, {polys: [q], lines: [], points: []}, MOORED_SAY_M + 1) <= MOORED_SAY_M))
                .map((q) => q.kind);
 }
+
+// ── DEEP WATER FIRST (Andy, 2026-10-12) ──────────────────────────────────────────────────────────────────────────────
+// His Go-To past Thacher Island ran over the 5.4-9.1 m patch off Oak Rock, legal at her 4.0 m floor: "good safe practice
+// would have put it between the buoys and especially not over the shallow spot. There should be an awareness that
+// although the ENC is an excellent source of data it can be inaccurate in some instances." His choice, asked: plan first
+// keeping 2 m over the floor and 50 m off charted rocks and shoal soundings (keepouts.js deepKeepouts, the MARGIN LAYER
+// the page builds beside the model as `ko.margin`); today's floor and buffer only on stretches where there is no other
+// way; and say so on the plan.
+//
+// HOW, ONE PASSAGE LEG AT A TIME (deepFirst). The floor's search runs first, as it always did - it is what says whether
+// she can get there at all, and its refusal stands. Its route is then walked: each stretch of it in margin water
+// (DEEP_JOIN_M apart is one stretch) is searched round on the layer, from DEEP_ANCHOR_M before it to DEEP_ANCHOR_M after,
+// and a deeper way no longer than DEEP_DETOUR times the way it replaces (or DEEP_DETOUR_MIN_M longer, whichever is more)
+// is spliced in. A stretch with none is RELEASED - the layer is lifted within DEEP_RELEASE_M of the route's own stretch -
+// and kept at today's floor and buffer. Where she starts or holds in margin water, the water about her out to the
+// nearest deeper water is released first, so the route leaves it the short way. What the stages after the search then
+// plan on is the model with the layer ARMED and those releases in it: the lane, the marks, the smoothing and the gate
+// take her nowhere into margin water the search did not have to. The hold point stays on the floor's model.
+// A maneuver (the way round a contact, back onto a line or onto station) is not a passage, and is laid as it always was.
+export const DEEP_JOIN_M = 200;
+export const DEEP_ANCHOR_M = 300;
+export const DEEP_DETOUR = 1.5;
+export const DEEP_DETOUR_MIN_M = 1000;
+export const DEEP_RELEASE_M = 150;
+/** What every deeper way round one leg's stretches may take, in all; a stretch not searched by then is released. */
+export const DEEP_BUDGET_MS = 6000;
+/** She starts or holds in margin water: the nearest deeper water is looked for this far out. */
+export const DEEP_REACH_M = 3000;
+/** A mark within this of a stretch holds it to the floor's route where the deeper way left the mark wrong (deepLanePass). */
+export const DEEP_MARK_M = 400;
+/** ... and the piece of route either side of a stretch the marks stage judges a deeper way near a mark on (deepFirst). */
+export const DEEP_MARK_CTX_M = 1500;
+
+/** `ko` with its margin layer ARMED at `margin` - each berth less the margin the plan keeps, so the berth is the
+ *  distance kept - outside the regions in `release`, which the caller may go on filling. Null when it has no layer. */
+export function armDeep(ko, margin, release = []){
+  const lay = ko && ko.margin;
+  if(!lay) return null;
+  // (the berths at each margin kept, so keepouts.js files them in its grid once per margin, not once per plan)
+  let at = ARMED.get(lay);
+  if(!at) ARMED.set(lay, at = new Map());
+  let points = at.get(margin);
+  if(!points) at.set(margin, points = lay.points.map((q) => q.berth ? {...q, r: Math.max(q.r || 0, q.berth - margin)} : q));
+  return {...ko, deep: {polys: lay.polys, lines: lay.lines || [], points, release}};
+}
+const ARMED = new WeakMap();
+/** Samples of the polyline `en` (frame meters) every `step`: {e, n, s (meters along it), seg (the vertex it runs to)}. */
+function sampleEN(en, step){
+  const S = [];
+  let cum = 0;
+  for(let i = 1; i < en.length; i++){
+    const a = en[i - 1], b = en[i], L = Math.hypot(b.e - a.e, b.n - a.n), n = Math.max(1, Math.ceil(L / step));
+    for(let k = i === 1 ? 0 : 1; k <= n; k++) S.push({e: a.e + (b.e - a.e) * k / n, n: a.n + (b.n - a.n) * k / n, s: cum + L * k / n, seg: i});
+    cum += L;
+  }
+  return S;
+}
+function lenLL(ref, pts){
+  let L = 0;
+  for(let i = 1; i < pts.length; i++){ const a = ref.toEN(pts[i - 1]), b = ref.toEN(pts[i]); L += Math.hypot(b.e - a.e, b.n - a.n); }
+  return L;
+}
+/** The runs of `routeLL` (her position first) in the margin layer of `ko` - the layer alone, nothing released - at
+ *  `margin`, sampled as legClear samples, DEEP_JOIN_M apart one run: [{m (meters in it), at (LL, its middle),
+ *  end: 'start' | 'end' | null (from her position, to the end)}]. [] where the model has no layer. */
+export function marginRuns(routeLL, ref, ko, margin){
+  const k = armDeep(ko, margin);
+  if(!k || !routeLL || routeLL.length < 2) return [];
+  const L = k.deep, S = sampleEN(routeLL.map((q) => ref.toEN(q)), Math.max(2, margin / 2));
+  const runs = [];
+  for(let i = 0; i < S.length; i++){
+    if(!blocked(S[i], L, margin)) continue;
+    const r = runs[runs.length - 1], ds = i ? S[i].s - S[i - 1].s : 0;
+    if(r && S[i].s - S[r.i1].s <= DEEP_JOIN_M){ r.i1 = i; r.m += ds; } else runs.push({i0: i, i1: i, m: ds});
+  }
+  return runs.map((r) => {
+    const mid = S[(r.i0 + r.i1) >> 1];
+    return {m: r.m, at: ref.fromEN(mid.e, mid.n), end: r.i0 === 0 ? "start" : r.i1 === S.length - 1 ? "end" : null};
+  });
+}
+/** How far from `c` (frame meters) the nearest water clear of both `ko` and the margin layer `layer` at `margin` lies,
+ *  looked for on rings out to DEEP_REACH_M - every 10 m to 200 m, then 15 % further each ring; null where none is. */
+function deeperWithin(c, ko, layer, margin){
+  for(let d = 10; d <= DEEP_REACH_M; d = d < 200 ? d + 10 : Math.round(d * 1.15)){
+    const n = Math.max(12, Math.ceil(2 * Math.PI * d / 25));
+    for(let k = 0; k < n; k++){
+      const a = 2 * Math.PI * k / n, q = {e: c.e + d * Math.sin(a), n: c.n + d * Math.cos(a)};
+      if(!blocked(q, layer, margin) && !blocked(q, ko, margin)) return d;
+    }
+  }
+  return null;
+}
+/**
+ * DEEP WATER FIRST on one passage leg the floor's search found (`path`, her position first, LL; `margin` the clearance
+ * it was found at). Null where the model has no margin layer; else {path, ko, released, repaired, repairedAt, marginM}:
+ *   path        the route with a deeper way spliced in round each stretch of margin water that has one;
+ *   ko          `ko` with the layer armed and released where no deeper way was taken - what the stages after the
+ *               search plan on;
+ *   released    each stretch kept at today's floor and buffer, as the floor's route ran it: {m, at, end, why} - `why`
+ *               "none" (no deeper way within the cap), "mark" (a mark held it: `opts.hold`), "reach" (she starts or ends
+ *               in margin water with no deeper water within DEEP_REACH_M), "time" (DEEP_BUDGET_MS spent before it);
+ *   repaired    the stretches a deeper way was found round, and repairedAt each one's floor and deeper way (frame
+ *               meters, [{floor, deep}]); marginM: the meters of the floor's route in margin water.
+ * `opts.hold`: marks (frame points) no deeper way is sought within DEEP_MARK_M of, nor taken within it of, and about which
+ * the layer is lifted (deepLanePass). `bore`: frame points where the layer bore on the route - its stretches as the
+ * floor ran them, and each deeper way taken.
+ */
+export function deepFirst(path, ref, ko, margin, opts = {}){
+  const release = [];
+  const koD = armDeep(ko, margin, release);
+  if(!koD || !path || path.length < 2) return null;
+  const layer = {polys: koD.deep.polys, lines: koD.deep.lines, points: koD.deep.points};
+  const step = Math.max(2, margin / 2);
+  const S = sampleEN(path.map((q) => ref.toEN(q)), step), N = S.length;
+  const F = S.map((p) => blocked(p, layer, margin));
+  const runs = [];
+  let marginM = 0;
+  for(let i = 0; i < N; i++){
+    if(!F[i]) continue;
+    if(i) marginM += S[i].s - S[i - 1].s;
+    const r = runs[runs.length - 1];
+    if(r && S[i].s - S[r.i1].s <= DEEP_JOIN_M) r.i1 = i; else runs.push({i0: i, i1: i});
+  }
+  if(!runs.length) return {path, ko: koD, released: [], repaired: 0, repairedAt: [], marginM: 0, bore: []};
+  // EACH STRETCH ITS OWN WINDOW, DEEP_ANCHOR_M before and after it and never past the middle of the clear water between
+  // it and the next - more than DEEP_JOIN_M of it, so an anchor is never in margin water. ⚠ Not one window for stretches
+  // whose windows meet: on his 61 km Go-To the stretch at the Oak Rock pair, which has a deeper way, shared one with the
+  // 1.3 km south of it, which had none within the cap, and was kept in margin water with it.
+  const at = (s) => { let lo = 0, hi = N - 1; while(lo < hi){ const m = (lo + hi) >> 1; if(S[m].s < s) lo = m + 1; else hi = m; } return lo; };
+  const wins = runs.map((r, k) => {
+    const lo = k ? at((S[runs[k - 1].i1].s + S[r.i0].s) / 2) : 0;
+    const hi = k < runs.length - 1 ? at((S[r.i1].s + S[runs[k + 1].i0].s) / 2) : N - 1;
+    return {a: Math.max(lo, at(S[r.i0].s - DEEP_ANCHOR_M)), b: Math.min(hi, at(S[r.i1].s + DEEP_ANCHOR_M)), runs: [r]};
+  });
+  const LL = (i) => i === 0 ? path[0] : i === N - 1 ? path[path.length - 1] : ref.fromEN(S[i].e, S[i].n);
+  const ring = (i0, i1) => {
+    const pts = [];
+    for(let i = i0; i <= i1; i++) if(i === i0 || i === i1 || S[i].s - pts.at(-1).s >= 20) pts.push({e: S[i].e, n: S[i].n, s: S[i].s});
+    if(pts.length === 1) pts.push(pts[0]);
+    return {pts, r: DEEP_RELEASE_M, bb: bbOf(pts)};
+  };
+  const disk = (i, r) => ({pts: [S[i], S[i]], r, bb: bbOf([S[i]])});
+  const hold = opts.hold || [];
+  const held = (pts) => hold.some((m) => pts.some((p) => Math.hypot(p.e - m.e, p.n - m.n) < DEEP_MARK_M));
+  // ... and the layer lifted within DEEP_MARK_M of a held mark, so the marks stage moves her there as it always did: on the
+  // Dog Bar's chart no deeper way was taken at all, and the layer alone kept the stage from bringing her to the green's
+  // proper hand, which it does on the floor's model.
+  for(const m of hold) release.push({pts: [m, m], r: DEEP_MARK_M, bb: bbOf([m])});
+  // ⚠ THE MARKS STAGE JUDGES A DEEPER WAY NEAR A MARK, ON THE PIECE OF ROUTE ABOUT IT. A deeper way within DEEP_MARK_M
+  // of a mark is taken only if the marks stage (markPassRoute), run on it and DEEP_MARK_CTX_M of the route either side,
+  // leaves on its wrong hand no mark it keeps on the floor's route there. Found on his Go-To into Gloucester:
+  // the deeper way below the Dog Bar pair turned her course at the red's station west, the bar read on her port hand, and
+  // the red was passed with the bar between her and it. No reading of the route alone told that case from a good one:
+  // the floor's own route passed Oak Rock 2 on its far side too (the marks stage moves it between the pair), and her
+  // course turned 86 degrees at the Dog Bar red but 78 at Avery Ledge 2, which the stage kept.
+  const marks = (ko.marks || []).filter((m) => Number.isFinite(m.e));
+  const near = (pts) => marks.some((m) => pts.some((p) => Math.hypot(p.e - m.e, p.n - m.n) < DEEP_MARK_M));
+  const thin = (pts) => pts.filter((p, i) => i === 0 || i === pts.length - 1 || i % Math.max(1, Math.round(10 / step)) === 0);
+  const wrongOn = (pts, k) => {
+    const piece = thin(pts).map((p) => ref.fromEN(p.e, p.n));
+    const r = markPassRoute(piece, ref, k, nogo.buffer, {standoffM: margin > nogo.buffer + 0.05 ? margin : 0});
+    return new Set(markVerdicts(r.path, ref, r.marks).filter((v) => !v.proper).map((v) => v.k.m));
+  };
+  // BOTH PIECES ON THE LAYER AS IT STANDS - the floor's way with this stretch released, as it would ship if no deeper way
+  // were taken. ⚠ Judged on the floor's own model, the floor's piece had the marks stage move her freely through the
+  // next stretch along (not reached yet, so not released) where the deeper piece could not, and on his Go-To the three
+  // stretches before the Dog Bar were held for what only the last one did. (Releasing every other stretch about them as
+  // well changed no window on his whole route: both pieces meet them alike.)
+  const worse = (w, floorEN, deepEN) => {
+    if(!near(floorEN) && !near(deepEN)) return false;
+    const ia = at(S[w.a].s - DEEP_MARK_CTX_M), ib = at(S[w.b].s + DEEP_MARK_CTX_M);
+    const before = S.slice(ia, w.a), after = S.slice(w.b + 1, ib + 1);
+    const on = (extra) => ({...koD, deep: {...koD.deep, release: [...release, ...extra]}});
+    // ⚠ MARK BY MARK, NOT BY COUNT: refused where it leaves wrong ANY mark the floor's way keeps. Counted, a deeper way out
+    // of Eastern Point that kept Eastern Point Ledge 4 (which the floor's way, starting beside it, does not) and passed the
+    // Dog Bar red on its bar's side was one wrong for one wrong, and taken - a buoy traded for the chart's margin.
+    const deep = wrongOn([...before, ...deepEN, ...after], on([]));
+    const floor = wrongOn([...before, ...floorEN, ...after], on(w.runs.map((r) => ring(r.i0, r.i1))));
+    return [...deep].some((m) => !floor.has(m));
+  };
+  const t0 = Date.now(), budget = opts.budgetMs ?? DEEP_BUDGET_MS;
+  const released = [], repairedAt = [];
+  let repaired = 0;
+  for(const w of wins){
+    const startIn = w.a === 0 && F[0], endIn = w.b === N - 1 && F[N - 1];
+    const lenOld = S[w.b].s - S[w.a].s;
+    const floorEN = S.slice(w.a, w.b + 1);
+    let why = held(floorEN) ? "mark" : null;
+    // She is in margin water at her start or her end: the water about her out to the nearest deeper water first.
+    const disks = [];
+    for(const [inIt, i] of [[startIn, 0], [endIn, N - 1]]){
+      if(!inIt || why) continue;
+      const d = deeperWithin(S[i], ko, layer, margin);
+      if(d == null) why = "reach"; else disks.push(disk(i, d + 2 * step));
+    }
+    if(!why && Date.now() - t0 >= budget) why = "time";
+    let sub = null;
+    if(!why){
+      release.push(...disks);
+      const t1 = Date.now();
+      // (the search's QUICK mode - one wider region, no escape rings: a deeper way that needs the whole ladder is not one
+      // worth having, and on the Dog Bar's chart one window spent the whole of DEEP_BUDGET_MS failing to find one)
+      const leg = legPath(LL(w.a), LL(w.b), ref, koD, margin, {quick: true});
+      const lenNew = leg ? lenLL(ref, [LL(w.a), ...leg]) : null;
+      const deepEN = leg ? sampleEN([LL(w.a), ...leg].map((q) => ref.toEN(q)), 10) : null;
+      const marked = leg && (held(deepEN) || worse(w, floorEN, deepEN));
+      if(leg && lenNew <= Math.max(DEEP_DETOUR * lenOld, lenOld + DEEP_DETOUR_MIN_M) && !marked){
+        sub = leg;
+        repairedAt.push({floor: floorEN, deep: deepEN});
+      }else{
+        release.length -= disks.length;
+        why = marked ? "mark" : "none";
+      }
+      if(opts.trace) opts.trace.push({s0: S[w.a].s, s1: S[w.b].s, lenOld, lenNew, ms: Date.now() - t1, ok: !!sub, disks: disks.length, why});
+    }
+    w.sub = sub;
+    if(sub){ repaired += w.runs.length; continue; }
+    for(const r of w.runs){
+      release.push(ring(r.i0, r.i1));
+      const mid = S[(r.i0 + r.i1) >> 1];
+      released.push({m: S[r.i1].s - S[r.i0].s, at: ref.fromEN(mid.e, mid.n), why,
+                     end: r.i0 === 0 && F[0] ? "start" : r.i1 === N - 1 && F[N - 1] ? "end" : null});
+    }
+  }
+  // The route: the floor's, with each deeper way spliced in between its window's anchors.
+  const out = [path[0]];
+  const push = (q) => { const l = out[out.length - 1]; if(Math.abs(l.lat - q.lat) > 1e-10 || Math.abs(l.lon - q.lon) > 1e-10) out.push({lat: q.lat, lon: q.lon}); };
+  let v = 1;
+  for(const w of wins){
+    if(!w.sub) continue;
+    while(v < S[w.a].seg) push(path[v++]);
+    push(LL(w.a));
+    for(const q of w.sub) push(q);
+    v = Math.max(v, S[w.b].seg);
+  }
+  while(v < path.length) push(path[v++]);
+  const bore = [...runs.flatMap((r) => S.slice(r.i0, r.i1 + 1).filter((p, k) => k % 4 === 0)), ...repairedAt.flatMap((x) => x.deep)];
+  return {path: out, ko: koD, released, repaired, repairedAt, marginM, bore};
+}
+/**
+ * ⚠ A MARK OUTRANKS THE MARGIN. The lane pass `lanePass(path, ko)` run on deepFirst's route - and, where it leaves a
+ * mark on its wrong hand within DEEP_MARK_M of margin water the floor's route ran in or of a deeper way taken, run again
+ * with those marks held (no deeper way near them, and the layer lifted about them), and that plan shipped where it leaves
+ * fewer marks wrong, or as many having put right a mark it held. Found on his 61 km Go-To: the deeper
+ * way into Gloucester ran west below the Dog Bar pair and north through the outer harbor, so her course at the red's
+ * station turned west, the bar read on her port hand, and the red was passed with the bar between her and it - the
+ * chart's margin bought by going round a danger on the side its buoy says not to, where the buoy is what Andy trusts
+ * when the chart may be wrong. {kr, df} (df null without a layer: the lane pass on the floor's route, as before).
+ */
+export function deepLanePass(path0, ref, ko, margin, lanePass){
+  const df = deepFirst(path0, ref, ko, margin);
+  if(!df) return {kr: lanePass(path0, ko), df: null};
+  const kr = lanePass(df.path, df.ko);
+  if(!df.bore.length) return {kr, df};
+  const near = (m) => df.bore.some((p) => Math.hypot(p.e - m.e, p.n - m.n) < DEEP_MARK_M);
+  const hold = markVerdicts(kr.route, ref, kr.marks || []).filter((v) => !v.proper).map((v) => v.k.m).filter(near);
+  if(!hold.length) return {kr, df};
+  const df2 = deepFirst(path0, ref, ko, margin, {hold});
+  const kr2 = lanePass(df2.path, df2.ko);
+  // (asked again, it ships where it leaves fewer marks wrong - or as many, having put right one of the marks it held: a
+  // buoy the deeper way traded for one the floor's own way leaves wrong is a trade made back. Where it puts none of them
+  // right, the first stands, deeper water and all.)
+  const wrongs = (k) => markVerdicts(k.route, ref, k.marks || []).filter((v) => !v.proper).map((v) => v.k.m);
+  const w1 = wrongs(kr), w2 = wrongs(kr2);
+  return w2.length < w1.length || (w2.length === w1.length && hold.some((m) => !w2.includes(m))) ? {kr: kr2, df: df2} : {kr, df};
+}
 // Plan an ENC-aware path from -> to ending at `to` - or at the nearest clear water to
 // `to` when it sits in a keep-out (see holdTarget). {route} on success, {error} when no
 // clear route exists (refuse + warn). Keeps to the starboard side of channels (Rule 9).
@@ -589,13 +855,21 @@ export function planNogoRoute(from, to, opts){
   if(!leg){ const fb=firstBlockAlong(from, to, ref, ko, buf);
     return {error:"no clear route to the target — every path crosses "+(fb?fb.info.kind:"a nogo zone"),
             reason:{mode:"boxed", info:fb?fb.info:null, at:fb?fb.at:null, target:to}}; }
-  const routed = leg.length > 1;
+  // A MANEUVER IS LANED AS IT ALWAYS WAS. The way round a contact and the way back onto a line
+  // (`flyThrough`) and the way back onto station (`maneuver`) are a few hundred meters of avoidance,
+  // not a passage up a channel: neither is brought to a charted channel's starboard quarter nor sent
+  // off to a buoy half a kilometer away. Go-To, RTH, a transit and the ETA rows are passages.
+  const passage = !(opts && (opts.flyThrough || opts.maneuver));
   // The lane's centerline is EXTENDED to the charted end of the fairway before the lane
   // is built on it (extendCenterline), so the stand-on past a mouth needs no separate
   // pass here. This comment used to claim the same thing about the UNextended centerline
   // - "it already runs out to the last buoy pair, so the fairway projects past the mouth"
   // - which was false: it ran out AT the last pair and the offset was decaying before it.
-  const path = [{lat:from.lat,lon:from.lon}, ...leg];
+  const path0 = [{lat:from.lat,lon:from.lon}, ...leg];
+  // DEEP WATER FIRST (2026-10-12, deepFirst / deepLanePass above): a passage's route kept out of margin water wherever it
+  // has a deeper way that leaves no mark wrong, at the clearance the leg was found at, and every stage below planning on
+  // the layer as deepFirst left it.
+  const found = insideStandoff || !(want > buf + 0.05) ? buf : want;
   // ⚠ AND THE STANDOFF SURVIVES THE LANE PASS (2026-09-28). The lane, the smoothing, the gate and the knot prune
   // all run at the operator's BUFFER, so every shortcut they take is clear of the buffer and nothing more - and a
   // route the search built at the standoff came out of them with its corners cut back to 3 m. Found on the tighter
@@ -608,14 +882,11 @@ export function planNogoRoute(from, to, opts){
   // proper hand came back from the re-gate 29 m off on the OTHER. So the lane is told the margin it will
   // be re-gated at and stands her off the mark by that and a little more (MARK_PASS_M), and the marks are
   // counted again on the route that ships.
-  // A MANEUVER IS LANED AS IT ALWAYS WAS. The way round a contact and the way back onto a line
-  // (`flyThrough`) and the way back onto station (`maneuver`) are a few hundred meters of avoidance,
-  // not a passage up a channel: neither is brought to a charted channel's starboard quarter nor sent
-  // off to a buoy half a kilometer away. Go-To, RTH, a transit and the ETA rows are passages.
-  const passage = !(opts && (opts.flyThrough || opts.maneuver));
   const laneOpts = {standoffM: insideStandoff ? 0 : want, marks: passage, charted: passage};
-  const kr = insideStandoff || !(want > buf + 0.05) ? channelLaneRoute(path, ref, ko, buf, laneOpts)
-                                                     : keepStandoff(channelLaneRoute(path, ref, ko, buf, laneOpts), path, ref, ko, want);
+  const lanePass = (pth, kP) => insideStandoff || !(want > buf + 0.05) ? channelLaneRoute(pth, ref, kP, buf, laneOpts)
+                                                                     : keepStandoff(channelLaneRoute(pth, ref, kP, buf, laneOpts), pth, ref, kP, want);
+  const {kr, df} = passage ? deepLanePass(path0, ref, ko, found, lanePass) : {kr: lanePass(path0, ko), df: null};
+  const routed = (df ? df.path : path0).length > 2;
   // (the knot prune that used to run here moved INTO channelLaneRoute — the producer —
   // after the Upload path, which never pruned, shipped a splice-seam knot to the boat)
   // `lane` travels WITH the plan. A refusal above returns before this point and so carries
@@ -629,7 +900,57 @@ export function planNogoRoute(from, to, opts){
   return {route, direct: !routed, routed, lane: kr.lane, partial: kr.partial,
           how: kr.how, marks: kr.marks,
           heldOff, holdClear, insideStandoff, standoffM: want,
-          moored: mooredPassed([{lat: from.lat, lon: from.lon}, ...route], ref, ko.moored)};
+          moored: mooredPassed([{lat: from.lat, lon: from.lon}, ...route], ref, ko.moored),
+          deep: df ? deepSaid([df], marginRuns([{lat: from.lat, lon: from.lon}, ...route], ref, ko, found)) : null};
+}
+/** What a plan says of deep water first: {marginM, berthM (the layer's), repaired, released (each stretch kept at the
+ *  floor, as deepFirst found it), runs (marginRuns: the margin water the route that SHIPS is in - what is said - each
+ *  with `why`: "start" / "end" / "waypoint" where she starts, ends or turns in it, else the released stretch's own
+ *  reason nearest it - "none", "mark", "time" - or "none")}. */
+export function deepSaid(dfs, runs){
+  const released = dfs.flatMap((d) => d.released);
+  const llM = (a, b) => Math.hypot((a.lat - b.lat) * 111320, (a.lon - b.lon) * 111320 * Math.cos(a.lat * Math.PI / 180));
+  for(const r of runs){
+    if(r.end){ r.why = r.end; continue; }
+    let best = null, bd = Infinity;
+    for(const x of released){ const d = llM(r.at, x.at); if(d < bd){ bd = d; best = x; } }
+    r.why = best && bd <= DEEP_RELEASE_M + r.m ? best.why : "none";
+  }
+  return {marginM: DEEP_MARGIN_M, berthM: DEEP_BERTH_M,
+          repaired: dfs.reduce((n, d) => n + d.repaired, 0), released, runs};
+}
+const DEEP_WHY = {start: "where she starts", end: "where she ends", waypoint: "at a waypoint",
+                  none: "no deeper way within the detour allowed", mark: "a deeper way put a buoy on its wrong hand",
+                  time: "not searched in the time allowed", reach: "no deeper water near her"};
+const latLonSay = (q) => Math.abs(q.lat).toFixed(4) + (q.lat < 0 ? " S " : " N ") + Math.abs(q.lon).toFixed(4) + (q.lon < 0 ? " W" : " E");
+/** The banner's words for deep water first (deepSaid): nothing where the route keeps the margin the whole way, else the
+ *  margin water it is in at her floor, and why. `fmt` formats meters (the page's fmtDist). */
+export function deepNote(deep, fmt){
+  const f = fmt || ((m) => Math.round(m) + " m");
+  if(!deep || !deep.runs || !deep.runs.length) return "";
+  const total = deep.runs.reduce((s, r) => s + r.m, 0);
+  const n = (w) => deep.runs.filter((r) => r.why === w).length;
+  const parts = [];
+  if(n("start")) parts.push("where she starts");
+  if(n("end")) parts.push("where she ends");
+  if(n("waypoint")) parts.push(n("waypoint") + " at a waypoint");
+  if(n("none")) parts.push(n("none") + " with no deeper way");
+  if(n("mark")) parts.push(n("mark") + " for a buoy's proper hand");
+  if(n("time")) parts.push(n("time") + " not searched in time");
+  return "deep water first: " + f(total) + " at her floor (" + parts.join(", ") + ")";
+}
+/** The Intent card's lines for deep water first: what was kept, and each stretch at her floor - where and why. A warning
+ *  where one lies between her start and her end (margin water she has no need to start or end in). */
+export function deepWhy(deep, fmt){
+  const f = fmt || ((m) => Math.round(m) + " m");
+  if(!deep) return [];
+  const kept = "deep water first: kept " + deep.marginM + " m over her floor and " + deep.berthM
+             + " m off charted rocks and shoal soundings";
+  if(!deep.runs || !deep.runs.length) return [{t: "lane", s: kept + " the whole way"}];
+  const list = deep.runs.map((r) => f(r.m) + " " + (r.end ? DEEP_WHY[r.why] : "near " + latLonSay(r.at) + " - " + (DEEP_WHY[r.why] || r.why)));
+  const inside = deep.runs.some((r) => !r.end);
+  return [{t: inside ? "warn" : "lane", s: kept + " except " + deep.runs.length + " stretch" + (deep.runs.length === 1 ? "" : "es")
+           + " at her floor and buffer: " + list.join("; ")}];
 }
 /** The lane pass's result re-gated at `want` (every leg clear of the standoff, spliced with the standoff's own
  *  route where it is not) and re-pruned at it. The lane is kept wherever the gate did not have to abandon it. */
@@ -699,6 +1020,7 @@ export function routePlan(start, wps, keepRightAll, standoffM, transitAt){
   // report only whichever leg happened to be last.
   let lane = false, partial = false, insideStandoff = 0;
   const how = {pairs: false, charted: false, narrow: false, reach: false, gaps: false, marks: {kept: 0, wrong: 0, stbd: 0, port: 0}};
+  const dfs = [], runs = [];                                     // deep water first, each transit leg's (deepFirst)
   const want = (standoffM > buf + 0.05) ? standoffM : buf;
   // ⚠ EACH LEG'S MARKS ARE JUDGED ON THAT LEG'S OWN PART OF THE ROUTE THAT SHIPS, and every pass
   // counts - but ONE pass, of a mark beside the waypoint two legs share, is counted once (both
@@ -741,9 +1063,17 @@ export function routePlan(start, wps, keepRightAll, standoffM, transitAt){
       // smoothing, the gate and the knot prune run at the BUFFER, and a transit leg found at the 19.5 m standoff came
       // out of them 6.3-14.1 m off a hull-sized block across it (tests/planner_guard_seam.js 7g). A leg found only at
       // the buffer - counted in insideStandoff - keeps the buffer's pass.
-      const kr0 = channelLaneRoute(seg, ref, koT, buf, {standoffM: atStandoff ? want : 0});   // see planNogoRoute
-      const kr = atStandoff ? keepStandoff(kr0, seg, ref, koT, want) : kr0;
+      // DEEP WATER FIRST on each transit leg, as planNogoRoute does (deepFirst): at the clearance the leg was found at.
+      const found = atStandoff ? want : buf;
+      const {kr, df} = deepLanePass(seg, ref, koT, found, (pth, kD) => {
+        const kr0 = channelLaneRoute(pth, ref, kD, buf, {standoffM: atStandoff ? want : 0});   // see planNogoRoute
+        return atStandoff ? keepStandoff(kr0, pth, ref, kD, want) : kr0;
+      });
+      if(df) dfs.push(df);
       seg = kr.route; if(kr.lane) lane = true; if(kr.partial) partial = true;
+      // (its margin water as it ships: from her position on the first leg, at its end on the last - else at a waypoint)
+      if(df) for(const r of marginRuns(seg, ref, koT, found))
+        runs.push({...r, end: (r.end === "start" && i === 0) || (r.end === "end" && i === wps.length - 1) ? r.end : r.end ? "waypoint" : null});
       if(kr.how){
         for(const f of ["pairs", "charted", "narrow", "reach", "gaps"]) if(kr.how[f]) how[f] = true;
       }
@@ -775,5 +1105,6 @@ export function routePlan(start, wps, keepRightAll, standoffM, transitAt){
   // or what beyondChart found; the route is still returned, and the page refuses it (doTransit, doUpload).
   const uncharted = beyondChart([{lat: start.lat, lon: start.lon}, ...out], nogo.bbox, undefined, nogo.unread);
   return {route: out, unroutable, lane, partial, how, insideStandoff, standoffM: want, uncharted,
-          moored: mooredPassed([{lat: start.lat, lon: start.lon}, ...out], ref, koT.moored)};
+          moored: mooredPassed([{lat: start.lat, lon: start.lon}, ...out], ref, koT.moored),
+          deep: dfs.length ? deepSaid(dfs, runs) : null};
 }

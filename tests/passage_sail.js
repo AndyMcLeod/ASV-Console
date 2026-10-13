@@ -612,6 +612,8 @@ console.log("The passage, sailed:");
     const src = [
       "const nogo = w.nogo, sea = {enc: {features: []}}, TIDE_REBUILD_M = 0.1, nogoDR = () => ({min: 3, max: 0});",
       "const buildKeepouts = (frame, enf, dr, feats, m) => { w.builds.push(m); return {builtAt: m, polys: [], lines: [], points: []}; };",
+      // (deep water first's margin layer at the same water, 2026-10-12: its level is what is asked here)
+      "const buildMargin = (frame, enf, dr, feats, m) => { w.margins = (w.margins || []).concat([m]); return {at: m, polys: [], lines: [], points: []}; };",
       "const foldChartInk = (ko) => { w.inked++; ko.inked = true; };",
       grab("nogoModelAt"), grab("koAtLevel"), grab("atWaterLevel"), "return atWaterLevel;"].join("\n");
     return { w, at: new Function("w", src)(w) };

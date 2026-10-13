@@ -49,7 +49,8 @@ import { HAZ_UNKNOWN_EXTENT, WRECK_CLEAR_MARGIN_M, MARK_TAIL, CL_EXTEND_CAP_M,
          markId, markSystems, systemCenterline, extendCenterline, pairGates, channelPolys,
          buildKeepouts as coreBuildKeepouts, hazExtent as coreHazExtent,
          hazPassable as coreHazPassable, overheadBlocks, overheadClearance,
-         depthExcluded as coreDepthExcluded, nogoKind as coreNogoKind } from "./keepouts.js";
+         depthExcluded as coreDepthExcluded, nogoKind as coreNogoKind,
+         deepKeepouts as coreDeepKeepouts } from "./keepouts.js";
 export { HAZ_UNKNOWN_EXTENT, WRECK_CLEAR_MARGIN_M, MARK_TAIL, CL_EXTEND_CAP_M,
          blocked, blockedInfo, clearanceM, legClear, firstBlockAlong,
          markId, markSystems, systemCenterline, extendCenterline, pairGates, channelPolys };
@@ -262,6 +263,14 @@ export function buildKeepouts(ref, enf, dr, feats, waterOffsetM){
   if(Number.isFinite(waterOffsetM)) o.waterOffsetM = waterOffsetM;
   return coreBuildKeepouts(ref, feats || sea.enc.features,
                            {...o, depthRange: dr, enforce: enf});
+}
+// DEEP WATER FIRST'S MARGIN LAYER (keepouts.js deepKeepouts, 2026-10-12) for the model `ko` built at `enf` / `dr` and the
+// water `waterOffsetM` (the live level when not given), through the same seam as buildKeepouts: the page hangs it on the
+// model as `ko.margin` (rebuildNogo, nogoModelAt), and only the planner arms it (passage.js deepFirst).
+export function buildMargin(ref, enf, dr, feats, waterOffsetM, ko){
+  const o = koOpts();
+  if(Number.isFinite(waterOffsetM)) o.waterOffsetM = waterOffsetM;
+  return coreDeepKeepouts(ref, feats || sea.enc.features, {...o, depthRange: dr, enforce: enf, floorPolys: ko ? ko.polys : undefined});
 }
 // --- app-level ENC NOGO: build once, every behavior routes clear of it ---- //
 //

@@ -49,6 +49,12 @@
  *          kinds - rocks, obstructions, wrecks and hulks): DEFAULTS.wreckRadiusM, equal
  *          to state.js's V.WRECK_RADIUS_M. asv_core still assumes 50 m. Covered by
  *          tests/wreck_clearance.js 1b.
+ *       9. DEEP WATER FIRST (2026-10-12, Andy's choice): deepKeepouts builds the
+ *          MARGIN LAYER - water within 2 m of her floor, a 50 m berth off charted
+ *          rocks and shoal soundings - and blocked, clearanceM and blockedInfo
+ *          read it where a planner arms it (`ko.deep`), outside its released
+ *          stretches (deepReleased). asv_core has neither. Covered by
+ *          tests/deep_first.js.
  *
  * The fix is covered by tests/clearance_guard.js, which runs in this repo's own
  * pre-commit hook. If it is ever wanted upstream, carry it there as its own
@@ -1063,6 +1069,142 @@ export function buildKeepouts(frame, feats, opts = {}) {
   };
 }
 
+// ── DEEP WATER FIRST: THE MARGIN LAYER (Andy, 2026-10-12) ───────────────────────────────────────────────────────────
+// His Go-To past Thacher Island ran over the 5.4-9.1 m patch off Oak Rock, legal water at her 4.0 m floor: "good safe
+// practice would have put it between the buoys and especially not over the shallow spot. There should be an awareness
+// that although the ENC is an excellent source of data it can be inaccurate in some instances." His choice, asked:
+// plan first keeping DEEP_MARGIN_M over the floor and DEEP_BERTH_M off charted rocks and shoal soundings; today's floor
+// and buffer only on stretches where there is no other way, and say so on the plan.
+//
+// THIS LAYER IS THAT MARGIN, AND IT IS NOT A KEEP-OUT. Built beside the model (`ko.margin`) it is inert: blocked,
+// clearanceM and the raster read it only where a planner ARMS it as `ko.deep` ({...layer, release}), and a point inside
+// one of `release`'s regions is outside it - the stretches with no deeper way (passage.js deepFirst). The guard, the
+// punch and the hold point never see it: a margin is a preference of the search, not a wall the boat is held off.
+export const DEEP_MARGIN_M = 2;
+export const DEEP_BERTH_M = 50;
+
+/**
+ * The margin layer for a hull whose floor is `opts.depthRange.min` (else `opts.minDepthM`), at `opts.waterOffsetM`:
+ *   polys   each depth or dredged area legal at the floor whose SHALLOWEST depth is under floor + DEEP_MARGIN_M (the
+ *           floor's own test, depthExcluded, reads a band by its DEEPEST value: a 5.4-9.1 m band is legal at 4.0);
+ *   points  each rock, obstruction, wreck and hulk no charted sounding clears floor + DEEP_MARGIN_M over (hazPassable at
+ *           that floor), and each SOUNDING shallower than it, at `berth: DEEP_BERTH_M` - the radius is set where the
+ *           layer is armed, as the berth less the margin the plan keeps, so the berth is the distance kept whatever the
+ *           buffer or standoff. A sounding whose berth lies wholly inside a keep-out or a margin area adds nothing and is
+ *           not kept.
+ * Follows the toggles: depth (the areas and soundings), haz (the rocks and obstructions), wreck (the wrecks).
+ * `opts.floorPolys`: the areas of the model built at the floor (buildKeepouts' polys), which the soundings are read
+ * against - built here when not given.
+ * {polys, lines: [], points, counts: {areas, rocks, soundings}}.
+ */
+export function deepKeepouts(frame, feats, opts = {}) {
+  const o = { ...DEFAULTS, ...opts };
+  const enf = enforcement(opts.enforce);
+  const floor = (opts.depthRange && opts.depthRange.min) ?? o.minDepthM;
+  const marginM = opts.marginM ?? DEEP_MARGIN_M, berth = opts.berthM ?? DEEP_BERTH_M;
+  const deepTo = floor + marginM;
+  const polys = [], points = [], snd = [];
+  const counts = { areas: 0, rocks: 0, soundings: 0 };
+  for (const f of feats || []) {
+    const g = f.geometry, r = f.role;
+    if (!g) continue;
+    if (r === 'depth_area' || r === 'dredged') {
+      if (!enf.depth || depthExcluded(f, { min: floor, max: 0 }, o.waterOffsetM)) continue;   // a keep-out already
+      const d = f.props?.DRVAL1 ?? f.props?.DRVAL2;
+      if (d == null || d + o.waterOffsetM >= deepTo) continue;
+      const kind = 'water less than ' + marginM + ' m over her floor';
+      eachRing(g, (rg) => {
+        const ring = rg.map((c) => frame.toEN({ lon: c[0], lat: c[1] }));
+        if (ring.length > 2) { polys.push({ ring, bb: bbOf(ring), kind, cls: f.cls }); counts.areas++; }
+      });
+    } else if (r === 'hazard_point' && HAZ_UNKNOWN_EXTENT.has(f.cls)) {
+      const wreck = f.cls === 'Wreck_point' || f.cls === 'Hulk_point';
+      if (!enf.haz || (wreck && !enf.wreck)) continue;
+      if (hazPassable(f, { ...o, minDepthM: deepTo })) continue;
+      const what = wreck ? 'a charted wreck' : f.cls === 'Obstruction_point' ? 'a charted obstruction' : 'a charted rock';
+      eachPoint(g, (c) => {
+        const q = frame.toEN({ lon: c[0], lat: c[1] });
+        points.push({ e: q.e, n: q.n, r: 0, berth, kind: berth + ' m off ' + what, cls: f.cls });
+        counts.rocks++;
+      });
+    } else if (r === 'sounding') {
+      if (!enf.depth) continue;
+      eachPoint(g, (c) => {
+        const d = c.length > 2 && c[2] != null ? c[2] : (f.props?.VALSOU ?? f.props?.DEPTH);
+        if (typeof d !== 'number' || d + o.waterOffsetM >= deepTo) return;
+        const q = frame.toEN({ lon: c[0], lat: c[1] });
+        snd.push({ e: q.e, n: q.n, r: 0, berth, kind: berth + ' m off a sounding of ' + d.toFixed(1) + ' m', cls: f.cls });
+      });
+    }
+  }
+  // (a sounding inside a keep-out area or a margin area, its berth's whole radius from that area's edge, adds nothing:
+  //  on his Cape Ann tile 349 of 1,424 shoal soundings)
+  if (snd.length) {
+    const fl = opts.floorPolys || buildKeepouts(frame, feats, { ...opts, depthRange: { min: floor, max: 0 } }).polys;
+    const grid = deepGrid(fl.concat(polys));
+    for (const q of snd) {
+      let inside = false;
+      for (const p of grid.get(deepCell(Math.floor(q.e / DEEP_CELL_M), Math.floor(q.n / DEEP_CELL_M))) || NO_FEATURES) {
+        if (!inBB(q, p.bb, 0) || !ringInside(q, p.ring)) continue;
+        if (ringDist(q, p.ring, true, berth) >= berth) { inside = true; break; }
+      }
+      if (!inside) { points.push(q); counts.soundings++; }
+    }
+  }
+  return { polys, lines: [], points, counts };
+}
+
+// THE ARMED LAYER IS READ THROUGH A GRID. Walked whole, it made every point test on his 61 km Go-To's chart 29 us dearer
+// (2,708 berths and 599 areas, beside a floor model that costs 63 us), and the lane pass 6.4 s longer. Each of its feature
+// lists is filed by DEEP_CELL_M cells - a feature in every cell its box, grown by its own radius and DEEP_PAD_M, touches -
+// so a test within DEEP_PAD_M of a point reads that point's cell alone, and finds every feature it could have: one whose
+// edge is within `buf` of the point lies in a cell its grown box covers. A wider test walks the whole layer. The grid
+// lives in a WeakMap on the list, so the areas are filed once per layer and the berths once per margin (armDeep keeps
+// them), and nothing here writes on the layer.
+export const DEEP_CELL_M = 250;
+export const DEEP_PAD_M = 100;
+const DEEP_GRID = new WeakMap();
+const NO_FEATURES = [];
+const deepCell = (gx, gy) => (gx + 1048576) * 2097152 + (gy + 1048576);
+function deepGrid(list) {
+  let g = DEEP_GRID.get(list);
+  if (g) return g;
+  g = new Map();
+  for (const f of list) {
+    const r = (f.r || 0) + DEEP_PAD_M;
+    const bb = f.bb || { x0: f.e, x1: f.e, y0: f.n, y1: f.n };
+    const gx0 = Math.floor((bb.x0 - r) / DEEP_CELL_M), gx1 = Math.floor((bb.x1 + r) / DEEP_CELL_M);
+    const gy0 = Math.floor((bb.y0 - r) / DEEP_CELL_M), gy1 = Math.floor((bb.y1 + r) / DEEP_CELL_M);
+    for (let gx = gx0; gx <= gx1; gx++) {
+      for (let gy = gy0; gy <= gy1; gy++) {
+        const k = deepCell(gx, gy);
+        const c = g.get(k);
+        if (c) c.push(f); else g.set(k, [f]);
+      }
+    }
+  }
+  DEEP_GRID.set(list, g);
+  return g;
+}
+/** The armed layer `d`'s features that can be within `buf` of `p`, as a model: its grid's cell, or all of it past the pad. */
+function deepNear(p, d, buf) {
+  if (!(buf <= DEEP_PAD_M)) return { polys: d.polys, lines: d.lines || NO_FEATURES, points: d.points };
+  const k = deepCell(Math.floor(p.e / DEEP_CELL_M), Math.floor(p.n / DEEP_CELL_M));
+  return { polys: deepGrid(d.polys).get(k) || NO_FEATURES, lines: d.lines && d.lines.length ? deepGrid(d.lines).get(k) || NO_FEATURES : NO_FEATURES,
+           points: deepGrid(d.points).get(k) || NO_FEATURES };
+}
+
+/** Is `p` inside one of a margin layer's released regions (passage.js deepFirst): {pts, r, bb}, the water within `r`
+ *  of the polyline `pts` (a point, as [c, c])? */
+export function deepReleased(p, release) {
+  if (!release) return false;
+  for (const c of release) {
+    if (!inBB(p, c.bb, c.r)) continue;
+    if (ringDist(p, c.pts, false, c.r) < c.r) return true;
+  }
+  return false;
+}
+
 // ---- A ROW-BAND INDEX FOR BIG RINGS (2026-09-26) ----------------------------------------------
 //
 // Andy: "The current instance of ASV Console has frozen. This has happened the last few times."
@@ -1184,6 +1326,8 @@ export function blocked(p, ko, buf) {
     if (Math.abs(p.e - pt.e) > R || Math.abs(p.n - pt.n) > R) continue;
     if (Math.hypot(p.e - pt.e, p.n - pt.n) < R) return true;
   }
+  // THE MARGIN LAYER, WHERE A PLANNER ARMED IT (deepKeepouts, passage.js deepFirst), outside its released stretches.
+  if (ko.deep && blocked(p, deepNear(p, ko.deep, buf), buf) && !deepReleased(p, ko.deep.release)) return true;
   return false;
 }
 
@@ -1220,6 +1364,8 @@ export function clearanceM(p, ko, cap = 500) {
     const d = Math.max(0, Math.hypot(p.e - pt.e, p.n - pt.n) - r);
     if (d < best) best = d;
   }
+  // (the margin layer where a planner armed it, as `blocked` reads it)
+  if (ko.deep && best > 0 && !deepReleased(p, ko.deep.release)) best = clearanceM(p, deepNear(p, ko.deep, best), best);
   return best;
 }
 
@@ -1263,6 +1409,10 @@ export function blockedInfo(p, ko, buf) {
     if (Math.hypot(p.e - pt.e, p.n - pt.n) < R) {
       return { kind: pt.kind, type: 'point', pt: { e: pt.e, n: pt.n }, r: pt.r || 0 };
     }
+  }
+  if (ko.deep && !deepReleased(p, ko.deep.release)) {
+    const d = blockedInfo(p, deepNear(p, ko.deep, buf), buf);
+    if (d) return { ...d, margin: true };
   }
   return null;
 }
