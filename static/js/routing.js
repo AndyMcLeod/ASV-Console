@@ -2322,7 +2322,10 @@ export function markPassRoute(pathLL, frame, ko, buf, opts = {}) {
     k.runs = [place(k, k.uIn, k.uOut)];
     if (dot(k.uIn, tIn) < MARK_TRACK_COS || dot(k.uOut, tOut) < MARK_TRACK_COS) k.runs.push(place(k, tIn, tOut));
     k.runs = k.runs.filter(Boolean);
-    k.min = D;                                               // nearer than this is not "kept"
+    // nearer than this is not "kept" - and an OFFSHORE mark is held to its whole berth (Andy, 2026-10-13: "yes, hold
+    // offshore marks to the full 30 m berth"): live off Rockport deep water first's route already passed Oak Rock Buoy 2 on
+    // its safe side, 15 m off, and at D (10 m at the DriX's 5 m buffer) the stage had nothing to move her for.
+    k.min = k.offshore ? k.want : D;
     if (!k.runs.length) { k.unplaced = 'no clear water to pass her in'; continue; }
     Object.assign(k, k.runs[0]);
   }
@@ -2579,7 +2582,12 @@ export function marksKept(routeLL, frame, marks) {
   return tallyMarks(markVerdicts(routeLL, frame, marks));
 }
 
-/** Each counted mark against a route: `{k, x, proper}` (x positive to starboard). `ends`
+/** How far inside an offshore mark's berth a route may pass and still be said to give it its berth, in meters: the
+ *  stage lays her pass AT the berth, and the smoothing and the gate after it may shave a little. */
+export const MARK_BERTH_SLACK_M = 1;
+
+/** Each counted mark against a route: `{k, x, proper, inside}` (x positive to starboard; `inside`: an offshore mark on
+ *  its proper hand passed nearer than its berth, `k.min`, less MARK_BERTH_SLACK_M). `ends`
  *  ({start, end}) says which of the route's ends is a waypoint between two legs of a drawn
  *  transit, where a mark too near it to be moved for is counted all the same (`markCounted`). */
 export function markVerdicts(routeLL, frame, marks, ends = null) {
@@ -2587,8 +2595,8 @@ export function markVerdicts(routeLL, frame, marks, ends = null) {
   if (!live.length || !routeLL || routeLL.length < 2) return [];
   const en = routeLL.map((p) => frame.toEN(p)), cum = cumEN(en);
   return live.map((k) => {
-    const x = projectEN(en, cum, k.m).x;
-    return { k, x, proper: k.keepStbd ? x > 0 : x < 0 };
+    const x = projectEN(en, cum, k.m).x, proper = k.keepStbd ? x > 0 : x < 0;
+    return { k, x, proper, inside: !!k.offshore && proper && k.min != null && Math.abs(x) < k.min - MARK_BERTH_SLACK_M };
   });
 }
 
@@ -2599,9 +2607,11 @@ export function markVerdicts(routeLL, frame, marks, ends = null) {
 export function tallyMarks(verdicts) {
   // (an OFFSHORE mark is counted apart, 2026-10-12: kept between her and its danger is no Rule 9 claim, and a route
   // whose only marks are offshore is laned by nothing - `offshore` kept, `offshoreWrong` on the danger's side)
-  const out = { kept: 0, wrong: 0, stbd: 0, port: 0, buoys: 0, close: 0, offshore: 0, offshoreWrong: 0 };
-  for (const { k, x, proper } of verdicts || []) {
-    if (k.offshore) { if (proper) out.offshore++; else out.offshoreWrong++; continue; }
+  // (... and `offshoreClose`, 2026-10-13: of the offshore marks kept, those passed inside their berth - the water gave her
+  // no more there - which the banner and the Intent card say)
+  const out = { kept: 0, wrong: 0, stbd: 0, port: 0, buoys: 0, close: 0, offshore: 0, offshoreWrong: 0, offshoreClose: 0 };
+  for (const { k, x, proper, inside } of verdicts || []) {
+    if (k.offshore) { if (!proper) out.offshoreWrong++; else { out.offshore++; if (inside) out.offshoreClose++; } continue; }
     if (!proper) { out.wrong++; continue; }
     out.kept++;
     if (k.keepStbd) out.stbd++; else out.port++;

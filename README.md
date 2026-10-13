@@ -2994,7 +2994,9 @@ of the operator.
    an **offshore mark**: it guides a vessel away from the danger beside it rather than
    down a constrained path. The route keeps each one **between her and the charted
    danger beside it** (a rock, a shoal below her floor, land), on whichever hand that
-   puts it, with a mark's berth and never close; it is no channel's edge and makes no
+   puts it, at its whole berth (30 m at the DriX's 5 m buffer, even where her route already
+   passes on its safe side) and never close - where the water gives her less, the banner
+   and the Intent card say the mark was passed inside its berth; it is no channel's edge and makes no
    buoyed reach. A mark of another name more than 1.5 km along her route no longer gives
    a single its direction, since singles that far apart are each numbered for their own
    danger. On a Go-To past Thacher Island off Rockport the route had run 90 m outside
@@ -3010,7 +3012,7 @@ of the operator.
    (none within half again the distance, or 1 km more), and where a deeper way would put
    a buoy on its wrong hand: a buoy outranks the chart's margin. Each such stretch is
    said on the banner ("deep water first: 1.34 km at her floor (1 with no deeper way, 1
-   for a buoy's proper hand)") and listed with its position on the Intent card, as a
+   for a buoy)") and listed with its position on the Intent card, as a
    warning where it lies between her start and her end. Where she starts or ends in
    shallower water she leaves it the short way; the hold point is unchanged, and the
    clearance guard never sees the margin. On the Go-To past Thacher Island the route now

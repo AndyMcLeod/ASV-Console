@@ -179,7 +179,7 @@ const LANE_DECLS = ["chartRings", "CHART_MARCH_MAX_M", "CHART_BRIDGE_REACH_M", "
                     "MARK_ALONG_COS", "MARK_COURSE_COS", "MARK_COURSE_LOOK_M",
                     "MARK_STAGE_LEGS", "MARK_STAGE_ROUNDS", "MARK_CLEAR_SEARCH_M", "GATE_PATCH_RATIO", "GATE_PATCH_SLACK_M", "END_CLEAR_M",
                     "MARK_PORT_BERTH", "MARK_PASS_M", "MARK_RUN_TURN_DEG", "MARK_JOIN_MAX_DEG", "MARK_TRACK_COS", "MARK_GATE_M", "MARK_BESIDE_RATIO",
-                    "OFFSHORE_DANGER_M", "OFFSHORE_BEAM_DEG", "OFFSHORE_SIDE_RATIO",
+                    "OFFSHORE_DANGER_M", "OFFSHORE_BEAM_DEG", "OFFSHORE_SIDE_RATIO", "MARK_BERTH_SLACK_M",
                     "REACH_EDGE_M", "REACH_MAX_WIDTH_M", "REACH_MIN_M", "REACH_ANCHOR_GAP", "REACH_HOLD_ROUNDS", "ROCK_MAX_M", "ROCK_MARKED_M", "ROCK_CLASSES", "ROCK_ROUNDS", "NEW_TURN_NEAR_M", "REACH_STRAIGHT_COS", "REACH_RUN_COS", "RESTRICTED_LOCAL_M2",
                     "markName"];
 const M_PER_DEG_LAT = 111320.0;
@@ -231,10 +231,13 @@ eval("const M_PER_DEG_LAT=" + M_PER_DEG_LAT + ";\n" +
      // directly from module scope is exactly how the checks below first crashed.
      "function __laneStandoff(b){ return LANE_CAPTURE_STANDOFF_M(b); }\n" +
      // ... and the marks' pass distance (2026-10-12, the offshore mark's berth check in 5b)
-     "function __markPass(b, s){ return MARK_PASS_M(b, s); }");
+     "function __markPass(b, s){ return MARK_PASS_M(b, s); }\n" +
+     // ... and the berth an offshore mark is held to (2026-10-13, 5b)
+     "function __portBerth(){ return MARK_PORT_BERTH; }");
 const NARROW_MAX_M = __narrowMax();
 const LANE_CAPTURE_STANDOFF_M = __laneStandoff;
 const MARK_PASS_M = __markPass;
+const MARK_PORT_BERTH = __portBerth();
 
 // --- synthetic world ------------------------------------------------------- //
 // A FRAME, not a bare point. The clearance bodies grabbed into the eval scope above are
@@ -427,9 +430,13 @@ for (const [tag, dir, base] of [
         withBuoy.every((e, i) => e != null && noBuoy[i] != null && e <= noBuoy[i] + 1.5)
           && withBuoy[1] <= -15 - MARK_PASS_M(6, 0),
         "with buoy e=" + fmt(withBuoy) + "  vs no buoy e=" + fmt(noBuoy) + " (the buoy at e=-15, the wall at e=40)");
-  check("... and with the danger it marks BEYOND it from her (a rock 20 m west of it), her track is exactly as with no buoy",
-        rockBeyond.every((e, i) => e != null && rockOnly[i] != null && Math.abs(e - rockOnly[i]) < 1.5),
-        "with buoy and rock e=" + fmt(rockBeyond) + "  vs the rock alone e=" + fmt(rockOnly));
+  // (her own line passes the buoy 15 m off on its safe side; until 2026-10-13 that was left as it was - past the close-pass
+  // limit - and her track was the rock-alone track. Andy: "yes, hold offshore marks to the full 30 m berth")
+  check("... and with the danger it marks BEYOND it from her (a rock 20 m west of it), she keeps the side she had with the rock "
+        + "alone, moved out to the buoy's whole berth (30 m at her 3 m buffer)",
+        rockBeyond.every((e) => e != null && e > -15) && rockOnly.every((e) => e != null && e > -15)
+          && rockBeyond[1] >= -15 + MARK_PORT_BERTH * MARK_PASS_M(3, 0) - 1,
+        "with buoy and rock e=" + fmt(rockBeyond) + "  vs the rock alone e=" + fmt(rockOnly) + " (the buoy at e=-15)");
 }
 
 // 6. NO-OP in OPEN WATER: with no buoys and no confining edges, a plain Go-To must not

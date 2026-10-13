@@ -30,7 +30,7 @@ const APP = process.env.ASV_APP || path.join(__dirname, "..");
 const JS = (f) => path.join(APP, "static", "js", f);
 const { V, nogo, sea } = require(JS("state.js"));
 const { planeFrame } = require(JS("geodesy.js"));
-const { buildKeepouts, legClear } = require(JS("chart.js"));
+const { buildKeepouts, buildMargin, legClear } = require(JS("chart.js"));
 const { bbOf } = require(JS("geometry.js"));
 const P = require(JS("passage.js"));
 const R = require(JS("routing.js"));
@@ -243,6 +243,56 @@ check("10. NO REACH BETWEEN OFFSHORE MARKS: an unnumbered red off a river's west
             && eRiver.every((e) => e != null && Math.abs(e + 100) < 1),
       () => "offshore " + rv.marks.filter((k) => k.offshore).length + "; reach " + rv.how.reach + "; e at n 1200/1400/1600 = "
             + eRiver.map(f1).join(", ") + " (her path: -100)");
+
+// ── THE WHOLE BERTH (Andy, 2026-10-13: "yes, hold offshore marks to the full 30 m berth") ─────────────────────────
+// Live off Rockport, deep water first's route came past Oak Rock Buoy 2 already on its safe side, 15 m off: the stage moved
+// her for an offshore mark only nearer than the close-pass distance (10 m at her 5 m buffer), so it left her there. An
+// offshore mark is held to its whole berth now (k.min = k.want); a channel mark keeps the close pass. The live run's water
+// and settings, deep water first's layer on, to its end point (its start lies within 100 m of this fixture's edge, so from
+// 42.6540 N 70.5852 W): the committed code passed Oak Rock 2 at 11.8 m with no standoff and 15.9 m at 10 m.
+const LIVE_A = { lat: 42.6540, lon: -70.5852 }, LIVE_B = { lat: 42.63251384542095, lon: -70.5845133544922 };
+const KOM = (() => { const was = sea.waterOffset; sea.waterOffset = 0.33;
+  try { return { ...KO, margin: buildMargin(F, ENF, { min: 4.0, max: 0 }, FIX.features, undefined, KO) }; } finally { sea.waterOffset = was; } })();
+const passOak = (route) => { const pts = route.map(en); let d = Infinity;
+  for (let i = 1; i < pts.length; i++) { const a = pts[i - 1], b = pts[i], n = Math.max(1, Math.ceil(Math.hypot(b.e - a.e, b.n - a.n)));
+    for (let k = 0; k <= n; k++) d = Math.min(d, Math.hypot(a.e + (b.e - a.e) * k / n - OAK.e, a.n + (b.n - a.n) * k / n - OAK.n)); }
+  return d; };
+chart(KOM);
+const live0 = P.planNogoRoute(LIVE_A, LIVE_B, { holdR: 20, setMs: 0 }), live10 = P.planNogoRoute(LIVE_A, LIVE_B, { holdR: 20, setMs: 0, standoffM: 10 });
+chart(KO);
+const kOak = (r) => (r.marks || []).find((k) => /oak rock/.test(k.m.sys));
+const chanD = inChan.marks.filter((k) => !k.skip && !k.offshore);
+check("11. THE WHOLE BERTH, ON THE SAFE SIDE TOO: on the live run's water with deep water first, Oak Rock Buoy 2 - which the "
+      + "route already passed on its safe side, 12-16 m off, and was left there - is passed at its berth (30 m at her 5 m "
+      + "buffer) with no standoff and at 10 m; the offshore mark's limit is its berth, a channel mark's still the close pass",
+      () => !live0.error && !live10.error && passOak([LIVE_A, ...live0.route]) >= berth - 1 && passOak([LIVE_A, ...live10.route]) >= berth - 1
+            && kOak(live0).min === berth && live0.how.marks.offshoreClose === 0 && live0.how.marks.offshoreWrong === 0
+            && chanD.length > 0 && chanD.every((k) => k.min === R.MARK_PASS_M(5, 0)) && R.MARK_BERTH_SLACK_M === 1,
+      () => "Oak Rock 2 passed " + f1(passOak([LIVE_A, ...live0.route])) + " m (no standoff), " + f1(passOak([LIVE_A, ...live10.route]))
+            + " m (10 m); its limit " + f1(kOak(live0) && kOak(live0).min) + " (berth " + f1(berth) + "); channel marks' "
+            + [...new Set(chanD.map((k) => k.min))].join(", "));
+// ... and where the water gives her less, it is SAID: a lone red buoy, a rock 50 m east of it (bound north she keeps it to
+// starboard, west of her), her line 12 m west of it, and a pier from the west shore ending 20 m west of the buoy's line 70 m
+// before it - no run out to the berth clears the pier. The CONTROL, without the pier: moved out to the berth.
+const lone2 = mk(0, 0, 1, undefined, "lone ledge");
+const tight = (pier) => ({ polys: [ring(-900, -2000, -300, 2000), ...(pier ? [{ ...ring(-300, -80, -20, -60), kind: "a dock / pier" }] : [])],
+  lines: [], points: [{ e: 0, n: 0, r: 0, kind: "a channel buoy" }, { e: 50, n: 0, r: 10, kind: "a charted rock" }],
+  marks: [lone2], sys: [], chans: [] });
+const GBOX2 = (() => { const a = GF.fromEN(-2500, -2500), b = GF.fromEN(2500, 2500); return { W: a.lon, S: a.lat, E: b.lon, N: b.lat }; })();
+const onTight = (pier) => { Object.assign(nogo, { ready: true, frame: GF, ko: tight(pier), buffer: 5, bbox: GBOX2, unread: null, ais: null });
+  const A = gll(-12, -1500), r = P.planNogoRoute(A, gll(-12, 1500), {}); return { r, v: R.markVerdicts([A, ...r.route], GF, r.marks || []) }; };
+const tp = onTight(true), tc = onTight(false);
+chart(KO);
+const whyTight = offshoreWhy({ lane: false, how: tp.r.how });
+check("12. ... AND WHERE THE WATER GIVES HER LESS, IT IS SAID: past a lone buoy 12 m off on its safe side, with a pier that "
+      + "leaves no run out to the berth, the mark is still kept between her and its danger and counted INSIDE its berth - the "
+      + "banner says so and the Intent card warns; the CONTROL, the same water with no pier, is moved out to the berth",
+      () => !tp.r.error && tp.v.length === 1 && tp.v[0].proper && tp.v[0].inside && tp.r.how.marks.offshore === 1 && tp.r.how.marks.offshoreClose === 1
+            && /kept between her and its danger - inside its berth/.test(P.offshoreNote(tp.r.how))
+            && whyTight.some((w) => w.t === "warn" && /^1 offshore mark passed inside its berth/.test(w.s))
+            && !tc.r.error && tc.v.length === 1 && tc.v[0].proper && !tc.v[0].inside && Math.abs(tc.v[0].x) >= berth - 1 && tc.r.how.marks.offshoreClose === 0,
+      () => "with the pier: " + (tp.v[0] ? f1(tp.v[0].x) + " m, inside " + tp.v[0].inside : "none") + ", '" + P.offshoreNote(tp.r.how) + "'; card "
+            + JSON.stringify(whyTight.map((w) => w.t)) + "; control " + (tc.v[0] ? f1(tc.v[0].x) + " m" : "none"));
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
 process.exit(fails ? 1 : 0);

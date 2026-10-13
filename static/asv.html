@@ -1960,6 +1960,10 @@ function offshoreWhy(plan){
   if(mk && mk.offshore)
     out.push({t:"lane", s:"kept off the dangers of " + mk.offshore + " offshore mark" + (mk.offshore === 1 ? "" : "s")
                         + " - each mark kept between her and the danger beside it, given a berth, never followed as a channel"});
+  if(mk && mk.offshoreClose)
+    out.push({t:"warn", s:mk.offshoreClose + " offshore mark" + (mk.offshoreClose === 1 ? "" : "s")
+                        + " passed inside " + (mk.offshoreClose === 1 ? "its" : "their") + " berth - the water there gives her no more;"
+                        + " check the route against the chart"});
   if(mk && mk.offshoreWrong)
     out.push({t:"warn", s:mk.offshoreWrong + " offshore mark" + (mk.offshoreWrong === 1 ? "" : "s")
                         + " NOT kept between her and the danger beside it - check the route against the chart"});

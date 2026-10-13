@@ -325,9 +325,9 @@ const vToday = verdicts(DFROM, dToday), vDeep = verdicts(DFROM, dDeep), vOnce = 
 check("14. A BUOY OUTRANKS THE MARGIN, AT THE MOUTH OF GLOUCESTER HARBOR: armed once, the layer kept the marks stage from bringing "
       + "her to the Dog Bar Channel green's proper hand, as the floor's model lets it (the REHEARSAL: deepFirst and one lane pass, "
       + "the green wrong); asked again with the marks it left wrong held - the layer lifted about them - the plan leaves the "
-      + "marks as today's does, and the Dog Bar water held for a buoy is said ('for a buoy's proper hand')",
+      + "marks as today's does, and the Dog Bar water held for a buoy is said ('for a buoy')",
       () => !dToday.error && !dDeep.error && wrongOf(vDeep) === wrongOf(vToday) && /dog bar channel/.test(wrongOf(vOnce))
-            && !/dog bar channel/.test(wrongOf(vDeep)) && dDeep.deep.runs.some((r) => r.why === "mark") && /for a buoy's proper hand/.test(P.deepNote(dDeep.deep)),
+            && !/dog bar channel/.test(wrongOf(vDeep)) && dDeep.deep.runs.some((r) => r.why === "mark") && /for a buoy\)/.test(P.deepNote(dDeep.deep)),
       () => "today wrong [" + wrongOf(vToday) + "]; once [" + wrongOf(vOnce) + "]; deep first [" + wrongOf(vDeep) + "]; runs "
             + JSON.stringify(dDeep.deep.runs.map((r) => [f0(r.m), r.why])));
 
@@ -368,6 +368,43 @@ check("14c. ... ONE BUOY AT A TIME, NOT A COUNT: from beside Eastern Point, a de
             && wrongOf(verdicts(EP, epDeep)) === wrongOf(verdicts(EP, epToday)) && !/dog bar/.test(wrongOf(verdicts(EP, epDeep))),
       () => "windows " + JSON.stringify(epWin.map((t) => [f0(t.lenOld), f0(t.lenNew), t.ok ? "taken" : t.why])) + "; today wrong ["
             + wrongOf(verdicts(EP, epToday)) + "], deep first [" + wrongOf(verdicts(EP, epDeep)) + "]");
+
+// ... AND ITS WHOLE BERTH (Andy, 2026-10-13: "yes, hold offshore marks to the full 30 m berth"): the same lone buoy and rock,
+// her line 18 m west of the buoy, and a band of margin water everything west of 35 m east - every run out to the berth lies
+// in it, and her own line never touches it (no stretch, no deeper way). Once round (the REHEARSAL), the layer keeps the marks
+// stage from the berth; asked again with the buoy held - the layer lifted about it - she is given it, and the margin water
+// that costs is said as the buoy's.
+const BAND = area(5.0, 9.1, -3000, -3000, 35, 3000), A2 = gll(42, -1500), B2 = gll(42, 1500);
+const bandKo = world([SEA, BAND, LONE, LROCK]);
+onWorld(bandKo);
+const bPlan = P.planNogoRoute(A2, B2, {});
+const bV = R.markVerdicts([A2, ...bPlan.route], GF, bPlan.marks || []);
+const bFirst = P.deepFirst([A2, ...R.legPath(A2, B2, GF, bandKo, 5)], GF, bandKo, 5);
+const bOnce = P.channelLaneRoute(bFirst.path, GF, bFirst.ko, 5, { marks: true, charted: true });
+const bV1 = R.markVerdicts(bOnce.route, GF, bOnce.marks || []);
+check("14d. ... AND A BUOY'S WHOLE BERTH: beside a band of margin water her line never touches, the layer kept the marks stage "
+      + "from every run out to an offshore buoy's 30 m berth (the REHEARSAL, one lane pass: 18 m off, inside it); asked again with "
+      + "the buoy held, she passes it at its berth, and the band's water that costs is said as the buoy's",
+      () => !bPlan.error && bV.length === 1 && bV[0].proper && !bV[0].inside && Math.abs(bV[0].x) >= 29 && bPlan.how.marks.offshoreClose === 0
+            && bV1.length === 1 && bV1[0].inside && bFirst.bore.length === 0
+            && bPlan.deep.runs.length === 1 && bPlan.deep.runs[0].why === "mark" && /for a buoy\)/.test(P.deepNote(bPlan.deep)),
+      () => "plan: " + (bV[0] ? f0(bV[0].x) + " m, inside " + bV[0].inside : "none") + "; rehearsal " + (bV1[0] ? f0(bV1[0].x) + " m, inside " + bV1[0].inside : "none")
+            + "; runs " + JSON.stringify(bPlan.deep.runs.map((r) => [f0(r.m), r.why])));
+
+// ... and the marks stage judges a deeper way by the berth too, before the lane pass is asked twice: the lone buoy and its
+// rock, her line through a patch of margin water that reaches to 30 m east - the shorter deeper way squeezes between the patch
+// and the buoy, on its safe side but inside its berth. Refused by deepFirst itself; the CONTROL, the patch to 20 m east, leaves
+// a deeper way at the whole berth, and it is taken.
+const squeeze = (east) => { const ko = world([SEA, area(5.0, 9.1, -250, -150, east, 150), LONE, LROCK]); onWorld(ko);
+  const trace = []; P.deepFirst([A, ...R.legPath(A, B, GF, ko, 5)], GF, ko, 5, { trace });
+  const r = P.planNogoRoute(A, B, {}); return { win: trace.filter((t) => t.s0 != null), r, v: R.markVerdicts([A, ...r.route], GF, r.marks || []) }; };
+const sq30 = squeeze(30), sq20 = squeeze(20);
+check("14e. ... AND BY ITS BERTH: a deeper way that squeezes past a lone buoy on its safe side but inside its berth is refused "
+      + "by deepFirst itself ('mark') and the buoy keeps its berth; the CONTROL, with room for the whole berth, is taken",
+      () => sq30.win.length === 1 && sq30.win[0].lenNew != null && sq30.win[0].why === "mark" && sq30.v.length === 1 && !sq30.v[0].inside && sq30.v[0].proper
+            && sq20.win.length === 1 && sq20.win[0].ok && sq20.v.length === 1 && !sq20.v[0].inside && Math.abs(sq20.v[0].x) >= 29,
+      () => "to 30 m: " + JSON.stringify(sq30.win.map((t) => [f0(t.lenOld), f0(t.lenNew), t.ok ? "taken" : t.why])) + ", the buoy " + (sq30.v[0] ? f0(sq30.v[0].x) + " m" : "-")
+            + "; to 20 m: " + JSON.stringify(sq20.win.map((t) => [f0(t.lenOld), f0(t.lenNew), t.ok ? "taken" : t.why])) + ", the buoy " + (sq20.v[0] ? f0(sq20.v[0].x) + " m" : "-"));
 
 // ── WHAT IT LEAVES AS IT WAS ──────────────────────────────────────────────────────────────────────────────────────────
 onWorld(world([SEA, PATCH]));
@@ -432,10 +469,10 @@ check("20. THE WORDS: the banner says nothing of a route that keeps the margin t
       + "water at her floor and why; the Intent card always says which - a WARNING where a stretch lies between her start and "
       + "her end, with where it is",
       () => P.deepNote(dNone) === "" && P.deepNote(null) === ""
-            && P.deepNote(dMix, fmt) === "deep water first: 1.42 km at her floor (where she starts, 1 with no deeper way, 1 for a buoy's proper hand)"
+            && P.deepNote(dMix, fmt) === "deep water first: 1.42 km at her floor (where she starts, 1 with no deeper way, 1 for a buoy)"
             && wNone.length === 1 && wNone[0].t === "lane" && /kept 2 m over her floor and 50 m off charted rocks and shoal soundings the whole way/.test(wNone[0].s)
             && wMix[0].t === "warn" && /except 3 stretches at her floor and buffer/.test(wMix[0].s) && /1\.25 km near 42\.6310 N 70\.5841 W - no deeper way/.test(wMix[0].s)
-            && /a deeper way put a buoy on its wrong hand/.test(wMix[0].s) && wEnds[0].t === "lane" && /where she ends/.test(wEnds[0].s) && P.deepWhy(null).length === 0,
+            && /a buoy's proper hand or its berth/.test(wMix[0].s) && wEnds[0].t === "lane" && /where she ends/.test(wEnds[0].s) && P.deepWhy(null).length === 0,
       () => JSON.stringify([P.deepNote(dMix, fmt), wMix[0].t, wEnds[0].t]));
 // the page: the three passage banners carry deepNote; the Intent card asks deepWhy of every plan (DRIVEN, below); both
 // models the planner is handed carry the layer, the section's at its own water
