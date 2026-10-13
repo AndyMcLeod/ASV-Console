@@ -369,8 +369,10 @@ const goto = (from, to, o) => ({ op: "nogo", args: { from, to, opts: o } });
   const held = await ticks(async () => { await new Promise((r) => setTimeout(r, 0)); for (let k = 0; k < 4; k++) P.planNogoRoute(from, up, o1); });
   check("8. THE PAGE'S THREAD IS FREE while the worker searches: its timers run all through the search - and on the page's "
         + "own thread (the control: the search as it ran before) they do not run at all",
-        // (Windows wakes a timer every ~15.6 ms whatever it asked for: a tick every 20 ms is the floor asked of it)
-        () => free.n >= Math.max(5, free.ms / 20) && held.n <= 1 && held.ms > 50,
+        // (Windows wakes a timer every ~15.6 ms whatever it asked for, and later on a loaded machine: since the grid over every
+        // feature list (2026-10-13) the four searches take ~250 ms, and run beside five other suites they once stretched to
+        // 787 ms with the page's timer woken every 33 ms. A tick every 40 ms is the floor asked of it; the control reads 0.)
+        () => free.n >= Math.max(5, free.ms / 40) && held.n <= 1 && held.ms > 50,
         () => "in the worker " + free.n + " ticks in " + free.ms + " ms; here " + held.n + " in " + held.ms + " ms");
 
   // 9. EVERY WAY THE WORKER CAN FAIL FALLS BACK TO THE PAGE'S OWN SEARCH.

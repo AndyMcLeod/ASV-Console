@@ -55,6 +55,12 @@
  *          read it where a planner arms it (`ko.deep`), outside its released
  *          stretches (deepReleased). asv_core has neither. Covered by
  *          tests/deep_first.js.
+ *      10. A GRID OVER EVERY FEATURE LIST (2026-10-13, Andy: "build the
+ *          spatial index for the floor model"): blocked, clearanceM and
+ *          blockedInfo read each list through a grid of GRID_CELL_M cells
+ *          (nearIn), the same answers from the features that could give
+ *          them. asv_core walks every feature. Covered by
+ *          tests/keepout_index.js.
  *
  * The fix is covered by tests/clearance_guard.js, which runs in this repo's own
  * pre-commit hook. If it is ever wanted upstream, carry it there as its own
@@ -1141,10 +1147,10 @@ export function deepKeepouts(frame, feats, opts = {}) {
   //  on his Cape Ann tile 349 of 1,424 shoal soundings)
   if (snd.length) {
     const fl = opts.floorPolys || buildKeepouts(frame, feats, { ...opts, depthRange: { min: floor, max: 0 } }).polys;
-    const grid = deepGrid(fl.concat(polys));
+    const grid = fileList(fl.concat(polys));
     for (const q of snd) {
       let inside = false;
-      for (const p of grid.get(deepCell(Math.floor(q.e / DEEP_CELL_M), Math.floor(q.n / DEEP_CELL_M))) || NO_FEATURES) {
+      for (const p of grid.get(gridCell(Math.floor(q.e / GRID_CELL_M), Math.floor(q.n / GRID_CELL_M))) || NO_FEATURES) {
         if (!inBB(q, p.bb, 0) || !ringInside(q, p.ring)) continue;
         if (ringDist(q, p.ring, true, berth) >= berth) { inside = true; break; }
       }
@@ -1154,45 +1160,78 @@ export function deepKeepouts(frame, feats, opts = {}) {
   return { polys, lines: [], points, counts };
 }
 
-// THE ARMED LAYER IS READ THROUGH A GRID. Walked whole, it made every point test on his 61 km Go-To's chart 29 us dearer
-// (2,708 berths and 599 areas, beside a floor model that costs 63 us), and the lane pass 6.4 s longer. Each of its feature
-// lists is filed by DEEP_CELL_M cells - a feature in every cell its box, grown by its own radius and DEEP_PAD_M, touches -
-// so a test within DEEP_PAD_M of a point reads that point's cell alone, and finds every feature it could have: one whose
-// edge is within `buf` of the point lies in a cell its grown box covers. A wider test walks the whole layer. The grid
-// lives in a WeakMap on the list, so the areas are filed once per layer and the berths once per margin (armDeep keeps
-// them), and nothing here writes on the layer.
-export const DEEP_CELL_M = 250;
-export const DEEP_PAD_M = 100;
-const DEEP_GRID = new WeakMap();
+// ---- A GRID OVER EVERY FEATURE LIST (2026-10-13, Andy: "build the spatial index for the floor model") ----------------
+//
+// A POINT TEST WALKED EVERY FEATURE OF THE MODEL, and that was most of what a plan cost: on his 61 km Go-To's chart (1,634
+// areas, 1,509 lines, 1,510 points) one test cost 43-85 us, nearly all of it bounding boxes nowhere near the point, and
+// `blocked` was 70 % of a long plan's CPU (a profile of the lane pass, 2026-10-12). Each feature list now gets a grid:
+// GRID_CELL_M cells, a feature filed - in the list's own order - in every cell its box, grown by its own radius and
+// GRID_PAD_M, touches. A test within GRID_PAD_M of a point reads that point's cell alone and finds every feature that
+// could answer it (a feature with an edge within `buf` of the point has the point inside its own grown box); a wider one
+// reads every cell within its reach less the pad, each feature once; one wider than GRID_WIDE_CELLS cells walks the list.
+// THE ANSWERS ARE THE WALK'S OWN: the same primitives on a subset holding every feature that could answer, in the same
+// order, so blockedInfo names the same feature (it reads a wider set only by walking the list) - tests/keepout_index.js
+// holds them side by side against a plain re-walk, on his own charts too.
+//   A LIST IS FILED ONCE IT HAS BEEN ASKED GRID_AFTER TIMES, and never if it holds fewer than GRID_MIN features: the
+// planner makes short-lived views of the model (the lane stages' walls, a contact's ring folded in, one feature at a time)
+// that may be asked a handful of times, and filing one costs more than walking it. Kept in a WeakMap on the list with its
+// length - a list that grows is filed afresh - and nothing here writes on a feature.
+// (Deep water first's armed margin layer had a grid of its own from 2026-10-12; it reads through this one now.)
+export const GRID_CELL_M = 250;
+export const GRID_PAD_M = 100;
+export const GRID_MIN = 16;
+export const GRID_AFTER = 64;
+export const GRID_WIDE_CELLS = 64;
+const GRID = new WeakMap();
 const NO_FEATURES = [];
-const deepCell = (gx, gy) => (gx + 1048576) * 2097152 + (gy + 1048576);
-function deepGrid(list) {
-  let g = DEEP_GRID.get(list);
-  if (g) return g;
-  g = new Map();
+const gridCell = (gx, gy) => (gx + 1048576) * 2097152 + (gy + 1048576);
+/** `list` filed by cell: Map(cell -> the features whose grown box touches it, in the list's order). */
+function fileList(list) {
+  const g = new Map();
   for (const f of list) {
-    const r = (f.r || 0) + DEEP_PAD_M;
+    const r = (f.r || 0) + GRID_PAD_M;
     const bb = f.bb || { x0: f.e, x1: f.e, y0: f.n, y1: f.n };
-    const gx0 = Math.floor((bb.x0 - r) / DEEP_CELL_M), gx1 = Math.floor((bb.x1 + r) / DEEP_CELL_M);
-    const gy0 = Math.floor((bb.y0 - r) / DEEP_CELL_M), gy1 = Math.floor((bb.y1 + r) / DEEP_CELL_M);
+    const gx0 = Math.floor((bb.x0 - r) / GRID_CELL_M), gx1 = Math.floor((bb.x1 + r) / GRID_CELL_M);
+    const gy0 = Math.floor((bb.y0 - r) / GRID_CELL_M), gy1 = Math.floor((bb.y1 + r) / GRID_CELL_M);
     for (let gx = gx0; gx <= gx1; gx++) {
       for (let gy = gy0; gy <= gy1; gy++) {
-        const k = deepCell(gx, gy);
+        const k = gridCell(gx, gy);
         const c = g.get(k);
         if (c) c.push(f); else g.set(k, [f]);
       }
     }
   }
-  DEEP_GRID.set(list, g);
   return g;
 }
-/** The armed layer `d`'s features that can be within `buf` of `p`, as a model: its grid's cell, or all of it past the pad. */
-function deepNear(p, d, buf) {
-  if (!(buf <= DEEP_PAD_M)) return { polys: d.polys, lines: d.lines || NO_FEATURES, points: d.points };
-  const k = deepCell(Math.floor(p.e / DEEP_CELL_M), Math.floor(p.n / DEEP_CELL_M));
-  return { polys: deepGrid(d.polys).get(k) || NO_FEATURES, lines: d.lines && d.lines.length ? deepGrid(d.lines).get(k) || NO_FEATURES : NO_FEATURES,
-           points: deepGrid(d.points).get(k) || NO_FEATURES };
+function gridOf(list) {
+  let x = GRID.get(list);
+  if (!x || x.n !== list.length) { x = { n: list.length, asked: 0, g: null }; GRID.set(list, x); }
+  if (!x.g && ++x.asked >= GRID_AFTER) x.g = fileList(list);
+  return x.g;
 }
+/** The features of `list` that can lie within `R` of `p`: its grid's cell, the cells within its reach, or all of it. */
+function nearIn(list, p, R) {
+  if (!list) return NO_FEATURES;
+  if (list.length < GRID_MIN) return list;
+  const g = gridOf(list);
+  if (!g) return list;
+  if (R <= GRID_PAD_M) return g.get(gridCell(Math.floor(p.e / GRID_CELL_M), Math.floor(p.n / GRID_CELL_M))) || NO_FEATURES;
+  const w = R - GRID_PAD_M;
+  if (!Number.isFinite(w) || !Number.isFinite(p.e) || !Number.isFinite(p.n)) return list;
+  const gx0 = Math.floor((p.e - w) / GRID_CELL_M), gx1 = Math.floor((p.e + w) / GRID_CELL_M);
+  const gy0 = Math.floor((p.n - w) / GRID_CELL_M), gy1 = Math.floor((p.n + w) / GRID_CELL_M);
+  if ((gx1 - gx0 + 1) * (gy1 - gy0 + 1) > GRID_WIDE_CELLS) return list;
+  const seen = new Set();
+  for (let gx = gx0; gx <= gx1; gx++) {
+    for (let gy = gy0; gy <= gy1; gy++) {
+      const c = g.get(gridCell(gx, gy));
+      if (c) for (const f of c) seen.add(f);
+    }
+  }
+  return [...seen];
+}
+/** Has `list` been filed in a grid (tests/keepout_index.js)? */
+export function listGridded(list) { const x = GRID.get(list); return !!(x && x.g); }
 
 /** Is `p` inside one of a margin layer's released regions (passage.js deepFirst): {pts, r, bb}, the water within `r`
  *  of the polyline `pts` (a point, as [c, c])? */
@@ -1309,25 +1348,26 @@ function ringDist(p, pts, closed, cap) {
 
 /** Is this point (frame meters) inside a keep-out, or within `buf` of one? */
 export function blocked(p, ko, buf) {
-  for (const poly of ko.polys) {
+  // (each list through its grid: only the features that could be within `buf` of `p`, in their own order)
+  for (const poly of nearIn(ko.polys, p, buf)) {
     if (!inBB(p, poly.bb, buf)) continue;
     if (ringInside(p, poly.ring)) return true;
     // The EDGE test is not redundant with the inside test: it is what gives a
     // shoreline its keep-clear margin from the water side.
     if (ringDist(p, poly.ring, true, buf) < buf) return true;
   }
-  for (const ln of ko.lines) {
+  for (const ln of nearIn(ko.lines, p, buf)) {
     if (!inBB(p, ln.bb, buf)) continue;
     if (ringDist(p, ln.pts, false, buf) < buf) return true;
   }
   // R is the hazard's OWN extent plus the buffer as the clearance margin.
-  for (const pt of ko.points) {
+  for (const pt of nearIn(ko.points, p, buf)) {
     const R = buf + (pt.r || 0);
     if (Math.abs(p.e - pt.e) > R || Math.abs(p.n - pt.n) > R) continue;
     if (Math.hypot(p.e - pt.e, p.n - pt.n) < R) return true;
   }
   // THE MARGIN LAYER, WHERE A PLANNER ARMED IT (deepKeepouts, passage.js deepFirst), outside its released stretches.
-  if (ko.deep && blocked(p, deepNear(p, ko.deep, buf), buf) && !deepReleased(p, ko.deep.release)) return true;
+  if (ko.deep && blocked(p, ko.deep, buf) && !deepReleased(p, ko.deep.release)) return true;
   return false;
 }
 
@@ -1346,26 +1386,26 @@ export function blocked(p, ko, buf) {
  */
 export function clearanceM(p, ko, cap = 500) {
   let best = cap;
-  for (const poly of ko.polys) {
+  for (const poly of nearIn(ko.polys, p, cap)) {
     if (!inBB(p, poly.bb, best)) continue;
     if (ringInside(p, poly.ring)) return 0;
     best = ringDist(p, poly.ring, true, best);
   }
-  for (const ln of ko.lines) {
+  for (const ln of nearIn(ko.lines, p, cap)) {
     if (!inBB(p, ln.bb, best)) continue;
     best = ringDist(p, ln.pts, false, best);
   }
   // Measured from the hazard's OWN EDGE, matching `blocked`'s `buf + pt.r` test: a wreck
   // with a 20 m extent, 21 m away, is 1 m clear and not 21. Clamped at 0 rather than
   // going negative, so "inside" reads the same whichever of the three kinds it is.
-  for (const pt of ko.points) {
+  for (const pt of nearIn(ko.points, p, cap)) {
     const r = pt.r || 0;
     if (Math.abs(p.e - pt.e) > best + r || Math.abs(p.n - pt.n) > best + r) continue;
     const d = Math.max(0, Math.hypot(p.e - pt.e, p.n - pt.n) - r);
     if (d < best) best = d;
   }
   // (the margin layer where a planner armed it, as `blocked` reads it)
-  if (ko.deep && best > 0 && !deepReleased(p, ko.deep.release)) best = clearanceM(p, deepNear(p, ko.deep, best), best);
+  if (ko.deep && best > 0 && !deepReleased(p, ko.deep.release)) best = clearanceM(p, ko.deep, best);
   return best;
 }
 
@@ -1394,16 +1434,17 @@ export function featureClearanceM(p, f, cap = 500) {
 
 /** Like `blocked`, but returns the offending keep-out so a refusal can name it. */
 export function blockedInfo(p, ko, buf) {
-  for (const poly of ko.polys) {
+  const near = (list) => (buf <= GRID_PAD_M ? nearIn(list, p, buf) : list || NO_FEATURES);
+  for (const poly of near(ko.polys)) {
     if (!inBB(p, poly.bb, buf)) continue;
     if (ringInside(p, poly.ring)) return { kind: poly.kind, type: 'poly', ring: poly.ring };
     if (ringDist(p, poly.ring, true, buf) < buf) return { kind: poly.kind, type: 'poly', ring: poly.ring };
   }
-  for (const ln of ko.lines) {
+  for (const ln of near(ko.lines)) {
     if (!inBB(p, ln.bb, buf)) continue;
     if (ringDist(p, ln.pts, false, buf) < buf) return { kind: ln.kind, type: 'line', pts: ln.pts };
   }
-  for (const pt of ko.points) {
+  for (const pt of near(ko.points)) {
     const R = buf + (pt.r || 0);
     if (Math.abs(p.e - pt.e) > R || Math.abs(p.n - pt.n) > R) continue;
     if (Math.hypot(p.e - pt.e, p.n - pt.n) < R) {
@@ -1411,7 +1452,7 @@ export function blockedInfo(p, ko, buf) {
     }
   }
   if (ko.deep && !deepReleased(p, ko.deep.release)) {
-    const d = blockedInfo(p, deepNear(p, ko.deep, buf), buf);
+    const d = blockedInfo(p, ko.deep, buf);
     if (d) return { ...d, margin: true };
   }
   return null;

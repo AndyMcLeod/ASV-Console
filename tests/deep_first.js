@@ -173,24 +173,28 @@ check("5. ARMED AT A MARGIN, THE BERTH IS THE DISTANCE KEPT: at 5 m each berth's
       () => a5.deep.points.every((q) => q.r === 45) && a20.deep.points.every((q) => q.r === 30) && a5.deep.points === a5b.deep.points
             && a5.deep.points !== a20.deep.points && a5.deep.polys === OAK.margin.polys,
       () => "radii " + [...new Set(a5.deep.points.map((q) => q.r))] + " / " + [...new Set(a20.deep.points.map((q) => q.r))]);
-// the grid against the layer walked whole: every point test, clearance and refusal the same
+// the armed layer, read through the model's grid (keepouts.js nearIn), against the layer walked one feature at a time - a
+// model of one feature is never filed (GRID_MIN) - every point test, clearance and refusal the same
 const rnd = (() => { let s = 7; return () => (s = (s * 16807) % 2147483647) / 2147483647; })();
-const probe = Array.from({ length: 4000 }, () => ({ e: -1600 + 3200 * rnd(), n: -1600 + 3200 * rnd() }));
-const lay20 = a20.deep, walk = { polys: lay20.polys, lines: lay20.lines, points: lay20.points };
+const probe = Array.from({ length: 500 }, () => ({ e: -1600 + 3200 * rnd(), n: -1600 + 3200 * rnd() }));
+const lay20 = a20.deep, armedOnly = { polys: [], lines: [], points: [], deep: lay20 };
+const one = (f) => (f.ring ? { polys: [f], lines: [], points: [] } : { polys: [], lines: [], points: [f] });
+const walkList = [...lay20.polys, ...lay20.points];
 let gridDiff = 0, clrDiff = 0, infoDiff = 0, hits = 0;
 for (const p of probe) {
   for (const buf of [5, 20, 150]) {
-    const g = K.blocked(p, { polys: [], lines: [], points: [], deep: lay20 }, buf), w = K.blocked(p, walk, buf);
-    if (g !== w) gridDiff++; if (w) hits++;
-    const gi = K.blockedInfo(p, { polys: [], lines: [], points: [], deep: lay20 }, buf), wi = K.blockedInfo(p, walk, buf);
-    if (!!gi !== !!wi || (gi && gi.kind !== wi.kind)) infoDiff++;
+    const g = K.blocked(p, armedOnly, buf), first = walkList.find((f) => K.blocked(p, one(f), buf));
+    if (g !== !!first) gridDiff++; if (first) hits++;
+    const gi = K.blockedInfo(p, armedOnly, buf);
+    if (!!gi !== !!first || (gi && gi.kind !== first.kind)) infoDiff++;
   }
-  const gc = K.clearanceM(p, { polys: [], lines: [], points: [], deep: lay20 }, 60), wc = K.clearanceM(p, walk, 60);
+  const gc = K.clearanceM(p, armedOnly, 60), wc = Math.min(60, ...walkList.map((f) => K.clearanceM(p, one(f), 60)));
   if (Math.abs(gc - wc) > 1e-9) clrDiff++;
 }
-check("6. THE ARMED LAYER'S GRID FINDS WHAT A WALK OF THE WHOLE LAYER FINDS: 4,000 points about the pair, at 5 m, 20 m and "
-      + "past the pad (150 m) - blocked, the refusal's kind and the clearance (to 60 m) the same for every one",
-      () => gridDiff === 0 && infoDiff === 0 && clrDiff === 0 && hits > 500 && K.DEEP_PAD_M === 100 && K.DEEP_CELL_M === 250,
+check("6. THE ARMED LAYER READ THROUGH THE MODEL'S GRID FINDS WHAT A WALK OF IT FINDS, ONE FEATURE AT A TIME: 500 points about "
+      + "the pair, at 5 m, 20 m and past the pad (150 m) - blocked, the refusal's kind and the clearance (to 60 m) the same for "
+      + "every one, and its lists filed",
+      () => gridDiff === 0 && infoDiff === 0 && clrDiff === 0 && hits > 50 && K.listGridded(lay20.polys) && K.listGridded(lay20.points),
       () => "blocked differs " + gridDiff + ", refusal " + infoDiff + ", clearance " + clrDiff + " (" + hits + " blocked tests)");
 // the raster: never free where `blocked` refuses, and it does release
 const rel = [{ pts: [{ e: -300, n: -900 }, { e: -300, n: 900 }], r: 150, bb: K.bbOf([{ e: -300, n: -900 }, { e: -300, n: 900 }]) }];

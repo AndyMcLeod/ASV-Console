@@ -1,5 +1,8 @@
 // tests/keepout_index.js - the row-band index for big rings answers EXACTLY as the plain edge walk
-// (2026-09-26), and only the big rings get one.
+// (2026-09-26), and only the big rings get one. AND THE GRID OVER EVERY FEATURE LIST (2026-10-13, Andy: "build the
+// spatial index for the floor model") answers exactly as the walk of every feature: checks 8-14, on a chart of thousands
+// of features and on his own charts about Oak Rock and the Dog Bar, at buffers and caps either side of GRID_PAD_M, as wide
+// as GRID_WIDE_CELLS and past it; which lists are filed, a list that grows, and the first offender named in the list's order.
 //
 // Andy: "The current instance of ASV Console has frozen. This has happened the last few times."
 // MEASURED on his New Castle chart at the boat's recorded position in the frozen session: the land
@@ -237,12 +240,141 @@ check("4. after those asks the big rings and the long shoreline carry an index, 
         () => "legClear " + K.legClear(a, b, frame, KO, 3) + " (plain " + legRef + "); first block: " + JSON.stringify(K.firstBlockAlong(a, b, frame, KO, 3).info.kind));
 }
 
+// ── 5. THE GRID OVER EVERY FEATURE LIST (2026-10-13) ────────────────────────────────────────
+// A chart of thousands of features over 6 km: small rings (islets, docks), short lines, points with and without an
+// extent, a few big rings among them - so a cell holds a handful and the big ring sits in hundreds of cells.
+const MANY = (() => {
+  const ps = [], ls = [], qs = [];
+  for (let i = 0; i < 900; i++) {
+    const c = { e: rnd() * 6000 - 3000, n: rnd() * 6000 - 3000 }, r = 5 + rnd() * 60, nv = 5 + Math.floor(rnd() * 12);
+    const ring = []; for (let k = 0; k < nv; k++) { const a = k / nv * 2 * Math.PI, rr = r * (0.6 + 0.4 * rnd()); ring.push({ e: c.e + rr * Math.cos(a), n: c.n + rr * Math.sin(a) }); }
+    ps.push({ ring, bb: bbOf(ring), kind: "ring " + i });
+  }
+  for (const [cx, cn] of [[-1500, 1200], [1800, -900]]) { const ring = coast(cx, cn, 1500, 450); ps.push({ ring, bb: bbOf(ring), kind: "big ring at " + cx }); }
+  for (let i = 0; i < 700; i++) {
+    let e = rnd() * 6000 - 3000, n = rnd() * 6000 - 3000; const pts = [{ e, n }];
+    for (let k = 0; k < 6; k++) { e += (rnd() - 0.5) * 80; n += (rnd() - 0.5) * 80; pts.push({ e, n }); }
+    ls.push({ pts, bb: bbOf(pts), kind: "line " + i });
+  }
+  for (let i = 0; i < 1500; i++) qs.push({ e: rnd() * 6000 - 3000, n: rnd() * 6000 - 3000, r: rnd() < 0.5 ? 0 : rnd() * 50, kind: "point " + i });
+  return { polys: ps, lines: ls, points: qs };
+})();
+// his own charts, built as the console builds them (tests/fixtures: his tile clipped about Oak Rock and the Dog Bar)
+const CH = require(path.join(__dirname, "..", "static", "js", "chart.js"));
+const { V, sea } = require(path.join(__dirname, "..", "static", "js", "state.js"));
+const { planeFrame } = require(path.join(__dirname, "..", "static", "js", "geodesy.js"));
+V.NOGO_MIN_DEPTH_M = 3.15; V.OPER_MIN_DEPTH_M = 4.0; V.NOGO_BUFFER_M = 5; V.AIR_DRAFT_M = 2.85; V.OVERHEAD_CLEARANCE_M = 1.0;
+const ENF = { land: true, depth: true, haz: true, area: false, wreck: true, chan: true };
+const his = (file, lat, lon) => {
+  const fx = JSON.parse(require("fs").readFileSync(path.join(__dirname, "fixtures", file), "utf8"));
+  const was = sea.waterOffset; sea.waterOffset = 0.33;
+  try { return CH.buildKeepouts(planeFrame({ lat, lon }), ENF, { min: 4.0, max: 0 }, fx.features); } finally { sea.waterOffset = was; }
+};
+const OAKM = his("enc_oak_rock.json", 42.642, -70.582), DOGM = his("enc_dog_bar.json", 42.582, -70.671);
+const extent = (ko) => { const all = [...ko.polys.map((q) => q.bb), ...ko.lines.map((q) => q.bb)]; return { x0: Math.min(...all.map((b) => b.x0)), x1: Math.max(...all.map((b) => b.x1)), y0: Math.min(...all.map((b) => b.y0)), y1: Math.max(...all.map((b) => b.y1)) }; };
+const probesIn = (ko, n) => {
+  const bb = extent(ko), out = [];
+  for (let i = 0; i < n; i++) out.push({ e: bb.x0 - 200 + rnd() * (bb.x1 - bb.x0 + 400), n: bb.y0 - 200 + rnd() * (bb.y1 - bb.y0 + 400) });
+  // and near the features' edges, where the answers flip
+  for (let i = 0; i < n / 2; i++) { const q = ko.polys[Math.floor(rnd() * ko.polys.length)], v = q.ring[Math.floor(rnd() * q.ring.length)]; out.push({ e: v.e + (rnd() - 0.5) * 30, n: v.n + (rnd() - 0.5) * 30 }); }
+  for (let i = 0; i < n / 4; i++) { const q = ko.points[Math.floor(rnd() * ko.points.length)]; if (q) out.push({ e: q.e + (rnd() - 0.5) * 120, n: q.n + (rnd() - 0.5) * 120 }); }
+  return out;
+};
+const GBUFS = [0, 3, 5, 20, 99.9, 100, 100.1, 150, 400, 2000];
+const GCAPS = [3, 50, 100, 101, 300, 500, 1000, 5000];
+for (const [name, ko, n] of [["8. a chart of 3,100 features over 6 km", MANY, 2400], ["9. his chart about Oak Rock", OAKM, 1600], ["10. his chart about the Dog Bar", DOGM, 1600]]) {
+  const P = probesIn(ko, n);
+  for (const p of P.slice(0, 80)) K.blocked(p, ko, 5);                    // (asked past GRID_AFTER: the lists are filed)
+  let bad = [], asks = 0, hits = 0;
+  for (const p of P) {
+    for (const buf of GBUFS) {
+      asks++;
+      const a = K.blocked(p, ko, buf), b = refBlocked(p, ko, buf);
+      if (a) hits++;
+      if (a !== b) bad.push({ what: "blocked", p, buf, got: a, want: b });
+      const ia = K.blockedInfo(p, ko, buf), ib = refInfoKind(p, ko, buf);
+      if ((ia ? ia.kind : null) !== ib) bad.push({ what: "blockedInfo", p, buf, got: ia && ia.kind, want: ib });
+    }
+    for (const cap of GCAPS) {
+      const a = K.clearanceM(p, ko, cap), b = refClearance(p, ko, cap);
+      if (Math.abs(a - b) > 1e-9) bad.push({ what: "clearanceM", p, cap, got: a, want: b });
+    }
+  }
+  check(name + ": THE GRID ANSWERS AS THE WALK OF EVERY FEATURE - blocked and the feature blockedInfo names at buffers "
+        + "either side of GRID_PAD_M, as wide as GRID_WIDE_CELLS and past it, and clearanceM to a nanometer at caps from 3 m to "
+        + "5 km (" + P.length + " points, " + asks + " buffer asks, " + hits + " blocked); every list it holds filed",
+        () => bad.length === 0 && hits > 500 && K.listGridded(ko.polys) && K.listGridded(ko.lines) && K.listGridded(ko.points)
+              && K.GRID_PAD_M === 100 && K.GRID_CELL_M === 250 && K.GRID_WIDE_CELLS === 64,
+        () => bad.length + " disagreement(s) " + JSON.stringify(bad.slice(0, 2)) + "; filed " + [K.listGridded(ko.polys), K.listGridded(ko.lines), K.listGridded(ko.points)]
+              + " (" + ko.polys.length + " areas, " + ko.lines.length + " lines, " + ko.points.length + " points)");
+}
+{
+  // which lists are filed: one shorter than GRID_MIN never; a long one only once asked GRID_AFTER times
+  const short = { polys: MANY.polys.slice(0, K.GRID_MIN - 1), lines: [], points: [] };
+  const fresh = { polys: MANY.polys.slice(0, 400), lines: [], points: [] };
+  const q = { e: 0, n: 0 };
+  for (let i = 0; i < K.GRID_AFTER - 2; i++) K.blocked(q, fresh, 5);
+  const before = K.listGridded(fresh.polys);
+  K.blocked(q, fresh, 5); K.blocked(q, fresh, 5);
+  for (let i = 0; i < 3 * K.GRID_AFTER; i++) K.blocked(q, short, 5);
+  check("11. A LIST IS FILED ONLY WHEN IT EARNS IT: a list of fewer than GRID_MIN features never is, however often it is asked; a "
+        + "long one is walked for its first GRID_AFTER asks (a short-lived view of the model) and filed then",
+        () => !K.listGridded(short.polys) && before === false && K.listGridded(fresh.polys) && K.GRID_MIN === 16 && K.GRID_AFTER === 64,
+        () => "short " + K.listGridded(short.polys) + "; long before " + before + ", after " + K.listGridded(fresh.polys));
+}
+{
+  // a list that GROWS after it was filed is filed afresh: the feature added is found
+  const grow = { polys: MANY.polys.slice(0, 300), lines: [], points: [] };
+  for (let i = 0; i < K.GRID_AFTER + 5; i++) K.blocked({ e: 5000, n: 5000 }, grow, 5);
+  const filed = K.listGridded(grow.polys);
+  const added = [{ e: 4990, n: 4990 }, { e: 5010, n: 4990 }, { e: 5010, n: 5010 }, { e: 4990, n: 5010 }];
+  grow.polys.push({ ring: added, bb: bbOf(added), kind: "added after filing" });
+  const inside = { e: 5000, n: 5000 };
+  check("12. A LIST THAT GROWS IS FILED AFRESH: a feature pushed onto a list already filed is found at once - inside it blocked, "
+        + "named, its clearance 0 - and not lost to the grid filed before it",
+        () => filed && K.blocked(inside, grow, 0) && (K.blockedInfo(inside, grow, 0) || {}).kind === "added after filing" && K.clearanceM(inside, grow) === 0,
+        () => "filed before " + filed + "; blocked " + K.blocked(inside, grow, 0) + ", named " + JSON.stringify((K.blockedInfo(inside, grow, 0) || {}).kind));
+}
+{
+  // several features block one point: the one named is the FIRST in the list's order, through the grid as on the walk
+  const sq = (e0, n0, w, kind) => { const r = [{ e: e0, n: n0 }, { e: e0 + w, n: n0 }, { e: e0 + w, n: n0 + w }, { e: e0, n: n0 + w }]; return { ring: r, bb: bbOf(r), kind }; };
+  const stack = { polys: [...MANY.polys.slice(0, 40), sq(4000, -4000, 900, "the big one, first"), sq(4400, -3600, 50, "the small one, second"),
+                          ...MANY.polys.slice(40, 80)], lines: [], points: [] };
+  for (let i = 0; i < K.GRID_AFTER + 5; i++) K.blocked({ e: 4420, n: -3580 }, stack, 5);
+  const named = [0, 5, 60].map((buf) => (K.blockedInfo({ e: 4420, n: -3580 }, stack, buf) || {}).kind);
+  check("13. THE FIRST OFFENDER IN THE LIST'S ORDER: where two features block a point, blockedInfo through the grid names the "
+        + "one the walk names - the first in the list - at every buffer",
+        () => K.listGridded(stack.polys) && named.every((k) => k === "the big one, first"),
+        () => JSON.stringify(named));
+}
+{
+  // the planner, end to end, on the grid: the route it ships across his Oak Rock chart is clear by the walk's own answers
+  const P = require(path.join(__dirname, "..", "static", "js", "passage.js"));
+  const F = planeFrame({ lat: 42.642, lon: -70.582 }), { nogo } = require(path.join(__dirname, "..", "static", "js", "state.js"));
+  const box = { W: -70.6, S: 42.628, E: -70.564, N: 42.656 };
+  Object.assign(nogo, { ready: true, frame: F, ko: OAKM, buffer: 5, bbox: box, unread: null, ais: null });
+  const A = { lat: 42.6520, lon: -70.5855 }, B = { lat: 42.6320, lon: -70.5840 };
+  const filed = P.planNogoRoute(A, B, { standoffM: 20 });
+  check("14. THE PLANNER ON THE GRID: Go-To bound south across his Oak Rock chart, every leg of it clear of the model by the walk "
+        + "(refBlocked at her 5 m buffer, sampled every meter) and the two offshore marks kept - the grid changes no answer the "
+        + "route stands on",
+        () => !filed.error && filed.route.length > 3 && (() => { const r = [A, ...filed.route].map((q) => F.toEN(q));
+          for (let i = 1; i < r.length; i++) { const a = r[i - 1], b = r[i], m = Math.max(1, Math.ceil(Math.hypot(b.e - a.e, b.n - a.n)));
+            for (let k = 1; k < m; k++) if (refBlocked({ e: a.e + (b.e - a.e) * k / m, n: a.n + (b.n - a.n) * k / m }, OAKM, 5)) return false; } return true; })()
+              && filed.how.marks.offshore === 2 && filed.how.marks.offshoreWrong === 0 && K.listGridded(OAKM.polys),
+        () => filed.error || (filed.route.length + " waypoints; " + JSON.stringify(filed.how.marks)));
+}
+
 // ── 4. THE COST, said rather than asserted (a timing assertion is a flaky check) ───────────
 {
   const probe = { e: 250, n: 40 };
   let t0 = Date.now(); for (let i = 0; i < 2000; i++) K.blocked(probe, KO, 3); const tIdx = Date.now() - t0;
   t0 = Date.now(); for (let i = 0; i < 2000; i++) refBlocked(probe, KO, 3); const tRef = Date.now() - t0;
   console.log("  (2000 point tests beside the 4,000-vertex ring: indexed " + tIdx + " ms, plain walk " + tRef + " ms)");
+  const ps = probesIn(MANY, 2000);
+  t0 = Date.now(); for (const p of ps) K.blocked(p, MANY, 5); const tG = Date.now() - t0;
+  t0 = Date.now(); for (const p of ps) refBlocked(p, MANY, 5); const tW = Date.now() - t0;
+  console.log("  (" + ps.length + " point tests on the chart of 3,100 features: through the grid " + tG + " ms, the walk " + tW + " ms)");
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");

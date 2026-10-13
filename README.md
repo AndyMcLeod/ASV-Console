@@ -1090,6 +1090,13 @@ before, and `?route_worker=off` on the page's address does that every time. **A 
 E-STOP pressed while a route is being planned withdraws it**: the banner says so, and nothing is
 sent (`tests/route_worker.js`).
 
+**Planning is several times faster (2026-10-13).** Every keep-out test used to check every feature on
+the chart, and on a long Go-To that was most of what the plan cost. Each list of chart features now
+has a grid of 250 m cells, so a test reads only the features near the point it asks about, and gets
+the same answer (`tests/keepout_index.js` holds the grid against the plain walk, on two of his own
+charts among others). The 61 km Go-To from New Castle to Gloucester now plans in 5.5 s with deep
+water first, where it took 23.2 s; each the mean of three runs alternating with the code before it, and the route is identical.
+
 **Two waters are not a reversal (2026-09-25).** When the chart splits a line into runs on both
 sides of a land mass, Punch Out's order finishes one side and crosses to the other, and the join
 between the last run on one side and the first on the other used to be judged a *reversal* by
