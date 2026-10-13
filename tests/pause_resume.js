@@ -226,8 +226,9 @@ eval([
   "function aisKeepoutsNow(){ return aisKoDrawn; }",
   // the vessels along a passage (2026-10-07): no AIS proxy answers here, so the read takes nothing - tests/chart_box.js 10
   "async function readPassageAis(){}",
-  // the busy report before each route search (2026-10-12): the console is not here - tests/supervisor_page.js
-  "async function supervisorBusy(){}", "let supPlanEnd = 0;",
+  // THE ROUTE WORKER (2026-10-12) is not here: each search runs on this thread as it always did (tests/route_worker.js); and the
+  // stop-class presses withdraw a plan in flight - the page's own (tests/route_worker.js 12-13)
+  "async function planOffThread(job, here){ return here(); }", "let routeStopGen = 0, routeStopName = null;", grab("routeStopPressed"),
   grab("planInsideChart"),
   // review #14: the guard and the governor act only in the SUPERVISING tab; this world is that tab. A view-only one is tests/supervisor_page.js's subject.
   "const supervising = () => true;",

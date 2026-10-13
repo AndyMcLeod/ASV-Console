@@ -131,6 +131,9 @@ function planNogoRoute(from, to) {
   const route = (r.route || [to]).map(p => ({ ...p }));
   return { route, degraded: !!r.degraded, routed: route.length > 1, lane: false };
 }
+// THE ROUTE WORKER (2026-10-12) is not here: each search runs on this thread as it always did (tests/route_worker.js) - the
+// scripted planNogoRoute above answers each - and the estimate is ASYNC now (its own worker, "est"), so it is awaited.
+function planOffThread(job, here) { return Promise.resolve(here()); }
 // eslint-disable-next-line no-eval
 eval(
      grabDecl("TRANSIT_REKEY_M") + "\n" +
@@ -288,8 +291,9 @@ nogo.ready = true; nogo.band = "enc_harbour"; nogo.buffer = 5;
 commit(3, 400, 60);
 asv = at(-500, -500); S = { run: "idle", home: at(-600, 0) };
 planCalls = []; planScript = {};
+(async () => {
 {
-  const r = transitEstCompute(asv, mission.waypoints, S.home);
+  const r = await transitEstCompute(asv, mission.waypoints, S.home);
   const wps = mission.waypoints, last = wps[wps.length - 1];
   check("10. the transit leg is boat -> FIRST waypoint",
         planCalls.length === 2
@@ -307,8 +311,8 @@ planCalls = []; planScript = {};
 
 // 11. Each row degrades ALONE: no fix loses only the transit row, no home only the RTH row.
 {
-  const noBoat = transitEstCompute(null, mission.waypoints, S.home);
-  const noHome = transitEstCompute(asv, mission.waypoints, null);
+  const noBoat = await transitEstCompute(null, mission.waypoints, S.home);
+  const noHome = await transitEstCompute(asv, mission.waypoints, null);
   check("11. no fix -> transit '--' while RTH still answers; no home -> the mirror",
         noBoat.transit === null && noBoat.rth && noBoat.rth.m > 0
           && noHome.rth === null && noHome.transit && noHome.transit.m > 0);
@@ -318,7 +322,7 @@ planCalls = []; planScript = {};
 // silent '--' (indistinguishable from "no fix") and never a number.
 {
   planScript = { error: "the target sits in land" };
-  const r = transitEstCompute(asv, mission.waypoints, S.home);
+  const r = await transitEstCompute(asv, mission.waypoints, S.home);
   const html = transitRowHtml("RTH:", r.rth, 3.6);
   check("12. a refused route renders 'unroutable' with the planner's reason",
         r.rth && r.rth.err === "the target sits in land"
@@ -329,7 +333,7 @@ planCalls = []; planScript = {};
 // 13. nogo-not-loaded is an ESTIMATE DOWNGRADE, said in the row, not hidden.
 {
   planScript = { degraded: true };
-  const r = transitEstCompute(asv, mission.waypoints, S.home);
+  const r = await transitEstCompute(asv, mission.waypoints, S.home);
   const html = transitRowHtml("transit:", r.transit, 3.6);
   check("13. a degraded (nogo not loaded) answer says 'direct' beside the figure",
         r.transit && r.transit.direct === true && /direct/.test(html),
@@ -380,3 +384,4 @@ planCalls = []; planScript = {};
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"
                   : "\nall checks passed (" + ran + ")");
 process.exit(fails ? 1 : 0);
+})();

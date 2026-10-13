@@ -1075,6 +1075,19 @@ and TAKE OVER still moves the post at once. While another chart tab is open, the
 tab's top bar shows **⚠ 2 CHART TABS**: close the chart tabs you are not using
 (`tests/supervisor.py` 13-13c, `tests/supervisor_page.js` 5 and 9-9c).
 
+**The route search runs in a worker (2026-10-12).** Go-To, RTH, a drawn transit, Upload, Continue,
+Resume from here, a passage's section and the ETA rows now search for their route in a background
+worker (`static/js/route_worker.js`), so the chart, the clearance guard, the controls and
+supervision's report keep running while it searches. The worker runs the planner's own code and its
+answer is the page's own, field for field: on a Go-To from New Castle up the Piscataqua, the
+299-waypoint route the worker returned was identical to the same search run on the page. The chart's
+keep-out model is copied to the worker once per model (a fraction of a second). On a two-core
+laptop the search itself takes somewhat longer in the worker than it did on the page, because the
+page keeps working beside it. If the worker cannot answer, the page plans on its own thread as
+before, and `?route_worker=off` on the page's address does that every time. **A Stop, Pause, Hold or
+E-STOP pressed while a route is being planned withdraws it**: the banner says so, and nothing is
+sent (`tests/route_worker.js`).
+
 **Two waters are not a reversal (2026-09-25).** When the chart splits a line into runs on both
 sides of a land mass, Punch Out's order finishes one side and crosses to the other, and the join
 between the last run on one side and the first on the other used to be judged a *reversal* by

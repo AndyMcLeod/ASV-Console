@@ -114,6 +114,8 @@ function world(o) {
     "const holdOpts = () => ({}), patClipBufM = () => 5, holdClearAt = () => 7, tailEndsAtHold = () => false, routeTooLong = () => false;",
     "const planNogoRoute = (from, to) => w.plan(from, to);",
     "const planInsideChart = async (pts, opts, plan) => plan();",
+    // THE ROUTE WORKER (2026-10-12) is not here: each search runs on this thread as it always did (tests/route_worker.js)
+    "const planOffThread = async (job, here) => here();",
     "const planWhy = (p) => p && p.error, heldOffWhy = () => 'it is held off';",
     "const notTookSay = (r) => 'REFUSED: ' + (r && r.error);",
     "const took = (r) => !!(r && r.ok);",

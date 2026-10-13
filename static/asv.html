@@ -1016,6 +1016,9 @@ import { CHART_EDGE_M, LANE_FRAC, SEG_LEN_M, beyondChart, beyondChartSay, buoyCh
          holdTarget, junctionKnot, legPath, narrowChannelLane, planNogoRoute, pruneJunctionKnots,
          pruneStitch, rasterKeepouts, regionOrder,
          routeAround, routeAroundSeg, routePlan, smoothTrack, stampSeg } from "/static/js/passage.js";
+// THE ROUTE SEARCH OFF THIS PAGE'S THREAD (2026-10-12): the model's feature count, which the worker checks the model it
+// holds against on every search (route_job.js; planOffThread).
+import { koCount as routeKoCount } from "/static/js/route_job.js";
 import { HAZ_UNKNOWN_EXTENT, MARK_TAIL, WATER_FAR_KM, WATER_REMOTE_KM, WATER_STALE_S,
          WRECK_CLEAR_MARGIN_M, airNeedM, blocked, blockedInfo, bufferFloor, buildKeepouts, clearanceM,
          channelPolys, depthExcluded, effectiveWaterOffset, firstBlockAlong, hazExtent, overheadBlocks,
@@ -7622,7 +7625,7 @@ function transitEstKey(boat, wps, home){
     // (and the rock model the route is laid with: the page's "Channel rocks" changes the route, not the chart)
     + "|" + V.REACH_ROCK;
 }
-function transitEstCompute(boat, wps, home){
+async function transitEstCompute(boat, wps, home){
   // Pure of the DOM and of the cache: route the two legs and report honestly.
   //   {m, direct}  routed meters (direct=true when nogo wasn't loaded - a straight guess)
   //   {err}        the planner REFUSED (start/target in a keep-out, no clear route)
@@ -7632,16 +7635,19 @@ function transitEstCompute(boat, wps, home){
   //   {m, uncharted}  a route that runs past the water the chart was read over (2026-10-03): the planner refuses it
   //                   to a COMMAND, which reads the chart over it and plans again (planInsideChart) - so it is not an
   //                   "unroutable" here, it is an estimate over water not yet read, and the row says so
+  //   ⚠ IN ITS OWN ROUTE WORKER (2026-10-12): the two searches held this thread like a command's, on every 50 m of her
+  //   motion; they now run in the "est" worker (planOffThread), never in front of a command's.
   const out = {transit:null, rth:null};
   if(!wps || !wps.length) return out;
+  const plan = (a, b) => planOffThread({op: "nogo", args: {from: a, to: b}}, () => planNogoRoute(a, b), undefined, "est");
   if(boat){
-    const p = planNogoRoute({lat:boat.lat,lon:boat.lon}, {lat:wps[0].lat,lon:wps[0].lon});
+    const p = await plan({lat:boat.lat,lon:boat.lon}, {lat:wps[0].lat,lon:wps[0].lon});
     out.transit = p.uncharted ? {m:routeLenM(boat, p.uncharted.route), uncharted:true, outM:p.uncharted.outM}
                 : p.error ? {err:p.error} : {m:routeLenM(boat, p.route), direct:!!p.degraded};
   }
   if(home){
     const last = wps[wps.length-1];
-    const q = planNogoRoute({lat:last.lat,lon:last.lon}, {lat:home.lat,lon:home.lon});
+    const q = await plan({lat:last.lat,lon:last.lon}, {lat:home.lat,lon:home.lon});
     out.rth = q.uncharted ? {m:routeLenM(last, q.uncharted.route), uncharted:true, outM:q.uncharted.outM}
             : q.error ? {err:q.error} : {m:routeLenM(last, q.route), direct:!!q.degraded};
   }
@@ -7652,8 +7658,8 @@ function scheduleTransitEst(){
   const key = transitEstKey(boat, wps, home);
   if(!key || key===transitEst.key || transitEst.busy) return;
   transitEst.busy = true;
-  setTimeout(()=>{
-    try{ const r = transitEstCompute(transitEstBoat(), mission.waypoints||[], S&&S.home);
+  setTimeout(async ()=>{
+    try{ const r = await transitEstCompute(transitEstBoat(), mission.waypoints||[], S&&S.home);
          transitEst = {key, busy:false, transit:r.transit, rth:r.rth}; }
     catch(e){ transitEst = {key, busy:false, transit:null, rth:null}; }
     renderLineTable();                       // paint the fresh answer
@@ -10581,8 +10587,11 @@ async function doGoTo(target){
   showBanner("Routing to the point… a long transit around obstacles can take several seconds.");
   await new Promise(r=>setTimeout(r,50));
   // Planned INSIDE THE WATER THE CHART WAS READ OVER: a route that runs past it is read over and planned again.
-  const plan = await planInsideChart([{lat:asv.lat,lon:asv.lon}, target], undefined,
-    () => planNogoRoute({lat:asv.lat,lon:asv.lon}, target, {...holdOpts(), standoffM: transitStandoffM()}), "Go-To");
+  const plan = await planInsideChart([{lat:asv.lat,lon:asv.lon}, target], undefined, () => {
+    const from = {lat:asv.lat,lon:asv.lon}, o = {...holdOpts(), standoffM: transitStandoffM()};
+    return planOffThread({op: "nogo", args: {from, to: target, opts: o}}, () => planNogoRoute(from, target, o));   // the route worker
+  }, "Go-To");
+  if(plan.withdrawn) return;                        // a Stop pressed while it planned (planInsideChart says so)
   if(plan.error){
     setViolation(plan.reason);
     const mode = plan.reason && plan.reason.mode;
@@ -10729,8 +10738,11 @@ async function doRTH(opts){
   await ensureNogoCovers([{lat:asv.lat,lon:asv.lon}, {lat:S.home.lat,lon:S.home.lon}]);
   showBanner("Routing home… a long transit around obstacles can take several seconds.");
   await new Promise(r=>setTimeout(r,50));
-  const plan = await planInsideChart([{lat:asv.lat,lon:asv.lon}, {lat:S.home.lat,lon:S.home.lon}], undefined,   // see doGoTo
-    () => planNogoRoute({lat:asv.lat,lon:asv.lon}, {lat:S.home.lat,lon:S.home.lon}, {...holdOpts(), standoffM: transitStandoffM()}), "RTH");
+  const plan = await planInsideChart([{lat:asv.lat,lon:asv.lon}, {lat:S.home.lat,lon:S.home.lon}], undefined, () => {   // see doGoTo
+    const from = {lat:asv.lat,lon:asv.lon}, to = {lat:S.home.lat,lon:S.home.lon}, o = {...holdOpts(), standoffM: transitStandoffM()};
+    return planOffThread({op: "nogo", args: {from, to, opts: o}}, () => planNogoRoute(from, to, o));
+  }, "RTH");
+  if(plan.withdrawn){ if(chained) rthChainFailed=true; return; }   // (see doGoTo; a chained RTH is not tried again by itself)
   if(plan.error){
     if(chained) rthChainFailed=true;
     setViolation(plan.reason);
@@ -11395,11 +11407,18 @@ async function sailSend(P, k, from, bo, append){
   // which the guard's own chart keeps (sectionWater, atWaterLevel).
   const lv = await sectionWater(P, from, pts, append);
   let ht = null;
-  const plan = await planInsideChart([from, ...pts], {route: true}, () => atWaterLevel(lv.m, () => {
-    ht = holdTarget(c.to, holdOpts());
-    if(ht.error) return null;
-    return routePlan(from, [...pts.slice(0, -1), ht.to], true, transitStandoffM());
-  }), (home ? "Home along the passage, section " : "Passage section ") + (k + 1));
+  // In the route worker (planOffThread), on the chart at that water (koAtLevel); on this thread as before if it cannot.
+  const plan = await planInsideChart([from, ...pts], {route: true}, () => {
+    const o = holdOpts(), via = pts.slice(0, -1), std = transitStandoffM(), koLv = koAtLevel(lv.m);
+    return planOffThread({op: "holdRoute", ko: koLv, args: {target: c.to, holdOpts: o, start: from, via, keepRightAll: true, standoffM: std}},
+      () => atWaterLevel(lv.m, () => {
+        ht = holdTarget(c.to, o);
+        if(ht.error) return null;
+        return routePlan(from, [...via, ht.to], true, std);
+      }, koLv),
+      (r) => { ht = r.ht; return r.plan; });
+  }, (home ? "Home along the passage, section " : "Passage section ") + (k + 1));
+  if(plan && plan.withdrawn) return {error: plan.error};
   if(ht !== null && ht.error) return {error: "the end of section " + (k + 1) + " is not clear water to hold at"};
   if(!plan) return {error: "no plan"};
   if(plan.error) return {error: plan.error};
@@ -11831,12 +11850,18 @@ function nogoModelAt(m){
 /** `fn` run on the guard's chart as built at the level `m`, and the chart put back. SYNCHRONOUS, so no frame - and no
  *  guard pass - runs between; the planner reads no level but the chart's (passage.js, routing.js, hold.js). Within
  *  TIDE_REBUILD_M of the level the chart was built at, on the chart itself. */
-function atWaterLevel(m, fn){
-  if(!nogo.ready || !nogo.frame || nogo.builtOffset == null || Math.abs(m - nogo.builtOffset) < TIDE_REBUILD_M - 1e-9) return fn();
+function atWaterLevel(m, fn, ko = koAtLevel(m)){
+  if(ko === nogo.ko) return fn();
   const keep = nogo.ko;
-  nogo.ko = nogoModelAt(m);
+  nogo.ko = ko;
   try{ return fn(); }
   finally{ nogo.ko = keep; }
+}
+/** The guard's chart at the level `m` as atWaterLevel plans on it: the chart itself within TIDE_REBUILD_M of the level it
+ *  was built at, else one built at `m` - which the route worker is handed in place of the chart (sailSend). */
+function koAtLevel(m){
+  if(!nogo.ready || !nogo.frame || nogo.builtOffset == null || Math.abs(m - nogo.builtOffset) < TIDE_REBUILD_M - 1e-9) return nogo.ko;
+  return nogoModelAt(m);
 }
 async function doTransit(){
   if(transit.length<1){ flashNote("Draw a transit line first (click the chart)."); return; }
@@ -11849,11 +11874,19 @@ async function doTransit(){
   // is judged by; a refusal of it ends the planning (null) and is said here.
   let ht = null;
   const plan = await planInsideChart([{lat:asv.lat,lon:asv.lon}, ...transit], undefined, () => {
-    ht = holdTarget(transit[transit.length-1], holdOpts());
-    if(ht.error) return null;
-    const line = [...transit.slice(0,-1), ht.to];
-    return routePlan({lat:asv.lat,lon:asv.lon}, line, true, transitStandoffM());   // pure transit: keep right (Rule 9), at the transit standoff where the water allows
+    const from = {lat:asv.lat,lon:asv.lon}, tgt = transit[transit.length-1], o = holdOpts(), via = transit.slice(0,-1),
+          std = transitStandoffM();
+    // In the route worker (planOffThread), the hold point back beside the plan; on this thread as before if it cannot.
+    return planOffThread({op: "holdRoute", args: {target: tgt, holdOpts: o, start: from, via, keepRightAll: true, standoffM: std}},
+      () => {
+        ht = holdTarget(tgt, o);
+        if(ht.error) return null;
+        const line = [...via, ht.to];
+        return routePlan(from, line, true, std);   // pure transit: keep right (Rule 9), at the transit standoff where the water allows
+      },
+      (r) => { ht = r.ht; return r.plan; });
   }, "Transit");
+  if(plan && plan.withdrawn) return;  // a Stop pressed while it planned (planInsideChart says so)
   if(ht !== null && ht.error){        // (null: refused before any planning - its own points past the chart, below)
     setViolation(ht.reason); render();
     showBanner("Transit refused: "+ht.error+" — highlighted on the chart. Move the last point nearer open water.");
@@ -13523,8 +13556,115 @@ function mooredNote(plan){
   const names = m.map((k) => String(k).replace(/^AIS: /, ""));
   return "clear of " + (names.length <= 2 ? names.join(" and ") : names.length + " vessels not under way") + " (AIS)";
 }
+// ── THE ROUTE SEARCH OFF THIS PAGE'S THREAD (2026-10-12, Andy: "move the route planner into a worker") ─────────────────
+// A route search held this thread for as long as it ran - 11 s, then 17.8 s, on his Go-To up the Piscataqua - and with it
+// the clearance guard, the readouts, the controls and supervision's report: a second chart tab took the post from the
+// silent one, and the Go-To was refused when it went. The search now runs in route_worker.js (route_job.js: passage.js's
+// own planNogoRoute / routePlan / holdTarget, unchanged), and this page waits for its answer with the thread free. TWO
+// workers, so an ETA row's search (transitEstCompute) never stands in front of a command's.
+//
+// ⚠ THE WORKER IS AN ACCELERATOR, NEVER A SECOND PLANNER. Whatever it cannot do - no Worker, a worker that would not
+// load or died, a model or an answer that cannot be copied, a search that throws, one that has not answered in
+// ROUTE_WORKER_TIMEOUT_MS - the same search runs HERE, as it always did (planHere: this thread, the busy report to the
+// console first). `?route_worker=off` on the page's address does that for every search, for an A/B or a fault.
+// The guard's own searches (the deviation, the way round a contact, the re-approach, a held run's way back) stay on this
+// thread: they are short, and they answer the frame they were asked on.
+const ROUTE_WORKER_TIMEOUT_MS = 120000;
+const ROUTE_WORKER_OFF = typeof location !== "undefined" && /[?&]route_worker=off(&|$)/.test(location.search || "");
+const routeLanes = {cmd: {w: null, jobs: new Map(), held: new Set(), seq: 0, dead: null},
+                    est: {w: null, jobs: new Map(), held: new Set(), seq: 0, dead: null}};
+const routeKoIds = new WeakMap();
+let routeKoSeq = 0;
+function routeKoId(ko){
+  let id = routeKoIds.get(ko);
+  if(id == null){ id = ++routeKoSeq; routeKoIds.set(ko, id); }
+  return id;
+}
+function routeWorkerOf(L){
+  const lane = routeLanes[L];
+  if(lane.w) return lane.w;
+  if(lane.dead || ROUTE_WORKER_OFF || typeof Worker !== "function") return null;
+  try{
+    const w = new Worker("/static/js/route_worker.js", {type: "module"});
+    w.onmessage = (ev) => { const d = (ev && ev.data) || {}, j = lane.jobs.get(d.id); if(j) j.done(d); };
+    // A worker that fails to LOAD, or dies, is gone for this page: every search after it runs here.
+    w.onerror = (e) => routeWorkerLost(L, "the route worker failed: " + ((e && e.message) || "error"), true);
+    lane.w = w; lane.held = new Set();
+    return w;
+  }catch(e){ lane.dead = "no route worker: " + ((e && e.message) || e); return null; }
+}
+function routeWorkerLost(L, why, forGood){
+  const lane = routeLanes[L];
+  if(lane.w){ try{ lane.w.terminate(); }catch(e){} }
+  lane.w = null; lane.held = new Set();
+  if(forGood) lane.dead = why;
+  for(const j of [...lane.jobs.values()]) j.done({ok: false, error: why});
+}
+/** The search on THIS thread, as it always ran: the console told first that this tab is busy (supervisorBusy). */
+async function planHere(here){
+  await supervisorBusy();
+  try{ return here(); }
+  finally{ supPlanEnd = Date.now(); }
+}
+/**
+ * One route search in a worker. `job`: {op: "nogo" | "route" | "holdRoute", args, ko?} - route_job.js's three, `ko` the
+ * model it stands on in place of nogo.ko (a passage section's at its own water). `here`: the same search on this page,
+ * run if the worker cannot answer. `adopt`: what the caller makes of the worker's answer (the hold point a drawn
+ * transit's closure sets, beside its plan). `L`: "cmd" for a command, "est" for the ETA rows.
+ */
+async function planOffThread(job, here, adopt = (out) => out, L = "cmd"){
+  const ko = job.ko || nogo.ko;
+  if(!nogo.ready || !ko) return here();                      // no chart: the planner answers at once, degraded
+  const w = routeWorkerOf(L);
+  if(!w) return planHere(here);
+  const lane = routeLanes[L], id = ++lane.seq, models = [];
+  const ref = (k) => {
+    const r = {id: routeKoId(k), n: routeKoCount(k)};
+    if(!lane.held.has(r.id) && !models.some((x) => x.id === r.id)) models.push({id: r.id, ko: k});
+    return r;
+  };
+  const args = {...(job.args || {})};
+  if(args.opts && args.opts.ko) args.opts = {...args.opts, ko: ref(args.opts.ko)};
+  const keep = nogo.ko ? [routeKoId(nogo.ko)] : [];          // the chart's own model, and nothing a search brought
+  const msg = {id, op: job.op, args, ko: ref(ko), models, keep,
+               state: {V: {...V}, nogo: {ready: nogo.ready, buffer: nogo.buffer, bbox: nogo.bbox, unread: nogo.unread,
+                                         ais: nogo.ais},
+                       frameRef: nogo.frame ? nogo.frame.ref : null, laneUsed: sea.laneUsed, lanePartial: sea.lanePartial}};
+  const t0 = Date.now();
+  const d = await new Promise((resolve) => {
+    const timer = setTimeout(() => routeWorkerLost(L, "the route search ran past " + ROUTE_WORKER_TIMEOUT_MS / 1000 + " s"),
+                             ROUTE_WORKER_TIMEOUT_MS);
+    lane.jobs.set(id, {done: (x) => { clearTimeout(timer); lane.jobs.delete(id); resolve(x); }});
+    try{
+      w.postMessage(msg);
+      lane.held = new Set(keep);                             // as the worker will hold it once this search is done
+    }catch(e){ lane.jobs.get(id).done({ok: false, error: "the search could not be sent: " + ((e && e.message) || e)}); }
+  });
+  if(d.ok !== true){                                         // (the worker's answer, not a command's: took() is for those)
+    logClient("route_worker", {op: job.op, lane: L, ok: false, error: String(d.error || "no answer").slice(0, 300),
+                               ms: Date.now() - t0});
+    return planHere(here);
+  }
+  sea.laneUsed = d.sea.laneUsed; sea.lanePartial = d.sea.lanePartial;
+  if(L === "cmd")                                            // (an ETA row's searches are not recorded: every 50 m of her)
+    logClient("route_worker", {op: job.op, lane: L, ok: true, ms: d.ms, wait_ms: Date.now() - t0, sent: models.length});
+  return adopt(d.out);
+}
+// ⚠ A STOP WITHDRAWS A PLAN STILL BEING SEARCHED (2026-10-12). While the search held this thread, a Stop pressed during
+// it waited behind it: the command went first and the Stop then stopped her. With the thread free the Stop goes at once -
+// and the command, sent when the search finished, would start her again after the operator had stopped her. So a press of
+// Stop, Pause, Hold or E-STOP moves `routeStopGen`, and planInsideChart withdraws a plan that began before it.
+let routeStopGen = 0, routeStopName = null;
+function routeStopPressed(name){ routeStopGen++; routeStopName = name; }
 async function planInsideChart(pts, opts, plan, what){
   const subjectOf = () => what === "Upload" ? "the plan" : what === "Transit" ? "the transit" : what === "RTH" ? "home" : "the target";
+  const stopWas = routeStopGen;
+  const withdrawn = () => {
+    const say = what + " withdrawn: " + (routeStopName || "a stop") + " was pressed while its route was being planned. Nothing was sent.";
+    showBanner("⚠ " + say);
+    logClient("plan_withdrawn", {what, by: routeStopName});
+    return {error: say, withdrawn: true};
+  };
   // ⚠ WATER NO CHART COVERS IS REFUSED AT ONCE (2026-10-11, the layered chart): reading wider cannot chart it. A read
   // that FAILED there says so, and to command it again once the chart can be read.
   const unreadRefusal = (u, route) => {
@@ -13557,10 +13697,10 @@ async function planInsideChart(pts, opts, plan, what){
   }
   await readPassageAis(pts);                     // the vessels not under way along it, for passageKo (2026-10-07)
   aisKeepoutsNow();
-  // THE SEARCH HOLDS THE PAGE'S THREAD: said to the console first, so this tab keeps supervision through it (2026-10-12)
-  await supervisorBusy();
-  let p = plan(), why = null, cause = null, round = 0;
-  supPlanEnd = Date.now();
+  // THE SEARCH RUNS IN THE ROUTE WORKER (planOffThread), or on this thread with the console told (planHere): `plan` is the
+  // caller's, and either way its answer is awaited.
+  let p = await plan(), why = null, cause = null, round = 0;
+  if(routeStopGen !== stopWas) return withdrawn();
   while(p && p.uncharted){
     if(p.uncharted.where === "unread"){                // no wider read charts it: said at once (the advice: unchartedTip)
       cause = p.uncharted.failed ? "failed" : "unread"; break;
@@ -13591,10 +13731,10 @@ async function planInsideChart(pts, opts, plan, what){
     showBanner(what + ": planning again over the chart read along the route" + n);
     await new Promise(r=>setTimeout(r,50));             // the rebuild's paint, and this banner's, before the routing takes the thread
     aisKeepoutsNow();                                   // the contacts, in the frame the new extract set
-    await supervisorBusy();                             // and again: this search holds the thread as the first did
-    p = plan();
-    supPlanEnd = Date.now();
+    p = await plan();
+    if(routeStopGen !== stopWas) return withdrawn();
   }
+  if(routeStopGen !== stopWas) return withdrawn();
   if(p && p.uncharted){
     p.uncharted.say = beyondChartSay(p.uncharted, fmtDist) + (why ? " - " + why : "");
     p.uncharted.rounds = round; p.uncharted.cause = cause;
@@ -16973,8 +17113,12 @@ async function doUpload(opts){
   // ASV never crosses land / a nogo zone on a transit.
   // INSIDE THE WATER THE CHART WAS READ OVER (planInsideChart, 2026-10-03): a route that runs past it is read over and
   // planned again, and the plan's own water - each survey's included ({plan: true}) - is read again after a wider extract.
-  const plan = await planInsideChart([{lat:asv.lat, lon:asv.lon}, ...wps], {plan: true},
-    () => routePlan({lat:asv.lat, lon:asv.lon}, wps, false, transitStandoffM(), surveyEntries(wps)), "Upload");
+  const plan = await planInsideChart([{lat:asv.lat, lon:asv.lon}, ...wps], {plan: true}, () => {
+    const start = {lat:asv.lat, lon:asv.lon}, std = transitStandoffM(), at = surveyEntries(wps);
+    return planOffThread({op: "route", args: {start, wps, keepRightAll: false, standoffM: std, transitAt: at}},   // the route worker
+                         () => routePlan(start, wps, false, std, at));
+  }, "Upload");
+  if(plan.withdrawn) return;          // a Stop pressed while it planned (planInsideChart says so); the finally puts the button back
   // ⚠ AND THE LEG INTO EACH LATER SURVEY IS A TRANSIT (sequenced surveys phase 2, 2026-10-02): routed as the approach
   // is - at the guard's standoff where the water allows, keeping right in a buoyed channel (Rule 9, Andy's call) -
   // where it used to keep the buffer and its straight track like a hop inside a pattern. A one-survey plan has no
@@ -17417,8 +17561,11 @@ async function continueSurvey(){
     const from = {lat: asv.lat, lon: asv.lon}, target = tail[0];
     showBanner("Routing to the survey… a long way round obstacles can take several seconds.");
     await ensureNogoCovers([from, target]);
-    const pin = await planInsideChart([from, target], undefined,
-      () => planNogoRoute(from, target, {...holdOpts(), standoffM: patClipBufM(), flyThrough: true}), "Continue");
+    const pin = await planInsideChart([from, target], undefined, () => {
+      const o = {...holdOpts(), standoffM: patClipBufM(), flyThrough: true};
+      return planOffThread({op: "nogo", args: {from, to: target, opts: o}}, () => planNogoRoute(from, target, o));   // the route worker
+    }, "Continue");
+    if(pin.withdrawn) return;            // a Stop pressed while it planned (planInsideChart says so); the break-off is kept
     takeDownBanner(/^Routing to the survey/);
     if(pin.error){
       showBanner("⚠ CANNOT CONTINUE " + label + " — " + (planWhy(pin) || pin.error) + ". Nothing was sent; the break-off is kept.");
@@ -17837,9 +17984,13 @@ async function resumeFromHere(ll){
     const ais = aisKoDrawn || [];
     const her = !ais.length ? null : aisHerPoly(ais, null, {lat: asv.lat, lon: asv.lon}, hit.to, std);
     const koIn = koRoundHer(ais, her, std);
-    return (her ? tautRoundHer(from, target, aisRoundKeepout(her, std, nogo.buffer || 0), koIn, std) : null)   // taut round her first
-        || planNogoRoute(from, target, {...holdOpts(), standoffM: patClipBufM(), ko: koIn, flyThrough: true});
+    const taut = her ? tautRoundHer(from, target, aisRoundKeepout(her, std, nogo.buffer || 0), koIn, std) : null;   // taut round her first
+    if(taut) return taut;
+    // ... else the router, in the route worker (planOffThread) with the contacts' model sent beside the chart's
+    const o = {...holdOpts(), standoffM: patClipBufM(), ko: koIn, flyThrough: true};
+    return planOffThread({op: "nogo", args: {from, to: target, opts: o}}, () => planNogoRoute(from, target, o));
   }, "Resume from here");
+  if(pin.withdrawn) return;            // a Stop pressed while it planned (planInsideChart says so)
   takeDownBanner(/^Routing to the point on line/);
   if(pin.error){
     showBanner('⚠ CANNOT RESUME FROM THERE ' + '—' + " " + pin.error + ". She is still paused; "
@@ -18109,12 +18260,14 @@ $("#b_pause").onclick = ()=>{
   // Recorded here rather than left silent, because this is the sixth control on this bar
   // and the next reader will ask the same question. See command_result 38.
   markPause();
+  routeStopPressed("PAUSE");                    // a plan still being searched is withdrawn (planInsideChart)
   cmd("/api/cmd/pause");
 };
 $("#b_stop").onclick = async ()=>{
   // See #b_hold: cleared only if still the value that was there when the button was pressed.
   const was = {gen: planGen, mark: pauseMark, slow: resumeSlow,
                throttle: escapeThrottle, commanded: commandedSpeed};
+  routeStopPressed("STOP");                     // a plan still being searched is withdrawn (planInsideChart)
   const r = await cmd("/api/cmd/stop");
   // ⚠ A RUN THE CONSOLE DID NOT STOP IS STILL A RUN. See #b_hold above: past this gate only.
   // ⚠⚠ AND `escapeThrottle` IS THE ONE THAT MATTERS HERE. A refused Stop during an
@@ -18850,6 +19003,7 @@ $("#b_hold").onclick = async ()=>{
   // make on a REFUSED Stop. Each field is cleared only if it is still the one that was there
   // when the operator pressed; anything a later command wrote, that command owns.
   const was = {gen: planGen, held: guardHeld};
+  routeStopPressed("HOLD");                     // a plan still being searched is withdrawn (planInsideChart)
   const r = await cmd("/api/cmd/hold", {hold_clear_m: holdClearAt(asv)});
   if(!took(r)){
     const say = notTookSay(r, "HOLD");
@@ -18883,6 +19037,7 @@ $("#b_estop").onclick = async ()=>{
   const on = !S.estop;
   if(on && !await guiConfirm("Latch the command E-STOP",
     "This halts commanding. For a real emergency use the RC transmitter E-stop / Sw A - that is the true failsafe.")) return;
+  if(on) routeStopPressed("E-STOP");            // a plan still being searched is withdrawn (planInsideChart)
   // ⚠⚠ THE ONE EXEMPTION FROM THE RULE ABOVE, AND IT ASKS THE ANSWER RATHER THAN ASSUMING.
   // Every other handler on this bar clears only once the command was TAKEN. A command
   // E-STOP is different: the console latches it whatever the vessel does - Engine.set_estop

@@ -338,14 +338,18 @@ check("5. holdClearM is the water round a point LESS the buffer: 12 m off the fa
               // posted through routeCmd since 2026-10-06 (the in-flight count the guard's look-ahead reads)
               && /routeCmd\("\/api\/cmd\/goto", \{lat:hp\.lat, lon:hp\.lon, route:plan\.route, hold_clear_m:plan\.holdClear,[\s\S]{0,120}?\}\)/.test(goTo)
               && !/\{lat:target\.lat, lon:target\.lon, route/.test(goTo)
-              && /planNogoRoute\([^;]*holdOpts\(\), standoffM: transitStandoffM\(\)\}\)/.test(goTo),   // the hold options plus the transit standoff (2026-09-26; the turn radius at the plan speed, 2026-10-06)
+              // the hold options plus the transit standoff (2026-09-26; the turn radius at the plan speed, 2026-10-06), to the
+              // route worker and to the page's own search beside it (2026-10-12, tests/route_worker.js)
+              && /const from = \{lat:asv\.lat,lon:asv\.lon\}, o = \{\.\.\.holdOpts\(\), standoffM: transitStandoffM\(\)\};/.test(goTo)
+              && /planOffThread\(\{op: "nogo", args: \{from, to: target, opts: o\}\}, \(\) => planNogoRoute\(from, target, o\)\)/.test(goTo),
         "a Go-To that names the pier as its target would hold ON the pier");
   // The #b_hold handler in full, so the check reads the property rather than a distance.
   const BH = PAGE.indexOf('$("#b_hold").onclick');
   const BHOLD_SRC = noComments(PAGE.slice(BH, PAGE.indexOf('$("#', BH + 10)));
   check("9b. ... and RTH, Transit, Hold and the guard's hold rung all send it too",
         () => /routeCmd\("\/api\/cmd\/rth", \{route:plan\.route, hold_clear_m:plan\.holdClear,[\s\S]{0,120}?\}\)/.test(rth)
-              && /holdTarget\(transit\[transit\.length-1\], holdOpts\(\)\)/.test(tran)
+              && /tgt = transit\[transit\.length-1\], o = holdOpts\(\)/.test(tran) && /ht = holdTarget\(tgt, o\);/.test(tran)
+              && /\{op: "holdRoute", args: \{target: tgt, holdOpts: o,/.test(tran)
               && /routeCmd\("\/api\/cmd\/transit", \{route: plan\.route, hold_clear_m: plan\.holdClear,[\s\S]{0,120}?\}\)/.test(tran)
               && /cmd\("\/api\/cmd\/hold", \{hold_clear_m: holdClearAt\(asv\)\}\)/.test(guard)
               // ⚠ THE WHOLE HANDLER, NOT A 300-CHARACTER WINDOW. #b_hold grew a comment

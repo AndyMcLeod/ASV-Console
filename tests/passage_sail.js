@@ -180,6 +180,9 @@ console.log("The passage, sailed:");
       // step 6: the water a section is planned at (stubbed here; 14 drives the real ones), and doRTH's way home
       "const sectionWater = async (P, from, pts, append) => { w.waterAsked.push({from, pts, append}); return w.level; };",
       "const atWaterLevel = (m, fn) => { w.levels.push(m); return fn(); };",
+      // THE ROUTE WORKER (2026-10-12) is not here: each search runs on this thread as it always did (tests/route_worker.js) - the
+      // section's model at its water handed to it (koAtLevel) and the search run here, in atWaterLevel, as it was
+      "const koAtLevel = (m) => ({atLevel: m}), planOffThread = async (job, here) => here();",
       "let rthChainFailed = false; const NOGO_RADIUS_M = 5000, homeSections = w.C.homeSections;",
       "const surveyBreakNow = () => w.brk || null, bankBreak = (b) => w.banked.push(b);",
       decl("RTH_MAX_M"),
@@ -610,7 +613,7 @@ console.log("The passage, sailed:");
       "const nogo = w.nogo, sea = {enc: {features: []}}, TIDE_REBUILD_M = 0.1, nogoDR = () => ({min: 3, max: 0});",
       "const buildKeepouts = (frame, enf, dr, feats, m) => { w.builds.push(m); return {builtAt: m, polys: [], lines: [], points: []}; };",
       "const foldChartInk = (ko) => { w.inked++; ko.inked = true; };",
-      grab("nogoModelAt"), grab("atWaterLevel"), "return atWaterLevel;"].join("\n");
+      grab("nogoModelAt"), grab("koAtLevel"), grab("atWaterLevel"), "return atWaterLevel;"].join("\n");
     return { w, at: new Function("w", src)(w) };
   };
   const LIVE = { live: true };
@@ -650,7 +653,10 @@ console.log("The passage, sailed:");
     plannedAt: W14.levels.length === 1 && W14.levels[0] === 0.35,
     kept: P14 && P14.sections[0].water_m === 0.35 && /^\+0\.35 m, the lowest predicted/.test(P14.sections[0].water),
     said: P14 && /planned at \+0\.35 m/.test(W14.api.sailLine(P14)),
-    wrapped: /planInsideChart\(\[from, \.\.\.pts\], \{route: true\}, \(\) => atWaterLevel\(lv\.m, \(\) => \{\s*\n\s*ht = holdTarget\(c\.to, holdOpts\(\)\);/.test(grab("sailSend")),
+    // (since 2026-10-12 in the route worker, on the chart at that level - koAtLevel - and on this thread, in atWaterLevel
+    // at it, if the worker cannot answer: tests/route_worker.js 6)
+    wrapped: /const o = holdOpts\(\), via = pts\.slice\(0, -1\), std = transitStandoffM\(\), koLv = koAtLevel\(lv\.m\);/.test(grab("sailSend"))
+             && /planOffThread\(\{op: "holdRoute", ko: koLv, args: \{target: c\.to, holdOpts: o, start: from, via, keepRightAll: true, standoffM: std\}\},\s*\n\s*\(\) => atWaterLevel\(lv\.m, \(\) => \{\s*\n\s*ht = holdTarget\(c\.to, o\);/.test(grab("sailSend")),
     // its chart read along it as a ROUTE, where the read can find something - and any wider read the planning makes
     routeInk: /await ensureNogoCovers\(\[from, \.\.\.pts\], null, \{route: true\}\);/.test(grab("sailSend")),
     oneWriter: (H.match(/sea\.waterOffset\s*=(?!=)/g) || []).length === 1,

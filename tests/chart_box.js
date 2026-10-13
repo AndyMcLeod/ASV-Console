@@ -241,9 +241,10 @@ const { distTo } = require("../static/js/geodesy.js");
 const passageReadCenters = eval("(" + grab("passageReadCenters") + ")");
 // eslint-disable-next-line no-eval
 const readPassageAis = eval("(" + grab("readPassageAis") + ")");
-// the busy report before each route search (2026-10-12): the console is not here - tests/supervisor_page.js
-const supervisorBusy = async () => {};
-let supPlanEnd = 0;
+// THE ROUTE WORKER (2026-10-12) is not here: each search runs on this thread as it always did (tests/route_worker.js); and no Stop
+// is pressed while one is searched (planInsideChart's withdrawal: tests/route_worker.js 12)
+const planOffThread = async (job, here) => here();
+let routeStopGen = 0, routeStopName = null;
 // eslint-disable-next-line no-eval
 const planInsideChart = eval("(" + grab("planInsideChart") + ")");
 const fresh = () => { banners = []; downs = []; covers = []; aisTaken = 0; coverAnswer = null; };
@@ -484,8 +485,11 @@ const fresh = () => { banners = []; downs = []; covers = []; aisTaken = 0; cover
   const body = (name) => grab(name);
   const go = body("doGoTo"), rth = body("doRTH"), tr = body("doTransit"), up = body("doUpload");
   check("6. Go-To and RTH plan through planInsideChart, each over its own boat-and-target points",
-        () => /const plan = await planInsideChart\(\[\{lat:asv\.lat,lon:asv\.lon\}, target\], undefined,\s*\(\) => planNogoRoute\(\{lat:asv\.lat,lon:asv\.lon\}, target,/.test(go)
-              && /const plan = await planInsideChart\(\[\{lat:asv\.lat,lon:asv\.lon\}, \{lat:S\.home\.lat,lon:S\.home\.lon\}\], undefined,(?:[^\n]*\n)?\s*\(\) => planNogoRoute\(\{lat:asv\.lat,lon:asv\.lon\}, \{lat:S\.home\.lat,lon:S\.home\.lon\},/.test(rth),
+        // (the search from her to the target in the route worker since 2026-10-12, and here beside it: tests/route_worker.js)
+        () => /const plan = await planInsideChart\(\[\{lat:asv\.lat,lon:asv\.lon\}, target\], undefined, \(\) => \{\s*\n\s*const from = \{lat:asv\.lat,lon:asv\.lon\}, o = /.test(go)
+              && /planOffThread\(\{op: "nogo", args: \{from, to: target, opts: o\}\}, \(\) => planNogoRoute\(from, target, o\)\)/.test(go)
+              && /const plan = await planInsideChart\(\[\{lat:asv\.lat,lon:asv\.lon\}, \{lat:S\.home\.lat,lon:S\.home\.lon\}\], undefined, \(\) => \{[^\n]*\n\s*const from = \{lat:asv\.lat,lon:asv\.lon\}, to = \{lat:S\.home\.lat,lon:S\.home\.lon\}, o = /.test(rth)
+              && /planOffThread\(\{op: "nogo", args: \{from, to, opts: o\}\}, \(\) => planNogoRoute\(from, to, o\)\)/.test(rth),
         "doGoTo / doRTH");
   check("6b. ... and say what to do about it: the uncharted refusal gets its own advice, not 'nearer open water'",
         () => /mode==="uncharted" \? unchartedTip\(plan\.uncharted, "Go-To a point part of the way there first\."\)/.test(go)
@@ -496,7 +500,8 @@ const fresh = () => { banners = []; downs = []; covers = []; aisTaken = 0; cover
   check("6c. the Transit works out its hold point INSIDE the plan (on the model the route is judged by), and refuses "
         + "an uncharted plan before it draws or posts anything",
         () => iTrPlan > 0 && iTrHt > iTrPlan && iTrUn > iTrPlan && iTrUn < iTrPost && iTrUn < iTrDraw
-              && /return routePlan\(\{lat:asv\.lat,lon:asv\.lon\}, line, true, transitStandoffM\(\)\);/.test(tr)
+              && /const from = \{lat:asv\.lat,lon:asv\.lon\}, tgt = transit\[transit\.length-1\], o = holdOpts\(\), via = transit\.slice\(0,-1\),\s*\n\s*std = transitStandoffM\(\);/.test(tr)
+              && /return routePlan\(from, line, true, std\);/.test(tr)
               && /if\(ht !== null && ht\.error\)\{/.test(tr),                   // null when refused before any planning (4h)
         "planInsideChart " + iTrPlan + ", holdTarget " + iTrHt + ", uncharted refusal " + iTrUn + ", post " + iTrPost + ", draw " + iTrDraw);
   const iUpPlan = up.indexOf("await planInsideChart("), iUpUn = up.indexOf("if(plan.uncharted){"),
@@ -521,7 +526,8 @@ const fresh = () => { banners = []; downs = []; covers = []; aisTaken = 0; cover
   check("6c2. a passage's section plans as the Transit does: inside planInsideChart, its hold point inside the plan, an "
         + "uncharted plan refused before it posts or draws anything",
         () => iSsPlan > 0 && iSsHt > iSsPlan && iSsUn > iSsPlan && iSsUn < iSsPost && iSsUn < iSsDraw
-              && /return routePlan\(from, \[\.\.\.pts\.slice\(0, -1\), ht\.to\], true, transitStandoffM\(\)\);/.test(ss),
+              && /const o = holdOpts\(\), via = pts\.slice\(0, -1\), std = transitStandoffM\(\), koLv = koAtLevel\(lv\.m\);/.test(ss)
+              && /return routePlan\(from, \[\.\.\.via, ht\.to\], true, std\);/.test(ss),
         "planInsideChart " + iSsPlan + ", holdTarget " + iSsHt + ", uncharted refusal " + iSsUn + ", post " + iSsPost + ", draw " + iSsDraw);
   const pv = fs.readFileSync(path.join(__dirname, "..", "static", "js", "passage.js"), "utf8").split("\r\n").join("\n");
   // (with the water no chart covers, nogo.unread, since 2026-10-11 - the layered chart; tests/unread_water.js)
@@ -549,7 +555,7 @@ const fresh = () => { banners = []; downs = []; covers = []; aisTaken = 0; cover
   let outM = 429;
   planNogoRoute = (from, to) => ({ error: "the route runs 429 m beyond the water the chart was read over",
                                    uncharted: { route: [at(0, 1000), { lat: to.lat, lon: to.lon }], outM } });
-  const est = transitEstCompute(A, [at(1000, 1000)], null);
+  const est = await transitEstCompute(A, [at(1000, 1000)], null);
   const row = transitRowHtml("Transit", est.transit, 2, "high", 0);
   check("7. the passive transit estimate reports a route past the chart as an ESTIMATE over water not yet read - its "
         + "length, and a note that the command reads it first - never as 'unroutable'",
@@ -558,12 +564,12 @@ const fresh = () => { banners = []; downs = []; covers = []; aisTaken = 0; cover
               && !/unroutable/.test(row),
         () => JSON.stringify(est.transit) + " -> " + row.replace(/<[^>]*>/g, ""));
   outM = 0;
-  const rowEdge = transitRowHtml("Transit", transitEstCompute(A, [at(1000, 1000)], null).transit, 2, "high", 0);
+  const rowEdge = transitRowHtml("Transit", (await transitEstCompute(A, [at(1000, 1000)], null)).transit, 2, "high", 0);
   check("7c. ... and one that only comes within the margin of the edge - never past it - says THAT, not 'not yet read'",
         () => /it runs near the edge of the water the chart was read over - the command reads it first/.test(rowEdge)
               && !/not yet read/.test(rowEdge),
         () => rowEdge.replace(/<[^>]*>/g, ""));
-  const estH = transitEstCompute(A, [at(1000, 1000)], at(0, 0));
+  const estH = await transitEstCompute(A, [at(1000, 1000)], at(0, 0));
   const rowH = transitRowHtml("RTH", estH.rth, 2, "high", 0);
   check("7e. ... and so does the RTH row (the plan's last waypoint home), not 'unroutable'",
         () => estH.rth && estH.rth.uncharted === true && Math.abs(estH.rth.m - 2000) < 1 && !estH.rth.err
@@ -616,7 +622,8 @@ const fresh = () => { banners = []; downs = []; covers = []; aisTaken = 0; cover
         + "model taken again INSIDE the plan - not the ones taken before a read that may have replaced the model",
         () => iCov > 0 && iPic > iCov
               && /const ais = aisKoDrawn \|\| \[\];/.test(closure) && /const koIn = koRoundHer\(ais, her, std\);/.test(closure)
-              && /planNogoRoute\(from, target, \{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\), ko: koIn, flyThrough: true\}\)/.test(closure),
+              && /const o = \{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\), ko: koIn, flyThrough: true\};/.test(closure)
+              && /planOffThread\(\{op: "nogo", args: \{from, to: target, opts: o\}\}, \(\) => planNogoRoute\(from, target, o\)\)/.test(closure),
         "resumeFromHere");
   const iConfirm = upl.indexOf('"Upload WITHOUT routing"'), iRaw = upl.indexOf("const raw = routePlan(");
   const between = iConfirm > 0 && iRaw > iConfirm ? upl.slice(iConfirm, iRaw) : "";

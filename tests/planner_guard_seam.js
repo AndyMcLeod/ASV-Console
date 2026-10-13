@@ -227,8 +227,12 @@ check("7. lines, leads and turns take the standoff; hops and transits try it fir
             // the drawn transit line, Go-To and RTH - carry transitStandoffM(): the guard's standoff or the turn
             // radius at the transit role's speed, whichever is larger (check 9); the coverage clip, the re-approach
             // and the way round a contact keep patClipBufM()
-            && (H.match(/routePlan\(\{lat:asv\.lat, lon:asv\.lon\}, wps, false, transitStandoffM\(\)(?:, surveyEntries\(wps\))?\)/g) || []).length === 2
-            && /routePlan\(\{lat:asv\.lat,lon:asv\.lon\}, line, true, transitStandoffM\(\)\)/.test(H)
+            // (the Upload's and the transit line's name it `std` since 2026-10-12: the same standoff to the route worker
+            // and to the page's own search beside it - tests/route_worker.js)
+            && /routePlan\(\{lat:asv\.lat, lon:asv\.lon\}, wps, false, transitStandoffM\(\)\)/.test(H)
+            && /const start = \{lat:asv\.lat, lon:asv\.lon\}, std = transitStandoffM\(\), at = surveyEntries\(wps\);/.test(H)
+            && /routePlan\(start, wps, false, std, at\)/.test(H)
+            && /std = transitStandoffM\(\);[\s\S]{0,700}?return routePlan\(from, line, true, std\);/.test(H)
             && (H.match(/\{\.\.\.holdOpts\(\), standoffM: transitStandoffM\(\)\}/g) || []).length === 2
             && !/routePlan\([^)]*patClipBufM\(\)/.test(H) && !/\{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\)\}/.test(H)
             // the SEVENTH (2026-09-29): the routed re-approach onto station hands the router the charted model PLUS

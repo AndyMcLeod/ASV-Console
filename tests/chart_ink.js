@@ -918,7 +918,7 @@ check("20e. ... and a SMALL comb is not a footprint either — a keep-out area h
                 && /await scanChartInk\(bb\);\s*await inkYield\(\);/.test(ens)
                 // (the routing goes through planInsideChart since 2026-10-03 - read the chart over a route that runs
                 // past it and plan again - and the yield must still stand between the read and the FIRST routing)
-                && /await ensureNogoCovers\(\[\{lat:asv\.lat, lon:asv\.lon\}, \.\.\.wps\], null, \{plan: true\}\);[\s\S]{0,400}?await inkYield\(\);[\s\S]{0,500}?const plan = await planInsideChart\(\[\{lat:asv\.lat, lon:asv\.lon\}, \.\.\.wps\], \{plan: true\},\s*\(\) => routePlan\(/.test(up),
+                && /await ensureNogoCovers\(\[\{lat:asv\.lat, lon:asv\.lon\}, \.\.\.wps\], null, \{plan: true\}\);[\s\S]{0,400}?await inkYield\(\);[\s\S]{0,500}?const plan = await planInsideChart\(\[\{lat:asv\.lat, lon:asv\.lon\}, \.\.\.wps\], \{plan: true\}, \(\) => \{\s*\n\s*const start = /.test(up),
           "scanChartInk, ensureChartInk and doUpload in static/asv.html");
   }
 

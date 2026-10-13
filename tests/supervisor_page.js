@@ -404,14 +404,29 @@ check("9b. A GAP THAT ENDS AS A ROUTE SEARCH ENDS is the search, not sleep: no '
       () => !W9b.banners.some((b) => /ASLEEP/.test(b)) && planGap.length === 1 && planGap[0].data.planning === true
             && W9s.banners.some((b) => /THIS TAB WAS ASLEEP for 18 s/.test(b)),
       () => JSON.stringify(planGap) + "; without a plan: " + (W9s.banners.find((b) => /ASLEEP/.test(b)) || "no banner").slice(0, 40));
-// 9c. the wiring: each route search in planInsideChart is preceded by the report and followed by the stamp
-const pic = grab("planInsideChart");
-const before9 = (pic.match(/await supervisorBusy\(\);[^\n]*\n\s*(let )?p = plan\(\)/g) || []).length;
-const after9 = (pic.match(/p = plan\(\)[^\n]*\n\s*supPlanEnd = Date\.now\(\);/g) || []).length;
-check("9c. THE WIRING: both route searches in planInsideChart - the first and the one after a wider chart read - are "
-      + "preceded by the busy report and followed by the stamp",
-      () => before9 === 2 && after9 === 2 && (pic.match(/plan\(\)/g) || []).length === 2,
-      () => "busy before " + before9 + " of 2, stamp after " + after9 + " of 2");
+// 9c. THE WIRING (2026-10-12, the route worker): a route search now runs in the route worker and holds nothing here, so
+// the busy report rides the search that DOES hold this thread - planHere, the worker's fallback (tests/route_worker.js 9)
+// - before it, with the stamp after it, a search that throws included; and planInsideChart no longer reports for one.
+(async () => {
+  const order = [];
+  // eslint-disable-next-line no-new-func
+  const PH = new Function("order", "Date", "let supPlanEnd = 0; const supervisorBusy = async () => { order.push('busy'); };\n"
+    + grab("planHere") + "\nreturn { planHere, end: () => supPlanEnd };")(order, { now: () => 4242 });
+  const got = await PH.planHere(() => { order.push("search"); return "planned"; });
+  const end1 = PH.end();
+  let threw = false;
+  // eslint-disable-next-line no-new-func
+  const PH2 = new Function("order", "Date", "let supPlanEnd = 0; const supervisorBusy = async () => { order.push('busy2'); };\n"
+    + grab("planHere") + "\nreturn { planHere, end: () => supPlanEnd };")(order, { now: () => 4343 });
+  try { await PH2.planHere(() => { order.push("throws"); throw new Error("x"); }); } catch (e) { threw = true; }
+  const pic = grab("planInsideChart");
+  check("9c. THE WIRING: a route search on this page's thread (planHere - the route worker's fallback) is preceded by the "
+        + "busy report and followed by the stamp, a search that throws too; and planInsideChart reports for none, its "
+        + "searches being the caller's (the route worker, tests/route_worker.js)",
+        () => got === "planned" && order.join(",") === "busy,search,busy2,throws" && end1 === 4242 && threw && PH2.end() === 4343
+              && !/supervisorBusy/.test(pic) && (pic.match(/await plan\(\)/g) || []).length === 2,
+        () => "order " + order.join(",") + "; stamps " + end1 + "/" + PH2.end() + "; threw " + threw);
 
-console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
-process.exit(fails ? 1 : 0);
+  console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
+  process.exit(fails ? 1 : 0);
+})();
