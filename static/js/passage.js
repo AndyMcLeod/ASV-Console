@@ -210,6 +210,14 @@ export function laneHow(how){
   }
   return parts;
 }
+/** The offshore marks a plan kept her off the dangers of (routing.js offshoreDangerSide, 2026-10-12), and any it did not -
+ *  said whether or not a lane was ridden, since an offshore mark is no Rule 9 claim: "" when there were none. */
+export function offshoreNote(how){
+  const mk = how && how.marks, kept = (mk && mk.offshore) || 0, wrong = (mk && mk.offshoreWrong) || 0;
+  const n = (k) => k + " offshore mark" + (k === 1 ? "" : "s");
+  return [kept ? n(kept) + " kept between her and " + (kept === 1 ? "its danger" : "their dangers") : "",
+          wrong ? n(wrong) + " NOT kept between her and " + (wrong === 1 ? "its danger" : "their dangers") : ""].filter(Boolean).join(" - ");
+}
 export function buoyageNote(lane, partial, how){
   // Go-To / RTH / Transit ride the CHANNEL LANE: offset to starboard of the buoy-pair
   // centerline, so the centerline stays to port and the starboard-hand marks to

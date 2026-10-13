@@ -165,6 +165,8 @@ const HELPERS = ["bandIndex", "indexFor", "ringIndexed", "ringInside", "ringDist
                  "tangentsEN", "slewField", "median", "chartOwnership", "chartedChannelLane",
                  "chartedRide", "cumEN", "projectEN",
                  "runPast", "uniqueMarks", "markPassRoute", "marksKept", "markVerdicts", "tallyMarks", "markCounted",
+                 // AN OFFSHORE MARK (2026-10-12): kept between her and the danger it marks - the side read off the chart
+                 "offshoreDangerSide",
                  // THE BUOYED REACH (2026-10-05): one more lane stage, and the splice it shares with the chart's.
                  "spliceShifted", "buoyedReachLane", "newLaneTurn",
                  "buoyChannelLane", "narrowChannelLane", "channelLaneRoute"];
@@ -172,10 +174,11 @@ const HELPERS = ["bandIndex", "indexFor", "ringIndexed", "ringInside", "ringDist
 const LANE_DECLS = ["chartRings", "CHART_MARCH_MAX_M", "CHART_BRIDGE_REACH_M", "CHART_ALONG_RATIO",
                     "LANE_SLEW", "CHART_INTERP_M", "CHART_GAP_M", "CHART_OPENING_M", "CHART_OPENING_FRAC",
                     "CHART_EDGE_WINDOW_M", "CHART_OPEN_PARALLEL_COS", "CHART_BASE_ROUND_M", "CHART_TAN_M", "CHART_END_SLIVER", "CHART_CONE_REACH_M", "CHART_CONE_STRAIGHT_COS",
-                    "MARK_REACH_M", "MARK_NEIGHBOR_M", "MARK_ROUTE_NEIGHBOR_M", "MARK_STEP_MAX",
+                    "MARK_REACH_M", "MARK_NEIGHBOR_M", "MARK_ROUTE_NEIGHBOR_M", "MARK_SINGLE_NEIGHBOR_M", "MARK_STEP_MAX",
                     "MARK_ALONG_COS", "MARK_COURSE_COS", "MARK_COURSE_LOOK_M",
                     "MARK_STAGE_LEGS", "MARK_STAGE_ROUNDS", "MARK_CLEAR_SEARCH_M", "GATE_PATCH_RATIO", "GATE_PATCH_SLACK_M", "END_CLEAR_M",
                     "MARK_PORT_BERTH", "MARK_PASS_M", "MARK_RUN_TURN_DEG", "MARK_JOIN_MAX_DEG", "MARK_TRACK_COS", "MARK_GATE_M", "MARK_BESIDE_RATIO",
+                    "OFFSHORE_DANGER_M", "OFFSHORE_BEAM_DEG", "OFFSHORE_SIDE_RATIO",
                     "REACH_EDGE_M", "REACH_MAX_WIDTH_M", "REACH_MIN_M", "REACH_ANCHOR_GAP", "REACH_HOLD_ROUNDS", "ROCK_MAX_M", "ROCK_MARKED_M", "ROCK_CLASSES", "ROCK_ROUNDS", "NEW_TURN_NEAR_M", "REACH_STRAIGHT_COS", "REACH_RUN_COS", "RESTRICTED_LOCAL_M2",
                     "markName"];
 const M_PER_DEG_LAT = 111320.0;
@@ -223,9 +226,12 @@ eval("const M_PER_DEG_LAT=" + M_PER_DEG_LAT + ";\n" +
      "function __narrowMax(){ return NARROW_MAX_M; }\n" +
      // Same reason, same shape: the lane's capture standoff (2026-09-01). Reading it
      // directly from module scope is exactly how the checks below first crashed.
-     "function __laneStandoff(b){ return LANE_CAPTURE_STANDOFF_M(b); }");
+     "function __laneStandoff(b){ return LANE_CAPTURE_STANDOFF_M(b); }\n" +
+     // ... and the marks' pass distance (2026-10-12, the offshore mark's berth check in 5b)
+     "function __markPass(b, s){ return MARK_PASS_M(b, s); }");
 const NARROW_MAX_M = __narrowMax();
 const LANE_CAPTURE_STANDOFF_M = __laneStandoff;
+const MARK_PASS_M = __markPass;
 
 // --- synthetic world ------------------------------------------------------- //
 // A FRAME, not a bare point. The clearance bodies grabbed into the eval scope above are
@@ -399,19 +405,28 @@ for (const [tag, dir, base] of [
 // single buoy on the other, counting the buoy as a channel edge shoved the track TOWARD
 // the wall and jogged it back once the buoy passed astern — seen live as a loop by the
 // breakwater on an RTH. The track must stay exactly as it is with no buoy present.
+// ⚠ AND SINCE 2026-10-12 A LONE BUOY IS AN OFFSHORE MARK (Andy: "offshore buoys ... are meant to guide vessels away from
+// danger rather than route them down a constrained path"; routing.js offshoreDangerSide): kept BETWEEN her and the danger
+// it marks. With the breakwater the nearest danger beside it she passes on its far side - away from the wall, never toward
+// it (the fault this check was written for); with a rock just beyond it the buoy marks the rock, and she stays put.
 {
   const wall = [{ e: 40, n: -500 }, { e: 400, n: -500 }, { e: 400, n: 1500 }, { e: 40, n: 1500 }];
-  const world = (withBuoy) => ({
+  const world = (withBuoy, rock) => ({
     polys: [{ ring: wall, bb: bbOf(wall), kind: "land" }], lines: [],
-    points: withBuoy ? [{ e: -15, n: 500, kind: "a channel buoy" }] : [],
+    points: (withBuoy ? [{ e: -15, n: 500, kind: "a channel buoy" }] : []).concat(rock ? [{ e: -35, n: 500, r: 2, kind: "a charted hazard" }] : []),
     marks: withBuoy ? [{ e: -15, n: 500, side: -1, num: 7, sys: "X" }] : [], sys: [] });
   const at = (w) => { const t = runLane(w, [{ e: 0, n: 0 }, { e: 0, n: 1000 }]);
     return [420, 500, 580].map((n) => eAtN(t, n)); };
-  const noBuoy = at(world(false)), withBuoy = at(world(true));
-  check("a lone buoy abeam is NOT treated as a channel wall (no jog toward the wall)",
-        withBuoy.every((e, i) => e != null && noBuoy[i] != null && Math.abs(e - noBuoy[i]) < 1.5),
-        "with buoy e=" + withBuoy.map((e) => e == null ? "null" : e.toFixed(1)).join(",") +
-        "  vs no buoy e=" + noBuoy.map((e) => e == null ? "null" : e.toFixed(1)).join(","));
+  const noBuoy = at(world(false)), withBuoy = at(world(true)), rockBeyond = at(world(true, true)), rockOnly = at(world(false, true));
+  const fmt = (es) => es.map((e) => e == null ? "null" : e.toFixed(1)).join(",");
+  check("a lone buoy abeam is NOT treated as a channel wall: no jog toward the wall - and, an OFFSHORE mark with the "
+        + "breakwater the danger beside it, she passes it on its far side, its berth off it",
+        withBuoy.every((e, i) => e != null && noBuoy[i] != null && e <= noBuoy[i] + 1.5)
+          && withBuoy[1] <= -15 - MARK_PASS_M(6, 0),
+        "with buoy e=" + fmt(withBuoy) + "  vs no buoy e=" + fmt(noBuoy) + " (the buoy at e=-15, the wall at e=40)");
+  check("... and with the danger it marks BEYOND it from her (a rock 20 m west of it), her track is exactly as with no buoy",
+        rockBeyond.every((e, i) => e != null && rockOnly[i] != null && Math.abs(e - rockOnly[i]) < 1.5),
+        "with buoy and rock e=" + fmt(rockBeyond) + "  vs the rock alone e=" + fmt(rockOnly));
 }
 
 // 6. NO-OP in OPEN WATER: with no buoys and no confining edges, a plain Go-To must not

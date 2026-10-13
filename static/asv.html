@@ -1012,7 +1012,7 @@ import { easeOffered } from "/static/js/turns.js";
 import { MAX_HALF_M, SKEW_LIMIT_DEG, arcPts, cornerSlowPlan, minTurnRadiusM, shortenSeg,
          teardropTurn, turnWithRetry, joinBreaches, SPEED_CMD_LATENCY_S } from "/static/js/turns.js";
 import { CHART_EDGE_M, LANE_FRAC, SEG_LEN_M, beyondChart, beyondChartSay, buoyChannelLane, buoyageNote, channelLaneRoute,
-         channelSpanKeepouts, channelTurnKeepouts, dilateGrid, gateLegClear,
+         channelSpanKeepouts, channelTurnKeepouts, dilateGrid, gateLegClear, offshoreNote,
          holdTarget, junctionKnot, legPath, narrowChannelLane, planNogoRoute, pruneJunctionKnots,
          pruneStitch, rasterKeepouts, regionOrder,
          routeAround, routeAroundSeg, routePlan, smoothTrack, stampSeg } from "/static/js/passage.js";
@@ -1953,6 +1953,18 @@ function holdClearWithContacts(ll, charted){
 // Hold that did not find it may not throw it away. "A new commanded motion is a new
 // decision" is this function's own first sentence.
 let planGen = 0;
+/** The Intent card's lines for a plan's OFFSHORE MARKS (2026-10-12, routing.js offshoreDangerSide): those kept between her
+ *  and the danger each marks, and a warning for any that were NOT - asked of every plan, laned or not. */
+function offshoreWhy(plan){
+  const mk = plan && plan.how && plan.how.marks, out = [];
+  if(mk && mk.offshore)
+    out.push({t:"lane", s:"kept off the dangers of " + mk.offshore + " offshore mark" + (mk.offshore === 1 ? "" : "s")
+                        + " - each mark kept between her and the danger beside it, given a berth, never followed as a channel"});
+  if(mk && mk.offshoreWrong)
+    out.push({t:"warn", s:mk.offshoreWrong + " offshore mark" + (mk.offshoreWrong === 1 ? "" : "s")
+                        + " NOT kept between her and the danger beside it - check the route against the chart"});
+  return out;
+}
 function setPlanIntent(kind, plan, route){
   planGen++;
   // ⚠ A NEW COMMANDED MOTION IS A NEW DECISION. The operator's "proceed" was about one
@@ -2017,6 +2029,9 @@ function setPlanIntent(kind, plan, route){
     if(gaps)
       w.push({t:"warn", s:"Rule 9 lane ridden, but PARTIAL - some of this route is not laned (a second channel, or a stretch handed back to the router)"});
   }
+  // OFFSHORE MARKS (2026-10-12, routing.js offshoreDangerSide): kept between her and the danger each marks - no Rule 9 claim,
+  // so said whether or not a lane was ridden; and one NOT so kept is a warning, lane or no lane (offshoreWhy).
+  w.push(...offshoreWhy(plan));
   const un = (plan.unroutable||[]).length;
   if(un){ planIntent.unsafe = un;
     w.push({t:"bad", s:un + " leg(s) had NO clear detour and are flagged red - they are not safe to run"}); }
@@ -10627,7 +10642,7 @@ async function doGoTo(target){
   plan.coast = gCoast;
   runRoute = plan.route; runUnsafe = []; setPlanIntent("goto", plan, plan.route); updateMissionCard();   // draw the transit line + waypoints like a survey
   legStartsHere(0, r);                           // her first leg begins where she is (SimVcu.start), not at a waypoint
-  const note = [buoyageNote(plan.lane, plan.partial, plan.how), mooredNote(plan)].filter(Boolean).join(" \u00b7 ");   // this plan's lane, not the last plan's
+  const note = [buoyageNote(plan.lane, plan.partial, plan.how), offshoreNote(plan.how), mooredNote(plan)].filter(Boolean).join(" \u00b7 ");   // this plan's lane, not the last plan's
   if(plan.heldOff) showBanner("Go-To: "+heldOffWhy(plan.heldOff)+" — holding "+fmtDist(plan.heldOff.m)
     +" off it, at the nearest clear water"+(plan.routed?(", routed via "+plan.route.length+" waypoints"):"")+(note?" · "+note:"")+".");
   else if(plan.routed || note || plan.insideStandoff) showBanner("Go-To: "+(plan.routed?("routed around nogo zone(s) via "+plan.route.length+" waypoints"):"direct")+(note?" \u00b7 "+note:"")+(plan.insideStandoff?" ⚠ inside the "+(+plan.standoffM).toFixed(1)+" m transit standoff (no route at that clearance) — expect the guard to slow or hold her there":"")+".");
@@ -10798,7 +10813,7 @@ async function doRTH(opts){
   plan.coast = rCoast;
   runRoute = plan.route; runUnsafe = []; setPlanIntent("rth", plan, plan.route); updateMissionCard();   // draw the transit line + waypoints like a survey
   legStartsHere(0, r);                           // see doGoTo
-  const note = [buoyageNote(plan.lane, plan.partial, plan.how), mooredNote(plan)].filter(Boolean).join(" \u00b7 ");   // this plan's lane, not the last plan's
+  const note = [buoyageNote(plan.lane, plan.partial, plan.how), offshoreNote(plan.how), mooredNote(plan)].filter(Boolean).join(" \u00b7 ");   // this plan's lane, not the last plan's
   if(plan.heldOff) showBanner(why+"RTH: Home "+heldOffWhy(plan.heldOff)+" — holding "+fmtDist(plan.heldOff.m)
     +" off it, at the nearest clear water"+(plan.routed?(", routed via "+plan.route.length+" waypoints"):"")+(note?" · "+note:"")+".");
   else if(plan.routed || note || plan.insideStandoff) showBanner(why+"RTH: "+(plan.routed?("routed around nogo zone(s) via "+plan.route.length+" waypoints"):"direct")+(note?" \u00b7 "+note:"")+(plan.insideStandoff?" ⚠ inside the "+(+plan.standoffM).toFixed(1)+" m transit standoff (no route at that clearance) — expect the guard to slow or hold her there":"")+".");
@@ -11932,7 +11947,7 @@ async function doTransit(){
   legStartsHere(0, r);                           // see doGoTo
   if(plan.heldOff) showBanner("Transit: the last point "+heldOffWhy(plan.heldOff)+" — holding "+fmtDist(plan.heldOff.m)+" off it, in water a boat can sit in.");
   const added = plan.route.length - transit.length;
-  const note = [buoyageNote(plan.lane, plan.partial, plan.how), mooredNote(plan)].filter(Boolean).join(" \u00b7 ");   // accumulated over every leg of THIS plan
+  const note = [buoyageNote(plan.lane, plan.partial, plan.how), offshoreNote(plan.how), mooredNote(plan)].filter(Boolean).join(" \u00b7 ");   // accumulated over every leg of THIS plan
   if(added>0 || note) showBanner("Transit: "+(added>0?("routed clear of ENC obstacles ("+added+" detour waypoint(s) added)"):"clear")+(note?" \u00b7 "+note:"")+".");
   setMode("pan"); render();
 }

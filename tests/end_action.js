@@ -322,7 +322,8 @@ check("16. ... and a stopped boat does not re-arm anything either",
 {
   // setPlanIntent counts the drawn picture's GENERATION (2026-09-22), so a command-bar
   // handler can tell "the plan I found" from "a plan commanded while I was in flight".
-  eval(grabDecl("planGen") + "\n" + grab("setPlanIntent") + "\n" + grab("wptRole"));
+  // (setPlanIntent asks offshoreWhy for the Intent card's offshore lines, 2026-10-12 - tests/offshore_marks.js 8)
+  eval(grabDecl("planGen") + "\n" + grab("offshoreWhy") + "\n" + grab("setPlanIntent") + "\n" + grab("wptRole"));
   var planIntent = null;
   // (HOW SHE ARRIVES is arrivalSay's line, 2026-10-08 - it reads the vessel's speeds and laws, none of which this
   // world has; these checks are about the routing lines, and say nothing of the arrival)

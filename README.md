@@ -2982,6 +2982,20 @@ of the operator.
    onto a line and the way back onto station are a few hundred meters of avoidance,
    not a passage up a channel: no chart lane, no marks.
 
+   **Offshore marks are kept off their dangers, not followed (2026-10-12).** A
+   lateral mark whose direction of buoyage cannot be read, with no channel about it, is
+   an **offshore mark**: it guides a vessel away from the danger beside it rather than
+   down a constrained path. The route keeps each one **between her and the charted
+   danger beside it** (a rock, a shoal below her floor, land), on whichever hand that
+   puts it, with a mark's berth and never close; it is no channel's edge and makes no
+   buoyed reach. A mark of another name more than 1.5 km along her route no longer gives
+   a single its direction, since singles that far apart are each numbered for their own
+   danger. On a Go-To past Thacher Island off Rockport the route had run 90 m outside
+   Oak Rock Buoy 2 and Thacher Island Buoy 1; it now passes between them, with Oak Rock 2
+   its berth to starboard. The banner and the Intent card count offshore marks apart
+   from the Rule 9 marks ("2 offshore marks kept between her and their dangers"), and
+   one NOT so kept is always said (`tests/offshore_marks.js`).
+
    > **History.** This replaced two earlier designs that both rode the *wrong side of
    > the buoys* on the water: a color buoy lane that inferred direction from IALA
    > numbering, and a geometric keep-right that measured its offset by probing for the

@@ -1766,6 +1766,17 @@ export const MARK_NEIGHBOR_M = 1500;
  * (the vote's 2.5 km window never read them).
  */
 export const MARK_ROUTE_NEIGHBOR_M = 4000;
+/**
+ * ... BUT A SINGLE - the only mark of its name - is read from a single of ANOTHER name no further along her route than
+ * this, in meters (2026-10-12). Off Cape Ann on his Go-To, Thacher Island Buoy 1 took a direction from Avery Ledge Lighted
+ * Buoy 2, 3.2 km back: read as one channel, the green was to be kept to starboard - passed close on its EAST side, toward
+ * the island's shoal water it marks - and Oak Rock Buoy 2 beside it, then in "a channel", was left alone and crossed. Andy:
+ * "offshore buoys are to be handled differently than channel buoys. They are meant to guide vessels away from danger rather
+ * than route them down a constrained path" - singles that far apart are each numbered for their own danger, and are kept
+ * off it as offshore marks (OFFSHORE_DANGER_M). A buoyed channel of singles - Hen Island Ledge 1, Eight-Foot Rock 2, Fox
+ * Point Rock 3, The Rocks 4 into Little Bay - has its marks a few hundred meters apart and reads as before.
+ */
+export const MARK_SINGLE_NEIGHBOR_M = 1500;
 
 /** Numbers this close are one channel's count; a bigger step is another's. */
 export const MARK_STEP_MAX = 6;
@@ -1833,6 +1844,68 @@ export const MARK_GATE_M = 400;
 /** A pass run laid along the channel's course is tried along her own track as well where
  *  the two differ by more than this (see markPassRoute's two ways past a mark). */
 export const MARK_TRACK_COS = Math.cos(10 * Math.PI / 180);
+
+// ── OFFSHORE MARKS (2026-10-12) ──────────────────────────────────────────────────────────────
+// Andy, on his Go-To past Thacher Island: "Path planning should have run the ASV between these buoys ... and especially
+// not over the shallow spot", and then: "offshore buoys are to be handled differently than channel buoys. They are meant
+// to guide vessels away from danger rather than route them down a constrained path". Oak Rock Buoy 2 (red) and Thacher
+// Island Buoy 1 (green), 335 m apart, each the only mark of its name: the stage could read no direction of buoyage for
+// either, left both alone, and her route ran 90 m west of Oak Rock 2 - outside the pair, over 5.4-9.1 m water with Oak
+// Rock (1.8 m) 158 m off. An OFFSHORE mark is such a mark: no channel of its own name runs past it to say which way the
+// buoyage goes. It is not a lane's edge and she is not brought to it; it stands by a danger, and the danger is what she
+// keeps off: the mark is kept BETWEEN her and the charted danger beside it, on whichever hand that puts it. Oak Rock's rock
+// lies 59 m west of its buoy, Thacher Island's shoal water 169 m east of its buoy, so a vessel bound south passes between.
+
+/** How far from an offshore mark the danger it marks is looked for, in meters. */
+export const OFFSHORE_DANGER_M = 400;
+/** Only a danger within this many degrees of her beam at the mark says which side it is on: one dead ahead of the mark,
+ *  or astern of it, says nothing (Thacher Island Buoy 1's NEAREST danger lies 12 degrees off dead ahead of a vessel bound
+ *  south; the island's water abeam of it is what it marks). */
+export const OFFSHORE_BEAM_DEG = 70;
+/** ... and the nearer side's danger must stand no further off than this fraction of the farther side's: where dangers lie
+ *  about as near on both sides the mark does not say which it marks, and is left alone. */
+export const OFFSHORE_SIDE_RATIO = 0.6;
+
+/**
+ * Which side of her an offshore mark's danger lies on, as she passes it heading `t` (a unit [e, n]): +1 to starboard,
+ * -1 to port, 0 where it does not say. Every keep-out of `ko` but the buoys' own points, within OFFSHORE_DANGER_M of the
+ * mark, by its nearest point to the mark (a point hazard less its radius); only those within OFFSHORE_BEAM_DEG of her beam
+ * count, and the nearest on each side is compared. Returns {side, stbdM, portM} (Infinity: none that side).
+ */
+export function offshoreDangerSide(m, t, ko) {
+  const sb = [t[1], -t[0]], tanB = Math.tan(OFFSHORE_BEAM_DEG * Math.PI / 180), R = OFFSHORE_DANGER_M;
+  let stbdM = Infinity, portM = Infinity;
+  const take = (c, d) => {
+    if (!(d <= R)) return;
+    const ve = c.e - m.e, vn = c.n - m.n, lat = ve * sb[0] + vn * sb[1], alg = ve * t[0] + vn * t[1];
+    if (Math.abs(alg) > Math.abs(lat) * tanB) return;                    // ahead of the mark or astern of it
+    if (lat > 0) stbdM = Math.min(stbdM, d); else portM = Math.min(portM, d);
+  };
+  const seg = (a, b) => {
+    const dx = b.e - a.e, dy = b.n - a.n, l2 = dx * dx + dy * dy || 1;
+    const u = Math.max(0, Math.min(1, ((m.e - a.e) * dx + (m.n - a.n) * dy) / l2));
+    const c = { e: a.e + u * dx, n: a.n + u * dy };
+    take(c, Math.hypot(c.e - m.e, c.n - m.n));
+  };
+  const nearBB = (bb) => !bb || (m.e >= bb.x0 - R && m.e <= bb.x1 + R && m.n >= bb.y0 - R && m.n <= bb.y1 + R);
+  // (a vessel's hull - one not under way that a passage is laid round, or a contact's - is no danger a buoy marks)
+  const vessel = (q) => q.moored || /^AIS/.test(q.kind || '');
+  for (const p of (ko && ko.polys) || []) {
+    if (vessel(p) || !nearBB(p.bb)) continue;
+    for (let i = 0; i < p.ring.length; i++) seg(p.ring[i], p.ring[(i + 1) % p.ring.length]);
+  }
+  for (const l of (ko && ko.lines) || []) {
+    if (!nearBB(l.bb)) continue;
+    for (let i = 1; i < l.pts.length; i++) seg(l.pts[i - 1], l.pts[i]);
+  }
+  for (const q of (ko && ko.points) || []) {
+    if (q.kind === 'a channel buoy' || vessel(q)) continue;              // the marks themselves are not what they mark
+    take(q, Math.max(0, Math.hypot(q.e - m.e, q.n - m.n) - (q.r || 0)));
+  }
+  const near = Math.min(stbdM, portM), far = Math.max(stbdM, portM);
+  const side = near === Infinity || near > OFFSHORE_SIDE_RATIO * far ? 0 : (stbdM < portM ? 1 : -1);
+  return { side, stbdM, portM };
+}
 
 /**
  * THE RUN PAST A MARK: straight water into it along the channel's course, round on an arc
@@ -2077,10 +2150,13 @@ export function markPassRoute(pathLL, frame, ko, buf, opts = {}) {
     const own = kin(k);
     const pool = own.length ? near.filter((j) => own.includes(j.m))
       : near.filter((j) => !gatePartner(k, j.m) && continues(k, j.m));
+    // ⚠ A SINGLE SPEAKS FOR A SINGLE OF ANOTHER NAME ONLY NEARBY (2026-10-12, MARK_SINGLE_NEIGHBOR_M): its own name's marks
+    // as far as MARK_ROUTE_NEIGHBOR_M, as before.
+    const reachOf = own.length ? MARK_ROUTE_NEIGHBOR_M : MARK_SINGLE_NEIGHBOR_M;
     for (const j of pool) {
       if (j === k || j.m.num == null || j.m.junction) continue;
       const dn = j.m.num - k.m.num, ds = j.s - k.s;
-      if (!dn || Math.abs(dn) > MARK_STEP_MAX || Math.abs(ds) < 30 || Math.abs(ds) > MARK_ROUTE_NEIGHBOR_M) continue;
+      if (!dn || Math.abs(dn) > MARK_STEP_MAX || Math.abs(ds) < 30 || Math.abs(ds) > reachOf) continue;
       const line = ds > 0 ? unit(k.m, j.m) : unit(j.m, k.m), trk = ds > 0 ? unit(atS(k.s), atS(j.s)) : unit(atS(j.s), atS(k.s));
       if (!line || !trk) continue;
       // along her route in BOTH senses: in the plane, and in her own stations (a pair 34 m
@@ -2158,11 +2234,15 @@ export function markPassRoute(pathLL, frame, ko, buf, opts = {}) {
       if (blocked({ e: here.e + ux * d, n: here.n + uy * d }, koLand, 0)) open = false;
     }
     if (!open) { why('land between'); continue; }
-    if (k.m.num == null) { why('direction of buoyage not known'); continue; }
+    // ⚠⚠ A MARK WITH NO DIRECTION OF BUOYAGE MAY BE AN OFFSHORE MARK (2026-10-12; see OFFSHORE_DANGER_M) - decided once
+    // every mark has been read, below (`offshoreMarks`): one in a channel whose other marks give its direction is no
+    // offshore mark, however it is named or numbered.
+    const unknown = () => { if (laned) why('ridden as a pair'); else gov.push({ ...k, skip: 'direction of buoyage not known', undirected: true }); };
+    if (k.m.num == null) { unknown(); continue; }
     const nb = neighbors(k);
     if (nb.crosses) { why('its own channel crosses her route'); continue; }
     const dirs = [nb.behind, nb.ahead].filter(Boolean).map((r) => r.dir);
-    if (!dirs.length) { why('direction of buoyage not known'); continue; }
+    if (!dirs.length) { unknown(); continue; }
     if (dirs.length === 2 && dirs[0] !== dirs[1]) { why('the numbers either side of it disagree'); continue; }
     const dir = dirs[0];
     // the channel's course past it, as SHE runs it: from the mark behind, to the mark ahead
@@ -2183,6 +2263,24 @@ export function markPassRoute(pathLL, frame, ko, buf, opts = {}) {
     if (!laned && offChannel(k, dir, true)) { left('she joins its channel beyond it'); continue; }
     if (laned && onHand) { left('ridden as a pair'); continue; }
     gov.push({ ...k, dir, uIn, uOut, keepStbd, pull: keepStbd && !k.m.fixed });
+  }
+  // ⚠⚠ THE OFFSHORE MARKS (2026-10-12; see OFFSHORE_DANGER_M): a mark whose direction of buoyage could not be read, with
+  // NO channel about it along her route - no mark within MARK_NEIGHBOR_M of it whose direction was read, none the pair
+  // lane rides, none in a charted channel. It is kept BETWEEN her and the danger it marks, on the hand the chart's
+  // dangers either side of it put it (offshoreDangerSide), never brought close (`pull` false: it is no lane's edge) and
+  // never a buoyed reach's (buoyedReachLane). Where the dangers do not say which it marks it is left alone, as before.
+  // ⚠ IN A CHANNEL IT IS NOT ONE: an unnumbered red buoy in a buoyed reach, read as offshore, was sent round by the bank
+  // 100 m off it - 180 m to the far side, its wrong hand for the reach (enc_channel 95, 96b).
+  const channelled = (q) => (q.dir === 1 || q.dir === -1) || /ridden as a pair|charted channel|its own channel crosses/.test(q.skip || '');
+  for (const k of gov) {
+    if (!k.undirected) continue;
+    delete k.undirected;
+    if (gov.some((q) => q !== k && channelled(q) && Math.abs(q.s - k.s) <= MARK_NEIGHBOR_M)) continue;
+    const od = offshoreDangerSide(k.m, tanAt(k.s), ko);
+    if (!od.side) continue;
+    delete k.skip;
+    Object.assign(k, { dir: 0, uIn: tanAt(k.s - MARK_COURSE_LOOK_M), uOut: tanAt(k.s + MARK_COURSE_LOOK_M),
+                       keepStbd: od.side > 0, pull: false, offshore: { stbdM: od.stbdM, portM: od.portM } });
   }
 
   // The run past her is two smoothing steps of straight water each way (see runPast), and
@@ -2206,7 +2304,8 @@ export function markPassRoute(pathLL, frame, ko, buf, opts = {}) {
   for (const k of gov) {
     if (k.skip && !k.guard) continue;
     let want = D;
-    if (!k.keepStbd) {
+    // (an offshore mark is given the berth of a mark left to port on either hand: it stands by its danger)
+    if (!k.keepStbd || k.offshore) {
       want = Math.max(D, MARK_PORT_BERTH * MARK_PASS_M(buf, 0));
       for (const p of pulls) {
         const gap = Math.hypot(p.m.e - k.m.e, p.m.n - k.m.n);
@@ -2498,8 +2597,11 @@ export function markVerdicts(routeLL, frame, marks, ends = null) {
  *  distance the stage asks for (`k.min`), not wherever it found clear water: "passed close"
  *  was said of a buoy there was none to bring her to, shipped 35 m off. */
 export function tallyMarks(verdicts) {
-  const out = { kept: 0, wrong: 0, stbd: 0, port: 0, buoys: 0, close: 0 };
+  // (an OFFSHORE mark is counted apart, 2026-10-12: kept between her and its danger is no Rule 9 claim, and a route
+  // whose only marks are offshore is laned by nothing - `offshore` kept, `offshoreWrong` on the danger's side)
+  const out = { kept: 0, wrong: 0, stbd: 0, port: 0, buoys: 0, close: 0, offshore: 0, offshoreWrong: 0 };
   for (const { k, x, proper } of verdicts || []) {
+    if (k.offshore) { if (proper) out.offshore++; else out.offshoreWrong++; continue; }
     if (!proper) { out.wrong++; continue; }
     out.kept++;
     if (k.keepStbd) out.stbd++; else out.port++;
@@ -2720,7 +2822,11 @@ export function buoyedReachLane(pathLL, frame, ko, buf, opts = {}) {
   // and the stretches of it between them.
   const notHers = /goes on without her|joins its channel beyond/;
   const ms = gov.map((k) => ({ k, ...projectEN(samp, cum, k.m) })).filter((q) => !q.beyond).sort((a, b) => a.s - b.s);
-  const known = (q) => q.k.keepStbd !== undefined && !(q.k.skip && (notHers.test(q.k.skip) || q.k.skip === 'ridden as a pair'));
+  // (an OFFSHORE mark makes no reach, 2026-10-12: it guides her off its danger, not down a channel - markPassRoute. Nor
+  // does the cone below need to know one: an offshore mark has no channel within MARK_NEIGHBOR_M of it along her route,
+  // so it never stands in a reach, which runs between two marks that near.)
+  const known = (q) => q.k.keepStbd !== undefined && !q.k.offshore
+    && !(q.k.skip && (notHers.test(q.k.skip) || q.k.skip === 'ridden as a pair'));
   const delim = ms.filter((q) => known(q) || /charted channel|ridden as a pair/.test(q.k.skip || ''));
   const spans = [];
   for (let i = 1; i < delim.length; i++) {

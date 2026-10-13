@@ -1602,12 +1602,15 @@ const along = (t, step, fn) => {                 // every `step` m of a track
         "e = " + eb.map(f1).join(",") + "; lane " + bare.lane);
 }
 // 69d. ... and two marks further apart along her route than MARK_NEIGHBOR_M buoy nothing between them: the same
-// banks, two green buoys 2,100 m apart. (Their hands are known - each reads the other - and she passes neither close.)
+// banks, two green buoys 2,100 m apart. (Since 2026-10-12 two singles of other names that far apart do not read each other
+// - MARK_SINGLE_NEIGHBOR_M - so each is an OFFSHORE mark, kept off the bank beside it: tests/offshore_marks.js 9. Neither
+// is passed close.)
 {
   const far2 = [mark(-150, 400, GREEN, 1, "able rock"), mark(-150, 2500, GREEN, 3, "cast ledge")];
   const r = lane(model({ polys: REACH_BANKS, marks: far2 }), REACH_UP), e = [900, 1450, 2000].map((n) => eAtN(r.track, n));
   check("69d. ... and two marks further apart than MARK_NEIGHBOR_M are no reach: nothing is laned between them",
-        e.every((x) => x != null && Math.abs(x + 100) < 1) && !r.how.reach && r.how.marks.kept === 2 && R.MARK_NEIGHBOR_M === 1500,
+        e.every((x) => x != null && Math.abs(x + 100) < 1) && !r.how.reach && r.how.marks.offshore === 2 && r.how.marks.kept === 0
+          && R.MARK_NEIGHBOR_M === 1500,
         "e = " + e.map(f1).join(",") + " (the search's path: -100); how.reach " + r.how.reach + "; " + JSON.stringify(r.how.marks));
 }
 // 70. A LOCAL RESTRICTED AREA ON HER STARBOARD HAND IS THE CHANNEL'S EDGE. The Naval Shipyard's restricted area lies

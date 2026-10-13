@@ -281,6 +281,8 @@ const PRELUDE = [
   "  return planIntent; };",
   "const updateMissionCard = () => { out.card++; };",
   "const buoyageNote = () => ''; const heldOffWhy = () => 'it is a dock / pier';",
+  // (the offshore marks' words, 2026-10-12: none in this world's plans - tests/offshore_marks.js 8 is theirs)
+  "const offshoreNote = () => '';",
   "const fmtDist = (m) => Math.round(m) + ' m';",
   // doRTH now asks rthTooFar() before it routes (2026-09-23), and that needs a distance. The
   // page's distTo is an import from geodesy.js, which a new Function cannot reach; this is

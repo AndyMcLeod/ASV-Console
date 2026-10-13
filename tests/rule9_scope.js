@@ -230,7 +230,10 @@ const ENF = { land: true, depth: true, haz: true, area: false };
   check("6b. ... and a pure transit still asks for it — the rule is not switched off",
         // `line` is the drawn transit with its LAST vertex held off any keep-out (holdTarget,
         // 2026-09-03) - the keepRightAll=true that this check guards is unchanged by that.
-        () => /routePlan\(\{lat:asv\.lat,lon:asv\.lon\}, (?:transit|line), true, transitStandoffM\(\)\)/.test(H),   // + the transit standoff (2026-09-26; the turn radius at the plan speed, 2026-10-06)
+        // + the transit standoff (2026-09-26; the turn radius at the plan speed, 2026-10-06) - named `std` since the route worker
+        // (2026-10-12), and asked of the worker (holdRoute) and of the page's own search beside it alike
+        () => /std = transitStandoffM\(\);/.test(grab(H, "doTransit")) && /return routePlan\(from, line, true, std\);/.test(grab(H, "doTransit"))
+              && /\{op: "holdRoute", args: \{target: tgt, holdOpts: o, start: from, via, keepRightAll: true, standoffM: std\}\}/.test(grab(H, "doTransit")),
         "the drawn-transit behaviour passes keepRightAll=true");
   const PO = grab(H, "punchOut");
   check("7. a SURVEY pattern's inter-line hop does not ride the lane",
