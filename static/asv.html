@@ -12368,13 +12368,16 @@ function setAisSort(key){
 // THE ORDER IS THE LIST'S, NOT THE FEED'S. A contact joins at the BOTTOM the first time it is seen (those first seen in
 // one update, nearest first among themselves) and keeps its place until the operator moves it - dragged by its grip, or
 // once by a header click. Nothing the feed does reorders it.
-// NOTHING LEAVES ON ITS OWN. The range filter runs on the server, so a ship that leaves the range is simply missing from
-// the next update; her row stays, on her last report: struck through in RED where that report puts her beyond the range,
-// dimmed as not reporting where it does not (on a Great Lake there is no range: dimmed). Only the operator removes a row
-// (its x) - and a removed contact comes back, at the bottom, when it comes back into range: next time it reports in
-// range if it was out of range or not reporting when removed, and after it has left and come back if it was in range.
+// OUT OF RANGE, OFF THE LIST (Andy, 2026-10-13: "for the AIS card delete the out of range vessels instead of the red
+// line solution"). A contact whose report puts her beyond the selected range is DELETED - dropped from the order, her
+// place gone - and acquired again, at the bottom, the next time she reports from inside it. The range filter runs on the
+// server, so a ship that leaves the range is simply missing from the next update: the server's report of her beyond it
+// (`beyond`, aisBeyondRpts) is what deletes her. One that falls silent INSIDE the range keeps her row on her last report,
+// dimmed as not reporting (on a Great Lake there is no range: dimmed, never deleted). The operator's x removes a row too
+// - and that contact comes back, at the bottom, when it comes back into range: next time it reports in range if it was
+// out of range or not reporting when removed, and after it has left and come back if it was in range.
 // The order and the removals are remembered across a reload (lsGet/lsSet; the last reports are not - a contact known
-// only from before a reload has its place kept and no row until it reports).
+// only from before a reload has its place kept and no row until it reports, or is reported beyond the range).
 const AIS_LIST_KEY = "asv_ais_list_v1", AIS_LIST_MAX = 400;
 const aisList = (function(){
   const o = lsGet(AIS_LIST_KEY, null) || {};
@@ -12392,15 +12395,14 @@ function saveAisList(){
 function aisHeard(){ return aisState === "ok" || aisState === "empty"; }
 // BEYOND THE SELECTED RANGE (sea mode; a lake has none). The server sends only contacts inside it, except the simulator's
 // test contacts, which it serves wherever they are placed (asv_console.py _ais_test_snapshot) - so a contact can be
-// reporting AND beyond it, and is struck all the same.
+// reporting AND beyond it, and is deleted all the same.
 function aisBeyond(rng){
   const km = aisArea && aisArea.mode === "sea" ? aisArea.show_km : null;
   return km != null && rng != null && rng > km * 1000;
 }
-// One update of the feed into the list: the removed that came back, the newly acquired, the last reports. Returns the
-// rows to draw, in the list's order: {k, r, state, beyond} with state "live", "out" (beyond the range) or "lost" (not
-// reporting), and beyond true for every row past the range, reporting or not. farRpts: the server's reports of the held
-// contacts it still collects beyond the range (aisBeyondRpts).
+// One update of the feed into the list: the removed that came back, the newly acquired, the last reports, the deleted.
+// Returns the rows to draw, in the list's order: {k, r, state} with state "live" or "lost" (not reporting) - every one
+// inside the range. farRpts: the server's reports of the held contacts it still collects beyond the range (aisBeyondRpts).
 function aisListUpdate(liveRows, c, heard = true, farRpts = []){
   const now = Date.now(), byKey = new Map(liveRows.map((r) => [String(r.v.mmsi), r]));
   let changed = false;
@@ -12417,22 +12419,29 @@ function aisListUpdate(liveRows, c, heard = true, farRpts = []){
   for(const r of fresh){ aisList.order.push(String(r.v.mmsi)); changed = true; }
   for(const [k, r] of byKey) aisList.last.set(k, {v: r.v, at: now});
   // ONE THAT SAILED OUT OF RANGE stops arriving in the live set, so her last report there is from just INSIDE the line
-  // and would read "not reporting". The server's report of her beyond it is where she is now: struck, at that range.
+  // and would read "not reporting". The server's report of her beyond it is where she is now: past the line, deleted.
   const inList = new Set(aisList.order);
   for(const v of farRpts){ const k = String(v.mmsi); if(inList.has(k) && !byKey.has(k)) aisList.last.set(k, {v, at: now}); }
-  if(changed) saveAisList();
-  const out = [];
+  const out = [], gone = new Set();
   for(const k of aisList.order){
     if(aisList.removed.has(k)) continue;
+    let row;
     const r = byKey.get(k);
-    if(r){ out.push({k, r, state: "live", beyond: aisBeyond(r.rng)}); continue; }
-    const held = aisList.last.get(k);
-    if(!held) continue;
-    const v = held.v, rng = c ? distTo(c, {lat: v.lat, lon: v.lon}) : null;
-    const brg = c ? Math.round(azTo(c, {lat: v.lat, lon: v.lon})) : null;
-    out.push({k, r: {v, rng, brg, cpa: null}, age: (now - held.at) / 1000,
-              state: aisBeyond(rng) ? "out" : "lost", beyond: aisBeyond(rng)});
+    if(r) row = {k, r, state: "live"};
+    else {
+      const held = aisList.last.get(k);
+      if(!held) continue;
+      const v = held.v, rng = c ? distTo(c, {lat: v.lat, lon: v.lon}) : null;
+      const brg = c ? Math.round(azTo(c, {lat: v.lat, lon: v.lon})) : null;
+      row = {k, r: {v, rng, brg, cpa: null}, age: (now - held.at) / 1000, state: "lost"};
+    }
+    // OUT OF RANGE: DELETED, on the report that puts her there - reporting from beyond it, her last report beyond it, or
+    // the server's report of her beyond it. A report every time, never her absence alone (a failed poll arrives empty).
+    if(aisBeyond(row.r.rng)){ gone.add(k); continue; }
+    out.push(row);
   }
+  if(gone.size){ aisList.order = aisList.order.filter((k) => !gone.has(k)); changed = true; }
+  if(changed) saveAisList();
   return out;
 }
 // The held contacts - in the list, not in the last answer - named on the next poll (`held`), so the server can report the
@@ -12554,13 +12563,12 @@ function renderAisTable(){
   const live=aisVessels.map(v=>({v, rng:c?distTo(c,{lat:v.lat,lon:v.lon}):null,
                                   brg:c?Math.round(azTo(c,{lat:v.lat,lon:v.lon})):null,
                                   cpa:aisCpa(v)}));
-  // THE LIST, IN ITS OWN ORDER (aisListUpdate, 2026-10-10): every contact the operator has not removed, live or held on
-  // its last report. There is no row cap any more - the list scrolls (max-height:46vh), and a cap cut whatever sorted
-  // last, which in the order of acquisition is the newest contact.
+  // THE LIST, IN ITS OWN ORDER (aisListUpdate, 2026-10-10): every contact in range the operator has not removed, live or
+  // held on its last report (out of range she is deleted, 2026-10-13). There is no row cap any more - the list scrolls
+  // (max-height:46vh), and a cap cut whatever sorted last, which in the order of acquisition is the newest contact.
   const list = aisListUpdate(live, c, aisHeard(), aisBeyondRpts);
-  const nIn = list.filter(x => x.state === "live" && !x.beyond).length, nOut = list.filter(x => x.beyond).length,
-        nLost = list.filter(x => x.state === "lost").length;
-  const held = (nOut ? " · " + nOut + " out of range" : "") + (nLost ? " · " + nLost + " not reporting" : "");
+  const nIn = list.filter(x => x.state === "live").length, nLost = list.filter(x => x.state === "lost").length;
+  const held = nLost ? " · " + nLost + " not reporting" : "";
   // STATUS LINE - always present, so an empty table says WHY (offline vs warming up vs
   // connected-but-nothing-in-range) instead of an ambiguous blank, and NAMES the live
   // source so a feed that cannot cover this area is obvious at a glance.
@@ -12591,8 +12599,8 @@ function renderAisTable(){
       : `no vessels in ${aisAreaLabel()} yet`;
     stDot="#e8a13f"; stMain="connected" + held; stNote=[srcLbl, inner].filter(Boolean).join(" · ");
   }
-  // ⚠ THE HEADLINE COUNTS THE ROWS THE OPERATOR CAN SEE, by what they are: in range, struck out of range, dimmed not
-  // reporting. A count the operator cannot reconcile with the rows reads as a fault in the feed.
+  // ⚠ THE HEADLINE COUNTS THE ROWS THE OPERATOR CAN SEE, by what they are: in range, dimmed not reporting (out of range
+  // there is no row, so no count). A count the operator cannot reconcile with the rows reads as a fault in the feed.
   else { stDot="#3fbf6b";
          stMain=`${nIn} vessel${nIn!=1?"s":""} in ${aisAreaLabel()}` + held;
          stNote=[srcLbl, nearest?("nearest "+nearest):""].filter(Boolean).join(" · "); }
@@ -12601,7 +12609,8 @@ function renderAisTable(){
   // so that reset the scroll position while you were reading it, dropped any text selection
   // mid-copy, and flashed. Rows are keyed by MMSI and reused: only cells whose text actually
   // changed are written, a row moves (insertBefore) only when the operator moved it, and only
-  // a row the operator removed is removed. Scroll position and selection simply survive.
+  // a row the operator removed, or one deleted out of range, is removed. Scroll position and
+  // selection simply survive.
   ensureAisSkeleton(el);
   aisPaintHead(el);                       // no-op after the first paint
   const stDotEl = el.querySelector("#aisStDot");
@@ -12631,13 +12640,10 @@ function renderAisTable(){
     // (held on a last report there is nothing current to project: no CPA)
     setCellText(tr.cells[4], x.state === "live" ? cpaCell(r.cpa) : "–");
     setCellText(tr.cells[5], x.state === "live" ? tcpaCell(r.cpa) : "–");
-    // ONE RED LINE THROUGH THE WHOLE ROW out of range - a stripe on every cell, so it runs unbroken across the gaps
-    // between the cells' text where a text-decoration would not; dimmed when not reporting. Written only on a change.
-    const look = x.state + (x.beyond ? "+beyond" : "");
-    if(tr.dataset.state !== look){
-      tr.dataset.state = look;
+    // Dimmed when not reporting (out of range there is no row: aisListUpdate deletes her). Written only on a change.
+    if(tr.dataset.state !== x.state){
+      tr.dataset.state = x.state;
       tr.style.opacity = x.state === "lost" ? "0.45" : "";
-      for(const td of tr.cells) td.style.backgroundImage = x.beyond ? AIS_OUT_LINE : "";
     }
     // The row's own tip carries what the narrow columns cannot: the TIME to that closest
     // approach, the hull, and where it is bound. Same facts as the chart hover, so the
@@ -12650,8 +12656,6 @@ function renderAisTable(){
       + (size ? " · " + size : "")
       + (v.dest ? " · → " + v.dest : "")
       + (x.state === "live" ? " · " + Math.round(v.age) + "s ago"
-         + (x.beyond ? " · OUT OF RANGE (beyond " + aisAreaLabel() + "), still reporting" : "")
-         : x.state === "out" ? " · OUT OF RANGE (beyond " + aisAreaLabel() + ") on her report of " + Math.round(x.age + (v.age || 0)) + "s ago"
          : " · NOT REPORTING - her last report, " + Math.round(x.age + (v.age || 0)) + "s ago")
       + (x.state === "live" ? "" : " · x removes her; she comes back if she comes back into range");
     // ⚠ THROUGH setTip: `tr.title` is "" while this row is the hovered one, so the
@@ -12660,11 +12664,9 @@ function renderAisTable(){
     if(tr.title !== title) setTip(tr, title);
     if(body.children[i] !== tr) body.insertBefore(tr, body.children[i] || null);  // move, not remake
   });
-  // Only a row the operator removed is not in the list.
+  // Only a row no longer in the list goes: the operator's x, or a contact deleted out of range.
   for(const tr of existing.values()) tr.remove();
 }
-// One red line through a row's every cell, 2 px, across its middle (the out-of-range rows).
-const AIS_OUT_LINE = "linear-gradient(transparent calc(50% - 1px), #d9534f calc(50% - 1px), #d9534f calc(50% + 1px), transparent calc(50% + 1px))";
 // The card's fixed furniture, built once. Everything below it is patched, never replaced.
 function ensureAisSkeleton(el){
   if(el.querySelector("#aisRowsBody")) return;

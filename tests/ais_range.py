@@ -324,8 +324,8 @@ try:
     check("10d. a contact with no position is refused in words, and nothing is placed",
           "error" in bad and not [v for v in api(port, sea)["vessels"] if v.get("src") == "test"], json.dumps(bad))
 
-    # 12. THE CARD'S HELD CONTACTS (2026-10-10). The AIS card keeps a contact until the operator removes her and strikes
-    # one out of range - but one that sails out stops arriving in `vessels`, so the page's last report of her is from
+    # 12. THE CARD'S HELD CONTACTS (2026-10-10). The AIS card keeps a contact in range until the operator removes her and
+    # deletes one out of range (2026-10-13) - but one that sails out stops arriving in `vessels`, so the page's last report of her is from
     # just inside the line. Named in `held`, the ones COLLECTED beyond the range come back in `beyond`, ranged, apart
     # from `vessels` (which the guard reads, and which must not change). 102 is inside 50 km, 104/105 beyond it, 7777
     # was never collected.

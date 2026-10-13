@@ -913,9 +913,9 @@ changed. Measured on a six-contact feed: 51 DOM node insertions and removals per
 updates became 6, with the writes landing as in-place text edits instead. And **a
 contact missing from a single update is no longer deleted** — AIS is intermittent and
 the range filter runs on the server, so a ship near the edge dropped out of one snapshot
-and returned in the next, blinking every 8 s. Since 2026-10-10 it is not removed at all
-except by the operator: it stays in its place on its last report, struck through when
-out of range and dimmed when not reporting (the table's order, below), and its CPA and
+and returned in the next, blinking every 8 s. Since 2026-10-10 a contact that falls silent
+inside the range is not removed except by the operator: it stays in its place on its last
+report, dimmed as not reporting (the table's order, below; out of range it is deleted), and its CPA and
 TCPA read "–", so stale numbers are never shown as live.
 
 **Tonnage is the one thing AIS does not carry.** No AIS message contains gross or deadweight
@@ -941,12 +941,13 @@ and nothing the feed does reshuffles them: a new contact joins at the bottom how
 she is. **Drag a row by its grip (⠿) to put it where you want it**, the top included, and
 **× removes one**; she comes back, at the bottom, once she has left the range and come back
 into it. A header click sorts the list once, and it then stays in that order. A contact
-**out of the selected range is struck through with one red line** and keeps her place.
-Each poll names the contacts the card is holding (`held` on `/api/ais`), and the console
-reports the ones it still collects beyond the range (`beyond`, apart from `vessels`, so the
-guard's model is untouched): one that sails out is struck where she is now, not left on her
-last report from just inside the line. One that falls silent inside the range is dimmed as
-*not reporting*. Nothing leaves the list but by the operator's ×; there is no row cap, the
+**out of the selected range is deleted from the list** (since 2026-10-13; it used to be
+struck through in red and keep her place): she comes back, at the bottom, the next time she
+reports from inside the range. Each poll names the contacts the card is holding (`held` on
+`/api/ais`), and the console reports the ones it still collects beyond the range (`beyond`,
+apart from `vessels`, so the guard's model is untouched): one that sails out is deleted then,
+not left on her last report from just inside the line. One that falls silent inside the range
+is dimmed as *not reporting*. Nothing else leaves the list but by the operator's ×; there is no row cap, the
 card scrolls, and the order and the removals survive a reload. The table always carries a **status line naming
 the live feed and its coverage** — e.g. *connected · aisstream (global) · no vessels in
 5 nm yet*, or *connected · digitraffic (Finland/Baltic only)* — so an empty list tells

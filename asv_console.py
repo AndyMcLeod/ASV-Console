@@ -8750,10 +8750,10 @@ class Handler(BaseHTTPRequestHandler):
                 lat, lon = (float(x) for x in params["center"][0].split(","))
             except (ValueError, TypeError):
                 lat = lon = None
-        # THE CONTACTS THE CARD IS HOLDING (2026-10-10): its list keeps every contact until the operator removes one, and
-        # strikes one that is out of range - but a contact that sails out of range simply stops arriving here, so the
-        # page's last report of her is from just INSIDE the line. Named here, the ones collected but beyond the range
-        # come back in `beyond`, apart from `vessels`, so the card can strike her where she really is. Nothing else
+        # THE CONTACTS THE CARD IS HOLDING (2026-10-10): its list keeps a contact on her last report while she is in
+        # range, and deletes one that is out of range (2026-10-13) - but a contact that sails out of range simply stops
+        # arriving here, so the page's last report of her is from just INSIDE the line. Named here, the ones collected
+        # but beyond the range come back in `beyond`, apart from `vessels`, so the card can delete her. Nothing else
         # reads `beyond`: the guard's model stays the in-range contacts.
         held = set(x for x in (params.get("held") or [""])[0].split(",")[:400] if x)
         if lat is None:

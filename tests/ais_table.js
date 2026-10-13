@@ -92,6 +92,25 @@
 //     any feed state counts as answered                           -> 6h
 //     the row template loses a cell (last column silently blank)  -> 19
 //
+// AND FOR DELETING OUT OF RANGE (Andy, 2026-10-13: "for the AIS card delete the out of range vessels instead of the red
+// line solution"), twelve more mutations RUN on sidecar copies, all twelve killed; the shipped red-line page fails
+// 6b, 6c, 6i-6l, 21b and 22b. They replaced the red-line rows above ("a live (test) contact beyond the range is not
+// struck", "no red line out of range"):
+//     no deletion out of range                                    -> 6b, 6c, 6i, 6j, 6k, 6l
+//     the row hidden but her place kept (back in her old slot)    -> 6b, 6c, 6i, 6j, 6l
+//     the deletion not saved                                      -> 6l
+//     her absence alone deletes her                               -> 6b, 6c, 6j, 6k, 6l
+//     only a live contact beyond the range deleted                -> 6b, 6c, 6i, 6l
+//     only a held contact beyond the range deleted                -> 6j, 6k
+//     the server's beyond reports ignored                         -> 6i, 6l
+//     a removed contact's return asks only whether she reports    -> 6k
+//     the headline counts every row as in range                   -> 21b
+//     the headline still says "out of range"                      -> 21b
+//     the stripe written on a row again                           -> 22b
+//     not reporting no longer dimmed                              -> 22b
+// ⚠ "the x arms her on reporting only, not on being in range" (above) now SURVIVES, and is equivalent: the x can only be
+// pressed on a row, and every row is in range or not reporting - one reporting from beyond the range has none.
+//
 // ⚠⚠ AND THE FIRST RUN OF THOSE TWELVE REPORTED 0 KILLED, WHICH WAS THE RUNNER AND NOT THE
 // CHECKS. This suite read static/asv.html by a FIXED PATH, so a runner pointing ASV_HTML at a
 // sidecar mutated a file the suite never opened and every mutation "survived". Twelve of
@@ -237,8 +256,10 @@ check("5. re-sorting MOVES the existing node rather than rebuilding it",
 // selected range, one line through it in red. allow the user to scroll contacts. Allow the user to drag contacts to
 // selected position. Like the top position. Allow the user to delete a contact, but bring it back if it comes back
 // into range."). It retired the grace sweep these checks used to pin - dim on one missed update, remove on two - and the
-// sort re-applied on every update: a contact that leaves the feed now STAYS, struck through in red where its last
-// report puts it out of range and dimmed where it does not, until the operator removes it.
+// sort re-applied on every update: a contact that leaves the feed inside the range STAYS, dimmed on her last report,
+// until the operator removes it. And OUT OF RANGE SHE IS DELETED (Andy, 2026-10-13: "for the AIS card delete the out of
+// range vessels instead of the red line solution"): off the list, her place gone, acquired again at the bottom when she
+// next reports in range. That retired the red line 6b, 6i-6l, 21b and 22b used to pin.
 //   DRIVEN: the page's own aisListUpdate, aisRemove, aisMoveTo, aisSortOnce, saveAisList and the list's state are lifted
 // out and fed a sequence of updates, with a stub store, a flat distance (111 km a degree) and a 5 km range. Positions are
 // due north of the boat at (0, 0); 0.01 degrees is 1,110 m.
@@ -285,17 +306,20 @@ const states = (rows) => rows.map((x) => x.k + ":" + x.state).join(" ");
         () => first === "2,1" && second === "2,1,3" && third === "2,1,3",
         () => "after the first update " + first + ", the second " + second + ", the third " + third
             + " (the shipped card sorted by range on every update: 3,2,1)");
-  // a contact missing from the feed: held on its last report - OUT OF RANGE where that report puts it beyond 5 km from
-  // the boat, NOT REPORTING where it does not
+  // a contact missing from the feed: DELETED where her last report puts her beyond 5 km from the boat, held on that
+  // report, NOT REPORTING, where it does not
   const held = L.feed([ship(2, 1)], { lat: -2.5 / 111, lon: 0 });    // the boat 2.5 km south: 1 at 5.7 km, 3 at 2.9 km
-  check("6b. A CONTACT THE FEED NO LONGER SENDS STAYS ON ITS LAST REPORT, IN ITS PLACE: struck out of range where that "
-        + "report is beyond the range, dimmed as not reporting where it is not - and removed by nothing but the operator",
-        () => states(held) === "2:live 1:out 3:lost" && L.order().join(",") === "2,1,3",
-        () => states(held) + " (want 2:live 1:out 3:lost; the shipped card dimmed both and removed them on the next update)");
-  const empty = L.feed([]);
-  check("6c. ... and an EMPTY update (the feeder empties the list on any throw) keeps every row on its last report",
-        () => empty.length === 3 && empty.every((x) => x.state !== "live"),
-        () => states(empty));
+  check("6b. A CONTACT OUT OF RANGE IS DELETED - off the list, her place gone (Andy, 2026-10-13: \"delete the out of range "
+        + "vessels instead of the red line solution\") - while one the feed no longer sends INSIDE the range stays on her "
+        + "last report, in her place, dimmed as not reporting",
+        () => states(held) === "2:live 3:lost" && L.order().join(",") === "2,3",
+        () => states(held) + ", order " + L.order().join(",") + " (want 2:live 3:lost, order 2,3; the red-line card kept "
+            + "her struck in her place: 2:live 1:out 3:lost)");
+  const empty = L.feed([]), down = L.feed([], undefined, "offline");
+  check("6c. ... and an EMPTY update (the feeder empties the list on any throw), answered or not, keeps every row in range "
+        + "on its last report - her absence alone deletes no one",
+        () => states(empty) === "2:lost 3:lost" && states(down) === "2:lost 3:lost" && L.order().join(",") === "2,3",
+        () => "answered: " + states(empty) + "; offline: " + states(down) + "; order " + L.order().join(","));
 }
 {
   // REMOVED, AND BACK WHEN IT COMES BACK INTO RANGE - both ways round
@@ -353,73 +377,76 @@ const states = (rows) => rows.map((x) => x.k + ":" + x.state).join(" ");
   L.hidden([ship(1, 3), ship(2, 1)]);
   L.hidden([ship(3, 0.5), ship(1, 3), ship(2, 1)]);
   const order = L.order().join(",");
-  // ... and the server's report of one that sailed out while it was closed: struck when it opens
+  // ... and the server's report of one that sailed out while it was closed: deleted with the card closed
   L.hidden([ship(3, 0.5), ship(2, 1)], [ship(1, 6)]);
-  const opened = (L.feed([ship(3, 0.5), ship(2, 1)]).find((x) => x.k === "1") || {}).state;
+  const closed = L.order().join(",");
+  const opened = L.feed([ship(3, 0.5), ship(2, 1)]);
   check("6i. CONTACTS ACQUIRED WHILE THE CARD IS CLOSED TAKE THEIR PLACE IN THE ORDER OF ACQUISITION (the page's own "
         + "renderer, card hidden): the first two nearest first, the later one below them - and one that sailed out of "
-        + "range meanwhile is out of range when the card opens",
-        () => order === "2,1,3" && opened === "out",
+        + "range meanwhile is deleted, card closed or not",
+        () => order === "2,1,3" && closed === "2,3" && states(opened) === "2:live 3:live",
         () => "order after two polls with the card closed: '" + order + "' (want 2,1,3; the first build acquired only "
-            + "while the card was drawing); the one that sailed out, on opening: " + opened + " (want out)");
+            + "while the card was drawing); after the server reported 1 beyond the range, card closed: '" + closed
+            + "' (want 2,3); on opening: " + states(opened));
 }
 {
   // BEYOND THE RANGE, STILL REPORTING: the server serves the simulator's test contacts wherever they are placed, so a
-  // live row CAN be past the range - and it is struck like any other
+  // live contact CAN be past the range - and she is not on the list either
   const L = listSandbox({});
   L.feed([ship(1, 1), ship(2, 2)]);
   const rows = L.feed([ship(1, 1), ship(990000001, 7)]);            // 2 held at 2 km; a test contact live at 7 km
-  const by = (k) => rows.find((x) => x.k === String(k)) || {};
-  check("6j. A CONTACT REPORTING FROM BEYOND THE RANGE IS STRUCK TOO (a test contact, which the server serves wherever it "
-        + "is placed) - live, with its CPA, but beyond; one in range is not, and one held inside the range is not",
-        () => by(990000001).state === "live" && by(990000001).beyond === true && by(1).beyond === false
-              && by(2).state === "lost" && by(2).beyond === false,
-        () => rows.map((x) => x.k + ":" + x.state + (x.beyond ? "+beyond" : "")).join(" ")
-            + " (want 1:live 2:lost 990000001:live+beyond)");
-  // and REMOVED there, she is out of range though still reporting: widening the range past her brings her back, while
-  // one removed INSIDE the range stays removed through the same widening - she never left it
-  L.remove("990000001");
+  check("6j. A CONTACT REPORTING FROM BEYOND THE RANGE IS NOT ON THE LIST EITHER (a test contact, which the server serves "
+        + "wherever it is placed); one live in range is, and one held inside the range is",
+        () => states(rows) === "1:live 2:lost" && L.order().join(",") === "1,2",
+        () => states(rows) + ", order " + L.order().join(",") + " (want 1:live 2:lost, order 1,2; the red-line card "
+            + "struck her: 1:live 2:lost 990000001:live+beyond)");
+  // widening the range past her brings her on, at the bottom, while one the operator removed INSIDE the range stays
+  // removed through the same widening - she never left it
   L.remove("1");
   const still = L.feed([ship(1, 1), ship(990000001, 7)]);
   L.range(10);
   const wide = L.feed([ship(1, 1), ship(990000001, 7)]);
-  const bw = (k) => wide.find((x) => x.k === String(k));
-  // the x itself knows she is beyond: the range widened before the next poll still brings her back
+  // ... and one removed in range that the operator then narrows the range past, still reporting (a test contact), HAS
+  // left it: widened again, she is back
   const M = listSandbox({});
-  M.feed([ship(1, 1), ship(990000001, 7)]);
-  M.remove("990000001");
-  M.range(10);
-  const quick = M.feed([ship(1, 1), ship(990000001, 7)]);
-  check("6k. ... and a contact removed while reporting from BEYOND the range comes back when the range is widened past "
-        + "her - she has come into range - while one removed inside the range stays removed through the same widening",
-        () => !still.some((x) => x.k === "990000001") && !!bw(990000001) && bw(990000001).beyond === false && !bw(1)
-              && quick.some((x) => x.k === "990000001"),
-        () => "removed, range 5 km: " + states(still) + "; widened to 10 km: " + states(wide)
-            + " (want 990000001 back and in range, 1 still removed); widened before the next poll: " + states(quick));
+  M.feed([ship(1, 1), ship(2, 3)]);
+  M.remove("2");
+  M.range(2);
+  M.feed([ship(1, 1), ship(2, 3)]);
+  M.range(5);
+  const again = M.feed([ship(1, 1), ship(2, 3)]);
+  check("6k. ... and widening the range past her brings her onto the list, at the bottom - she has come into range - while "
+        + "one removed inside the range stays removed through the same widening; one removed in range and then put "
+        + "beyond a narrowed range has left it, and is back when it is widened again",
+        () => states(still) === "2:lost" && states(wide) === "2:lost 990000001:live" && states(again) === "1:live 2:live",
+        () => "1 removed, range 5 km: " + states(still) + " (want 2:lost); widened to 10 km: " + states(wide)
+            + " (want 2:lost 990000001:live); removed, narrowed past her, widened: " + states(again) + " (want 1:live 2:live)");
 }
 {
   // ONE THAT SAILS OUT OF RANGE. The server stops sending her in `vessels` the moment she crosses the line, so the
   // card's last report of her is from just INSIDE it - 4.9 km of a 5 km range. Named in `held`, the server reports
-  // her beyond it (`beyond`), and she is struck there; without that report she could only read as not reporting.
-  const L = listSandbox({});
-  L.feed([ship(1, 1), ship(2, 4.9)]);
-  L.feed([ship(1, 1)]);                                              // she has crossed: gone from the live set
+  // her beyond it (`beyond`), and she is deleted; without that report she could only read as not reporting.
+  const store = {}, L = listSandbox(store);
+  L.feed([ship(2, 4.9)]);
+  L.feed([ship(2, 4.9), ship(1, 1), ship(3, 2)]);                    // order 2,1,3: she heads the list
+  L.feed([ship(1, 1), ship(3, 2)]);                                  // she has crossed: gone from the live set
   const q = L.heldQuery();
-  const out = L.feed([ship(1, 1)], undefined, "ok", [ship(2, 5.4)]); // the server's report of her, beyond
-  const two = out.find((x) => x.k === "2") || {};
-  const back = L.feed([ship(1, 1), ship(2, 4.8)]);                   // and she turns back in: live, in her place
+  const out = L.feed([ship(1, 1), ship(3, 2)], undefined, "ok", [ship(2, 5.4)]); // the server's report of her, beyond
+  const afterOut = L.order().join(","), reloaded = listSandbox(store).order().join(",");
+  const back = L.feed([ship(1, 1), ship(3, 2), ship(2, 4.8)]);       // she turns back in: acquired again, at the bottom
   // the control: no report of her beyond the range (she stopped transmitting) - held where she was, not reporting
   const M = listSandbox({});
   M.feed([ship(1, 1), ship(2, 4.9)]);
   const silent = (M.feed([ship(1, 1)]).find((x) => x.k === "2") || {}).state;
-  check("6l. A CONTACT THAT SAILS OUT OF RANGE IS STRUCK WHERE SHE IS NOW, not dimmed on her last report from just "
-        + "inside the line: the card names her in `held`, the server's `beyond` report of her puts her out of range, "
-        + "and she is live in her place again when she turns back in - while one that falls silent inside is not reporting",
-        () => q === "&held=2" && two.state === "out" && two.beyond === true && Math.abs(two.r.rng - 5400) < 1
-              && back.map((x) => x.k + ":" + x.state).join(" ") === "1:live 2:live" && silent === "lost",
-        () => "held query '" + q + "' (want &held=2); her row with the server's report: " + two.state
-            + (two.beyond ? "+beyond" : "") + " at " + (two.r && Math.round(two.r.rng)) + " m (want out+beyond at 5400); "
-            + "turned back in: " + states(back) + "; silent inside: " + silent + " (want lost)");
+  check("6l. A CONTACT THAT SAILS OUT OF RANGE IS DELETED, not dimmed on her last report from just inside the line: the "
+        + "card names her in `held`, the server's `beyond` report of her takes her off the list (and that is saved), and "
+        + "she comes back AT THE BOTTOM, acquired again, when she turns back in - while one that falls silent inside is "
+        + "not reporting",
+        () => q === "&held=2" && states(out) === "1:live 3:live" && afterOut === "1,3" && reloaded === "1,3"
+              && states(back) === "1:live 3:live 2:live" && silent === "lost",
+        () => "held query '" + q + "' (want &held=2); with the server's report: " + states(out) + ", order " + afterOut
+            + ", after a reload " + reloaded + " (want 1:live 3:live, 1,3, 1,3); turned back in: " + states(back)
+            + " (want 1:live 3:live 2:live); silent inside: " + silent + " (want lost)");
   // the poll is what carries it: `held` on the request, `beyond` off the answer, and nothing left over from a failure
   const POLL = grab("pollAIS");
   check("6m. ... and the poll is what carries it: the request names the held contacts (aisHeldQuery), the answer's "
@@ -743,28 +770,27 @@ check("8. the row template provides the marker and name spans the patch writes t
   const main = RENDER.slice(RENDER.indexOf("stMain=`${nIn}"), RENDER.indexOf("stNote=[srcLbl, nearest"));
   const headline = (list) => new Function("list", "aisAreaLabel",
     heldSrc + "\nlet stMain;" + main + "return stMain;")(list, () => "5 nm");
-  // two live in range, two held out of range, one not reporting, and a TEST contact reporting from beyond the range
-  const L = [{ state: "live" }, { state: "live" }, { state: "out", beyond: true }, { state: "lost" },
-             { state: "out", beyond: true }, { state: "live", beyond: true }];
+  // two live in range and one not reporting - out of range there is no row (aisListUpdate deletes her, 6b, 6i-6l)
+  const L = [{ state: "live" }, { state: "live" }, { state: "lost" }];
   const h = at < 0 ? null : headline(L), one = at < 0 ? null : headline([{ state: "live" }]);
-  check("21b. ... and the headline counts what is drawn, by what it is: in range, out of range (reporting or not), not "
-        + "reporting",
-        () => h === "2 vessels in 5 nm · 3 out of range · 1 not reporting" && one === "1 vessel in 5 nm",
-        () => "two live, two struck held, one dimmed, one struck still reporting -> \"" + h + "\"; one live -> \""
-            + one + "\" (want 2 in / 3 out / 1 not reporting)");
-  // 22. ONLY A ROW THE OPERATOR REMOVED IS REMOVED - the one removal left in the renderer is of rows not in the list,
-  // and the list keeps every contact it has seen until the operator removes it (6b-6e)
-  check("22. the only row the renderer removes is one no longer in the list - which only the operator's x does",
+  check("21b. ... and the headline counts what is drawn, by what it is: in range, not reporting - and no 'out of range', "
+        + "since out of range there is no row",
+        () => h === "2 vessels in 5 nm · 1 not reporting" && one === "1 vessel in 5 nm" && !/out of range/.test(heldSrc),
+        () => "two live, one dimmed -> \"" + h + "\"; one live -> \"" + one + "\" (want 2 in / 1 not reporting)");
+  // 22. ONLY A ROW NO LONGER IN THE LIST IS REMOVED - the one removal left in the renderer; the list drops a contact on
+  // the operator's x or out of range, and keeps every other it has seen (6b-6e)
+  check("22. the only row the renderer removes is one no longer in the list - the operator's x, or a contact deleted out "
+        + "of range",
         () => /for\(const tr of existing\.values\(\)\) tr\.remove\(\);/.test(R)
               && (R.match(/\.remove\(\)/g) || []).length === 1,
         "the shipped card removed a row on its second missed update");
-  // 22b. THE RED LINE AND THE DIM, written on a change of state only (an unchanged row is not touched)
-  check("22b. ... out of range is ONE red line through the row - a stripe across every cell - and not reporting is dimmed; "
-        + "each written only when the row's state changes",
-        () => /const look = x\.state \+ \(x\.beyond \? "\+beyond" : ""\);/.test(R) && /if\(tr\.dataset\.state !== look\)\{/.test(R)
-              && /td\.style\.backgroundImage = x\.beyond \? AIS_OUT_LINE : ""/.test(R)
-              && /tr\.style\.opacity = x\.state === "lost" \? "0\.45" : ""/.test(R) && /#d9534f/.test(H.slice(H.indexOf("const AIS_OUT_LINE"), H.indexOf("const AIS_OUT_LINE") + 200)),
-        "a text-decoration would break between the cells; the stripe runs unbroken across them");
+  // 22b. NO RED LINE (Andy, 2026-10-13: "delete the out of range vessels instead of the red line solution") - and the
+  // dim, written on a change of state only (an unchanged row is not touched)
+  check("22b. ... no red line any more: no stripe written on a row and its constant gone; not reporting is dimmed, written "
+        + "only when the row's state changes",
+        () => !/backgroundImage/.test(R) && !/AIS_OUT_LINE/.test(H) && /if\(tr\.dataset\.state !== x\.state\)\{/.test(R)
+              && /tr\.style\.opacity = x\.state === "lost" \? "0\.45" : ""/.test(R),
+        "out of range she is off the list (6b), so there is nothing to strike");
   // 22c. THE OPERATOR'S HANDS: bound ONCE, in the skeleton builder behind its early return
   check("22c. the x and the drag are delegated on the list body and bound once, with the skeleton - and only a row's "
         + "GRIP drags, so the rest of the row stays selectable",
