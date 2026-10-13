@@ -508,5 +508,77 @@ check("22. THE GUARD NEVER SEES IT: nothing the clearance guard, the hold disc o
       () => GUARDED.every(([, s]) => !/\.margin\b|\.deep\b/.test(s)),
       () => GUARDED.filter(([, s]) => /\.margin\b|\.deep\b/.test(s)).map(([f]) => f).join(", ") || "none");
 
+
+// ── ON THE CHART (Andy, 2026-10-13: "draw the margin water stretches on the chart") ─────────────────────────────────────
+// Each stretch carries its own line along the route (`pts`) and the waypoint it ends before (`w1`, in the plan's route); the
+// page keeps them with the route they were measured on and draws those still ahead of her (asv.html drawMarginStretches).
+const onRoute = (route, q) => { const pts = route.map((x) => GF.toEN(x)), e = GF.toEN(q); let best = Infinity;
+  for (let i = 1; i < pts.length; i++) { const a = pts[i - 1], b = pts[i], dx = b.e - a.e, dy = b.n - a.n, l2 = dx * dx + dy * dy || 1;
+    const t = Math.max(0, Math.min(1, ((e.e - a.e) * dx + (e.n - a.n) * dy) / l2)); best = Math.min(best, Math.hypot(e.e - a.e - t * dx, e.n - a.n - t * dy)); }
+  return best; };
+const along = (route, q) => { const pts = route.map((x) => GF.toEN(x)), e = GF.toEN(q); let s = 0, best = Infinity, at = 0;
+  for (let i = 1; i < pts.length; i++) { const a = pts[i - 1], b = pts[i], dx = b.e - a.e, dy = b.n - a.n, L = Math.hypot(dx, dy), l2 = L * L || 1;
+    const t = Math.max(0, Math.min(1, ((e.e - a.e) * dx + (e.n - a.n) * dy) / l2)), d = Math.hypot(e.e - a.e - t * dx, e.n - a.n - t * dy);
+    if (d < best - 1e-9) { best = d; at = s + t * L; } s += L; }
+  return at; };
+const runW = pW.deep.runs[0], fullW = [A, ...pW.route];
+const lenPts = (pts) => pts.reduce((L, q, i) => (i ? L + Math.hypot(GF.toEN(q).e - GF.toEN(pts[i - 1]).e, GF.toEN(q).n - GF.toEN(pts[i - 1]).n) : 0), 0);
+const endS = along(fullW, runW.pts[runW.pts.length - 1]), w1S = along(fullW, pW.route[runW.w1]), w1PrevS = along(fullW, runW.w1 ? pW.route[runW.w1 - 1] : A);
+check("23. THE STRETCH'S OWN LINE: across the 2.2 km band, the stretch at her floor carries its line along her route - every "
+      + "point of it on the route, from the band's edge (less her buffer) to its other edge, as long as the meters said - and "
+      + "`w1`, the first waypoint of the plan's route at or past its end",
+      () => runW && runW.pts.length >= 2 && runW.pts.every((q) => onRoute(fullW, q) < 0.5)
+            && Math.abs(GF.toEN(runW.pts[0]).n + 155) < 3 && Math.abs(GF.toEN(runW.pts[runW.pts.length - 1]).n - 155) < 3
+            && Math.abs(lenPts(runW.pts) - runW.m) < 6 && w1S >= endS - 1e-6 && w1PrevS < endS,
+      () => runW ? "pts " + runW.pts.length + ", from n " + f0(GF.toEN(runW.pts[0]).n) + " to " + f0(GF.toEN(runW.pts[runW.pts.length - 1]).n)
+            + ", " + f0(lenPts(runW.pts)) + " m (said " + f0(runW.m) + "); its end " + f0(endS) + " m along, waypoint " + runW.w1 + " at "
+            + f0(w1S) + " m, the one before at " + f0(w1PrevS) + " m" : "no stretch");
+// a drawn transit of two legs, the band crossed on the second: w1 in the WHOLE plan's route
+onWorld(world([SEA, area(5.0, 9.1, 400, 600, 2600, 900)]));
+const tw = [gll(1500, 0), gll(1500, 1500)], tStart = gll(0, -1200);
+const tp = P.routePlan(tStart, tw, true, 5);
+const tRun = tp.deep && tp.deep.runs[0], tFull = [tStart, ...tp.route];
+check("24. ... AND IN A DRAWN TRANSIT OF TWO LEGS, the band crossed on the second: its line on the plan's route and `w1` the "
+      + "first waypoint of the WHOLE plan's route past its end - the first leg's waypoints counted in",
+      () => tRun && tp.deep.runs.length === 1 && tRun.pts.every((q) => onRoute(tFull, q) < 0.5)
+            && along(tFull, tp.route[tRun.w1]) >= along(tFull, tRun.pts[tRun.pts.length - 1]) - 1e-6
+            && along(tFull, tp.route[tRun.w1 - 1]) < along(tFull, tRun.pts[tRun.pts.length - 1])
+            && tp.route.findIndex((q) => Math.abs(q.lat - tw[0].lat) < 1e-9 && Math.abs(q.lon - tw[0].lon) < 1e-9) < tRun.w1,
+      () => tRun ? "w1 " + tRun.w1 + " of " + tp.route.length + "; the first leg's waypoint at index "
+            + tp.route.findIndex((q) => Math.abs(q.lat - tw[0].lat) < 1e-9 && Math.abs(q.lon - tw[0].lon) < 1e-9) : JSON.stringify(tp.deep));
+const mra = P.marginRunsAfter([{ w1: 3, m: 1 }, { w1: 5, m: 4 }, { w1: 10, m: 2 }], 5, [{ w1: 2, m: 3 }], 7);   // (w1 5: ends at her next waypoint - kept)
+check("25. A PASSAGE'S NEXT SECTION: the stretches of the route she is sent - the last section's still ahead of her re-indexed "
+      + "from where she is, then the new section's after the waypoints she had left (marginRunsAfter, asv.html sailSend)",
+      () => JSON.stringify(mra) === JSON.stringify([{ w1: 0, m: 4 }, { w1: 5, m: 2 }, { w1: 9, m: 3 }]) && /marginRunsAfter\(mgWas, cut, plan\.deep\.runs, prefix\.length\)/.test(H),
+      () => JSON.stringify(mra));
+// the page's drawing, driven with a recording canvas
+const rec = { calls: [], set strokeStyle(v) { this.calls.push(["strokeStyle", v]); }, set lineWidth(v) { this.calls.push(["lineWidth", v]); },
+  set fillStyle(v) {}, set font(v) {}, set lineCap(v) {}, set lineJoin(v) {},
+  save() {}, restore() {}, setLineDash() {}, beginPath() { this.calls.push(["begin"]); }, moveTo(x, y) { this.calls.push(["move", x, y]); },
+  lineTo(x, y) { this.calls.push(["line", x, y]); }, stroke() { this.calls.push(["stroke"]); }, strokeText(t) {}, fillText(t, x, y) { this.calls.push(["text", t, x, y]); } };
+const MG_DECL = H.slice(H.indexOf("const MARGIN_COL"), H.indexOf("/** Draw `mg.runs`"));
+// eslint-disable-next-line no-new-func
+const drawMS = new Function("ctx", "fmtDist", MG_DECL + "\n" + grabFn("drawMarginStretches") + "\nreturn drawMarginStretches;")(rec, (m) => Math.round(m) + " m");
+const scr = (lat, lon) => ({ x: Math.round((lon + 70) * 1e5), y: Math.round((42.1 - lat) * 1e5) });
+const mgT = { route: [], runs: [{ pts: [{ lat: 42.0, lon: -70.0 }, { lat: 42.001, lon: -70.0 }, { lat: 42.002, lon: -70.001 }], at: { lat: 42.001, lon: -70.0 }, m: 230, why: "none", w1: 7 },
+                                 { pts: [{ lat: 42.01, lon: -70.0 }, { lat: 42.011, lon: -70.0 }], at: { lat: 42.0105, lon: -70.0 }, m: 110, why: "start", w1: 2 },
+                                 // (it ends at the waypoint she is bound for: she is in it, or short of it - drawn)
+                                 { pts: [{ lat: 42.02, lon: -70.0 }, { lat: 42.021, lon: -70.0 }], at: { lat: 42.0205, lon: -70.0 }, m: 95, why: "mark", w1: 5 }] };
+const nDrawn = drawMS(scr, mgT, 5);
+const moves = rec.calls.filter((c) => c[0] === "move" || c[0] === "line"), texts = rec.calls.filter((c) => c[0] === "text");
+const want = mgT.runs[0].pts.map((q) => scr(q.lat, q.lon));
+const RB2 = grabFn("render"), iDiamond = RB2.indexOf('ctx.closePath(); ctx.fillStyle = (i<idx) ? "#3fbf6b" : "#ff9a3c"'), iCall = RB2.indexOf("if(mg && mg.route === runRoute) drawMarginStretches(");
+check("26. THE PAGE DRAWS THEM: setPlanIntent keeps the stretches with the route they were measured on (DRIVEN); drawMarginStretches "
+      + "strokes a stretch still ahead of her along its own line, wide and orange, labeled how long and why, and not one she has "
+      + "passed; render draws them only while that route is the one drawn, OVER its waypoints (drawn under them, the diamonds hid "
+      + "the band whole at zoom 13)",
+      () => piDeep.margin && piDeep.margin.runs === dMix.runs && piDeep.margin.route.length === 2 && piNone.margin === null
+            && nDrawn === 2 && moves.length === 5 && moves.slice(0, 3).every((c, i) => c[1] === want[i].x && c[2] === want[i].y)
+            && rec.calls.some((c) => c[0] === "lineWidth" && c[1] >= 8) && rec.calls.some((c) => c[0] === "strokeStyle" && /rgba\(255,140,40/.test(c[1]))
+            && texts.length === 2 && texts[0][1] === "AT HER FLOOR 230 m - no deeper way" && texts[1][1] === "AT HER FLOOR 95 m - for a buoy"
+            && iCall > iDiamond && iDiamond > 0,
+      () => "drawn " + nDrawn + "; strokes through " + JSON.stringify(moves.map((c) => [c[1], c[2]])) + "; labels " + JSON.stringify(texts.map((c) => c[1]))
+            + "; in render the call " + (iCall > iDiamond ? "after" : "BEFORE") + " the diamonds; kept " + JSON.stringify(piDeep.margin && { runs: piDeep.margin.runs.length }));
+
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
 process.exit(fails ? 1 : 0);

@@ -1012,7 +1012,7 @@ import { easeOffered } from "/static/js/turns.js";
 import { MAX_HALF_M, SKEW_LIMIT_DEG, arcPts, cornerSlowPlan, minTurnRadiusM, shortenSeg,
          teardropTurn, turnWithRetry, joinBreaches, SPEED_CMD_LATENCY_S } from "/static/js/turns.js";
 import { CHART_EDGE_M, LANE_FRAC, SEG_LEN_M, beyondChart, beyondChartSay, buoyChannelLane, buoyageNote, channelLaneRoute,
-         channelSpanKeepouts, channelTurnKeepouts, deepNote, deepWhy, dilateGrid, gateLegClear, offshoreNote,
+         channelSpanKeepouts, channelTurnKeepouts, deepNote, deepWhy, dilateGrid, gateLegClear, marginRunsAfter, offshoreNote,
          holdTarget, junctionKnot, legPath, narrowChannelLane, planNogoRoute, pruneJunctionKnots,
          pruneStitch, rasterKeepouts, regionOrder,
          routeAround, routeAroundSeg, routePlan, smoothTrack, stampSeg } from "/static/js/passage.js";
@@ -1982,8 +1982,10 @@ function setPlanIntent(kind, plan, route){
   planIntent = {kind: kind, at: Date.now(), route: (route||[]).length,
                 why: [], target: null, unsafe: 0, degraded: !!(plan && plan.degraded),
                 heldOff: (plan && plan.heldOff) || null,
-                holdClear: (plan && plan.holdClear != null) ? plan.holdClear : null};
+                holdClear: (plan && plan.holdClear != null) ? plan.holdClear : null, margin: null};
   if(!plan) return planIntent;
+  // the margin water she runs at her floor, to be drawn on the route it was measured on (drawMarginStretches)
+  if(plan.deep && plan.deep.runs && plan.deep.runs.length) planIntent.margin = {route: route, runs: plan.deep.runs};
   const w = planIntent.why;
   if(plan.degraded) w.push({t:"warn", s:"nogo model not loaded - driving DIRECT, unverified against the chart"});
   else if(plan.routed) w.push({t:"route", s:"routed clear of the keep-out model via " + (route||[]).length + " waypoints"});
@@ -6608,6 +6610,11 @@ function render(){
         ctx.closePath(); ctx.fillStyle = (i<idx) ? "#3fbf6b" : "#ff9a3c"; ctx.fill();
         ctx.lineWidth=1.5; ctx.strokeStyle="#160d02"; ctx.stroke(); });
     }
+    // THE MARGIN WATER STRETCHES, OVER the route they belong to (translucent, so it shows through) - and only while it is
+    // that route: drawMarginStretches. ⚠ Not under it: drawn first, at zoom 13 the waypoint diamonds - 12 px wide, 60 m
+    // (4 px) apart - covered the band whole, and not one of its pixels was left on the canvas.
+    const mg = planIntent && planIntent.margin;
+    if(mg && mg.route === runRoute) drawMarginStretches(toScreen, mg, Math.min(window._wpIndex||0, runRoute.length));
     ctx.restore();
   }
   // Survey-line TURN waypoints — the line endpoints (reversals) and the teardrop
@@ -10888,6 +10895,39 @@ function drawTransit(toScreen){                   // the transit DRAFT being dra
     ctx.fillStyle = p.fuel ? "#ff9f40" : "#39c0ff"; ctx.fillText("T"+(i+1) + (p.fuel ? " FUEL" : ""), s.x+7, s.y-6); });
   ctx.restore();
 }
+// --- THE MARGIN WATER SHE RUNS AT HER FLOOR, ON THE CHART (Andy, 2026-10-13: "draw the margin water stretches on the
+// chart") ---------------------------------------------------------------------------------------------------------- //
+// Deep water first says, on the banner and the Intent card, each stretch of her route that runs where the chart's depths
+// are all that is kept - less than 2 m over her floor, or within 50 m of a charted rock or shoal sounding - and why. This
+// marks each one on the route itself: a wide ORANGE band over the route (amber is the plan, cyan the track, green the
+// routed run, red a leg with no clear detour, magenta a measurement - orange, translucent and wide, is none of them), and
+// beside it how long it is and why, so the operator looks at THAT water on the chart before sending her.
+//   CAPTURED WITH THE PLAN (setPlanIntent: `planIntent.margin`, with the route array it was measured on) and drawn only
+// while that route is the one drawn: a route the guard splices in, or a resume cuts, is a new array, and the stretches of
+// the plan before it no longer describe it. A stretch whose last waypoint (`w1`, in that route) she has passed is not drawn.
+const MARGIN_COL = "rgba(255,140,40,0.55)", MARGIN_TEXT = "#ffa040";
+const MARGIN_SAY = {none: "no deeper way", mark: "for a buoy", start: "where she starts", end: "where she ends",
+                    waypoint: "at a waypoint", time: "not searched in time"};
+/** Draw `mg.runs` (passage.js deepSaid: {pts, at, m, why, w1}) still ahead of waypoint `idx`; how many were drawn. */
+function drawMarginStretches(toScreen, mg, idx){
+  if(!mg || !mg.runs || !mg.runs.length) return 0;
+  let n = 0;
+  ctx.save();
+  ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.setLineDash([]);
+  ctx.font = "bold 10px Consolas,monospace";
+  for(const r of mg.runs){
+    if(!r.pts || r.pts.length < 2 || (r.w1 != null && r.w1 < idx)) continue;
+    const ps = r.pts.map((p) => toScreen(p.lat, p.lon));
+    ctx.strokeStyle = MARGIN_COL; ctx.lineWidth = 9;
+    ctx.beginPath(); ps.forEach((q, i) => (i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y))); ctx.stroke();
+    const c = toScreen(r.at.lat, r.at.lon), t = "AT HER FLOOR " + fmtDist(r.m) + " - " + (MARGIN_SAY[r.why] || r.why || "");
+    ctx.lineWidth = 3; ctx.strokeStyle = "rgba(10,20,28,0.85)"; ctx.strokeText(t, c.x + 9, c.y - 9);
+    ctx.fillStyle = MARGIN_TEXT; ctx.fillText(t, c.x + 9, c.y - 9);
+    n++;
+  }
+  ctx.restore();
+  return n;
+}
 // --- the measurement overlay ---------------------------------------------- //
 // MAGENTA on purpose: S-52 reserves it for the MARINER'S OWN information, and it is the
 // one chart color this console had not already spent - amber is the plan, cyan the
@@ -11448,16 +11488,21 @@ async function sailSend(P, k, from, bo, append){
   if(plan.uncharted) return {error: plan.uncharted.say || "the chart is not read over all of it"};
   if(plan.unroutable && plan.unroutable.length) return {error: "no route clear of the chart's keep-outs on " + plan.unroutable.length + " leg(s)"};
   plan.heldOff = ht.heldOff; plan.holdClear = holdClearWithContacts(ht.to, ht.holdClear);
-  let prefix = [];
+  let prefix = [], cut = 0;
   if(append){
     // ⚠ ONLY TO THE ROUTE IT WAS PLANNED AFTER, AND NEVER TO A BOAT ALREADY HOLDING: the guard may have moved the route
     // while this planned (a way round), and a boat that has reached the end holds there until Continue (Andy).
     if(runRoute !== rrWas || !sailOwns(P) || (S.status || {}).holding || S.run !== "running") return {soft: true};
-    prefix = runRoute.slice(Math.min(window._wpIndex || 0, runRoute.length));    // what she has left, read NOW
+    cut = Math.min(window._wpIndex || 0, runRoute.length);
+    prefix = runRoute.slice(cut);    // what she has left, read NOW
   }
   const route = [...prefix, ...plan.route];
   if(routeTooLong(route.length)) return {error: "too many waypoints"};
   const whole = {...plan, route};
+  // (the margin water stretches in the route she is sent - this section's after what she has left, and those of what she
+  // has left still ahead of her - for the Intent card and the chart: drawMarginStretches)
+  const mgWas = append && planIntent && planIntent.margin && planIntent.margin.route === rrWas ? planIntent.margin.runs : [];
+  if(plan.deep) whole.deep = {...plan.deep, runs: marginRunsAfter(mgWas, cut, plan.deep.runs, prefix.length)};
   const coast = solveCoastFor(whole);
   // THE WAY HOME is sent as an RTH (step 6): she is going home - the cards say so, the fuel monitor sends no second
   // one, and the end-of-plan chain never fires on an RTH's hold.

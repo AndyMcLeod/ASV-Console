@@ -3013,7 +3013,9 @@ of the operator.
    a buoy on its wrong hand: a buoy outranks the chart's margin. Each such stretch is
    said on the banner ("deep water first: 1.34 km at her floor (1 with no deeper way, 1
    for a buoy)") and listed with its position on the Intent card, as a
-   warning where it lies between her start and her end. Where she starts or ends in
+   warning where it lies between her start and her end - and **marked on the chart**
+   (2026-10-13): a wide orange band over the route, labeled with its length and why,
+   drawn while she has it ahead of her. Where she starts or ends in
    shallower water she leaves it the short way; the hold point is unchanged, and the
    clearance guard never sees the margin. On the Go-To past Thacher Island the route now
    passes between Oak Rock Buoy 2 and Thacher Island Buoy 1 clear of the 5.4-9.1 m patch,

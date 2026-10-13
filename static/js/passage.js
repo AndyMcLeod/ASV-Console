@@ -631,7 +631,9 @@ function lenLL(ref, pts){
 }
 /** The runs of `routeLL` (her position first) in the margin layer of `ko` - the layer alone, nothing released - at
  *  `margin`, sampled as legClear samples, DEEP_JOIN_M apart one run: [{m (meters in it), at (LL, its middle),
- *  end: 'start' | 'end' | null (from her position, to the end)}]. [] where the model has no layer. */
+ *  end: 'start' | 'end' | null (from her position, to the end), pts (LL: its own line along the route - where it begins,
+ *  her route's vertices within it, where it ends - which the chart draws), v1 (the index in `routeLL` of the vertex its
+ *  last sample runs to)}]. [] where the model has no layer. */
 export function marginRuns(routeLL, ref, ko, margin){
   const k = armDeep(ko, margin);
   if(!k || !routeLL || routeLL.length < 2) return [];
@@ -643,8 +645,12 @@ export function marginRuns(routeLL, ref, ko, margin){
     if(r && S[i].s - S[r.i1].s <= DEEP_JOIN_M){ r.i1 = i; r.m += ds; } else runs.push({i0: i, i1: i, m: ds});
   }
   return runs.map((r) => {
-    const mid = S[(r.i0 + r.i1) >> 1];
-    return {m: r.m, at: ref.fromEN(mid.e, mid.n), end: r.i0 === 0 ? "start" : r.i1 === S.length - 1 ? "end" : null};
+    const mid = S[(r.i0 + r.i1) >> 1], a = S[r.i0], b = S[r.i1];
+    const pts = [ref.fromEN(a.e, a.n)];
+    for(let v = a.seg; v < b.seg; v++) pts.push({lat: routeLL[v].lat, lon: routeLL[v].lon});
+    pts.push(ref.fromEN(b.e, b.n));
+    return {m: r.m, at: ref.fromEN(mid.e, mid.n), end: r.i0 === 0 ? "start" : r.i1 === S.length - 1 ? "end" : null,
+            pts, v1: b.seg};
   });
 }
 /** How far from `c` (frame meters) the nearest water clear of both `ko` and the margin layer `layer` at `margin` lies,
@@ -912,7 +918,8 @@ export function planNogoRoute(from, to, opts){
           how: kr.how, marks: kr.marks,
           heldOff, holdClear, insideStandoff, standoffM: want,
           moored: mooredPassed([{lat: from.lat, lon: from.lon}, ...route], ref, ko.moored),
-          deep: df ? deepSaid([df], marginRuns([{lat: from.lat, lon: from.lon}, ...route], ref, ko, found)) : null};
+          deep: df ? deepSaid([df], marginRuns([{lat: from.lat, lon: from.lon}, ...route], ref, ko, found)
+                                     .map((r) => ({...r, w1: r.v1 - 1}))) : null};   // (w1: the stretch's end in plan.route)
 }
 /** What a plan says of deep water first: {marginM, berthM (the layer's), repaired, released (each stretch kept at the
  *  floor, as deepFirst found it), runs (marginRuns: the margin water the route that SHIPS is in - what is said - each
@@ -923,14 +930,24 @@ export function deepSaid(dfs, runs){
   const llM = (a, b) => Math.hypot((a.lat - b.lat) * 111320, (a.lon - b.lon) * 111320 * Math.cos(a.lat * Math.PI / 180));
   for(const r of runs){
     if(r.end){ r.why = r.end; continue; }
-    // (margin water the layer was lifted from for a mark - its berth, or its proper hand - is said as the mark's)
-    if(heldAt.some((m) => llM(r.at, m) <= DEEP_MARK_M + r.m / 2)){ r.why = "mark"; continue; }
+    // the reason of the stretch kept at her floor that lies on it, first; then margin water the layer was lifted from for
+    // a mark (its berth, or its proper hand) - a held mark within DEEP_MARK_M of the stretch's own line. (⚠ Asked the other
+    // way round and of the stretch's middle, the 1.3 km west of Thacher Island, with no deeper way, was said "for a buoy"
+    // because Oak Rock Buoy 2, held 400 m north of where it began, lay within half its length of its middle.)
     let best = null, bd = Infinity;
     for(const x of released){ const d = llM(r.at, x.at); if(d < bd){ bd = d; best = x; } }
-    r.why = best && bd <= DEEP_RELEASE_M + r.m ? best.why : "none";
+    if(best && bd <= DEEP_RELEASE_M + r.m){ r.why = best.why; continue; }
+    r.why = heldAt.some((m) => (r.pts || [r.at]).some((q) => llM(q, m) <= DEEP_MARK_M)) ? "mark" : "none";
   }
   return {marginM: DEEP_MARGIN_M, berthM: DEEP_BERTH_M,
           repaired: dfs.reduce((n, d) => n + d.repaired, 0), released, runs};
+}
+/** A passage's section sent after what she has left of the one before (asv.html sailSend): the margin water stretches of
+ *  the route she is sent - those of the route before (`was`, indexed in it) still ahead of waypoint `cut`, re-indexed from
+ *  it, then this section's (`runs`, indexed in its own route) after the `prefixLen` waypoints she had left. */
+export function marginRunsAfter(was, cut, runs, prefixLen){
+  return [...(was || []).filter((r) => r.w1 >= cut).map((r) => ({...r, w1: r.w1 - cut})),
+          ...(runs || []).map((r) => ({...r, w1: r.w1 + prefixLen}))];
 }
 const DEEP_WHY = {start: "where she starts", end: "where she ends", waypoint: "at a waypoint",
                   none: "no deeper way within the detour allowed", mark: "a buoy's proper hand or its berth",
@@ -963,7 +980,7 @@ export function deepWhy(deep, fmt){
   const list = deep.runs.map((r) => f(r.m) + " " + (r.end ? DEEP_WHY[r.why] : "near " + latLonSay(r.at) + " - " + (DEEP_WHY[r.why] || r.why)));
   const inside = deep.runs.some((r) => !r.end);
   return [{t: inside ? "warn" : "lane", s: kept + " except " + deep.runs.length + " stretch" + (deep.runs.length === 1 ? "" : "es")
-           + " at her floor and buffer: " + list.join("; ")}];
+           + " at her floor and buffer, marked in orange on the chart: " + list.join("; ")}];
 }
 /** The lane pass's result re-gated at `want` (every leg clear of the standoff, spliced with the standoff's own
  *  route where it is not) and re-pruned at it. The lane is kept wherever the gate did not have to abandon it. */
@@ -1086,7 +1103,8 @@ export function routePlan(start, wps, keepRightAll, standoffM, transitAt){
       seg = kr.route; if(kr.lane) lane = true; if(kr.partial) partial = true;
       // (its margin water as it ships: from her position on the first leg, at its end on the last - else at a waypoint)
       if(df) for(const r of marginRuns(seg, ref, koT, found))
-        runs.push({...r, end: (r.end === "start" && i === 0) || (r.end === "end" && i === wps.length - 1) ? r.end : r.end ? "waypoint" : null});
+        runs.push({...r, w1: out.length + r.v1 - 1,             // (the stretch's end in the plan's route: seg[k] is out[out.length + k - 1])
+                   end: (r.end === "start" && i === 0) || (r.end === "end" && i === wps.length - 1) ? r.end : r.end ? "waypoint" : null});
       if(kr.how){
         for(const f of ["pairs", "charted", "narrow", "reach", "gaps"]) if(kr.how[f]) how[f] = true;
       }
