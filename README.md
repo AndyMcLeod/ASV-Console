@@ -3022,7 +3022,11 @@ of the operator.
    **Deep water first (2026-10-12).** The chart is an excellent source of data but can be
    wrong, so a passage (a Go-To, an RTH, a transit, the leg into a survey) is planned
    first keeping **2 m of water over her depth floor and 50 m off charted rocks and shoal
-   soundings**. Today's floor and buffer are used only on stretches with no deeper way
+   soundings**. A charted depth band counts as that shallow only when it is no wider than
+   **10 m** (2026-10-13): a coastal chart's 0-18.2 m band runs from the shoreline to the
+   10-fathom line, its 0 is the shore, and read by it a Go-To off Biddeford Pool went
+   970 m round water whose soundings beside the line were 15.5 m and deeper; inside such a band the shoal
+   soundings and rocks still get their 50 m. Today's floor and buffer are used only on stretches with no deeper way
    (none within half again the distance, or 1 km more), and where a deeper way would put
    a buoy on its wrong hand: a buoy outranks the chart's margin. Each such stretch is
    said on the banner ("deep water first: 1.34 km at her floor (1 with no deeper way, 1

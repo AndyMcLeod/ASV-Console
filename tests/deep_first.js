@@ -580,5 +580,62 @@ check("26. THE PAGE DRAWS THEM: setPlanIntent keeps the stretches with the route
       () => "drawn " + nDrawn + "; strokes through " + JSON.stringify(moves.map((c) => [c[1], c[2]])) + "; labels " + JSON.stringify(texts.map((c) => c[1]))
             + "; in render the call " + (iCall > iDiamond ? "after" : "BEFORE") + " the diamonds; kept " + JSON.stringify(piDeep.margin && { runs: piDeep.margin.runs.length }));
 
+// ── A COARSE BAND IS NOT MARGIN WATER (Andy, 2026-10-13: "yes, build the 10 m band-width rule") ───────────────────────
+// His Go-To from New Castle to Portland went 970 m round open water off Biddeford Pool, up to 837 m off the straight line:
+// the coastal chart's one band from the shoreline to the 10-fathom line, 0-18.2 m, read as margin water by its 0, where
+// the soundings along the line were 15.5 m and deeper. A band wider than DEEP_BAND_MAX_M is not margin water; its shoal
+// soundings and rocks still are berths. tests/fixtures/enc_biddeford.json is his cached tile about that leg.
+const cE = (q) => q.ring.reduce((s, v) => s + v.e, 0) / q.ring.length;
+const bw = K.deepKeepouts(GF, [SEA, area(5.4, 9.1, -3000, -200, -2600, 200), area(0, 9.1, -2000, -200, -1600, 200),
+  area(0, 10, -1000, -200, -600, 200), area(0, 10.1, 0, -200, 400, 200), area(0, 18.2, 1000, -400, 2000, 400), sounding(1500, 0, 3.0),
+  { role: "dredged", cls: "Dredged_Area", props: { DRVAL1: 5.0 }, geometry: { type: "Polygon", coordinates: rect(3000, -200, 3400, 200) } }],
+  { minDepthM: 4.0, depthRange: { min: 4.0, max: 0 }, waterOffsetM: 0, enforce: ENF });
+const bwHas = (e) => bw.polys.some((q) => Math.abs(cE(q) - e) < 300);
+const bwSnd = bw.points.some((q) => Math.abs(q.e - 1500) < 0.5 && Math.abs(q.n) < 0.5);
+check("27. A BAND WIDER THAN DEEP_BAND_MAX_M (10 m) IS NOT MARGIN WATER: 5.4-9.1, 0-9.1 and 0-10.0 m are in the layer, "
+      + "0-10.1 and 0-18.2 m are not; a dredged area with one bound (5.0 m) is judged by it, as before; and a 3.0 m sounding "
+      + "inside the 0-18.2 m band is still a berth",
+      () => K.DEEP_BAND_MAX_M === 10 && bwHas(-2800) && bwHas(-1800) && bwHas(-800) && !bwHas(200) && !bwHas(1500) && bwHas(3200) && bwSnd,
+      () => "in the layer at e = " + bw.polys.map((q) => f0(cE(q))).join(", ") + "; the 3.0 m sounding a berth " + bwSnd);
+// his chart off Biddeford Pool
+const BIDFIX = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "enc_biddeford.json"), "utf8"));
+const BF = planeFrame({ lat: 43.4124, lon: -70.3335 });
+const bidBuild = (feats) => {
+  const was = sea.waterOffset; sea.waterOffset = 0.33;
+  try { const ko = buildKeepouts(BF, ENF, { min: 4.0, max: 0 }, feats);
+        ko.margin = buildMargin(BF, ENF, { min: 4.0, max: 0 }, feats, undefined, ko);
+        return ko; } finally { sea.waterOffset = was; }
+};
+const BID = bidBuild(BIDFIX.features);
+const bRings = (f) => (f.geometry.type === "Polygon" ? [f.geometry.coordinates[0]] : f.geometry.coordinates.map((p) => p[0]))
+  .map((rg) => rg.map(([lon, lat]) => BF.toEN({ lat, lon })));
+const bInLayer = (f) => bRings(f).some((rg) => BID.margin.polys.some((q) => q.ring.length === rg.length
+  && q.ring.every((v, i) => Math.hypot(v.e - rg[i].e, v.n - rg[i].n) < 0.01)));
+const bBand = (d1, d2) => BIDFIX.features.filter((f) => f.role === "depth_area" && f.props.DRVAL1 === d1 && Math.abs(f.props.DRVAL2 - d2) < 0.05);
+const bRock = (name) => BIDFIX.features.filter((f) => f.props && f.props.OBJNAM === name).every((f) => {
+  const p = BF.toEN({ lat: f.geometry.coordinates[1], lon: f.geometry.coordinates[0] });
+  return BID.margin.points.some((q) => Math.hypot(q.e - p.e, q.n - p.n) < 0.01); });
+const narrow = [[3.6, 5.4], [5.4, 9.1], [5.4, 10.9]].map(([a, b]) => bBand(a, b));
+check("28. HIS CHART OFF BIDDEFORD POOL: none of the coastal chart's 0-18.2 m areas is in the layer; every 3.6-5.4, 5.4-9.1 and "
+      + "5.4-10.9 m area is; Hussey Rock (1.5 m) and Whaleback Rock (0.6 m) are 50 m berths",
+      () => bBand(0, 18.2).length > 0 && !bBand(0, 18.2).some(bInLayer) && narrow.every((fs_) => fs_.length > 0 && fs_.every(bInLayer))
+            && bRock("Hussey Rock") && bRock("Whaleback Rock"),
+      () => "0-18.2 m areas " + bBand(0, 18.2).length + " (in the layer " + bBand(0, 18.2).filter(bInLayer).length + "); narrow "
+            + narrow.map((fs_) => fs_.filter(bInLayer).length + "/" + fs_.length).join(", ") + "; " + JSON.stringify(BID.margin.counts));
+const [bW, bS, bE, bN] = BIDFIX.box;
+Object.assign(nogo, { ready: true, frame: BF, ko: BID, buffer: 5, bbox: { W: bW + 0.002, S: bS + 0.002, E: bE - 0.002, N: bN - 0.002 }, unread: null, ais: null });
+const BFROM = { lat: 43.39478427592312, lon: -70.34821594291144 }, BTO = { lat: 43.429975258316716, lon: -70.31355385139443 };   // his waypoints 756, 845
+const bLeg = P.planNogoRoute(BFROM, BTO, O);
+const bA = BF.toEN(BFROM), bB = BF.toEN(BTO), bL = Math.hypot(bB.e - bA.e, bB.n - bA.n);
+const bOff = bLeg.error ? null : Math.max(...[BFROM, ...bLeg.route].map((q) => { const p = BF.toEN(q);
+  return Math.abs(((p.e - bA.e) * (bB.n - bA.n) - (p.n - bA.n) * (bB.e - bA.e)) / bL); }));
+const bLen = bLeg.error ? null : lenOf(BF, [BFROM, ...bLeg.route]);
+check("29. ... AND HIS LEG THERE, waypoint 756 to 845: planned with deep water first, it runs the straight line - no farther off "
+      + "it than 25 m, no longer than it by 25 m (on the rule before, this fixture planned 5,725 m, 848 m off the line, as his "
+      + "Go-To did) - with no stretch at her floor",
+      () => !bLeg.error && bOff <= 25 && bLen <= bL + 25 && bLeg.deep && bLeg.deep.runs.length === 0,
+      () => bLeg.error ? "refused: " + bLeg.error : "line " + f0(bL) + " m, route " + f0(bLen) + " m, " + f0(bOff) + " m off it at most; "
+            + (bLeg.deep ? bLeg.deep.runs.length + " stretch(es) at her floor" : "no deep record"));
+
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
 process.exit(fails ? 1 : 0);

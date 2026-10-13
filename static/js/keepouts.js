@@ -1088,11 +1088,22 @@ export function buildKeepouts(frame, feats, opts = {}) {
 // punch and the hold point never see it: a margin is a preference of the search, not a wall the boat is held off.
 export const DEEP_MARGIN_M = 2;
 export const DEEP_BERTH_M = 50;
+// ⚠ A COARSE BAND IS NOT MARGIN WATER (Andy, 2026-10-13: "yes, build the 10 m band-width rule"). His Go-To from New
+// Castle to Portland went 970 m round open water off Biddeford Pool - up to 837 m off the straight line, just inside
+// the detour allowed - because the coastal chart draws ONE band from the shoreline to the 10-fathom line, 0-18.2 m, and
+// its 0 is the shore, not the water: the shallowest charted sounding within 300 m of the 3.0 km the straight line ran
+// in it was 15.5 m. A band says how deep its water is only when it is narrow. Over his cached charts the bands that
+// could be margin water fall in two groups - up to 9.1 m wide (3.6-5.4, 5.4-9.1, 0-9.1 m: the Oak Rock patch is one)
+// and from 12.8 m (5.4-18.2, 0-18.2 m) - and a band wider than DEEP_BAND_MAX_M is not margin water itself. Inside one,
+// each shoal sounding and every rock still gets its DEEP_BERTH_M, so a charted shallow spot is still kept off.
+export const DEEP_BAND_MAX_M = 10;
 
 /**
  * The margin layer for a hull whose floor is `opts.depthRange.min` (else `opts.minDepthM`), at `opts.waterOffsetM`:
  *   polys   each depth or dredged area legal at the floor whose SHALLOWEST depth is under floor + DEEP_MARGIN_M (the
- *           floor's own test, depthExcluded, reads a band by its DEEPEST value: a 5.4-9.1 m band is legal at 4.0);
+ *           floor's own test, depthExcluded, reads a band by its DEEPEST value: a 5.4-9.1 m band is legal at 4.0) -
+ *           and whose band is no wider than DEEP_BAND_MAX_M (a 0-18.2 m coastal band is not; an area with one bound
+ *           is judged by it, as before);
  *   points  each rock, obstruction, wreck and hulk no charted sounding clears floor + DEEP_MARGIN_M over (hazPassable at
  *           that floor), and each SOUNDING shallower than it, at `berth: DEEP_BERTH_M` - the radius is set where the
  *           layer is armed, as the berth less the margin the plan keeps, so the berth is the distance kept whatever the
@@ -1116,8 +1127,9 @@ export function deepKeepouts(frame, feats, opts = {}) {
     if (!g) continue;
     if (r === 'depth_area' || r === 'dredged') {
       if (!enf.depth || depthExcluded(f, { min: floor, max: 0 }, o.waterOffsetM)) continue;   // a keep-out already
-      const d = f.props?.DRVAL1 ?? f.props?.DRVAL2;
+      const d1 = f.props?.DRVAL1, d2 = f.props?.DRVAL2, d = d1 ?? d2;
       if (d == null || d + o.waterOffsetM >= deepTo) continue;
+      if (d1 != null && d2 != null && d2 - d1 > DEEP_BAND_MAX_M) continue;   // a coarse band: its soundings say (above)
       const kind = 'water less than ' + marginM + ' m over her floor';
       eachRing(g, (rg) => {
         const ring = rg.map((c) => frame.toEN({ lon: c[0], lat: c[1] }));
