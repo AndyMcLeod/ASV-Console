@@ -19,6 +19,7 @@
 //   a reload never asked for -> 4             an unfilled page claims a version -> 5
 //   the pill never hidden again -> 6          the tooltip left behind -> 6
 //   frames not checked -> 7                   a reload asked for before the restart -> 4
+// and since the two-line bar (2026-10-14), 2 more, 2/2 caught: the pill before the link -> 7; in the lower row -> 7
 //
 // NOTE: the page's script is <script type="module">, which runs STRICT - so the functions under test are
 // evaluated strict here too.
@@ -121,9 +122,15 @@ check("6. once they agree again the pill is HIDDEN - not left up empty - and say
       () => "display '" + pill.style.display + "', text '" + pill.textContent + "', title '" + pill.title + "'");
 
 const onFrame = grab("onFrame");
-check("7. every state frame is checked - onFrame calls buildCheck - and the pill sits in the top bar",
+// (the pill's place since 2026-10-14, the two-line status bar: the UPPER row, after the link and the rest of the group -
+// one of the three warnings that come and go, last, so one showing moves nothing that was already there)
+const iGroup = H.indexOf('<div class="tbrow tbgroup">'), iLink = H.indexOf('<span id="linktext">idle</span>');
+const iBuild = H.indexOf('<div class="pill" id="buildPill"'), iCur = H.indexOf('<div class="pill" id="curWin"');
+const iLive = H.indexOf('<div class="tbrow tblive">');
+check("7. every state frame is checked - onFrame calls buildCheck - and the pill sits in the top bar's upper row, after "
+      + "the link and the rest of the group",
       () => /consoleHealth\(\);\s*buildCheck\(\);/.test(onFrame)
-            && /<div class="pill"><span class="dot" id="dot"><\/span><span id="linktext">idle<\/span><\/div>\s*<div class="pill" id="buildPill"/.test(H),
+            && iGroup > 0 && iGroup < iLink && iLink < iCur && iCur < iBuild && iBuild < iLive,
       () => onFrame.replace(/\s+/g, " ").slice(-80));
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");

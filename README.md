@@ -71,6 +71,18 @@ drawn with a transparent background (no card, no chip) and **draggable anywhere 
 the chart**; it remembers where you put it and is clamped back into view if the
 window shrinks.
 
+**The status bar is two lines (2026-10-14).** The upper line, from the left, is the console:
+the port and vessel pickers, the link, the autonomy state, Playback, Controls, the station
+windows, and last any warning that comes and goes (`RESTART CONSOLE`, `DISK LOW`, the
+supervisor's pill), so one appearing moves nothing already there (only a warning too long for
+the room left can add a line, and that moves the readouts down, never sideways). The lower line, from the
+right, is the vessel's live data - POS, SOG, HDG, COG, HOME→, PITCH, ROLL, the energy, WPT,
+the distance unit and TIME - each at a fixed width sized to its longest value, so nothing in
+either line moves as the numbers change. Until then it was one line that wrapped inside the
+readouts on most screens, and the readouts jumped between lines as their widths changed. Both
+lines fit a window wider than about 1,200 px; a narrower one wraps a line, always at the same
+place.
+
 **Operating port + vessel — two choices, not one.** The top bar carries two pickers.
 The **port** is *where you are*; the **ASV** is *what you are driving*. Selecting a port
 sets the chart's opening view and, in sim, where the boat spawns — switching hull no

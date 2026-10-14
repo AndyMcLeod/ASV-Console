@@ -18,9 +18,27 @@
   #map.drag{cursor:grabbing;}
   #tiles img{position:absolute;width:256px;height:256px;user-select:none;-webkit-user-drag:none;image-rendering:auto;}
   #overlay{position:absolute;inset:0;pointer-events:none;}
-  .topbar{position:absolute;top:0;left:0;right:0;display:flex;align-items:center;flex-wrap:wrap;gap:10px;
+  /* TWO LINES, ALWAYS (Andy, 2026-10-14: "The ASV Status bar should be 2 lines tall. The upper, and left aligned
+     portion, will hold the mission/vessel/pills group in roughly the same position they are now. The lower line, aligned
+     right, will hold the dynamic data of the ASV. This is to accommodate smaller screens where the dynamic data wraps to
+     the second line and jitters about as numbers change. Try to keep everything stable in size and lateral placement.")
+     It was ONE wrapping row - the group, a spacer, the readouts - about 2,000 px of it, so nearly every screen broke it
+     somewhere inside the readouts, and the break moved whenever a width did. Now the group is the upper row from the
+     left and the readouts the lower row from the right, every readout at a FIXED width (below), so nothing in either
+     row moves as the numbers change. A window too narrow for a row still wraps it - but at the same place every time,
+     the widths being fixed. The cards under the bar start at 96 px; the bar is about 65.
+     The one thing still able to add a line is a WARNING too long for the room left in the upper row: at 1,366 px with
+     the station windows open, only "VIEW ONLY · the other tab is planning" is, and it moves the readouts DOWN a line
+     (the bar 93 px, still clear of the cards), never sideways. */
+  .topbar{position:absolute;top:0;left:0;right:0;display:flex;flex-direction:column;gap:6px;
     padding:8px 14px;background:linear-gradient(180deg,rgba(13,22,32,.96),rgba(10,17,25,.86));
     border-bottom:1px solid var(--line);z-index:5;}
+  .topbar .tbrow{display:flex;align-items:center;flex-wrap:wrap;gap:6px 6px;}
+  /* (tighter than the pills elsewhere: the lower row was 1,296 px at the old 10 px gaps and 9 px padding, and wrapped
+     even at 1,280; at 6 and 6 it is 1,168 to 1,172 - one line in a window wider than about 1,200 px) */
+  .topbar .tbrow .pill{padding:3px 6px;gap:4px;}
+  .topbar .tbgroup{justify-content:flex-start;}
+  .topbar .tblive{justify-content:flex-end;}
   .brand{font-family:var(--mono);letter-spacing:.14em;font-size:13px;color:var(--bronze);text-transform:uppercase;}
   .spacer{flex:1}
   .pill{font-family:var(--mono);font-size:11px;padding:3px 9px;border-radius:2px;border:1px solid var(--line2);
@@ -29,12 +47,19 @@
   .pill .k{color:var(--ink-faint);font-size:9px;text-transform:uppercase;letter-spacing:.06em;}
   /* fixed-width telemetry values (mono font -> ch units are exact): each pill is
      sized to its maximum possible content and the value centered, so the bar
-     doesn't reflow/jump as digits change (e.g. "3 kn" vs "2.65 kn"). */
+     doesn't reflow/jump as digits change (e.g. "3 kn" vs "2.65 kn").
+     (2026-10-14, the two-line bar: each at its LONGEST, which four were not - a position at 100 degrees of longitude
+     or more is 25 characters ("44.38785° N  140.79505° W"), a speed of 10 kn or more 8 ("10.37 kn", the server's two
+     places), HOME→ past 100 km 16 ("359° · 123.45 km"), a plan of 1,000 waypoints or more up to 13 ("12345 / 20000",
+     route_max_wpts 20000) - each one pushed every readout left of it as it grew. TIME is always 20 ("HH:MM:SS ·
+     HH:MM:SSZ"). The link's words and the autonomy word are fixed too: they sit in the upper row, before the rest.) */
   .pill b{display:inline-block;text-align:center;}
-  #p_pos{min-width:24ch;} #p_sog{min-width:7ch;} #p_hdg{min-width:6ch;}
-  #p_cog{min-width:4ch;} #p_home{min-width:15ch;} #p_pitch{min-width:6ch;}
-  #p_roll{min-width:6ch;} #p_batt{min-width:7ch;} #p_wpt{min-width:9ch;}
-  #p_time{min-width:8ch;}
+  #p_pos{min-width:25ch;} #p_sog{min-width:8ch;} #p_hdg{min-width:6ch;}
+  #p_cog{min-width:4ch;} #p_home{min-width:17ch;} #p_pitch{min-width:6ch;}
+  #p_roll{min-width:6ch;} #p_batt{min-width:7ch;} #p_wpt{min-width:13ch;}
+  #p_time{min-width:20ch;}
+  #linktext{display:inline-block;min-width:14ch;}   /* "serial · stale" (the console's modes: sim, tcp, serial) */
+  #autonomy{min-width:10ch;}                         /* "FAILSAFE" (the console's longest), and the letter-spacing */
   .pill.state{border-color:var(--line2);text-transform:uppercase;letter-spacing:.08em;font-size:10px;}
   .pill.safe b{color:var(--ok);} .pill.armed b{color:var(--warn);} .pill.auto b{color:var(--track);}
   .pill.estop{border-color:var(--bad);} .pill.estop b{color:var(--bad);}
@@ -434,20 +459,25 @@
   <div class="vminipill" id="aisReopen" title="Show AIS traffic table" style="display:none;right:14px;top:120px;">AIS &#10287;</div>
 
   <div class="topbar">
+    <!-- THE UPPER ROW, from the left: the console's group. The three warnings that come and go (the build, the disk, the
+         supervisor) are LAST, so one showing moves nothing that was already there. -->
+    <div class="tbrow tbgroup">
     <div class="brand"><b>ASV</b> Status</div>
     <select id="portSel" class="pill" title="Operating PORT - where the console opens and, in sim, where the boat spawns. Pick a base here and the vessel separately: a port is where you are, the ASV is what you are driving. Choose &quot;+ Add port here...&quot; to save the chart's current center as a new base - it is retained in this list from then on. (Disarm and stop the run first.)"></select>
     <select id="vesselSel" class="pill" title="Active vessel profile — switch to study another ASV (disarm and stop the run first)"></select>
     <div class="pill"><span class="dot" id="dot"></span><span id="linktext">idle</span></div>
-    <div class="pill" id="buildPill" style="display:none;color:var(--warn);border-color:var(--warn);" title=""></div>
-    <div class="pill" id="diskPill" style="display:none;color:var(--warn);border-color:var(--warn);" title=""></div>
-    <div class="pill" id="supPill" style="display:none;cursor:pointer;color:var(--warn);border-color:var(--warn);" title=""></div>
     <div class="pill state safe" id="p_autonomy"><b id="autonomy">SAFE</b></div>
     <a class="pill" href="/playback" target="_blank" title="Open the session playback viewer — review a recorded run" style="text-decoration:none;color:var(--ink-dim);">▶ Playback</a>
     <div class="pill" id="ctlReopen" title="Reopen the controls window (it closed or crashed — the toolbar and panels moved back to this window)" style="cursor:pointer;color:var(--ink-dim);">⏏ Controls</div>
     <div class="pill" id="tideWin" style="display:none;cursor:pointer;color:var(--ink-dim);">⏏ Tide</div>
     <div class="pill" id="wxWin" style="display:none;cursor:pointer;color:var(--ink-dim);">⏏ Weather</div>
     <div class="pill" id="curWin" style="display:none;cursor:pointer;color:var(--ink-dim);">⏏ Current</div>
-    <div class="spacer"></div>
+    <div class="pill" id="buildPill" style="display:none;color:var(--warn);border-color:var(--warn);" title=""></div>
+    <div class="pill" id="diskPill" style="display:none;color:var(--warn);border-color:var(--warn);" title=""></div>
+    <div class="pill" id="supPill" style="display:none;cursor:pointer;color:var(--warn);border-color:var(--warn);" title=""></div>
+    </div>
+    <!-- THE LOWER ROW, from the right: the vessel's live data, each readout at a fixed width. -->
+    <div class="tbrow tblive">
     <div class="pill"><span class="k">POS</span><b id="p_pos">no fix</b></div>
     <div class="pill"><span class="k">SOG</span><b id="p_sog">--</b></div>
     <div class="pill"><span class="k">HDG</span><b id="p_hdg">--</b></div>
@@ -459,6 +489,7 @@
     <div class="pill"><span class="k">WPT</span><b id="p_wpt">--</b></div>
     <div class="pill" id="unitsPill" style="cursor:pointer" title="Distance display unit for LONG distances — route lengths, remaining distance, HOME range, tide-station distance: kilometers or NAUTICAL MILES. Click to toggle (persisted). Short distances (line spacing, buffers, depths, the LINES table) always read in meters, chart-tile soundings stay in feet, and the AIS card always reads nm."><span class="k">DIST</span><b id="p_units">KM</b></div>
     <div class="pill" title="Local time · UTC"><span class="k">TIME</span><b id="p_time">--</b></div>
+    </div>
   </div>
 
   <div class="controls">

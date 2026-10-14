@@ -118,7 +118,7 @@ c.push(TBL(["Row", "Does"], [
 c.push(P("A row that cannot act right now is grayed and SAYS WHY beside itself — `arm first`, `no link`, `sim only`. The menu is a shortcut past the arming STEP, never past the arm GATE: the rules are the same ones the safety model applies everywhere else, and they are checked as the menu opens, so a row closes the moment an E-STOP is latched."));
 c.push(P("Escape closes the menu, as does clicking elsewhere. A click that closes the menu does nothing else, so you cannot dismiss it and place something by accident."));
 c.push(H2("4.2  The top status bar"));
-c.push(P("Always visible, and the fastest read on the vessel:"));
+c.push(P("Always visible, and the fastest read on the vessel. It is two lines: the upper, from the left, is the console - the port and vessel pickers, the link, the autonomy state, Playback, Controls, the station windows, and last any warning that comes and goes, so one appearing moves nothing already there (only a warning too long for the room left can add a line, which moves the readouts down, never sideways); the lower, from the right, is the vessel's live data, each reading at a fixed width, so nothing moves as the numbers change. A window narrower than about 1,200 px wraps a line, always at the same place:"));
 c.push(TBL(["Field", "Meaning"], [
   ["link dot + text", "Connection mode and health. The dot turns red and the text reads `stale` when no update has arrived for two seconds - see 13.8"],
   ["`RESTART CONSOLE` / `RELOAD PAGE`", "Shown only when this page and the running console are different versions - see 13.9"],
