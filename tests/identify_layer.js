@@ -161,7 +161,7 @@ const prev = hitAt(0.003, 0.005);
 check("2. ⚠ THE QUESTION HE ASKED: a click on the pattern preview says it is NOT in the plan, and names both ways out "
       + "- commit it, or clear the anchors",
       () => prev && prev.layer === "preview" && /NOT in the plan/.test(prev.what) && /cyan/.test(prev.what)
-            && /ADD TO PLAN/.test(prev.what) && /SURV then RESET/.test(prev.what),
+            && /ADD TO PLAN/.test(prev.what) && /Reset on the Survey tab/.test(prev.what),   // SURV then RESET until the Path planning card (2026-10-13)
       () => (prev && prev.what.slice(0, 120)) || "(nothing found)");
 
 // 3. every other layer answers as itself
