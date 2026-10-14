@@ -135,34 +135,81 @@ check("1. every suite that starts a console gives it a state folder of its own -
 # removing it - amend_plan.py's was not even used. By AST, in every suite: each tempfile.mkdtemp() is assigned to a
 # plain name, and that name is handed to rmtree (directly, or through atexit.register). JS suites: each
 # fs.mkdtempSync() is assigned to a name that reaches fs.rmSync. A folder made inside ConsoleState (tests/lib) is
-# removed at exit by the class itself.
+# removed at exit by the class itself - through atexit.
+# os._exit (2026-10-13, Andy: "fix the speed_knots leak too"). os._exit skips atexit, and this check did not know it:
+# speed_knots.py registered its rmtree with atexit and ENDED in os._exit, so every run left a folder in %TEMP% (42 by
+# then), and stream_fusion.py left two ConsoleState folders a run the same way - both passed here. Now, in a suite that
+# calls os._exit outside a function, only a direct rmtree counts, and a ConsoleState must be named and its .dir removed
+# by hand. And a CRASH HANDLER that ends in os._exit (the crash guard most suites carry) must itself remove every folder
+# the suite made at module level: ofs_s3.py's crashed runs had left two.
 def temp_leaks(src):
     tree = ast.parse(src)
-    named, leaks = {}, []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and getattr(node.func, "attr", getattr(node.func, "id", None)) == "mkdtemp":
-            named.setdefault(id(node), None)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call) and id(node.value) in named \
-                and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
-            named[id(node.value)] = node.targets[0].id
-    removed = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        fname = getattr(node.func, "attr", getattr(node.func, "id", None))
-        args = list(node.args)
-        if fname == "register" and args and getattr(args[0], "attr", getattr(args[0], "id", None)) == "rmtree":
-            args = args[1:]
-        elif fname != "rmtree":
-            continue
-        if args and isinstance(args[0], ast.Name):
-            removed.add(args[0].id)
-    for call_id, name in named.items():
+
+    def name_of(node):
+        return getattr(node, "attr", getattr(node, "id", None))
+
+    def is_exit(n):
+        return isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "_exit" \
+            and getattr(n.func.value, "id", None) == "os"
+
+    def handler(n):
+        return isinstance(n, ast.FunctionDef) and any(is_exit(x) for x in ast.walk(n))
+
+    def walk(node, skip):
+        # ast.walk, less any crash handler under `node` when `skip`: the normal path's removal is never the handler's
+        todo = [node]
+        while todo:
+            n = todo.pop()
+            if skip and n is not node and handler(n):
+                continue
+            yield n
+            todo.extend(ast.iter_child_nodes(n))
+
+    def removed_in(node, skip=False):
+        # the names whose folder an rmtree under `node` removes - rmtree(X) or rmtree(X.dir) - and those only an
+        # atexit.register(rmtree, X) would
+        direct, later = set(), set()
+        for n in walk(node, skip):
+            if not isinstance(n, ast.Call):
+                continue
+            args, into = list(n.args), direct
+            if name_of(n.func) == "register" and args and name_of(args[0]) == "rmtree":
+                args, into = args[1:], later
+            elif name_of(n.func) != "rmtree":
+                continue
+            if args and isinstance(args[0], ast.Attribute) and args[0].attr == "dir" and isinstance(args[0].value, ast.Name):
+                into.add(args[0].value.id)
+            elif args and isinstance(args[0], ast.Name):
+                into.add(args[0].id)
+        return direct, later
+
+    def assigned(stmt):
+        if isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.Call) and id(stmt.value) in made \
+                and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
+            return stmt.targets[0].id
+        return None
+
+    made = {id(n): [name_of(n.func), None] for n in ast.walk(tree)
+            if isinstance(n, ast.Call) and name_of(n.func) in ("mkdtemp", "ConsoleState")}
+    for n in ast.walk(tree):
+        if assigned(n):
+            made[id(n.value)][1] = assigned(n)
+    top = {assigned(s) for s in tree.body} - {None}             # the folders made at module level
+    ends_in_exit = any(is_exit(n) for s in tree.body if not isinstance(s, (ast.FunctionDef, ast.ClassDef))
+                       for n in ast.walk(s))
+    direct, later = removed_in(tree, skip=True)
+    leaks = []
+    for kind, name in made.values():
+        if kind == "ConsoleState" and not ends_in_exit:
+            continue                                            # the class's own atexit removes it
         if name is None:
-            leaks.append("an unnamed mkdtemp()")
-        elif name not in removed:
-            leaks.append(name)
+            leaks.append("an unnamed %s()" % kind)
+        elif name not in direct and (ends_in_exit or name not in later):
+            leaks.append(name + (" (an atexit rmtree, and the suite ends in os._exit)" if name in later or kind == "ConsoleState" else ""))
+    for fn in ast.walk(tree):
+        if handler(fn):
+            for name in sorted(top - removed_in(fn)[0]):
+                leaks.append("%s (not removed by %s, which ends in os._exit)" % (name, fn.name))
     return leaks
 
 
@@ -172,7 +219,7 @@ for fn in sorted(os.listdir(HERE)):
     if fn.endswith(".py"):
         with open(p, "r", encoding="utf-8") as f:
             src = f.read()
-        if "mkdtemp" in src:
+        if "mkdtemp" in src or "ConsoleState(" in src:
             temp_report[fn] = temp_leaks(src)
     elif fn.endswith(".js"):
         with open(p, "r", encoding="utf-8") as f:
@@ -183,7 +230,8 @@ for fn in sorted(os.listdir(HERE)):
                               + (["an unnamed mkdtempSync()"] if src.count("mkdtempSync(") > len(names) else [])
 leaky = {k: v for k, v in temp_report.items() if v}
 check("1b. every temp folder a suite makes, the suite removes - each mkdtemp is named, and the name reaches rmtree "
-      "(or rmSync)",
+      "(or rmSync); in a suite that ends in os._exit, by a direct rmtree (atexit never runs), a ConsoleState's too; and "
+      "a crash handler ending in os._exit removes every folder the suite made at module level",
       lambda: len(temp_report) >= 8 and not leaky,
       lambda: "%d suites make temp folders; leaking: %s" % (len(temp_report),
                                                           "; ".join("%s: %s" % (k, ", ".join(v)) for k, v in leaky.items())

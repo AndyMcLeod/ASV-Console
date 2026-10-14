@@ -19,7 +19,6 @@ The page's half is tests/speed_knots.js.
     python tests/speed_knots.py     # exit 0 = pass, 1 = fail   (in-process: no console, no network)
 """
 
-import atexit
 import copy
 import importlib.util
 import json
@@ -35,6 +34,7 @@ sys.path.insert(0, APP)        # the app's modules first: tests/currents.py is a
 
 fails = 0
 ran = 0
+TMP = None                                 # the temp plan folder, once made - removed on a crash too (state_dir.py 1b)
 
 
 def _crash_report(t, e, tb):
@@ -43,6 +43,8 @@ def _crash_report(t, e, tb):
     print("".join(traceback.format_exception(t, e, tb))[-900:])
     print("\n1 CHECK(S) FAILED (crashed before finishing)")
     sys.stdout.flush()
+    if TMP:                                # os._exit skips atexit and the rmtree at the end alike
+        shutil.rmtree(TMP, ignore_errors=True)
     os._exit(1)
 
 
@@ -71,8 +73,9 @@ spec = importlib.util.spec_from_file_location("console_for_speed_knots",
 A = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(A)
 
+# Removed by hand before each os._exit below: an atexit.register(rmtree) here never ran (os._exit skips atexit), and a
+# folder was left in %TEMP% by every run - 42 of them by 2026-10-13.
 TMP = tempfile.mkdtemp(prefix="asv_speed_knots_")
-atexit.register(shutil.rmtree, TMP, True)
 A.MISSION_PATH = os.path.join(TMP, "mission.json")     # never the operator's plan (tests_must_not_write_app_state)
 A._MISSION_CACHE = None
 
@@ -273,6 +276,7 @@ check("10. speed_txt: \"7\" reads \"7 kn\", `low` reads \"low (4.0 kn)\", an unk
       lambda: (A.speed_txt("7"), A.speed_txt("low"), A.speed_txt("warp")) == ("7 kn", "low (4.0 kn)", "warp"),
       lambda: str((A.speed_txt("7"), A.speed_txt("low"), A.speed_txt("warp"))))
 
+shutil.rmtree(TMP, ignore_errors=True)
 print("\n%s (%d ran)" % ("%d CHECK(S) FAILED" % fails if fails else "all checks passed", ran))
 sys.stdout.flush()
 os._exit(1 if fails else 0)

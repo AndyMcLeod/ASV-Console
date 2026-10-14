@@ -48,7 +48,11 @@ ran = 0
 
 
 # --- crash guard: a throw outside a check() must still REPORT ------------------------
+STATE = None                               # the console's state folder, once made (below) - removed on a crash too
+
+
 def _crash_report(t, e, tb):
+    import shutil
     import traceback
     print("  FAIL 0. the suite itself CRASHED before finishing - %s: %s" % (t.__name__, e))
     print("".join(traceback.format_exception(t, e, tb))[-600:])
@@ -62,6 +66,8 @@ def _crash_report(t, e, tb):
     # it — so flush first, then go.
     sys.stdout.flush()
     sys.stderr.flush()
+    if STATE is not None:                  # ConsoleState removes it through atexit, which os._exit skips
+        shutil.rmtree(STATE.dir, ignore_errors=True)
     os._exit(1)
 
 
@@ -447,7 +453,7 @@ with _eng._lock:
     _eng._link = _NoSetLink()
     _eng._mode = "real"
     _eng._stop.clear()
-_th = _threading.Thread(target=_eng._run, daemon=True)
+_th = _threading.Thread(target=_eng._run, args=(_eng._stop,), daemon=True)   # the loop's OWN stop flag (e731af8: connect())
 _th.start()
 _st = {}
 for _ in range(30):

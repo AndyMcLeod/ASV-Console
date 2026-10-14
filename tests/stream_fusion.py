@@ -45,6 +45,7 @@ sys.path.insert(0, APP)
 
 fails = 0
 ran = 0
+TMP = None                                 # the suite's temp folder, once made - removed on a crash too (state_dir.py 1b)
 
 
 def _crash_report(t, e, tb):
@@ -53,6 +54,8 @@ def _crash_report(t, e, tb):
     print("".join(traceback.format_exception(t, e, tb))[-900:])
     print("\n1 CHECK(S) FAILED (crashed before finishing)")
     sys.stdout.flush()
+    if TMP:                                # os._exit skips the rmtree at the end
+        shutil.rmtree(TMP, ignore_errors=True)
     os._exit(1)
 
 
@@ -571,13 +574,25 @@ mon4._sources.stations._tables = (table("GSB", 43.11785, -70.82608, 238.0, 78.0,
 before4 = mon4.field_at(43.11785, -70.82608)
 mon4.disable_sources()
 after4 = mon4.field_at(43.11785, -70.82608)
+def _harness_args():
+    """The arguments every test harness's console is given. Its folder is removed HERE: ConsoleState removes it through
+    atexit, which this suite's os._exit skips - the two this check made were left in %TEMP% by every run (state_dir.py
+    1b)."""
+    cs = ConsoleState()
+    try:
+        return cs.args()
+    finally:
+        shutil.rmtree(cs.dir, ignore_errors=True)
+
+
+ARGS18 = _harness_args()
 check("18. a console given --no-stream-predictions reads the OFS alone (the station at the boat no longer in it), and "
       "every test harness's console is given it - so no suite that drives the boat at New Castle passes at slack and "
       "fails at full ebb",
-      lambda: "--no-stream-predictions" in ConsoleState().args()
+      lambda: "--no-stream-predictions" in ARGS18
       and re.search(r"if args\.no_stream_predictions:[^\n]*\n\s+CURRENTS\.disable_sources\(\)", SRC) is not None
       and abs(before4[0] - 3.0) < 0.05 and abs(after4[0] - 1.0) < 0.05 and abs(after4[1] - 0.0) < 1,
-      lambda: "args %s; field before %s, after %s" % (ConsoleState().args(), before4, after4))
+      lambda: "args %s; field before %s, after %s" % (ARGS18, before4, after4))
 
 # ── 19. A PORT THAT NAMES NO MODEL GETS NONE (Andy, 2026-10-09: "fix the port with no model issue") ──────────────────
 # A blank "ofs" was skipped by apply_port and ignored by set_ofs, so the console kept the LAST port's model: Portland read

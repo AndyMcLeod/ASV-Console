@@ -3409,7 +3409,10 @@ it is what lets an area already seen plan with the network down (`tests/log_comp
 `comms_config.json`, `ports.json`, `roc_config.json` and `logs/` - in DIR instead of beside the
 program. Every test that starts a console passes a temp folder this way
 (`tests/lib/console_state.py`), so running the suites or committing never writes your own plan,
-settings or logs; `tests/state_dir.py` fails if a suite starts a console without one.
+settings or logs; `tests/state_dir.py` fails if a suite starts a console without one, and if a
+suite leaves a temp folder behind - a crash included. A suite that ends in `os._exit` removes its
+folders by hand: `os._exit` skips `atexit`, so a cleanup registered there never ran
+(`tests/speed_knots.py` had left one folder in your temp folder per run).
 
 **`--mission PATH`** keeps this console's **plan** at PATH instead of `mission.json` - its
 `.bak1..5` history beside it - and everything else where it would be. It wins over `--state-dir`

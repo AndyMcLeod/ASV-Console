@@ -32,6 +32,7 @@ were reporting; Fort Point at New Castle was NOT - no observation in 24 hours - 
 
     python tests/stofs.py      # exit 0 = pass, 1 = fail   (stdlib only; no network - every NOAA answer is stubbed)
 """
+import atexit
 import calendar
 import inspect
 import json
@@ -88,6 +89,7 @@ ep = lambda s: calendar.timegm(time.strptime(s, "%Y-%m-%d %H:%M"))
 NOW = calendar.timegm((2026, 10, 13, 22, 0, 0))                  # ten hours after the cycle
 CYCLE_T = calendar.timegm((2026, 10, 13, 12, 0, 0))
 TMP = tempfile.mkdtemp(prefix="asv_stofs_")
+atexit.register(shutil.rmtree, TMP, True)     # a crash skips the rmtree at the end (this suite never calls os._exit)
 
 
 def obs_of(sid, datum, t0, t1):
