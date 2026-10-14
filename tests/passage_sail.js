@@ -161,7 +161,7 @@ console.log("The passage, sailed:");
   const world = (o) => {
     const w = Object.assign({ S: { armed: true, estop: false, run: "idle", status: { fuel_l: 200, holding: false }, wp_total: 0 },
       asv: { ...HERE }, wpIndex: 0, mission: { passage: null }, passage: PLAN(), runRoute: null, cmds: [], banners: [], notes: [],
-      logs: [], saves: 0, canCommand: true, sup: true, planned: [], quiet: true, refuse: null, unroutable: 0, ownsKind: null,
+      logs: [], missions: [], saves: 0, canCommand: true, sup: true, planned: [], quiet: true, refuse: null, unroutable: 0, ownsKind: null,
       gotoTakes: true, planIntent: null, planGen: 0, waterAsked: [], levels: [], banked: [],
       level: { m: 0.35, say: "+0.35 m, the lowest predicted along it over the next 4.0 h (Test Harbor, 3 km off)" } }, o || {});
     const src = [
@@ -175,6 +175,8 @@ console.log("The passage, sailed:");
       "const passageRefusal = () => w.refuse, passageName = (p) => p && p.t ? 'T' + p.t : 'her position';",
       "const canCommand = () => w.canCommand, supervising = () => w.sup;",
       "const saveMission = () => { w.saves++; }, logClient = (k, d) => w.logs.push([k, d]);",
+      // a new mission's history (2026-10-14, newMission): Sail passage starts one (4, 4b)
+      "const newMission = (t0, what) => w.missions.push({t0, what});",
       "const showBanner = (t) => w.banners.push(t), flashNote = (t) => w.notes.push(t), render = () => {}, applyCmdState = () => {}, updateTransitPanel = () => {}, updateMissionCard = () => {};",
       "const guiConfirm = async () => true, ensureNogoCovers = async () => true, holdOpts = () => ({}), transitStandoffM = () => 20;",
       "const planInsideChart = async (pts, opts, plan) => { if (w.duringPlan) w.duringPlan(w, api); return plan(); };",
@@ -253,12 +255,14 @@ console.log("The passage, sailed:");
               && P4 && P4.state === "running" && P4.sent === 0 && P4.base === 0 && distTo(P4.end, P1) < 1 && P4.route.length === 2
               && W4.saves > 0 && st4.passage === null
               && /PASSAGE UNDER WAY: section 1 of 3 sent \(2 waypoints, planned at \+0\.35 m, the lowest predicted/.test(W4.banners.pop() || "")
-              && W4.logs.some((l) => l[0] === "passage_sail" && l[1].ok),
+              && W4.logs.some((l) => l[0] === "passage_sail" && l[1].ok)
+              && W4.missions.length === 1 && W4.missions[0].what === "Sail passage",   // a new mission's history (2026-10-14)
         () => JSON.stringify({ planned: W4.planned.length, cmd: c4 && [c4[0], c4[1].route.length, c4[1].hold_clear_m], P: P4 && [P4.state, P4.sent] }));
   const W4b = world({ unroutable: 1 });
   await W4b.api.sailPassage();
   check("4b. A FIRST SECTION THAT CANNOT BE PLANNED: nothing sent, nothing kept, said",
-        () => W4b.cmds.length === 0 && W4b.api.st().mission.passage === null && /NOT sailed: its first section could not be sent - no route clear/.test(W4b.banners[0] || ""),
+        () => W4b.cmds.length === 0 && W4b.api.st().mission.passage === null && /NOT sailed: its first section could not be sent - no route clear/.test(W4b.banners[0] || "")
+              && W4b.missions.length === 0,
         () => JSON.stringify(W4b.banners));
 
   // ── 5. ahead of her ─────────────────────────────────────────────────────────────────────────────────────────────

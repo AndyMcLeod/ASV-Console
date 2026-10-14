@@ -228,6 +228,8 @@ eval([
   "async function readPassageAis(){}",
   // open water first's read of the water it searches (2026-10-14): tests/open_water.js's - none here
   "async function openWaterRead(){ return null; }",
+  // a new mission's history (2026-10-14, newMission): tests/action_history.js and command_result.js 54 - none here
+  "function newMission(){}",
   // THE ROUTE WORKER (2026-10-12) is not here: each search runs on this thread as it always did (tests/route_worker.js); and the
   // stop-class presses withdraw a plan in flight - the page's own (tests/route_worker.js 12-13)
   "async function planOffThread(job, here){ return here(); }", "let routeStopGen = 0, routeStopName = null;", grab("routeStopPressed"),

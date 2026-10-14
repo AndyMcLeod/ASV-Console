@@ -1139,8 +1139,9 @@ function lsDel(key){ try{ localStorage.removeItem(key); }catch(e){} }
 // banner), a new entry inserts one row and drops the last, and a message is written as TEXT - a server error is not
 // markup.
 const HISTORY_MAX = 20, HISTORY_KEY = "asv_history_v1", HISTORY_SHOW = 120;   // SHOW: characters a row shows
-let actionLog = (()=>{ const h = lsGet(HISTORY_KEY, []);
-  return Array.isArray(h) ? h.filter(e => e && typeof e.label === "string" && Number.isFinite(e.t)).slice(0, HISTORY_MAX) : []; })();
+function historyStored(){ const h = lsGet(HISTORY_KEY, []);
+  return Array.isArray(h) ? h.filter(e => e && typeof e.label === "string" && Number.isFinite(e.t)).slice(0, HISTORY_MAX) : []; }
+let actionLog = historyStored();
 function recordAction(kind, label, answer){
   const l = String(label == null ? "" : label).trim(), ans = String(answer == null ? "" : answer).trim();
   if(!l) return;
@@ -1235,6 +1236,34 @@ function renderHistory(changed){
 // runs: a banner posted during load reaches recordAction, and a `let` further down would still be in its temporal
 // dead zone.)
 renderHistory();
+// A NEW MISSION STARTS ITS OWN HISTORY (Andy, 2026-10-14: "Mission Status Card: Delete history and intent after each
+// mission. These data are available in playback. It confuses the current mission." Asked when, he chose: when the NEXT
+// mission starts - so the last one's lines, why it ended and the hold she sits in, stay readable until then). Called by
+// each command the operator gives that STARTS a mission, once the vessel has TAKEN it: Go-To (doGoTo - the Go-To tab, the
+// chart's menu, a survey's start, a passage's Divert), RTH (the button's: not the end-of-plan chain, not the low-fuel
+// shift - those are the mission she is on turning for home, and its lines say why), Transit (doTransit), Upload
+// (doUpload - not Upload from here, not the Continue past a held survey: those carry on the plan she has), Sail passage
+// (sailPassage) and the button's RTH home along a passage (sailHome). Every line older than `t0` - the press - goes; the
+// lines since stay, so the new mission's history opens with its own planning and its own command. A REFUSED command
+// clears nothing: she is still on the mission she had. Nothing is lost: each line went to the session record as it was
+// written (recordAction's logClient "history"), which playback reads, and this marks the boundary there too. The Intent
+// needs nothing here: the command's own setPlanIntent has just replaced it.
+function newMission(t0, what){
+  const kept = actionLog.filter(a => a.t >= t0), dropped = actionLog.length - kept.length;
+  logClient("mission_new", {what, dropped});
+  if(!dropped) return;
+  actionLog = kept;
+  lsSet(HISTORY_KEY, actionLog);
+  renderHistory();
+  renderAlertRecent();
+}
+// ... AND ANOTHER PAGE'S WRITE IS TAKEN UP. The controls window and a second chart page each hold a copy of the list, and
+// the store keeps the last one written - so a page still holding the last mission's lines would put them back with its
+// next line. Each page takes up what another wrote (the storage event never reaches the page that wrote).
+window.addEventListener("storage", e => {
+  if(e.key !== HISTORY_KEY) return;
+  actionLog = historyStored(); renderHistory(); renderAlertRecent();
+});
 // The display toggles were stored as the RAW strings "1"/"0", which predate the JSON
 // store. A preference written by an older build has to keep working, so this accepts
 // both: JSON.parse reads "1"/"0" back as 1/0, and a value written now comes back as a
@@ -10706,6 +10735,7 @@ function updateNogoUI(){
 // flag again, able to outlive the plan that set it. See channelLaneRoute.
 async function doGoTo(target){
   if(!asv){ flashNote("No position fix yet — can't Go-To."); return; }
+  const missionAt = Date.now();                  // a new mission's history opens here (newMission)
   // ⚠ SNAPSHOT BEFORE THE ROUTING, NOT BEFORE THE POST. The operator pressed this seconds
   // ago: the chart extract can run to several seconds and the clearance guard commands the boat
   // at 4 Hz through all of it. `planGen` moves for a new PICTURE and not for an amendment, so a
@@ -10755,6 +10785,7 @@ async function doGoTo(target){
   if(planGen === wasGen) releaseEscapeClaim("Go-To replaced it");
   plan.coast = gCoast;
   runRoute = plan.route; runUnsafe = []; setPlanIntent("goto", plan, plan.route); updateMissionCard();   // draw the transit line + waypoints like a survey
+  newMission(missionAt, "Go-To");
   legStartsHere(0, r);                           // her first leg begins where she is (SimVcu.start), not at a waypoint
   const note = [openWaterNote(plan.openWater, fmtDist), buoyageNote(plan.lane, plan.partial, plan.how), offshoreNote(plan.how), deepNote(plan.deep, fmtDist), mooredNote(plan)].filter(Boolean).join(" \u00b7 ");   // this plan's lane, not the last plan's
   if(plan.heldOff) showBanner("Go-To: "+heldOffWhy(plan.heldOff)+" — holding "+fmtDist(plan.heldOff.m)
@@ -10831,6 +10862,8 @@ function rthTooFar(fromLL, homeLL){
 }
 async function doRTH(opts){
   const chained = !!(opts && opts.chained === true);
+  // the RTH button's is a new mission (newMission); the end-of-plan chain and the low-fuel shift are the one she is on
+  const missionAt = chained || (opts && opts.breakWhy) ? null : Date.now();
   const why = (opts && typeof opts.why === "string" && opts.why) ? opts.why + " · " : "";   // LOW FUEL (2026-10-11)
   // THE SURVEY IT BREAKS OFF (2026-10-11), taken at the press - before the RTH replaces the plan aboard - and banked on
   // the plan only once the vessel has taken the RTH (below). Not by the end-of-plan chain: nothing is left to fly.
@@ -10855,7 +10888,7 @@ async function doRTH(opts){
     // RTH goes home the way the passage runs. Never the chain's, nor the low-fuel monitor's: an automatic RTH is for a
     // home in range (Andy, 2026-10-11).
     const H = chained || why ? null : homeRecord();
-    if(H && !H.why) return sailHome(H, brk, far);
+    if(H && !H.why) return sailHome(H, brk, far, missionAt);
     if(chained) rthChainFailed = true;
     showBanner("RTH refused: home is " + fmtDist(far.m) + " away, "
       + fmtDist(RTH_MAX_M) + " is as far as the console will certify a return"
@@ -10926,6 +10959,7 @@ async function doRTH(opts){
   if(brk) bankBreak(brk);                         // the survey she has left: Continue picks it up (2026-10-11)
   plan.coast = rCoast;
   runRoute = plan.route; runUnsafe = []; setPlanIntent("rth", plan, plan.route); updateMissionCard();   // draw the transit line + waypoints like a survey
+  if(missionAt != null) newMission(missionAt, "RTH");
   legStartsHere(0, r);                           // see doGoTo
   const note = [openWaterNote(plan.openWater, fmtDist), buoyageNote(plan.lane, plan.partial, plan.how), offshoreNote(plan.how), deepNote(plan.deep, fmtDist), mooredNote(plan)].filter(Boolean).join(" \u00b7 ");   // this plan's lane, not the last plan's
   if(plan.heldOff) showBanner(why+"RTH: Home "+heldOffWhy(plan.heldOff)+" — holding "+fmtDist(plan.heldOff.m)
@@ -11623,6 +11657,7 @@ async function sailSend(P, k, from, bo, append){
 /** SAIL PASSAGE: the coarse plan becomes the passage she sails, and its first section is sent from where she is. */
 async function sailPassage(){
   if(sailBusy) return;
+  const missionAt = Date.now();                  // a new mission's history opens here, at the press (newMission)
   const why = sailRefusal(passage);
   if(why){ showBanner("Passage NOT sailed: " + why + "."); return; }
   if(S.run === "running" && !(S.status || {}).holding
@@ -11636,6 +11671,7 @@ async function sailPassage(){
       logClient("passage_sail", {id: P.id, ok: false, why: r.error || "soft"});
       return;
     }
+    newMission(missionAt, "Sail passage");
     P.state = "running";
     mission.passage = P; saveMission();
     passage = null;                              // the plan is the passage now: drawn and said from it
@@ -11900,7 +11936,7 @@ function homeRecord(){
           state: "ready", sent: -1, sec: 0, base: 0, end: null, route: null, breakoff: null, note: ""};
 }
 /** RTH ALONG THE PASSAGE (doRTH, home beyond RTH_MAX_M): the way home's first section sent from where she is. */
-async function sailHome(H, brk, far){
+async function sailHome(H, brk, far, missionAt = null){
   if(sailBusy){ flashNote("RTH: the passage is sending a section - press RTH again in a moment."); return; }
   const f = sailFuelShort(H, 0, null);
   if(f){ showBanner("RTH refused: home is " + fmtDist(far.m) + " away, along the passage - " + f + "."); return; }
@@ -11916,6 +11952,7 @@ async function sailHome(H, brk, far){
       return;
     }
     if(brk) bankBreak(brk);                      // the survey she has left: Continue picks it up (as doRTH banks it)
+    if(missionAt != null) newMission(missionAt, "RTH along the passage");
     H.state = "running";
     mission.passage = H; saveMission();          // the passage she was on is the way home now: Continue sails THIS
     passage = null;
@@ -12042,6 +12079,7 @@ function koAtLevel(m){
 async function doTransit(){
   if(transit.length<1){ flashNote("Draw a transit line first (click the chart)."); return; }
   if(!asv){ flashNote("No position fix yet."); return; }
+  const missionAt = Date.now();                  // a new mission's history opens here (newMission)
   const wasGen = planGen;             // see doGoTo
   await ensureNogoCovers([{lat:asv.lat,lon:asv.lon}, ...transit]);   // cover distant transit vertices
   // The LAST vertex is where the boat will hold, so it is a hold point like any other: a
@@ -12105,6 +12143,7 @@ async function doTransit(){
   if(planGen === wasGen) releaseEscapeClaim("the transit replaced it");   // see doGoTo
   plan.coast = tCoast;
   runRoute = plan.route; runUnsafe = []; setPlanIntent("transit", plan, plan.route); updateMissionCard();   // draw the path she is actually flying
+  newMission(missionAt, "Transit");
   legStartsHere(0, r);                           // see doGoTo
   if(plan.heldOff) showBanner("Transit: the last point "+heldOffWhy(plan.heldOff)+" — holding "+fmtDist(plan.heldOff.m)+" off it, in water a boat can sit in.");
   const added = plan.route.length - transit.length;
@@ -17295,6 +17334,7 @@ async function doUpload(opts){
   // costs the operator the round trip, bounded at CMD_TIMEOUT_MS - the price #b_hold weighed
   // and paid.
   uploadBusy = true; applyCmdState(S);
+  const missionAt = Date.now();                  // a new mission's history opens here (newMission, below)
   // ⚠ SNAPSHOT AT THE PRESS, NOT IN FRONT OF THE POST, and this function needs that more
   // than doGoTo does: three of its exits sit behind an UNBOUNDED `await guiConfirm` and a
   // corner walk that yields to the screen by design, and the clearance guard commands the
@@ -17388,6 +17428,7 @@ async function doUpload(opts){
       render(); return;
     }
     runRoute = raw.route; runUnsafe = []; setPlanIntent("survey", raw, raw.route);
+    if(!fromSv && !release) newMission(missionAt, "Upload");   // (Upload from here and the Continue past a hold carry on the plan she has)
     // NO MODEL, NO CORNER CHECK - and no STALE one either. The previous plan's slow
     // corners are indices into a route that is no longer being flown, and a slow command
     // at the wrong waypoint is worse than none.
@@ -17658,6 +17699,7 @@ async function doUpload(opts){
   }
   clearViolation();
   runRoute = plan.route; runUnsafe = []; setPlanIntent("survey", plan, plan.route);
+  if(!fromSv && !release) newMission(missionAt, "Upload");     // (Upload from here and the Continue past a hold carry on the plan she has)
   cornerSlow = new Set(cs.slow);
   cornerUnanswered = cs.unanswered || [];
   cornerSlowFor = plan.route.length;

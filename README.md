@@ -246,9 +246,9 @@ showing an empty section. And it goes with the SESSION: a console restarted unde
 that stayed open comes back with nothing running, so the page gives up the route, its unsafe
 legs and this reasoning, and the section says so (`Cleared with the route — the console
 restarted, so this is a new session`). Until 2026-10-09 the last session's intent stood until
-the first command of the new one. The **History** section under it is NOT cleared: it is the
-last 20 things the console did, each with its time, kept in the browser across a reload and
-a restart.
+the first command of the new one. The **History** section under it is NOT cleared by a
+restart: it is the last 20 things the console did, each with its time, kept in the browser
+across a reload and a restart - until the next mission starts (below).
 
 **History — last 20.** Below Intent, the Mission Status card lists what the console **did**,
 newest first, each line with its time: every command it sent with the answer it got — the
@@ -261,6 +261,18 @@ browser, and a reload keeps them. A command sent again straight away is one line
 taking another, matched with its numbers set aside, so the two banners every page load posts
 stay two lines (`Nogo established (583 nogo zone(s) …) ×3`). Commands are never merged past
 the newest line, because their order is the record. Hover a line for the full text and date.
+
+**A new mission starts its own history (2026-10-14).** When you command a new mission - an
+Upload, a Go-To, the RTH button, a Transit, Sail passage - and the vessel takes it, the lines
+from before your press go, and the new mission's history opens with its own planning and its
+own command. The last mission's lines (why it ended, the hold she sits in) stay readable until
+then. A refused command clears nothing: she is still on the mission she had. The end-of-plan
+RTH, the low-fuel RTH, Resume, Continue passage, Upload from here and the Continue past a held
+survey carry on the mission she is on and keep its history. Nothing is lost: every line is in
+the session record, where playback shows it and marks where each mission began
+(`MISSION NEW`). The Intent was already replaced by each new mission's plan. Another window
+of the console (the controls window, a second chart page) takes up the cleared list too
+(`tests/action_history.js` 14-16, `tests/command_result.js` 54).
 
 **Surface current** (Mission Status card, `Current` row). The console also reads the surface
 current **at the boat's own position**, and since 7 October 2026 it is **fused** from

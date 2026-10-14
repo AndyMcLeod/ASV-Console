@@ -234,6 +234,8 @@ process.on("exit", (code) => {
 // therefore cmd()'s own answer, not a restatement of it.
 const PRELUDE = [
   "const out = W.out;",
+  // a new mission's history (2026-10-14, newMission - tests/action_history.js 14-16): recorded, so 54 can ask who calls it
+  "const newMission = (t0, what) => { out.missions.push({t0, what}); };",
   "let S = W.S, asv = W.asv;",
   "let runRoute = null, runUnsafe = [], planIntent = null, rthChainFailed = false;",
   // what the command-bar handlers touch beyond the three motions
@@ -336,7 +338,7 @@ function bannerEl() {
 const IR = require("../static/js/inkreads.js"), PS = require("../static/js/passage.js");
 function world(opts) {
   const o = opts || {};
-  const out = { notes: [], recorded: [], renders: 0, card: 0, violations: 0, violation: null,
+  const out = { notes: [], recorded: [], renders: 0, card: 0, violations: 0, violation: null, missions: [],
                 posts: [], bodies: [], banner: bannerEl(), aborts: 0, resumed: 0 };
   // THE FETCH, not the command. `reply` decides what the console answers.
   const fetchStub = (url, init) => {
@@ -483,6 +485,33 @@ function world(opts) {
 }
 
 (async () => {
+
+console.log("-- 54: a new mission's history (newMission) --");
+// 54. A NEW MISSION STARTS ITS OWN HISTORY (Andy, 2026-10-14: "Delete history and intent after each mission" - when the next
+// one starts, his choice). The three motions this world drives: each, TAKEN, starts one, named - and REFUSED starts none; the RTH button's does, the end-of-plan chain's and the low-fuel
+// shift's (breakWhy) do not: they are the mission she is on.
+{
+  const t0 = Date.now();
+  const go = world({}); await go.doGoTo({ lat: 43.05, lon: -70.45 });
+  const goNo = world({ reply: "refuse" }); await goNo.doGoTo({ lat: 43.05, lon: -70.45 });
+  const rth = world({}); await rth.doRTH({});
+  const rthNo = world({ reply: "refuse" }); await rthNo.doRTH({});
+  const chain = world({}); await chain.doRTH({ chained: true });
+  const fuel = world({}); await fuel.doRTH({ why: "LOW FUEL", breakWhy: "fuel" });
+  const tr = world({}); await tr.doTransit();
+  const trNo = world({ reply: "refuse" }); await trNo.doTransit();
+  const m = (w) => w.out.missions;
+  const one = (w, what) => m(w).length === 1 && m(w)[0].what === what && m(w)[0].t0 >= t0 && m(w)[0].t0 <= Date.now()
+    && w.out.posts.length > 0;
+  check("54. A NEW MISSION STARTS ITS OWN HISTORY: a Go-To, the RTH button's RTH and a Transit, each TAKEN, start one, "
+        + "named; each REFUSED starts none; the end-of-plan RTH chain and the low-fuel shift start none - they "
+        + "are the mission she is on",
+        () => one(go, "Go-To") && one(rth, "RTH") && one(tr, "Transit")
+              && m(goNo).length === 0 && m(rthNo).length === 0 && m(trNo).length === 0
+              && chain.out.posts.length > 0 && m(chain).length === 0 && fuel.out.posts.length > 0 && m(fuel).length === 0,
+        JSON.stringify({ go: m(go), rth: m(rth), tr: m(tr), refused: [m(goNo).length, m(rthNo).length, m(trNo).length],
+                               chain: [chain.out.posts.length, m(chain).length], fuel: [fuel.out.posts.length, m(fuel).length] }));
+}
 
 console.log("-- 1-2: cmd() answers THREE things, and the three are not the same thing --");
 

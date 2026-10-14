@@ -46,6 +46,13 @@
 // lines - so a banner posted again moves up, matched with its numbers set aside (the zone count read 585, 599, 737).
 // After both: three reloads, two lines, each ×3.
 //
+// A NEW MISSION STARTS ITS OWN HISTORY (Andy, 2026-10-14: "Mission Status Card: Delete history and intent after each
+// mission. These data are available in playback. It confuses the current mission." - when the NEXT one starts, his
+// choice): 14 newMission keeps only the lines since the press, stored, redrawn, the boundary logged; 15 a page takes up
+// another page's write; 16 the commands that start one (Upload, Sail passage, RTH along a passage) and the ones that do
+// not (Upload from here, Continue past a hold, the RTH chain and the low-fuel shift). Go-To, RTH and Transit are DRIVEN
+// in tests/command_result.js 54, Sail passage in tests/passage_sail.js 4.
+//
 // NOTE: the page's script is <script type="module">, which runs STRICT; the lifted code runs in a strict function here.
 
 function __crash(e) {
@@ -125,8 +132,10 @@ function makeFetch() {
 
 // The history's declarations and functions, lifted one by one; and the page's own load-time draw, lifted only if the
 // page still makes it - a page that stopped drawing at load is a failed check below, not a harness that cannot start.
-const HIST_DECLS = decl(/^const HISTORY_MAX = [^;]*;/m) + "\n"
-  + H.slice(H.indexOf("let actionLog = "), H.indexOf("})();", H.indexOf("let actionLog = ")) + "})();".length);
+const HIST_DECLS = decl(/^const HISTORY_MAX = [^;]*;/m) + "\n" + grab("historyStored") + "\n"
+  + decl(/^let actionLog = historyStored\(\);$/m);
+// the page's own listener for another page's write (2026-10-14), lifted whole; null if it is gone (check 15 says so)
+const STORAGE_LISTENER = (/^window\.addEventListener\("storage", e => \{\n  if\(e\.key !== HISTORY_KEY\) return;\n[^\n]*\n\}\);$/m.exec(H) || [""])[0];
 const LOAD_CALL = /^renderHistory\(\);$/m.test(H) ? "renderHistory();" : "";
 const HISTORY_SHOW = Number(/HISTORY_SHOW = (\d+)/.exec(H)[1]);
 function makeWorld(store) {
@@ -146,21 +155,26 @@ function makeWorld(store) {
     grab("lsGet"), grab("lsSet"), grab("lsDel"), grab("setCellText"),
     HIST_DECLS,
     // recordAction posts a NEW row into the session log (2026-09-25, playback's History card); the post is
-    // tests/page_log_posts.js's subject - here it must merely find its name.
-    "const logClient = () => {};",
+    // tests/page_log_posts.js's subject - here it must merely find its name. (Recorded since 2026-10-14: newMission's
+    // boundary, check 14.)
+    "const logClient = (k, d) => logs.push([k, d]);",
     // recordAction also feeds the ALERTS card's own tail (2026-09-28) - stubbed here so the history's insert
-    // economy (check 10) is measured alone; the real renderAlertRecent is check 13's subject.
-    "const renderAlertRecent = () => {};",
-    ["recordAction", "historyText", "fillHistoryRow", "historyRow", "renderHistory"].map(grab).join("\n"),
+    // economy (check 10) is measured alone; the real renderAlertRecent is check 13's subject. (Counted, check 14.)
+    "const renderAlertRecent = () => { counts.alerts++; };",
+    ["recordAction", "historyText", "fillHistoryRow", "historyRow", "renderHistory", "newMission"].map(grab).join("\n"),
     LOAD_CALL,
+    STORAGE_LISTENER,
     grab("cmd").replace(/^function cmd/, "async function cmd"), grab("cmdLabel"), decl(/^let noteTimer = [^;]*;/m),
     grab("showNote"), grab("flashNote"), grab("showBanner"),
-    "return { recordAction, renderHistory, cmd, cmdLabel, flashNote, showBanner, get log(){ return actionLog; },",
+    "return { recordAction, renderHistory, newMission, cmd, cmdLabel, flashNote, showBanner, get log(){ return actionLog; },",
     "         setNote: (n) => { S.note = n; } };",
   ].join("\n");
-  const w = new Function("els", "document", "localStorage", "fetch", "fetchStub", "setTimeout", "clearTimeout", body)(
-    els, doc, store, fetchStub, fetchStub, () => 0, () => {});
-  w.els = els; w.fetch = fetchStub; w.store = store;
+  const logs = [], counts = { alerts: 0, writes: 0 }, handlers = {};
+  const win = { addEventListener: (k, f) => { handlers[k] = f; } };
+  const setItem = store.setItem; store.setItem = (k, v) => { counts.writes++; return setItem(k, v); };
+  const w = new Function("els", "document", "localStorage", "fetch", "fetchStub", "setTimeout", "clearTimeout", "window", "logs", "counts", body)(
+    els, doc, store, fetchStub, fetchStub, () => 0, () => {}, win, logs, counts);
+  w.els = els; w.fetch = fetchStub; w.store = store; w.logs = logs; w.counts = counts; w.handlers = handlers;
   return w;
 }
 const rowsOf = (w) => w.els["#historyBody"].childNodes.filter((n) => /\bhrow\b/.test(n.className));
@@ -332,6 +346,72 @@ const rowText = (r) => r.lastChild.textContent;
                 && rows13[2].className === "arow refused" && rows13[2].childNodes[1].textContent === "Go-To \u2014 refused: ARM first"
                 && rows13[5].childNodes[1].textContent === "n3" && !rows13.some(r => /Start/.test(r.childNodes[1].textContent)),
           () => err13 ? "THREW: " + err13 : rows13.map(r => r.className + ": " + r.childNodes.map(c => c.textContent).join(" ")).join(" | "));
+  }
+  // 14. A NEW MISSION STARTS ITS OWN HISTORY: lines from before the press go, the lines since stay - stored, the card
+  //     redrawn, the alerts card's tail with it, the boundary logged for playback; nothing older, nothing written.
+  {
+    const T = 1791990000000;
+    const e = (dt, kind, label) => ({ t: T + dt, kind, label, answer: "", n: 1 });
+    const stored = [e(5000, "cmd", "Go-To"), e(4000, "banner", "Routing to the point"), e(3000, "note", "End of plan"),
+                    e(2000, "cmd", "Start"), e(1000, "cmd", "Upload")];
+    const W14 = makeWorld(makeStore(JSON.stringify(stored)));
+    const before = { writes: W14.counts.writes, alerts: W14.counts.alerts };
+    W14.newMission(T + 3500, "Go-To");
+    const after = { log: W14.log.map((a) => a.label), rows: rowsOf(W14).map(rowText), store: JSON.parse(W14.store.getItem("asv_history_v1")).map((a) => a.label),
+                    writes: W14.counts.writes - before.writes, alerts: W14.counts.alerts - before.alerts, logs: W14.logs.slice() };
+    const w2 = W14.counts.writes;
+    W14.newMission(T, "Upload");                          // nothing older than this: nothing goes, nothing is written
+    check("14. A NEW MISSION STARTS ITS OWN HISTORY (newMission): the lines from before the press go, the lines since "
+          + "stay, newest first - stored, the card redrawn and the alerts card's tail with it, the boundary logged with what "
+          + "went; a press with nothing older drops nothing and writes nothing, and is still logged",
+          () => JSON.stringify(after.log) === '["Go-To","Routing to the point"]' && JSON.stringify(after.rows) === '["Go-To","Routing to the point"]'
+                && JSON.stringify(after.store) === JSON.stringify(after.log) && after.writes === 1 && after.alerts === 1
+                && after.logs.length === 1 && after.logs[0][0] === "mission_new" && after.logs[0][1].what === "Go-To" && after.logs[0][1].dropped === 3
+                && W14.counts.writes === w2 && W14.log.length === 2 && W14.logs[1][0] === "mission_new" && W14.logs[1][1].dropped === 0,
+          () => JSON.stringify({ after, then: W14.logs }));
+  }
+  // 15. ANOTHER PAGE'S WRITE IS TAKEN UP: the controls window or a second chart page writes the store; this page adopts it
+  //     and redraws - a different key is left alone
+  {
+    const W15 = makeWorld(makeStore(JSON.stringify([{ t: 1, kind: "cmd", label: "Old A", answer: "", n: 1 },
+                                                    { t: 2, kind: "cmd", label: "Old B", answer: "", n: 1 }])));
+    const h = W15.handlers.storage;
+    W15.store.map.set("asv_history_v1", JSON.stringify([{ t: 9, kind: "cmd", label: "New", answer: "", n: 1 }]));
+    if (h) h({ key: "asv_units" });
+    const ignored = W15.log.map((a) => a.label);
+    if (h) h({ key: "asv_history_v1" });
+    check("15. ANOTHER PAGE'S WRITE IS TAKEN UP: the store written elsewhere, this page's list and card become it; a write "
+          + "to another key changes nothing",
+          () => !!h && STORAGE_LISTENER !== "" && JSON.stringify(ignored) === '["Old A","Old B"]'
+                && JSON.stringify(W15.log.map((a) => a.label)) === '["New"]' && JSON.stringify(rowsOf(W15).map(rowText)) === '["New"]',
+          () => JSON.stringify({ listener: !!h, ignored, now: W15.log.map((a) => a.label) }));
+  }
+  // 16. WHO STARTS ONE: Upload (both of its accepted paths - the routed one and the one sent with no model), unless it is
+  //     Upload from here or the Continue past a hold; Sail passage, after its first section is sent; and the RTH button's
+  //     way home along a passage - the time taken at the press, before anything is awaited
+  {
+    const up = (() => { const st = H.indexOf("async function doUpload("); let k = H.indexOf("{", H.indexOf(")", st)), d = 0;
+      for (;;) { const c = H[k]; if (c === "{") d++; else if (c === "}") { d--; if (!d) break; } k++; } return H.slice(st, k + 1); })();
+    const sp = grab("sailPassage"), sh = grab("sailHome"), rth = grab("doRTH"), go = grab("doGoTo"), tr = grab("doTransit");
+    const code = (src) => src.replace(/\/\/[^\n]*/g, "");      // (an "await" in a comment is no await)
+    const firstAwait = (src) => code(src).indexOf("await ");
+    const atPress = (src) => code(src).indexOf("missionAt") > 0 && code(src).indexOf("missionAt") < firstAwait(src);
+    const ups = up.match(/if\(!fromSv && !release\) newMission\(missionAt, "Upload"\);/g) || [];
+    const pins = {
+      upload: ups.length === 2 && up.indexOf('setPlanIntent("survey", raw, raw.route);') < up.indexOf("newMission(") && atPress(up),
+      sail: atPress(sp) && sp.indexOf('newMission(missionAt, "Sail passage");') > sp.indexOf("if(r.error || r.soft)"),
+      home: /function sailHome\(H, brk, far, missionAt = null\)/.test(sh)
+            && /if\(missionAt != null\) newMission\(missionAt, "RTH along the passage"\);/.test(sh)
+            && sh.indexOf("newMission(") > sh.indexOf("if(r.error || r.soft)"),
+      rth: /const missionAt = chained \|\| \(opts && opts\.breakWhy\) \? null : Date\.now\(\);/.test(rth)
+           && /return sailHome\(H, brk, far, missionAt\);/.test(rth) && atPress(rth),
+      press: atPress(go) && atPress(tr),
+    };
+    check("16. WHO STARTS ONE: Upload on both of its accepted paths but not Upload from here or the Continue past a hold; "
+          + "Sail passage once its first section is sent; the RTH button's way home along a passage, not the chain's or the "
+          + "low-fuel shift's - each timed at the press, before anything is awaited",
+          () => Object.values(pins).every(Boolean),
+          () => JSON.stringify(pins));
   }
   check("12. the section is on the Mission Status card, and the history is declared and drawn at the top of the module - "
         + "before any code that can post a banner or flash a note",
