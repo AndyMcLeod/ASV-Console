@@ -35,6 +35,7 @@ import ofs_s3                  # noqa: E402
 FIX = Path(HERE) / "fixtures" / "ofs_s3"
 fails = 0
 ran = 0
+TMP_DIR = None                             # check 5's temp cache, once made - removed on a crash too (state_dir.py 1b)
 
 
 def _crash_report(t, e, tb):
@@ -43,6 +44,8 @@ def _crash_report(t, e, tb):
     print("".join(traceback.format_exception(t, e, tb))[-900:])
     print("\n1 CHECK(S) FAILED (crashed before finishing)")
     sys.stdout.flush()
+    if TMP_DIR:                            # os._exit skips the rmtree at the end: two such folders were left in %TEMP%
+        shutil.rmtree(TMP_DIR, ignore_errors=True)
     os._exit(1)
 
 
@@ -145,7 +148,8 @@ check("4. the bucket is listed across its continuation pages; only regulargrid f
       lambda: "%d keys over %d requests; cycles %s" % (len(keys), len(asked), [(c[1], len(c[2])) for c in cyc]))
 
 # 5. A WHOLE CYCLE into a temp cache, loaded by the unchanged currents.Currents.
-TMP = Path(tempfile.mkdtemp(prefix="asv_ofs_s3_"))
+TMP_DIR = tempfile.mkdtemp(prefix="asv_ofs_s3_")
+TMP = Path(TMP_DIR)
 opened = []
 
 
@@ -303,7 +307,7 @@ check("9. the console reads the S3 copy ONLY when NOAA's model server is down - 
       and res["outside"] == "tstofs does not cover this position" and res["reading"].get("via") == "s3",
       lambda: "%r" % res)
 
-shutil.rmtree(TMP, ignore_errors=True)
+shutil.rmtree(TMP_DIR, ignore_errors=True)
 print("\n%s (%d ran)" % ("%d CHECK(S) FAILED" % fails if fails else "all checks passed", ran))
 sys.stdout.flush()
 os._exit(1 if fails else 0)
