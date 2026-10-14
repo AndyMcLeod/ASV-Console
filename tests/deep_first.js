@@ -240,7 +240,7 @@ check("9. ... AND ONE WITH NONE WITHIN THE DETOUR ALLOWED IS KEPT AT HER FLOOR A
       + "released, 'none' - and the banner and the Intent card say so, where",
       () => !pW.error && Math.abs(metersIn(GF, [A, ...pW.route], [wideRing]) - 300) < 15 && pW.deep.repaired === 0
             && pW.deep.released.length === 1 && pW.deep.released[0].why === "none" && pW.deep.runs.length === 1 && pW.deep.runs[0].why === "none"
-            && /^deep water first: \d+ m at her floor \(1 with no deeper way\)$/.test(P.deepNote(pW.deep))
+            && /^deep water first: \d+ m with the margin not kept \(1 with no deeper way\)$/.test(P.deepNote(pW.deep))
             && P.DEEP_DETOUR === 1.5 && P.DEEP_DETOUR_MIN_M === 1000,
       () => "in the band " + f0(metersIn(GF, [A, ...pW.route], [wideRing])) + " m; released " + JSON.stringify(pW.deep.released.map((x) => [f0(x.m), x.why]))
             + "; banner: " + P.deepNote(pW.deep));
@@ -469,9 +469,9 @@ check("20. THE WORDS: the banner says nothing of a route that keeps the margin t
       + "water at her floor and why; the Intent card always says which - a WARNING where a stretch lies between her start and "
       + "her end, with where it is",
       () => P.deepNote(dNone) === "" && P.deepNote(null) === ""
-            && P.deepNote(dMix, fmt) === "deep water first: 1.42 km at her floor (where she starts, 1 with no deeper way, 1 for a buoy)"
+            && P.deepNote(dMix, fmt) === "deep water first: 1.42 km with the margin not kept (where she starts, 1 with no deeper way, 1 for a buoy)"
             && wNone.length === 1 && wNone[0].t === "lane" && /kept 2 m over her floor and 50 m off charted rocks and shoal soundings the whole way/.test(wNone[0].s)
-            && wMix[0].t === "warn" && /except 3 stretches at her floor and buffer/.test(wMix[0].s) && /1\.25 km near 42\.6310 N 70\.5841 W - no deeper way/.test(wMix[0].s)
+            && wMix[0].t === "warn" && /except 3 stretches with the margin not kept \(her floor and buffer only\), marked in orange on the chart/.test(wMix[0].s) && /1\.25 km near 42\.6310 N 70\.5841 W - no deeper way/.test(wMix[0].s)
             && /a buoy's proper hand or its berth/.test(wMix[0].s) && wEnds[0].t === "lane" && /where she ends/.test(wEnds[0].s) && P.deepWhy(null).length === 0,
       () => JSON.stringify([P.deepNote(dMix, fmt), wMix[0].t, wEnds[0].t]));
 // the page: the three passage banners carry deepNote; the Intent card asks deepWhy of every plan (DRIVEN, below); both
@@ -575,7 +575,7 @@ check("26. THE PAGE DRAWS THEM: setPlanIntent keeps the stretches with the route
       () => piDeep.margin && piDeep.margin.runs === dMix.runs && piDeep.margin.route.length === 2 && piNone.margin === null
             && nDrawn === 2 && moves.length === 5 && moves.slice(0, 3).every((c, i) => c[1] === want[i].x && c[2] === want[i].y)
             && rec.calls.some((c) => c[0] === "lineWidth" && c[1] >= 8) && rec.calls.some((c) => c[0] === "strokeStyle" && /rgba\(255,140,40/.test(c[1]))
-            && texts.length === 2 && texts[0][1] === "AT HER FLOOR 230 m - no deeper way" && texts[1][1] === "AT HER FLOOR 95 m - for a buoy"
+            && texts.length === 2 && texts[0][1] === "MARGIN NOT KEPT 230 m - no deeper way" && texts[1][1] === "MARGIN NOT KEPT 95 m - for a buoy"
             && iCall > iDiamond && iDiamond > 0,
       () => "drawn " + nDrawn + "; strokes through " + JSON.stringify(moves.map((c) => [c[1], c[2]])) + "; labels " + JSON.stringify(texts.map((c) => c[1]))
             + "; in render the call " + (iCall > iDiamond ? "after" : "BEFORE") + " the diamonds; kept " + JSON.stringify(piDeep.margin && { runs: piDeep.margin.runs.length }));

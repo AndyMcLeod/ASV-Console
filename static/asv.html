@@ -11091,7 +11091,11 @@ function drawMarginStretches(toScreen, mg, idx){
     const ps = r.pts.map((p) => toScreen(p.lat, p.lon));
     ctx.strokeStyle = MARGIN_COL; ctx.lineWidth = 9;
     ctx.beginPath(); ps.forEach((q, i) => (i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y))); ctx.stroke();
-    const c = toScreen(r.at.lat, r.at.lon), t = "AT HER FLOOR " + fmtDist(r.m) + " - " + (MARGIN_SAY[r.why] || r.why || "");
+    // MARGIN NOT KEPT, not "AT HER FLOOR" (Andy, 2026-10-14: 'Define "At her floor" and what it really means. Maybe
+    // change the phrase'; he chose MARGIN NOT KEPT). The old words read as water at her floor's depth; the stretch is
+    // one where deep water first's 2 m over the floor and 50 m off rocks and shoal soundings was not kept - only the
+    // floor and the buffer - and most of it may be well deeper.
+    const c = toScreen(r.at.lat, r.at.lon), t = "MARGIN NOT KEPT " + fmtDist(r.m) + " - " + (MARGIN_SAY[r.why] || r.why || "");
     ctx.lineWidth = 3; ctx.strokeStyle = "rgba(10,20,28,0.85)"; ctx.strokeText(t, c.x + 9, c.y - 9);
     ctx.fillStyle = MARGIN_TEXT; ctx.fillText(t, c.x + 9, c.y - 9);
     n++;

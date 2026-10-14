@@ -1027,7 +1027,8 @@ export function deepNote(deep, fmt){
   if(n("none")) parts.push(n("none") + " with no deeper way");
   if(n("mark")) parts.push(n("mark") + " for a buoy");
   if(n("time")) parts.push(n("time") + " not searched in time");
-  return "deep water first: " + f(total) + " at her floor (" + parts.join(", ") + ")";
+  // (said "at her floor" until 2026-10-14 - read as water at her floor's depth; Andy chose "the margin not kept")
+  return "deep water first: " + f(total) + " with the margin not kept (" + parts.join(", ") + ")";
 }
 /** The Intent card's lines for deep water first: what was kept, and each stretch at her floor - where and why. A warning
  *  where one lies between her start and her end (margin water she has no need to start or end in). */
@@ -1040,7 +1041,7 @@ export function deepWhy(deep, fmt){
   const list = deep.runs.map((r) => f(r.m) + " " + (r.end ? DEEP_WHY[r.why] : "near " + latLonSay(r.at) + " - " + (DEEP_WHY[r.why] || r.why)));
   const inside = deep.runs.some((r) => !r.end);
   return [{t: inside ? "warn" : "lane", s: kept + " except " + deep.runs.length + " stretch" + (deep.runs.length === 1 ? "" : "es")
-           + " at her floor and buffer, marked in orange on the chart: " + list.join("; ")}];
+           + " with the margin not kept (her floor and buffer only), marked in orange on the chart: " + list.join("; ")}];
 }
 /** The lane pass's result re-gated at `want` (every leg clear of the standoff, spliced with the standoff's own
  *  route where it is not) and re-pruned at it. The lane is kept wherever the gate did not have to abandon it. */

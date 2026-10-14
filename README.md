@@ -3102,11 +3102,14 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    soundings and rocks still get their 50 m. Today's floor and buffer are used only on stretches with no deeper way
    (none within half again the distance, or 1 km more), and where a deeper way would put
    a buoy on its wrong hand: a buoy outranks the chart's margin. Each such stretch is
-   said on the banner ("deep water first: 1.34 km at her floor (1 with no deeper way, 1
-   for a buoy)") and listed with its position on the Intent card, as a
+   said on the banner ("deep water first: 1.34 km with the margin not kept (1 with no deeper
+   way, 1 for a buoy)") and listed with its position on the Intent card, as a
    warning where it lies between her start and her end - and **marked on the chart**
-   (2026-10-13): a wide orange band over the route, labeled with its length and why,
-   drawn while she has it ahead of her. Where she starts or ends in
+   (2026-10-13): a wide orange band over the route (it reads yellow-orange over pale water),
+   labeled **MARGIN NOT KEPT** with its length and why, drawn while she has it ahead of her.
+   The margin not kept is the 2 m over the floor and the 50 m off rocks and shoal soundings;
+   the floor and the buffer still are, and most of the stretch may be well deeper. (Until
+   2026-10-14 it said "at her floor", which read as water at her floor's depth.) Where she starts or ends in
    shallower water she leaves it the short way; the hold point is unchanged, and the
    clearance guard never sees the margin. On the Go-To past Thacher Island the route now
    passes between Oak Rock Buoy 2 and Thacher Island Buoy 1 clear of the 5.4-9.1 m patch,
