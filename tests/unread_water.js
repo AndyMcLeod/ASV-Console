@@ -143,12 +143,12 @@ console.log("Water no chart covers:");
     const nogo = { ready: true, bbox: box, unread };
     const mk = new Function("nogo", "beyondChart", "beyondChartSay", "fmtDist", "boxAround", "encSpanRefusal", "bbUnion",
       "ensureNogoCovers", "readPassageAis", "aisKeepoutsNow", "showBanner", "takeDownBanner", "sizeWhy", "STALL_TICK_MS",
-      "CHART_WIDEN_ROUNDS", "CHART_WIDEN_PAD_M",
+      "CHART_WIDEN_ROUNDS", "CHART_WIDEN_PAD_M", "openWaterRead",
       // no Stop is pressed while a plan is searched here (planInsideChart's withdrawal: tests/route_worker.js 12)
       "let routeStopGen = 0, routeStopName = null;\n" + grab("planInsideChart") + "\nreturn planInsideChart;");
     w.fn = mk(nogo, P.beyondChart, P.beyondChartSay, (m) => Math.round(m) + " m", () => box, () => null, (a) => a,
       async () => { w.reads++; return true; }, async () => {}, () => {}, (t) => w.banners.push(t), () => {}, () => "",
-      0, 3, 1000);
+      0, 3, 1000, async () => null);   // (open water first's read: tests/open_water.js's - none here)
     return w;
   };
   const A = world(U);

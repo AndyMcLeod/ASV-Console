@@ -102,12 +102,15 @@ console.log("The passage, sailed:");
               && s1[s1.length - 1].end === "port" && s1[s1.length - 1].port === 1 && s1.slice(0, -1).every((c) => c.end === "hold"),
         () => s1.length + " sections: " + lens.map((m) => (m / 1000).toFixed(1)).join(", ") + " km; safe " + allSafe + ", chained " + chained);
 
-  // a fuel stop half way, and a shoal beside the line where the 20 km mark falls
+  // a fuel stop half way, and a CANAL where the 20 km mark falls: land across the whole tile but rows 127-129, 81 cells
+  // along - the only way, so the route runs beside danger there whatever it prefers. (A shoal beside the line until
+  // 2026-10-14: open water first now keeps the route off it, and the mark no longer fell beside anything.)
   const t1b = [0, 1, 2, 3].map((i) => grid(TX + i, TY));
   const mid = ll(t1b[1], 250, 128);
   const at20 = C.cellOf(east(A0, 20000)), g20 = t1b.find((g) => g.tx === Math.floor(at20.gx / N));
-  for (let r = 129; r <= 131; r++) for (let c = -40; c <= 40; c++) {
-    const gx = at20.gx + c - g20.tx * N; if (gx >= 0 && gx < N) g20.T[r * N + gx] = 10;     // a danger touching the water beside it
+  for (let r = 0; r < N; r++) for (let c = -40; c <= 40; c++) {
+    if (r >= 127 && r <= 129) continue;
+    const gx = at20.gx + c - g20.tx * N; if (gx >= 0 && gx < N) { g20.C[r * N + gx] = 0; g20.T[r * N + gx] = 0; }   // land
   }
   const p1b = C.planPassage({ grids: t1b, floorDm: 30, points: [{ ...A0, port: true }, { ...mid, port: true }, { ...Z0, port: true }], sectionM: 20000 });
   const s1b = p1b.sections || [];
@@ -120,9 +123,14 @@ console.log("The passage, sailed:");
               && C.holdSafe(f1b, s1b[k20].to, [A0, mid, Z0].map((p) => C.cellOf(p))) && cutOff > 300,
         () => s1b.map((c) => c.end + " " + (c.lengthM / 1000).toFixed(1)).join(" | ") + "; the cut moved " + cutOff.toFixed(0) + " m");
 
-  // a long stretch with no water clear all round (a danger touching every row): one longer section
+  // a long stretch with no water clear all round: a canal the whole way, dangers touching both its sides and land past
+  // them - one longer section. (Two rows of shoal across open water until 2026-10-14: open water first now leaves them
+  // for the clear water beside them, where she can hold.)
   const t1c = [0, 1].map((i) => grid(TX + i, TY));
-  for (const g of t1c) for (let c = 0; c < N; c++) { g.T[127 * N + c] = 10; g.T[129 * N + c] = 10; }
+  for (const g of t1c) for (let c = 0; c < N; c++) {
+    g.T[127 * N + c] = 10; g.T[129 * N + c] = 10;
+    for (let r = 0; r < N; r++) if (r < 127 || r > 129) { g.C[r * N + c] = 0; g.T[r * N + c] = 0; }
+  }
   const B1 = ll(t1c[1], 240, 128);
   const p1c = C.planPassage({ grids: t1c, floorDm: 30, points: [{ ...A0, port: true }, { ...B1, port: true }], sectionM: 15000 });
   check("1c. A STRETCH WITH NO WATER TO HOLD IN makes one longer section, not a hold beside a danger",
@@ -670,7 +678,8 @@ console.log("The passage, sailed:");
     // (since 2026-10-12 in the route worker, on the chart at that level - koAtLevel - and on this thread, in atWaterLevel
     // at it, if the worker cannot answer: tests/route_worker.js 6)
     wrapped: /const o = holdOpts\(\), via = pts\.slice\(0, -1\), std = transitStandoffM\(\), koLv = koAtLevel\(lv\.m\);/.test(grab("sailSend"))
-             && /planOffThread\(\{op: "holdRoute", ko: koLv, args: \{target: c\.to, holdOpts: o, start: from, via, keepRightAll: true, standoffM: std\}\},\s*\n\s*\(\) => atWaterLevel\(lv\.m, \(\) => \{\s*\n\s*ht = holdTarget\(c\.to, o\);/.test(grab("sailSend")),
+             // (and open water first on every leg of it, 2026-10-14 - tests/open_water.js)
+             && /planOffThread\(\{op: "holdRoute", ko: koLv, args: \{target: c\.to, holdOpts: o, start: from, via, keepRightAll: true, standoffM: std,\s*\n\s*ropts: \{openWater: "all"\}\}\},[^\n]*\n\s*\(\) => atWaterLevel\(lv\.m, \(\) => \{\s*\n\s*ht = holdTarget\(c\.to, o\);/.test(grab("sailSend")),
     // its chart read along it as a ROUTE, where the read can find something - and any wider read the planning makes
     routeInk: /await ensureNogoCovers\(\[from, \.\.\.pts\], null, \{route: true\}\);/.test(grab("sailSend")),
     oneWriter: (H.match(/sea\.waterOffset\s*=(?!=)/g) || []).length === 1,

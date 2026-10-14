@@ -59,6 +59,7 @@ import { blockedInfo, firstBlockAlong, legClear } from "./chart.js";
 import { HOLD_RADIUS_MIN_M, holdClearM, holdMarginM, snapCapM, snapClearRadial } from "./hold.js";
 // The vessels NOT under way, laid round by a passage as a pier is (passageKo, 2026-10-07).
 import { aisMooredKeepouts } from "./ais_keepout.js";
+import { OPEN_WATER, openWaterLeg } from "./openwater.js";
 import { DEEP_BERTH_M, DEEP_MARGIN_M, bbOf, blocked, clearanceM } from "./keepouts.js";
 // The shared routing layer. `legPath` is used below by planNogoRoute and routePlan; the
 // rest pass straight through to this console's importers, which are untouched.
@@ -854,6 +855,41 @@ export function deepLanePass(path0, ref, ko, margin, lanePass){
 // carries it, its route included, for the page to read the chart over and plan again.
 // Laid in passageKo's model: the vessels not under way are kept clear as a pier is (2026-10-07), and the
 // target is held off one exactly as off a pier; a caller's own `opts.ko` (the way round a contact) stands as it was.
+/**
+ * A BUOY OUTRANKS OPEN WATER (2026-10-14), as it outranks deep water first's margin. Open water first takes a wider way,
+ * and the stages after the search lay the marks on whatever way it is: on his 61 km Go-To from New Castle to Gloucester
+ * the wider way came into the outer harbor on a line that left Tenpound Island Ledge 6 on its wrong hand, 335 m off,
+ * where the close-in way kept it (tools/open_water_missions.js). So a passage leg taken in open water that leaves a mark
+ * wrong (or an offshore mark inside its berth - deep first's own fault, `!proper || inside`) is planned again with the
+ * router's own route held within OPEN_WATER.MARK_HOLD_M of each such mark and open water either side of it (`held`);
+ * shipped where that leaves none of them wrong and no new one; else the router's own leg ships wherever it keeps any
+ * mark the wider way leaves wrong (`why: "a buoy's proper hand"`); else the wider way stands - the close-in way leaves
+ * the mark wrong too, and the wider way is the safer of the two by the chart. Nothing is planned twice unless a mark is
+ * left wrong. `pass(leg)` runs the stages after the search on a leg ({kr, df}); `verdicts(kr)` the marks' verdicts.
+ * Returns {kr, df, leg, held, router}.
+ */
+export function buoysOutrankOpenWater(from, to, ref, ko, buf, routerLeg, owLeg, P, pass, verdicts, chart){
+  const faults = (kr) => new Set(verdicts(kr).filter((v) => !v.proper || v.inside).map((v) => v.k.m));
+  const W = faults(P.kr);
+  if(!W.size) return {...P, leg: owLeg, held: 0, router: false};
+  const rl = [{lat: from.lat, lon: from.lon}, ...routerLeg], en = rl.map((q) => ref.toEN(q));
+  const nearW = (p) => [...W].some((m) => Math.hypot(p.e - m.e, p.n - m.n) <= OPEN_WATER.MARK_HOLD_M);
+  let iIn = -1, iOut = -1;
+  en.forEach((p, i) => { if(nearW(p)){ if(iIn < 0) iIn = i; iOut = i; } });
+  if(iIn >= 0){
+    const part = (a, b, sub) => { const r = openWaterLeg(a, b, ref, ko, buf, sub, {chart}); return r.used ? r.leg : sub; };
+    const head = iIn > 0 ? part(rl[0], rl[iIn], rl.slice(1, iIn + 1)) : [];
+    const mid = rl.slice(iIn + 1, iOut + 1);
+    const tail = iOut < rl.length - 1 ? part(rl[iOut], rl[rl.length - 1], rl.slice(iOut + 1)) : [];
+    const leg = [...head, ...mid, ...tail].map((q) => ({lat: q.lat, lon: q.lon}));
+    const S = pass(leg), WS = faults(S.kr);
+    if([...W].every((m) => !WS.has(m)) && [...WS].every((m) => W.has(m))) return {...S, leg, held: W.size, router: false};
+  }
+  const K = pass(routerLeg), WK = faults(K.kr);
+  if([...W].some((m) => !WK.has(m))) return {...K, leg: routerLeg, held: 0, router: true};
+  return {...P, leg: owLeg, held: 0, router: false};
+}
+
 export function planNogoRoute(from, to, opts){
   if(!nogo.ready) return {route:[{lat:to.lat,lon:to.lon}], direct:true, degraded:true};
   const ref=nogo.frame, ko=(opts && opts.ko) || passageKo(nogo.ko), buf=nogo.buffer;   // opts.ko: see holdTarget (2026-09-27)
@@ -877,12 +913,24 @@ export function planNogoRoute(from, to, opts){
   // not a passage up a channel: neither is brought to a charted channel's starboard quarter nor sent
   // off to a buoy half a kilometer away. Go-To, RTH, a transit and the ETA rows are passages.
   const passage = !(opts && (opts.flyThrough || opts.maneuver));
+  // OPEN WATER FIRST (2026-10-14, openwater.js): a passage leg through a bay or open water takes the way that keeps off
+  // the chart's hazards - and through the water its buoys vouch for - where that cuts the route's exposure enough for
+  // the distance it costs; otherwise the search's own route stands. At the clearance the leg was found at. Everything
+  // below runs on whichever it is. `V.OPEN_WATER === false` turns it off (the operator's Route rules).
+  // (The way back onto a survey - `flyThrough`: Continue, Resume from here - may be kilometers: it is laned as a maneuver,
+  // but it takes open water like a passage. MIN_LEG_M keeps the short ones as they were. The way back onto station
+  // - `maneuver` - never.)
+  let openWater = null;
+  const routerLeg = leg, owChart = {box: nogo.bbox, unread: nogo.unread, edgeM: CHART_EDGE_M};
+  if(!(opts && opts.maneuver) && V.OPEN_WATER !== false){
+    openWater = openWaterLeg(from, to, ref, ko, insideStandoff || !(want > buf + 0.05) ? buf : want, leg, {chart: owChart});
+    if(openWater.used) leg = openWater.leg;
+  }
   // The lane's centerline is EXTENDED to the charted end of the fairway before the lane
   // is built on it (extendCenterline), so the stand-on past a mouth needs no separate
   // pass here. This comment used to claim the same thing about the UNextended centerline
   // - "it already runs out to the last buoy pair, so the fairway projects past the mouth"
   // - which was false: it ran out AT the last pair and the offset was decaying before it.
-  const path0 = [{lat:from.lat,lon:from.lon}, ...leg];
   // DEEP WATER FIRST (2026-10-12, deepFirst / deepLanePass above): a passage's route kept out of margin water wherever it
   // has a deeper way that leaves no mark wrong, at the clearance the leg was found at, and every stage below planning on
   // the layer as deepFirst left it.
@@ -902,8 +950,17 @@ export function planNogoRoute(from, to, opts){
   const laneOpts = {standoffM: insideStandoff ? 0 : want, marks: passage, charted: passage};
   const lanePass = (pth, kP) => insideStandoff || !(want > buf + 0.05) ? channelLaneRoute(pth, ref, kP, buf, laneOpts)
                                                                      : keepStandoff(channelLaneRoute(pth, ref, kP, buf, laneOpts), pth, ref, kP, want);
-  const {kr, df} = passage ? deepLanePass(path0, ref, ko, found, lanePass) : {kr: lanePass(path0, ko), df: null};
-  const routed = (df ? df.path : path0).length > 2;
+  const passLeg = (lg) => { const p0 = [{lat:from.lat,lon:from.lon}, ...lg];
+    return passage ? deepLanePass(p0, ref, ko, found, lanePass) : {kr: lanePass(p0, ko), df: null}; };
+  let {kr, df} = passLeg(leg), owHeld = 0;
+  // A BUOY OUTRANKS OPEN WATER (buoysOutrankOpenWater, above): the wider way judged by the marks it leaves wrong
+  if(openWater && openWater.used){
+    const B = buoysOutrankOpenWater(from, to, ref, ko, found, routerLeg, leg, {kr, df}, passLeg,
+                                    (k) => markVerdicts(k.route, ref, k.marks || []), owChart);
+    ({kr, df} = B); leg = B.leg; owHeld = B.held;
+    if(B.router) openWater = {...openWater, used: false, why: "a buoy's proper hand"};
+  }
+  const routed = (df ? df.path : [{lat:from.lat,lon:from.lon}, ...leg]).length > 2;
   // (the knot prune that used to run here moved INTO channelLaneRoute — the producer —
   // after the Upload path, which never pruned, shipped a splice-seam knot to the boat)
   // `lane` travels WITH the plan. A refusal above returns before this point and so carries
@@ -917,6 +974,9 @@ export function planNogoRoute(from, to, opts){
   return {route, direct: !routed, routed, lane: kr.lane, partial: kr.partial,
           how: kr.how, marks: kr.marks,
           heldOff, holdClear, insideStandoff, standoffM: want,
+          openWater: openWater && {used: openWater.used, why: openWater.why, held: owHeld, lenM: openWater.lenM ?? null,
+                                   lenRouterM: openWater.lenRouterM ?? null, clearM: openWater.clearM ?? null, exposure: openWater.exposure ?? null,
+                                   exposureRouter: openWater.exposureRouter ?? null},
           moored: mooredPassed([{lat: from.lat, lon: from.lon}, ...route], ref, ko.moored),
           deep: df ? deepSaid([df], marginRuns([{lat: from.lat, lon: from.lon}, ...route], ref, ko, found)
                                      .map((r) => ({...r, w1: r.v1 - 1}))) : null};   // (w1: the stretch's end in plan.route)
@@ -1038,7 +1098,7 @@ export function keepStandoff(kr, fallback, ref, ko, want){
  * the leg into each later survey (surveys.js surveyEntries). Routed exactly as the approach is: at the standoff where
  * the water allows, keeping right in a buoyed channel (Rule 9, Andy's call). Absent, nothing changes.
  */
-export function routePlan(start, wps, keepRightAll, standoffM, transitAt){
+export function routePlan(start, wps, keepRightAll, standoffM, transitAt, ropts){
   if(!nogo.ready || !start) return {route: wps.map(p=>({lat:p.lat,lon:p.lon})), unroutable:[], degraded:true};
   const ref=nogo.frame, ko=nogo.ko, buf=nogo.buffer;
   // THE TRANSIT LEGS ARE LAID ROUND THE VESSELS NOT UNDER WAY (passageKo, 2026-10-07); a pattern's own legs - its
@@ -1062,6 +1122,12 @@ export function routePlan(start, wps, keepRightAll, standoffM, transitAt){
   // NOT left on the proper hand", and an approach whose survey lines ran back down the channel
   // the same (`legVerdicts`).
   const legVerdicts = [];
+  // OPEN WATER FIRST on each transit leg (2026-10-14, openwater.js), as planNogoRoute does - `ropts.openWater`: "all" (the
+  // approach and the leg into each later survey, a passage's sections) or "detours" (a DRAWN transit: the operator's own
+  // line stands wherever it is clear; only a leg the router has to take round something takes the open water round it).
+  // Default: "detours" for a pure transit (keepRightAll), "all" for a plan's transit legs. V.OPEN_WATER === false: off.
+  const owMode = V.OPEN_WATER === false ? false : ((ropts && ropts.openWater) || (keepRightAll ? "detours" : "all"));
+  const owLegs = [];
   wps.forEach((wp, i)=>{
     const transit = keepRightAll || i===0 || !!(transitAt && transitAt.has(i));   // the legs the page routes itself
     const kL = transit ? koT : ko;                               // (a transit's model holds the vessels not under way)
@@ -1069,6 +1135,14 @@ export function routePlan(start, wps, keepRightAll, standoffM, transitAt){
     let atStandoff = transit && want > buf + 0.05;               // ... and whether the leg was FOUND there
     if(!leg && transit && want > buf){ leg = legPath(prev, wp, ref, kL, buf); if(leg){ insideStandoff++; atStandoff = false; } }
     if(!leg){ unroutable.push([prev, {lat:wp.lat,lon:wp.lon}]); out.push({lat:wp.lat,lon:wp.lon}); prev=wp; return; }
+    const routerLeg = leg, owChart = {box: nogo.bbox, unread: nogo.unread, edgeM: CHART_EDGE_M};
+    let owEntry = null;
+    if(transit && owMode && (owMode === "all" || leg.length > 1)){
+      const ow = openWaterLeg(prev, wp, ref, kL, atStandoff ? want : buf, leg, {chart: owChart});
+      owEntry = {leg: i, used: ow.used, why: ow.why, held: 0, lenM: ow.lenM ?? null, lenRouterM: ow.lenRouterM ?? null, clearM: ow.clearM ?? null};
+      owLegs.push(owEntry);
+      if(ow.used) leg = ow.leg;
+    }
     let seg = [prev, ...leg];                       // prev … wp
     // Rule 9 keep-right applies to a TRANSIT: the approach out (leg 0), and every
     // leg of a pure-transit route (keepRightAll - Go-To, RTH, a drawn transit).
@@ -1095,10 +1169,18 @@ export function routePlan(start, wps, keepRightAll, standoffM, transitAt){
       // the buffer - counted in insideStandoff - keeps the buffer's pass.
       // DEEP WATER FIRST on each transit leg, as planNogoRoute does (deepFirst): at the clearance the leg was found at.
       const found = atStandoff ? want : buf;
-      const {kr, df} = deepLanePass(seg, ref, koT, found, (pth, kD) => {
+      const passLeg = (lg) => deepLanePass([prev, ...lg], ref, koT, found, (pth, kD) => {
         const kr0 = channelLaneRoute(pth, ref, kD, buf, {standoffM: atStandoff ? want : 0});   // see planNogoRoute
         return atStandoff ? keepStandoff(kr0, pth, ref, kD, want) : kr0;
       });
+      let {kr, df} = passLeg(leg);
+      // A BUOY OUTRANKS OPEN WATER (buoysOutrankOpenWater), as in planNogoRoute
+      if(owEntry && owEntry.used){
+        const B = buoysOutrankOpenWater(prev, wp, ref, koT, found, routerLeg, leg, {kr, df}, passLeg,
+                                        (k) => markVerdicts(k.route, ref, k.marks || [], {start: i > 0, end: i < wps.length - 1}), owChart);
+        ({kr, df} = B); leg = B.leg; owEntry.held = B.held;
+        if(B.router){ owEntry.used = false; owEntry.why = "a buoy's proper hand"; }
+      }
       if(df) dfs.push(df);
       seg = kr.route; if(kr.lane) lane = true; if(kr.partial) partial = true;
       // (its margin water as it ships: from her position on the first leg, at its end on the last - else at a waypoint)
@@ -1135,7 +1217,7 @@ export function routePlan(start, wps, keepRightAll, standoffM, transitAt){
   // included, since a survey line over water nobody read is no more checked than a transit over it. `uncharted` is null
   // or what beyondChart found; the route is still returned, and the page refuses it (doTransit, doUpload).
   const uncharted = beyondChart([{lat: start.lat, lon: start.lon}, ...out], nogo.bbox, undefined, nogo.unread);
-  return {route: out, unroutable, lane, partial, how, insideStandoff, standoffM: want, uncharted,
+  return {route: out, unroutable, lane, partial, how, insideStandoff, standoffM: want, uncharted, openWater: owLegs,
           moored: mooredPassed([{lat: start.lat, lon: start.lon}, ...out], ref, koT.moored),
           deep: dfs.length ? deepSaid(dfs, runs) : null};
 }

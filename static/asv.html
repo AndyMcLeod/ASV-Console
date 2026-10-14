@@ -688,6 +688,7 @@
         <div class="prow"><label>Buffer m</label><input type="number" id="sp_buffer" value="3" min="0" max="200" step="1" title="Keep-clear buffer around every nogo zone. SHARED — this is the buffer all behaviors (Go-To / RTH / search / survey) route clear by."/></div>
         <div class="prow"><label>Transit kn</label>
           <select id="sp_spd_transit" title="Speed on everything that is not coverage and not a turn: the approach out to the survey area, hops between separated regions, and the Go-To / RTH / Transit behaviors. Whole knots, COMMANDED through the water: the current and the wind make her speed over the ground differ."></select></div>
+        <div class="prow" title="OPEN WATER FIRST. On a passage leg of 3 km or more - a Go-To, an RTH, Continue, the way out to a survey and into each later one, a long passage's sections - the planner looks at the whole water between her and the point and keeps a berth of up to 1 km off charted dangers where the water allows, rather than threading islands, ledges and shoals by the shortest way: the chart may be wrong by tens of meters, or miss a rock. A buoyed or charted channel and the water round a safe-water buoy count as safer; an isolated-danger buoy and a lone channel mark are kept clear. It is taken when it cuts the route's time near dangers by 10% or more at no more than twice the length; the banner says what it added. A DRAWN transit keeps its own line where that is clear - only a leg the router has to bend round something goes the open-water way round it. OFF: the shortest clear way, as before. The next plan reads it (a fresh page starts on First)."><label>Open water</label><select id="enf_openwater"><option value="first" selected>First</option><option value="off">Off</option></select></div>
         <div class="prow" title="HOW A ROCK IN A BUOYED CHANNEL IS PASSED by the Rule 9 lane - a charted rock, wreck or obstruction, a small shoal patch or islet with water all round it. It is never the channel's edge: the lane holds its line and passes it to EITHER side. LAND gives it the lane's own clearance from a bank (twice the buffer and two meters, or more). SHOAL gives it only the keep-clear - the buffer, or the guard's standoff in a set - and two meters (half the buffer where that is more), as a shallow point of the sea bottom: any spot of water shallower than the floor. Anything built - a pier, a pile, a dolphin, a float, a bridge support - and every buoy or beacon is the bank either way - except a fish weir or other structure charted only as an obstruction, which cannot be told from a rock and is passed as one. This is the lane between SINGLE channel marks only: in a charted channel, between buoy pairs or in unmarked narrow water a rock is passed at the ordinary keep-clear either way. For trying both: the next Go-To, RTH, transit, survey approach or leg into a later survey is planned with what this says (a fresh page starts on Land)."><label>Channel rocks</label><select id="enf_rock"><option value="land" selected>Land</option><option value="bottom">Shoal</option></select></div>
         <div class="enf" title="Which ENC features form the NOGO model — SHARED by every behavior (Go-To / RTH / search / survey), not just Punch Out. Toggling these re-routes all behaviors.">
           <label><input type="checkbox" id="enf_land" checked/>Land / shore / docks</label>
@@ -1083,6 +1084,8 @@ import { CHART_EDGE_M, LANE_FRAC, SEG_LEN_M, beyondChart, beyondChartSay, buoyCh
 // THE ROUTE SEARCH OFF THIS PAGE'S THREAD (2026-10-12): the model's feature count, which the worker checks the model it
 // holds against on every search (route_job.js; planOffThread).
 import { koCount as routeKoCount, packKo as routePackKo } from "/static/js/route_job.js";
+// OPEN WATER FIRST (2026-10-14): its words, for the banners and the Intent card (the planner itself is passage.js's).
+import { openWaterBox, openWaterNote, openWaterWhy } from "/static/js/openwater.js";
 import { HAZ_UNKNOWN_EXTENT, MARK_TAIL, WATER_FAR_KM, WATER_REMOTE_KM, WATER_STALE_S,
          WRECK_CLEAR_MARGIN_M, airNeedM, blocked, blockedInfo, bufferFloor, buildKeepouts, buildMargin, clearanceM,
          channelPolys, depthExcluded, effectiveWaterOffset, firstBlockAlong, hazExtent, overheadBlocks,
@@ -2105,6 +2108,7 @@ function setPlanIntent(kind, plan, route){
   // OFFSHORE MARKS (2026-10-12, routing.js offshoreDangerSide): kept between her and the danger each marks - no Rule 9 claim,
   // so said whether or not a lane was ridden; and one NOT so kept is a warning, lane or no lane (offshoreWhy).
   w.push(...offshoreWhy(plan));
+  w.push(...openWaterWhy(plan.openWater, fmtDist));   // open water first (openwater.js), asked of every plan
   w.push(...deepWhy(plan.deep, fmtDist));             // deep water first (passage.js deepFirst), asked of every plan
   const un = (plan.unroutable||[]).length;
   if(un){ planIntent.unsafe = un;
@@ -8241,7 +8245,8 @@ let coarseHome = {key: null, hf: null, at: 0, tried: null, note: null, busy: fal
 let coarseHomeWorker = null, coarseHomeSeq = 0;
 /** What a coarse field is built for: home, and the floor and air draft its cells were judged at. */
 function coarseHomeKey(){
-  return S && S.home ? [S.home.lat.toFixed(5), S.home.lon.toFixed(5), Math.round(nogoDR().min * 10), Math.round(airNeedM() * 10)].join("|") : null;
+  return S && S.home ? [S.home.lat.toFixed(5), S.home.lon.toFixed(5), Math.round(nogoDR().min * 10), Math.round(airNeedM() * 10),
+                        V.OPEN_WATER === false ? "close" : "open"].join("|") : null;
 }
 /** On every state frame (fuelTick): build the coarse field when she needs it and has none that holds her. */
 function coarseHomeTick(){
@@ -8284,7 +8289,7 @@ async function coarseHomeBuild(key, here){
   if(!st || st.error || st.state !== "done") return fail("the chart read along the way " + ((st && st.state) || "failed"));
   const g = await passageGrids(st.tiles || []);
   const res = await coarseHomeInWorker({kind: "home", grids: g.grids, floorDm: Math.round(nogoDR().min * 10),
-                                        airDm: Math.round(airNeedM() * 10), home});
+                                        airDm: Math.round(airNeedM() * 10), home, openWater: V.OPEN_WATER !== false});
   if(res.error) return fail(res.error === "unread" ? "home's own chart tile could not be read" : res.error);
   coarseHome = {key, hf: {tiles: res.tiles}, at: Date.now(), note: "ready", busy: false, tried: key};
   logClient("coarse_home", {ok: true, tiles: res.tiles.length, missing: g.missing, half_km: +halfKm.toFixed(1),
@@ -10751,7 +10756,7 @@ async function doGoTo(target){
   plan.coast = gCoast;
   runRoute = plan.route; runUnsafe = []; setPlanIntent("goto", plan, plan.route); updateMissionCard();   // draw the transit line + waypoints like a survey
   legStartsHere(0, r);                           // her first leg begins where she is (SimVcu.start), not at a waypoint
-  const note = [buoyageNote(plan.lane, plan.partial, plan.how), offshoreNote(plan.how), deepNote(plan.deep, fmtDist), mooredNote(plan)].filter(Boolean).join(" \u00b7 ");   // this plan's lane, not the last plan's
+  const note = [openWaterNote(plan.openWater, fmtDist), buoyageNote(plan.lane, plan.partial, plan.how), offshoreNote(plan.how), deepNote(plan.deep, fmtDist), mooredNote(plan)].filter(Boolean).join(" \u00b7 ");   // this plan's lane, not the last plan's
   if(plan.heldOff) showBanner("Go-To: "+heldOffWhy(plan.heldOff)+" — holding "+fmtDist(plan.heldOff.m)
     +" off it, at the nearest clear water"+(plan.routed?(", routed via "+plan.route.length+" waypoints"):"")+(note?" · "+note:"")+".");
   else if(plan.routed || note || plan.insideStandoff) showBanner("Go-To: "+(plan.routed?("routed around nogo zone(s) via "+plan.route.length+" waypoints"):"direct")+(note?" \u00b7 "+note:"")+(plan.insideStandoff?" ⚠ inside the "+(+plan.standoffM).toFixed(1)+" m transit standoff (no route at that clearance) — expect the guard to slow or hold her there":"")+".");
@@ -10922,7 +10927,7 @@ async function doRTH(opts){
   plan.coast = rCoast;
   runRoute = plan.route; runUnsafe = []; setPlanIntent("rth", plan, plan.route); updateMissionCard();   // draw the transit line + waypoints like a survey
   legStartsHere(0, r);                           // see doGoTo
-  const note = [buoyageNote(plan.lane, plan.partial, plan.how), offshoreNote(plan.how), deepNote(plan.deep, fmtDist), mooredNote(plan)].filter(Boolean).join(" \u00b7 ");   // this plan's lane, not the last plan's
+  const note = [openWaterNote(plan.openWater, fmtDist), buoyageNote(plan.lane, plan.partial, plan.how), offshoreNote(plan.how), deepNote(plan.deep, fmtDist), mooredNote(plan)].filter(Boolean).join(" \u00b7 ");   // this plan's lane, not the last plan's
   if(plan.heldOff) showBanner(why+"RTH: Home "+heldOffWhy(plan.heldOff)+" — holding "+fmtDist(plan.heldOff.m)
     +" off it, at the nearest clear water"+(plan.routed?(", routed via "+plan.route.length+" waypoints"):"")+(note?" · "+note:"")+".");
   else if(plan.routed || note || plan.insideStandoff) showBanner(why+"RTH: "+(plan.routed?("routed around nogo zone(s) via "+plan.route.length+" waypoints"):"direct")+(note?" \u00b7 "+note:"")+(plan.insideStandoff?" ⚠ inside the "+(+plan.standoffM).toFixed(1)+" m transit standoff (no route at that clearance) — expect the guard to slow or hold her there":"")+".");
@@ -11395,7 +11400,8 @@ async function planPassageNow(){
     corridorRead = toCorridor(st);
     passageStatus = "planning the passage…"; updateTransitPanel();
     const g = await passageGrids(st.tiles || []);
-    const res = await passageInWorker({grids: g.grids, floorDm: Math.round(floorM * 10), airDm: Math.round(airNeedM() * 10), points});
+    const res = await passageInWorker({grids: g.grids, floorDm: Math.round(floorM * 10), airDm: Math.round(airNeedM() * 10), points,
+                                       openWater: V.OPEN_WATER !== false});
     if(gen !== transitGen){ showBanner("Passage NOT planned: the line was edited while it was being planned - plan it again."); return; }
     if(res.error){ showBanner("Passage NOT planned: " + res.error + "."); return; }
     const fuelLegs = passageFuelLegs(points, res.legs);
@@ -11568,11 +11574,12 @@ async function sailSend(P, k, from, bo, append){
   // In the route worker (planOffThread), on the chart at that water (koAtLevel); on this thread as before if it cannot.
   const plan = await planInsideChart([from, ...pts], {route: true}, () => {
     const o = holdOpts(), via = pts.slice(0, -1), std = transitStandoffM(), koLv = koAtLevel(lv.m);
-    return planOffThread({op: "holdRoute", ko: koLv, args: {target: c.to, holdOpts: o, start: from, via, keepRightAll: true, standoffM: std}},
+    return planOffThread({op: "holdRoute", ko: koLv, args: {target: c.to, holdOpts: o, start: from, via, keepRightAll: true, standoffM: std,
+                                                            ropts: {openWater: "all"}}},   // a passage: open water on every leg
       () => atWaterLevel(lv.m, () => {
         ht = holdTarget(c.to, o);
         if(ht.error) return null;
-        return routePlan(from, [...via, ht.to], true, std);
+        return routePlan(from, [...via, ht.to], true, std, undefined, {openWater: "all"});
       }, koLv),
       (r) => { ht = r.ht; return r.plan; });
   }, (home ? "Home along the passage, section " : "Passage section ") + (k + 1));
@@ -12101,7 +12108,7 @@ async function doTransit(){
   legStartsHere(0, r);                           // see doGoTo
   if(plan.heldOff) showBanner("Transit: the last point "+heldOffWhy(plan.heldOff)+" — holding "+fmtDist(plan.heldOff.m)+" off it, in water a boat can sit in.");
   const added = plan.route.length - transit.length;
-  const note = [buoyageNote(plan.lane, plan.partial, plan.how), offshoreNote(plan.how), deepNote(plan.deep, fmtDist), mooredNote(plan)].filter(Boolean).join(" \u00b7 ");   // accumulated over every leg of THIS plan
+  const note = [openWaterNote(plan.openWater, fmtDist), buoyageNote(plan.lane, plan.partial, plan.how), offshoreNote(plan.how), deepNote(plan.deep, fmtDist), mooredNote(plan)].filter(Boolean).join(" \u00b7 ");   // accumulated over every leg of THIS plan
   if(added>0 || note) showBanner("Transit: "+(added>0?("routed clear of ENC obstacles ("+added+" detour waypoint(s) added)"):"clear")+(note?" \u00b7 "+note:"")+".");
   setMode("pan"); render();
 }
@@ -13846,6 +13853,25 @@ async function planOffThread(job, here, adopt = (out) => out, L = "cmd"){
 // Stop, Pause, Hold or E-STOP moves `routeStopGen`, and planInsideChart withdraws a plan that began before it.
 let routeStopGen = 0, routeStopName = null;
 function routeStopPressed(name){ routeStopGen++; routeStopName = name; }
+// ⚠ OPEN WATER FIRST READS THE WATER IT SEARCHES (2026-10-14, openwater.js). Its search looks up to 15 km beside a long leg
+// and keeps to water the chart was read over (openWaterField) - so with the chart read over her and the target alone it had
+// the water between them and no more: the open water west of North Haven his Castine Go-To wanted lies 2.4 km past that box.
+// So before planInsideChart plans, a leg of OPEN_WATER.MIN_LEG_M or more has the chart read over the whole water its search
+// looks at (openWaterBox), joined to what was read - a `keep` read, so one that fails leaves the model as it was; one too
+// wide for an extract is not asked, and the search keeps to the water read. An Upload's (`opts.plan`): its approach leg
+// alone - its later legs between surveys run over water the plan's own read covers, and a survey line is not a passage.
+// Returns what it did: null (nothing to read, or already read), {read: false, why} or {read: true, failed}.
+async function openWaterRead(pts, opts, what){
+  const box = V.OPEN_WATER !== false && nogo.ready && nogo.bbox ? openWaterBox(opts && opts.plan ? pts.slice(0, 2) : pts) : null;
+  if(!box || bboxContains(nogo.bbox, box)) return null;
+  const tooBig = encSpanRefusal(bbUnion(nogo.bbox, box));
+  if(tooBig){ logClient("open_water_read", {what, read: false, why: tooBig}); return {read: false, why: tooBig}; }
+  const ask = {say: what + ": reading the chart over the open water round the way there…", keep: true};
+  await refreshNogo(asv ? {lat: asv.lat, lon: asv.lon} : pts[0], bbUnion(nogo.bbox, box), ask);
+  logClient("open_water_read", {what, read: true, failed: ask.failed || null});
+  if(!ask.failed) await ensureNogoCovers(pts, null, {...(opts || {}), keep: true});   // the plan's own chart image, read again
+  return {read: true, failed: ask.failed || null};
+}
 async function planInsideChart(pts, opts, plan, what){
   const subjectOf = () => what === "Upload" ? "the plan" : what === "Transit" ? "the transit" : what === "RTH" ? "home" : "the target";
   const stopWas = routeStopGen;
@@ -13885,6 +13911,7 @@ async function planInsideChart(pts, opts, plan, what){
               uncharted: {...own, route: [], say, rounds: 0, cause: tooBig ? "size" : "failed"}};
     }
   }
+  await openWaterRead(pts, opts, what);           // the water open water first searches, read first (2026-10-14)
   await readPassageAis(pts);                     // the vessels not under way along it, for passageKo (2026-10-07)
   aisKeepoutsNow();
   // THE SEARCH RUNS IN THE ROUTE WORKER (planOffThread), or on this thread with the console told (planHere): `plan` is the
@@ -15480,7 +15507,8 @@ function pathReadings(){
   set("#pp_plan .ppsum", n ? "plan: " + n + " wpts · " + fmtDist(len) : "plan: empty");
   const v = sel => { const el = $(sel); return el ? String(el.value).trim() : ""; };
   set("#pp_rules .pprsum", "min " + (v("#sp_mindepth") || "--") + " m · buf " + (v("#sp_buffer") || "--") + " m · water "
-    + (v("#sp_water") ? v("#sp_water") + " m" : "auto") + " · " + spdTxt(roleSpeed("transit")));
+    + (v("#sp_water") ? v("#sp_water") + " m" : "auto") + " · " + spdTxt(roleSpeed("transit"))
+    + (v("#enf_openwater") === "off" ? " · open water off" : ""));
 }
 PATH_TABS.forEach(t => { $("#pp_tab_" + t).onclick = () => pathSelect(t); });
 $("#pp_draw").onclick = pathDraw;
@@ -15656,6 +15684,10 @@ $("#sp_turn_ease").onchange = ()=>setTurnEase($("#sp_turn_ease").value);
 // How a rock in a buoyed reach is passed - for trying both (state.js V.REACH_ROCK). The keep-out model does not
 // change, only the lane laid through it, so nothing is rebuilt: the next plan reads it.
 $("#enf_rock").onchange = ()=>{ V.REACH_ROCK = $("#enf_rock").value === "bottom" ? "bottom" : "land"; };
+// Open water first (2026-10-14, openwater.js; state.js V.OPEN_WATER): read by the next plan, the route worker's included (it
+// is sent the whole V block with each job), and by the coarse passage and home searches (sent with each); the coarse home
+// field is built again for it (coarseHomeKey).
+$("#enf_openwater").onchange = ()=>{ V.OPEN_WATER = $("#enf_openwater").value !== "off"; pathReadings(); };
 // enforce toggles rebuild the shared nogo (affect Go-To / RTH / search too)
 ["#enf_land","#enf_depth","#enf_haz","#enf_area","#enf_wreck","#enf_chan"].forEach(id=>{
   $(id).onchange = ()=>{ applyNogoControls(); patClip=null; updatePatReadout(); render(); };

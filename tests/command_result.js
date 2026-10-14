@@ -285,6 +285,8 @@ const PRELUDE = [
   "const offshoreNote = () => '';",
   // (deep water first's words, 2026-10-12: no margin layer in this world - tests/deep_first.js is theirs)
   "const deepNote = () => '';",
+  // (open water first's words, 2026-10-14: tests/open_water.js is theirs)
+  "const openWaterNote = () => '';",
   "const fmtDist = (m) => Math.round(m) + ' m';",
   // doRTH now asks rthTooFar() before it routes (2026-09-23), and that needs a distance. The
   // page's distTo is an import from geodesy.js, which a new Function cannot reach; this is
@@ -458,7 +460,7 @@ function world(opts) {
                            // the vessels along a passage (2026-10-07): no AIS proxy answers in this world, so the
                            // read takes nothing and each plan is laid in the chart's model; the read itself is
                            // tests/chart_box.js's subject (10). The banner's words for what one names are the page's own.
-                           + 'const readPassageAis = async () => {};' + "\n" + grab("mooredNote") + "\n"
+                           + 'const readPassageAis = async () => {}, openWaterRead = async () => null;' + "\n" + grab("mooredNote") + "\n"
                            // THE ROUTE WORKER (2026-10-12) is not here: each search runs on this thread as it always did (tests/route_worker.js);
                            // and the four stop-class presses withdraw a plan in flight - the page's own (tests/route_worker.js 12-13)
                            + 'const planOffThread = async (job, here) => here(); let routeStopGen = 0, routeStopName = null;' + "\n"

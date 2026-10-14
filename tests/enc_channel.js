@@ -1380,12 +1380,16 @@ const ptsOf = (ms) => ms.map((m) => ({ e: m.e, n: m.n, r: 0, kind: m.fixed ? "a 
   for (let n = -300; n <= 2300; n += 30) points.push({ e: 15, n, r: 0, kind: "a pile" });
   const ko = model({ chans: [chan(rect(-50, -500, 50, 2500), true)], polys: [land(rect(50, -2000, 400, 4000))], points });
   const saved = { ready: nogo.ready, frame: nogo.frame, buffer: nogo.buffer, ko: nogo.ko };
+  // (OPEN WATER FIRST off, 2026-10-14: this world's west is open water to the horizon beside a channel that hugs a bank,
+  // and the planner would - rightly - take it, a kilometer off the bank and the piles; a real chart draws that water shoal,
+  // or there would be no channel. The subject here is the lane's claim after the re-gate. tests/open_water.js is its own.)
+  const { V } = require("../static/js/state.js"), owWas = V.OPEN_WATER;
   let set, calm;
   try {
-    Object.assign(nogo, { ready: true, frame: F, buffer: BUF, ko });
+    Object.assign(nogo, { ready: true, frame: F, buffer: BUF, ko }); V.OPEN_WATER = false;
     set = P.planNogoRoute(ll(-20, -800), ll(-20, 2800), { standoffM: 19.5, ko });
     calm = P.planNogoRoute(ll(-20, -800), ll(-20, 2800), { ko });
-  } finally { Object.assign(nogo, saved); }
+  } finally { Object.assign(nogo, saved); V.OPEN_WATER = owWas; }
   const h = (r) => (r.how ? { charted: r.how.charted, short: r.how.chartedShortM } : r.error);
   check("64b. ... and in a set it is measured on the route the standoff's re-gate ships: not claimed where that route "
         + "crossed most of the owned water short of it (calm, it is ridden and claimed)",

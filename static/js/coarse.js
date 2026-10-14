@@ -21,7 +21,18 @@
 // is the console planner's and the coarse route only has to leave by water. The path is then pulled taut (pullTaut):
 // a shortcut is taken only over cells no worse than the stretch of path it replaces.
 //
+// OPEN WATER FIRST (Andy, 2026-10-14; openwater.js, where the detail planner does the same): every cell also costs
+// more the nearer it lies to a cell a danger touches or blocks - OPEN_WATER.WEIGHT x nearCost(its clearance), the same
+// price the detail planner's open-water search pays, nothing past CLEAR_M - so a passage keeps that far off the
+// coast, the islands and the ledges wherever the water allows, rather than threading them by the shortest way: "the
+// chart may have a positional error or unmarked feature", and "safety is always better than efficiency for path
+// planning". The pull then takes a shortcut only where it costs no more than the stretch it replaces, so the berth
+// the search kept is not cut back to the shore. Not inside a port's circle (the detail planner's water), and not
+// with `openWater: false` (the operator's Route rules: the costs by level alone, as before).
+//
 // Everything here is PURE: grids in, a plan out. Nothing here reads the page or commands anything.
+
+import { OPEN_WATER, nearCost } from "./openwater.js";
 
 export const GRID_N = 256;
 export const TILE_DEG = 0.25;
@@ -91,9 +102,9 @@ export function cellLL(gx, gy) {
 
 /**
  * THE FIELD: the passage's tiles, each a level per cell, LV_NEAR marked across tile edges. `grids` [{head, C, T}].
- * A cell of no tile here is unread.
+ * A cell of no tile here is unread. `opts.openWater` (default on): each tile's open-water cost too (openWaterCosts).
  */
-export function buildField(grids, floorDm, airDm = 0) {
+export function buildField(grids, floorDm, airDm = 0, opts = {}) {
   const tiles = new Map(), list = [];
   for (const g of grids) {
     const [W, S] = g.head.tile;
@@ -128,7 +139,76 @@ export function buildField(grids, floorDm, airDm = 0) {
     for (let j = 0; j < near.length; j++) if (near[j]) t.lv[j] = LV_NEAR;
   }
   field.level = raw;
+  field.openWater = opts.openWater !== false;
+  if (field.openWater) openWaterCosts(field);
+  field.near = (gx, gy) => {
+    const t = tiles.get(tileKey(Math.floor(gx / GRID_N), Math.floor(gy / GRID_N)));
+    return t && t.nr ? OPEN_WATER.WEIGHT * t.nr[(gy - t.ty * GRID_N) * GRID_N + (gx - t.tx * GRID_N)] / 255 : 0;
+  };
   return field;
+}
+
+/**
+ * OPEN WATER FIRST, COARSE: each tile's `nr` - nearCost of every cell's clearance from the nearest cell a danger
+ * touches or blocks (PARTLY, BLOCKED; unread water is no danger, it is only never entered), x 255 as a byte - or null
+ * where no danger is within CLEAR_M of the tile. The clearance is a chamfer distance in meters over the tile and a halo
+ * of its neighbors' cells CLEAR_M wide, center to center, at the tile's own latitude.
+ */
+function openWaterCosts(field) {
+  const O = OPEN_WATER, ky = CELL_DEG * M_PER_DEG;
+  for (const t of field.list) {
+    t.nr = null;
+    const kx = ky * Math.max(0.05, t.cosLat), kd = Math.hypot(kx, ky);
+    const hx = Math.min(GRID_N, Math.ceil(O.CLEAR_M / kx) + 1), hy = Math.ceil(O.CLEAR_M / ky) + 1;
+    const W = GRID_N + 2 * hx, H = GRID_N + 2 * hy, d = new Float32Array(W * H);
+    const gx0 = t.tx * GRID_N - hx, gy0 = t.ty * GRID_N - hy;
+    let any = false;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const c = x - hx, r = y - hy;
+        const lv = c >= 0 && c < GRID_N && r >= 0 && r < GRID_N ? t.lv[r * GRID_N + c] : field.level(gx0 + x, gy0 + y);
+        if (lv === LV_PARTLY || lv === LV_BLOCKED) { d[y * W + x] = 0; any = true; } else d[y * W + x] = Infinity;
+      }
+    }
+    if (!any) continue;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const i = y * W + x;
+        let v = d[i];
+        if (!v) continue;
+        if (x > 0) v = Math.min(v, d[i - 1] + kx);
+        if (y > 0) {
+          v = Math.min(v, d[i - W] + ky);
+          if (x > 0) v = Math.min(v, d[i - W - 1] + kd);
+          if (x < W - 1) v = Math.min(v, d[i - W + 1] + kd);
+        }
+        d[i] = v;
+      }
+    }
+    for (let y = H - 1; y >= 0; y--) {
+      for (let x = W - 1; x >= 0; x--) {
+        const i = y * W + x;
+        let v = d[i];
+        if (!v) continue;
+        if (x < W - 1) v = Math.min(v, d[i + 1] + kx);
+        if (y < H - 1) {
+          v = Math.min(v, d[i + W] + ky);
+          if (x < W - 1) v = Math.min(v, d[i + W + 1] + kd);
+          if (x > 0) v = Math.min(v, d[i + W - 1] + kd);
+        }
+        d[i] = v;
+      }
+    }
+    const nr = new Uint8Array(GRID_N * GRID_N);
+    let some = false;
+    for (let r = 0; r < GRID_N; r++) {
+      for (let c = 0; c < GRID_N; c++) {
+        const v = Math.round(255 * nearCost(d[(r + hy) * W + c + hx], O));
+        if (v) { nr[r * GRID_N + c] = v; some = true; }
+      }
+    }
+    if (some) t.nr = nr;
+  }
 }
 
 /** Meters between two cells' centers, flat at their mean latitude. */
@@ -144,11 +224,14 @@ function inPort(ports, gx, gy) {
   return false;
 }
 
-/** The cost per meter of entering a cell, or Infinity: `ports` the circles a blocked cell may be crossed in. */
+/** The cost per meter of entering a cell, or Infinity: `ports` the circles a blocked cell may be crossed in - and where
+ *  the open-water cost is not added (buildField). */
 function cellCost(field, ports, gx, gy) {
   const lv = field.level(gx, gy);
   if (lv === LV_BLOCKED) return ports.length && inPort(ports, gx, gy) ? PORT_BLOCKED_COST : Infinity;
-  return COST[lv];
+  if (lv === LV_UNREAD) return Infinity;
+  const nr = field.near ? field.near(gx, gy) : 0;
+  return COST[lv] + (nr && !(ports.length && inPort(ports, gx, gy)) ? nr : 0);
 }
 
 // A binary heap of (f, id).
@@ -260,11 +343,36 @@ function routeLevel(field, ports, gx, gy) {
 
 /**
  * PULLED TAUT: the search's cells to the fewest straight segments, each over cells no worse than the stretch of the
- * path it replaces (the worst level along that stretch), the ends' own cells excepted. Returns the kept cells.
+ * path it replaces (the worst level along that stretch), the ends' own cells excepted - and, on an open-water field
+ * (buildField), costing no more than that stretch did, its cost per meter integrated along the segment against the
+ * path's own as the search priced it: a shortcut nearer the coast than the path ran is taken only where the meters it
+ * saves pay for it, so the berth the search kept is not cut back. Returns the kept cells.
  */
 export function pullTaut(field, cells, ports) {
   if (cells.length <= 2) return cells.slice();
   const lv = cells.map((c) => routeLevel(field, ports, c.gx, c.gy));
+  // the cost rule: the leg's own end cells cost a meter, as the search's do
+  const last = cells.length - 1;
+  const costOf = (gx, gy) => ((gx === cells[0].gx && gy === cells[0].gy) || (gx === cells[last].gx && gy === cells[last].gy)
+    ? 1 : cellCost(field, ports, gx, gy));
+  const cum = new Float64Array(cells.length);
+  if (field.openWater) {
+    let pc = costOf(cells[0].gx, cells[0].gy);
+    for (let k = 1; k < cells.length; k++) {
+      const c = costOf(cells[k].gx, cells[k].gy);
+      cum[k] = cum[k - 1] + cellDistM(cells[k - 1].gx, cells[k - 1].gy, cells[k].gx, cells[k].gy) * (pc + c) / 2;
+      pc = c;
+    }
+  }
+  const lineCost = (a, b) => {
+    const n = Math.max(1, Math.ceil(Math.max(Math.abs(b.gx - a.gx), Math.abs(b.gy - a.gy)) * 4));
+    let s = 0;
+    for (let q = 0; q < n; q++) {
+      const f = (q + 0.5) / n;
+      s += costOf(Math.floor(a.gx + 0.5 + (b.gx - a.gx) * f), Math.floor(a.gy + 0.5 + (b.gy - a.gy) * f));
+    }
+    return s * cellDistM(a.gx, a.gy, b.gx, b.gy) / n;
+  };
   // the stretch a shortcut replaces is the cells BETWEEN its two ends: an end that is itself partly (a corner of the
   // path beside a danger) is no licence for the shortcut to run on along other such cells (tests/passage_plan.js 9)
   const worstBetween = (i, j) => { let w = 0; for (let k = i + 1; k < j; k++) if (lv[k] > w) w = lv[k]; return w; };
@@ -275,7 +383,7 @@ export function pullTaut(field, cells, ports) {
       const v = routeLevel(field, ports, c.gx, c.gy);
       if (v > allow || v >= LV_BLOCKED) return false;
     }
-    return true;
+    return !field.openWater || lineCost(cells[i], cells[j]) <= cum[j] - cum[i] + 1e-6;
   };
   const out = [cells[0]];
   let i = 0;
@@ -350,8 +458,8 @@ export function routeLengthM(pts) {
  * A leg that cannot be planned carries `error` ("unread": an end off the chart read; "blocked": no water way within
  * the tiles read; "too_long") and `at`, the point it is about; the rest are still planned.
  */
-export function planPassage({ grids, floorDm, airDm = 0, points, sectionM = SECTION_M }) {
-  const field = buildField(grids.map((g) => (g.head ? g : decodeGrid(g))), floorDm, airDm);
+export function planPassage({ grids, floorDm, airDm = 0, points, sectionM = SECTION_M, openWater = true }) {
+  const field = buildField(grids.map((g) => (g.head ? g : decodeGrid(g))), floorDm, airDm, { openWater });
   const cells = points.map((p) => ({ ...cellOf(p), port: !!p.port, lat: p.lat, lon: p.lon }));
   const legs = [];
   let total = 0;
@@ -371,7 +479,8 @@ export function planPassage({ grids, floorDm, airDm = 0, points, sectionM = SECT
                 pts: taut.map((c, k) => (k === 0 ? { lat: a.lat, lon: a.lon } : k === taut.length - 1 ? { lat: b.lat, lon: b.lon } : cellLL(c.gx, c.gy))),
                 narrow: narrowStretches(field, taut, ports) });
   }
-  const out = { legs, lengthM: total, ports: points.filter((p) => p.port).map((p) => ({ lat: p.lat, lon: p.lon })) };
+  const out = { legs, lengthM: total, ports: points.filter((p) => p.port).map((p) => ({ lat: p.lat, lon: p.lon })),
+                openWater: field.openWater };
   if (!legs.some((g) => g.error)) out.sections = cutSections(field, legs, points, sectionM);
   return out;
 }
@@ -616,15 +725,23 @@ export function coarseHomeField(field, home) {
   const cc = new Float32Array(W * H).fill(Infinity);           // the cost per meter of entering each cell
   for (const t of field.list) {
     const ox = t.tx * GRID_N - gx0, oy = t.ty * GRID_N - gy0;
-    for (let r = 0; r < GRID_N; r++) for (let c = 0; c < GRID_N; c++) cc[(oy + r) * W + ox + c] = COST[t.lv[r * GRID_N + c]];
+    for (let r = 0; r < GRID_N; r++) {
+      for (let c = 0; c < GRID_N; c++) {
+        const j = r * GRID_N + c;
+        cc[(oy + r) * W + ox + c] = COST[t.lv[j]] + (t.nr ? OPEN_WATER.WEIGHT * t.nr[j] / 255 : 0);
+      }
+    }
   }
-  // home's port circle: a blocked cell there is crossed at PORT_BLOCKED_COST (searchLeg's cellCost); home itself, 1
+  // home's port circle: a blocked cell there is crossed at PORT_BLOCKED_COST (searchLeg's cellCost), and no cell carries
+  // the open-water cost; home itself, 1
   const hx = h.gx - gx0, hy = h.gy - gy0, ry = Math.ceil(PORT_R_M / (CELL_DEG * M_PER_DEG)) + 1;
   const rx = Math.ceil(ry / Math.max(0.05, Math.cos(home.lat * Math.PI / 180)));
   for (let y = Math.max(0, hy - ry); y <= Math.min(H - 1, hy + ry); y++)
     for (let x = Math.max(0, hx - rx); x <= Math.min(W - 1, hx + rx); x++) {
       const i = y * W + x, gx = x + gx0, gy = y + gy0;
-      if (field.level(gx, gy) === LV_BLOCKED && cellDistM(gx, gy, h.gx, h.gy) <= PORT_R_M) cc[i] = PORT_BLOCKED_COST;
+      if (cellDistM(gx, gy, h.gx, h.gy) > PORT_R_M) continue;
+      const lv = field.level(gx, gy);
+      cc[i] = lv === LV_BLOCKED ? PORT_BLOCKED_COST : COST[lv];
     }
   cc[hy * W + hx] = 1;
   // each row's move lengths in meters (its latitude's), and the moves as flat offsets

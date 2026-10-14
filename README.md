@@ -1185,7 +1185,7 @@ point added to a plan. A tab with nothing drawn yet arms itself (Waypoints never
 there adds a waypoint); **Esc**, Add to plan, Follow, Sail passage and Go put the chart back to
 panning, and while it draws the chart says so (*DRAWING SURVEY PATTERN · ESC TO STOP*).
 **Route rules** under every tab is what every behavior routes by - Min depth, Water, Buffer,
-Transit kn, Channel rocks, the chart features - and the only copy: the command bar no longer
+Transit kn, Open water, Channel rocks, the chart features - and the only copy: the command bar no longer
 repeats Buffer, Min depth or Transit kn. The plan as a whole (waypoints, length, CLR PLAN) is the
 card's foot. The WPT / SURV / BND / SRCH / TRAN buttons are gone. `tests/path_card.js`.
 
@@ -2475,7 +2475,8 @@ card's foot. The WPT / SURV / BND / SRCH / TRAN buttons are gone. `tests/path_ca
    (as Read chart) with each tile's **planning grid** made, then plans the whole passage coarse in a
    background worker, off the guard's thread: a route of straight runs through water that is clear
    at this vessel's depth floor, round islands and headlands, kept off water a danger touches where
-   there is room. Then the fuel, leg by leg between fuel stops, at the transit speed in still water:
+   there is room - and, open water first (2026-10-14, below), up to 1 km off it where the water
+   allows. Then the fuel, leg by leg between fuel stops, at the transit speed in still water:
    the first leg from what is aboard now, each leg after a fuel stop from a full tank. A leg that
    arrives with less than **20% of the tank** says how far she gets before she is down to it, marked
    red on the chart: put a fuel stop before there. The plan is drawn (pale dashed), with a circle
@@ -2485,7 +2486,9 @@ card's foot. The WPT / SURV / BND / SRCH / TRAN buttons are gone. `tests/path_ca
    coarse route runs on cells of about 100 m, so the route she sails will be a little longer. A
    battery hull is refused ("long passages are for the diesel hulls"). Nothing moves the boat.
    Measured: a 287 nm passage, Portsmouth to the New York approaches (39 tiles), read from NOAA in
-   8.6 minutes the first time and planned in 0.8 s. **The grid** (`asv_console.py`, "THE PASSAGE
+   8.6 minutes the first time and planned in 0.8 s; with open water first, New Castle to Castine
+   over his 40 cached grids plans in 2.9 s (0.9 s without), 222.3 km against 224.9, its cells within
+   two of a danger 99 against 385. **The grid** (`asv_console.py`, "THE PASSAGE
    GRID"): each tile becomes 256 x 256 cells, about 108 m by 80 m at 43 N. Each cell holds the
    shallowest danger at its center and anywhere touching it, judged as the keep-out model judges: a
    depth area by its deepest depth, a rock by its sounding less a meter, land, structures and buoys
@@ -3080,6 +3083,39 @@ card's foot. The WPT / SURV / BND / SRCH / TRAN buttons are gone. `tests/path_ca
    stretches to 1,340 m in two, for a route 1.0 % longer. Maneuvers (the way round a
    contact, back onto a line or onto station) and a survey's own lines are laid as before
    (`tests/deep_first.js`).
+
+   **Open water first (2026-10-14).** Planned close in, a passage threads islands, ledges
+   and shoals by the shortest clear way - technically good, but the chart may carry a
+   positional error or miss a rock. So a passage leg of **3 km or more** (a Go-To, an RTH,
+   Continue, the leg out to a survey and into each later one, a drawn transit's legs, every
+   section of a long passage) is searched over the whole water between its ends, each meter
+   costing more the nearer it runs to a charted danger out to a **1 km berth** (500 m, then
+   250 m, where the widest is past the cap), and pulled into long straight legs that never
+   come nearer a danger than the search ran. It is taken where it cuts the route's exposure
+   by 10% or more at no more than twice its length - safety before efficiency - and
+   otherwise the close-in route stands exactly. **The buoys help**: a buoyed or charted
+   channel, the water round a red or green mark and along the reach between two marks of
+   one channel, and the water round a safe-water buoy are safer water, so a marked channel
+   is taken over an unmarked gap; an isolated-danger buoy is kept clear; and a buoy's own
+   nearness never pushes the route off the channel it marks. And a **buoy outranks open
+   water**: where the wider way would leave a mark on its wrong hand that the close-in route
+   keeps, the close-in way is kept past that mark (open water either side), or the close-in
+   leg is planned. The search uses only water the
+   chart was read over, and the page reads the chart over that wider water before it plans
+   ("reading the chart over the open water round the way there"). The banner and the Intent
+   card say the berth and what it added or saved ("open water first: a 1.00 km berth off
+   charted dangers where the water allows, 3.70 km shorter than the close-in route");
+   **Open water** under Route rules (First / Off) turns it off. Plan passage's coarse route
+   and the fuel monitor's way home keep the same berth. His Go-To from Castine to the Fox
+   Islands Thorofare now runs down the open bay west of North Haven, as his drawing did:
+   38.1 km against 42.5, 2.7 km of it within 250 m of a charted danger against 19.3 km, 3
+   turns against 41. Across 12 Go-Tos in his four areas (Penobscot, Casco, the
+   Piscataqua, Cape Ann - his own two and ten more across the same waters) it was taken on 11 (Shoals to Rye kept: no safer way), and
+   the routes ran 7.6 km within 250 m of a charted danger instead of 65.7 km (0.9 km within
+   100 m instead of 12.7), with 36 turns instead of 111 and no buoy on its wrong hand instead
+   of one, for 4.0% more distance in all - from 10% shorter (Castine) to 30% longer (Gloucester
+   to Rockport, outside Thacher Island). `tests/open_water.js`; the Go-Tos in his own waters:
+   `node tools/open_water_missions.js --charts <his chart cache>`.
 
    > **History.** This replaced two earlier designs that both rode the *wrong side of
    > the buoys* on the water: a color buoy lane that inferred direction from IALA

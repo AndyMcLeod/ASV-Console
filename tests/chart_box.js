@@ -245,6 +245,8 @@ const readPassageAis = eval("(" + grab("readPassageAis") + ")");
 // is pressed while one is searched (planInsideChart's withdrawal: tests/route_worker.js 12)
 const planOffThread = async (job, here) => here();
 let routeStopGen = 0, routeStopName = null;
+// OPEN WATER FIRST's read of the water it searches (2026-10-14) is tests/open_water.js's: none here
+const openWaterRead = async () => null;
 // eslint-disable-next-line no-eval
 const planInsideChart = eval("(" + grab("planInsideChart") + ")");
 const fresh = () => { banners = []; downs = []; covers = []; aisTaken = 0; coverAnswer = null; };
@@ -527,7 +529,8 @@ const fresh = () => { banners = []; downs = []; covers = []; aisTaken = 0; cover
         + "uncharted plan refused before it posts or draws anything",
         () => iSsPlan > 0 && iSsHt > iSsPlan && iSsUn > iSsPlan && iSsUn < iSsPost && iSsUn < iSsDraw
               && /const o = holdOpts\(\), via = pts\.slice\(0, -1\), std = transitStandoffM\(\), koLv = koAtLevel\(lv\.m\);/.test(ss)
-              && /return routePlan\(from, \[\.\.\.via, ht\.to\], true, std\);/.test(ss),
+              // (open water first on every leg of a section, 2026-10-14 - tests/open_water.js)
+              && /return routePlan\(from, \[\.\.\.via, ht\.to\], true, std, undefined, \{openWater: "all"\}\);/.test(ss),
         "planInsideChart " + iSsPlan + ", holdTarget " + iSsHt + ", uncharted refusal " + iSsUn + ", post " + iSsPost + ", draw " + iSsDraw);
   const pv = fs.readFileSync(path.join(__dirname, "..", "static", "js", "passage.js"), "utf8").split("\r\n").join("\n");
   // (with the water no chart covers, nogo.unread, since 2026-10-11 - the layered chart; tests/unread_water.js)

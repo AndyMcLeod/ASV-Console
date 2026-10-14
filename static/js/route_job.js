@@ -98,13 +98,13 @@ function withKo(opts){
 
 function run(op, a){
   if(op === "nogo") return planNogoRoute(a.from, a.to, withKo(a.opts));
-  if(op === "route") return routePlan(a.start, a.wps, a.keepRightAll, a.standoffM, a.transitAt);
+  if(op === "route") return routePlan(a.start, a.wps, a.keepRightAll, a.standoffM, a.transitAt, a.ropts);
   // A drawn transit and a passage's section: where she will hold (holdTarget), then the route to it - one search,
   // as the page's own closure runs them, and the hold point back with the plan.
   if(op === "holdRoute"){
     const ht = holdTarget(a.target, a.holdOpts);
     if(ht.error) return {ht, plan: null};
-    return {ht, plan: routePlan(a.start, [...(a.via || []), ht.to], a.keepRightAll, a.standoffM)};
+    return {ht, plan: routePlan(a.start, [...(a.via || []), ht.to], a.keepRightAll, a.standoffM, undefined, a.ropts)};
   }
   throw new Error("no such search: " + op);
 }

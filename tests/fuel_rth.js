@@ -643,6 +643,10 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
   const ll = (g, c, r) => ({ lat: (g.ty * N + r + 0.5) * CD - 90, lon: (g.tx * N + c + 0.5) * CD - 180 });
   const flatD = (a, b) => Math.hypot((b.lat - a.lat) * M, (b.lon - a.lon) * M * Math.cos((a.lat + b.lat) / 2 * Math.PI / 180));
   const field = (gs) => C.buildField(gs, 30);       // a 3 m floor: a cell charted at 300 dm is water, at 0 is land
+  // ... and the planner's LEVEL rules alone (2026-10-14): open water first (coarse.js openWaterCosts) also prices a cell's
+  // nearness to a danger, which no hand-worked way round a wall can be held to - 11 and 11b work the level rules by hand
+  // with it off, and 11i holds what it adds
+  const fieldLv = (gs) => C.buildField(gs, 30, 0, { openWater: false });
   const CELL_M = CD * M;                             // a cell's height, meters (~109)
 
   // 11. open water, and round a wall
@@ -656,10 +660,10 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
   const wall = [0, 1, 2].map((i) => grid(TX + i, TY));
   for (let r = 0; r < 230; r++) for (let c = 100; c < 103; c++) wall[1].C[r * N + c] = 0;          // land, rows 0-229
   const hW = ll(wall[0], 128, 50), far = ll(wall[2], 128, 50), top = ll(wall[1], 101, 231);
-  const mW = C.coarseHomeDistM(C.coarseHomeField(field(wall), hW), far), aroundW = flatD(hW, top) + flatD(top, far);
+  const mW = C.coarseHomeDistM(C.coarseHomeField(fieldLv(wall), hW), far), aroundW = flatD(hW, top) + flatD(top, far);
   check("11. THE COARSE HOME FIELD (coarse.js coarseHomeField): across open water within 4% of the straight line (the 16 "
         + "moves - 8 neighbors alone run 8% long) and never short of it by more than half a cell, her offset from her "
-        + "cell's center counted; round a wall of land, "
+        + "cell's center counted; round a wall of land (the level rules alone), "
         + "the way round it worked by hand (" + (aroundW / 1000).toFixed(1) + " km, the straight line "
         + (flatD(hW, far) / 1000).toFixed(1) + "), within 2%",
         () => ratios.every((q) => q >= 1 - 70 / 20000 && q < 1.04) && hfO.reached === 6 * N2
@@ -691,10 +695,10 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
   // would go straight through).
   const band = [grid(TX, TY), grid(TX + 1, TY)];
   for (let r = 0; r < N; r++) for (let c = 100; c < 120; c++) { band[1].T[r * N + c] = 10; }
-  const hB = ll(band[0], 128, 30), fB = ll(band[1], 200, 30), mB = C.coarseHomeDistM(C.coarseHomeField(field(band), hB), fB);
+  const hB = ll(band[0], 128, 30), fB = ll(band[1], 200, 30), mB = C.coarseHomeDistM(C.coarseHomeField(fieldLv(band), hB), fB);
   const bandR = [grid(TX, TY), grid(TX + 1, TY)];
   for (let r = 0; r < 60; r++) for (let c = 100; c < 161; c++) { bandR[1].T[r * N + c] = 10; }
-  const mR = C.coarseHomeDistM(C.coarseHomeField(field(bandR), hB), fB);
+  const mR = C.coarseHomeDistM(C.coarseHomeField(fieldLv(bandR), hB), fB);
   check("11b. THE PLANNER'S RULES: home inside a walled harbor is reached - a blocked cell is crossed in HOME'S OWN port "
         + "circle - but a boat walled in 25 km off is not; no way through a diagonal of land meeting only at corners; "
         + "water never read is never entered, and home's own tile unread is said; water a danger touches costs three times "
@@ -728,6 +732,7 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
                               fldBuild: null }, o || {});
     const src = [
       "const S = {home: w.home || HOME}, asv = w.here, homeFldBuild = w.fldBuild, RTH_MAX_M = " + RTH_MAX + ";",
+      "const V = w.V || {};",
       "let coarseHome = w.coarse;",
       "const fineHomeDist = () => (w.fineM != null ? {m: w.fineM} : {why: 'off the field'});",
       "const nogoDR = () => ({min: 3.15}), airNeedM = () => 4.85;",
@@ -762,7 +767,7 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
                               stDone: { id: "c1", state: "done", total: 8, tiles: [[1, 2, 3, 4], [5, 6, 7, 8]] },
                               res: null, coarse: { key: "old", hf: { tiles: [] }, at: 0, note: "ready", busy: false } }, o || {});
     const src = [
-      "const S = {home: w.home || HOME};",
+      "const S = {home: w.home || HOME}, V = w.V || {};",
       "let coarseHome = w.coarse;",
       "const postCorridor = async (b) => { w.posts.push(b); return w.st0; };",
       "const getCorridor = async (id) => { w.gets++; return w.stDone; };",
@@ -811,7 +816,7 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
   const pageW = (o) => {
     const w = Object.assign({ field: null, passage: null, coarse: { key: null, hf: null, note: null, busy: false }, coarseDist: null }, o || {});
     const src = [
-      "const S = {home: HOME, home_source: null};",
+      "const S = {home: HOME, home_source: null}, V = {};",
       "const FR = {toEN: () => ({e: 0, n: 0})}, mission = {passage: w.passage}, nogo = {frame: FR}, homeFldBuild = null;",
       "const homeFld = w.field ? {dist: [1], frame: FR, key: 'k', g: {cell: 5}, note: 'ready'} : {dist: null, note: 'home is off the chart that was read'};",
       "const homeFieldKey = () => 'k', fieldDistM = () => w.field, cellOf = () => true, HOME_FIELD_REACH_M = 300;",
@@ -838,6 +843,40 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
               && /; the coarse grid is being read$/.test(gBusy.why) && /; the coarse grid: the chart read along the way canceled$/.test(gFail.why)
               && !/coarse/.test(gOld.why),
         () => JSON.stringify({ F: gF.m, C: [gC.m, gC.along], old: gOld.why, busy: gBusy.why, fail: gFail.why }));
+
+  // 11i. OPEN WATER FIRST (2026-10-14): the same wall and band with the field's default costs - each cell priced for its
+  // nearness to a danger as the passage search prices it (coarse.js openWaterCosts) - against the level rules alone. The
+  // way home round the wall's end keeps OFF it: longer than the level rules' way, and within 2% of the way round it worked by
+  // hand a CLEAR_M off its end; round the band, wider than the level rules go; across open water, nothing changed (no tile
+  // without a danger carries a cost); and a field built with it off carries none. Then the switch: the key the page builds
+  // the field for changes with it (a field built for one is not kept for the other), and the worker is told.
+  const OWC = require(path.join(APP, "static", "js", "openwater.js")).OPEN_WATER;
+  const mWo = C.coarseHomeDistM(C.coarseHomeField(field(wall), hW), far);
+  const topD = ll(wall[1], 101, 229 + OWC.CLEAR_M / CELL_M), aroundD = flatD(hW, topD) + flatD(topD, far);
+  const mRo = C.coarseHomeDistM(C.coarseHomeField(field(bandR), hB), fB);
+  const fOn = field(wall), fOff = fieldLv(wall), hfLv = C.coarseHomeField(fieldLv(open), home);
+  // home's own circle carries no open-water cost (the harbor is the detail planner's): an islet between her and home, both
+  // well inside it - the way home is the level rules' own, to the meter
+  const isl = [grid(TX, TY)];
+  for (let r = 125; r <= 131; r++) for (let c = 134; c <= 136; c++) isl[0].C[r * N + c] = 0;
+  const hI = ll(isl[0], 128, 128), pI = ll(isl[0], 142, 128);
+  const inCircle = [C.coarseHomeDistM(C.coarseHomeField(field(isl), hI), pI), C.coarseHomeDistM(C.coarseHomeField(fieldLv(isl), hI), pI)];
+  const openSame = probes.every((p) => Math.abs(C.coarseHomeDistM(hfO, p) - C.coarseHomeDistM(hfLv, p)) < 1e-6);
+  const kOpen = tickWorld({ V: {} }).api.key(), kClose = tickWorld({ V: { OPEN_WATER: false } }).api.key();
+  const bOff = buildWorld({ V: { OPEN_WATER: false } }); await bOff.api.build("K1", mid);
+  const sent = [b1.workerMsgs[0] && b1.workerMsgs[0].openWater, bOff.workerMsgs[0] && bOff.workerMsgs[0].openWater];
+  const planSend = grab("planPassageNow");
+  check("11i. OPEN WATER FIRST, COARSE: round the wall the way home keeps off its end - " + (mWo / 1000).toFixed(2) + " km against "
+        + "the level rules' " + (mW / 1000).toFixed(2) + ", within 2% of the way round " + OWC.CLEAR_M + " m off its end worked by hand ("
+        + (aroundD / 1000).toFixed(2) + ") - and round the band wider; open water unchanged; inside home's own circle no cost (round an "
+        + "islet there, the level rules' own way); with it off no cell carries the cost; the page's key and both worker messages carry the switch",
+        () => mWo > mW + 500 && Math.abs(mWo - aroundD) / aroundD < 0.02 && mRo > mR + 300 && openSame
+              && Number.isFinite(inCircle[0]) && Math.abs(inCircle[0] - inCircle[1]) < 1
+              && fOn.list.map((t) => !!t.nr).join() === "false,true,false" && fOff.list.every((t) => !t.nr)
+              && kOpen !== kClose && /\|open$/.test(kOpen) && /\|close$/.test(kClose)
+              && sent[0] === true && sent[1] === false && /openWater: V\.OPEN_WATER !== false/.test(planSend),
+        () => JSON.stringify({ wall: [Math.round(mW), Math.round(mWo), Math.round(aroundD)], band: [Math.round(mR), Math.round(mRo)],
+                               nr: fOn.list.map((t) => !!t.nr), keys: [kOpen, kClose], sent, inCircle: inCircle.map((m) => m && Math.round(m)) }));
 
   // 11h. the wiring
   check("11h. THE WIRING: the monitor builds it on every frame after the field round home; its own worker, so a passage "

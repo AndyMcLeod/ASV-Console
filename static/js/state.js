@@ -72,6 +72,11 @@ export const V = {
   // channel's edge.
   // The page's "Channel rocks" sets it; a fresh page starts on 'land' (routing.js buoyedReachLane, ROCK_MAX_M).
   REACH_ROCK: 'land',
+  // OPEN WATER FIRST (2026-10-14, Andy: "For open ocean/or large bay, etc paths consider a more direct and less complex
+  // path as a default consideration"; openwater.js): a passage leg of 3 km or more is planned over the whole water between
+  // its ends at a berth off charted dangers, not threaded close in. false - the shortest clear way, as before. The page's
+  // "Open water" (Route rules) sets it; a fresh page starts on true.
+  OPEN_WATER: true,
   // Shortest survey line worth running, in meters, AS RUN (after the turn margin is taken
   // off both ends). A survey line costs two turns whatever its length, so below some
   // length the boat spends more time manoeuvring onto the line than surveying it - and

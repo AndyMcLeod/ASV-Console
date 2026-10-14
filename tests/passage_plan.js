@@ -30,6 +30,14 @@
 //   18   THE DRAWING: each planned leg's line, a failed leg straight and red, a mark per narrow stretch, a circle per
 //        port, the reserve mark;
 //   19   THE WIRING: the button, the drawing after the transit's, every edit of the line, the worker.
+//   OPEN WATER FIRST (Andy, 2026-10-14: "For open ocean/or large bay, etc paths consider a more direct and less complex
+//   path as a default consideration"; coarse.js openWaterCosts - checks 1-19 run with it, the default):
+//   20   AN ISLAND CHAIN across the way: the passage goes ROUND it, at twice the berth the level rules thread it with, for
+//        a few percent more length; with it off, through a gap as before;
+//   20b  THE PULL KEEPS THE BERTH: past a headland the search keeps off, the cost rule keeps the taut route there - the
+//        level rule alone, on the same search's cells, cuts it back toward the headland;
+//   20c  NOT IN A PORT'S CIRCLE (the detail planner's water): the search's cells there are the level rules' own; off,
+//        no tile carries the cost; the worker is told, and says which it planned with.
 //
 //   node tests/passage_plan.js   # exit 0 = pass
 
@@ -523,6 +531,75 @@ const FLOOR = 30;
         + "imports; the worker a module, answering by id",
         () => Object.values(wiring).every(Boolean),
         () => Object.entries(wiring).filter(([, v]) => !v).map(([k]) => k).join(", ") || "all wired");
+
+  // ── 20. OPEN WATER FIRST, COARSE (2026-10-14) ───────────────────────────────────────────────────────────────────
+  // a cell's center's distance (m) from the nearest of a set of cells, and the route's least, over the cells it passes
+  const KX = CD * 111320 * Math.cos(43.125 * Math.PI / 180), KY = CD * 111320;
+  const leastFrom = (cells, set) => { let best = Infinity;
+    for (const c of cells) for (const [sc, sr] of set) best = Math.min(best, Math.hypot((c.gx - TX * N - sc) * KX, (c.gy - TY * N - sr) * KY));
+    return best; };
+  const passed = (pts) => cellsOf(pts);
+  // five islands of 2 x 2 cells down column 127, 6 rows apart (rows 119-144): the straight way crosses the chain at row 131
+  const ch = grid(TX, TY), chain = [];
+  for (let r0 = 119; r0 <= 143; r0 += 6) for (let r = r0; r < r0 + 2; r++) for (let c = 127; c < 129; c++) { setC(ch, c, r, C.GRID_HARD); chain.push([c, r]); }
+  const aCh = ll(ch, 20, 131), bCh = ll(ch, 236, 131);
+  const onCh = C.planPassage({ grids: [ch], floorDm: FLOOR, points: [aCh, bCh] }), offCh = C.planPassage({ grids: [ch], floorDm: FLOOR, points: [aCh, bCh], openWater: false });
+  const crossRows = (pl) => passed(pl.legs[0].pts).filter((c) => c.gx - TX * N === 127).map((c) => c.gy - TY * N);
+  const inSpan = (rows) => rows.some((r) => r >= 119 && r <= 144);
+  const clrOn = leastFrom(passed(onCh.legs[0].pts), chain), clrOff = leastFrom(passed(offCh.legs[0].pts), chain);
+  check("20. OPEN WATER FIRST, COARSE: an island chain across the way is gone ROUND - the route crosses the chain's line "
+        + "beyond its end, at twice the least clearance the level rules thread a gap with, for under 5% more length; with "
+        + "it off, through a gap as before",
+        () => !onCh.legs[0].error && !offCh.legs[0].error && onCh.openWater === true && offCh.openWater === false
+              && !inSpan(crossRows(onCh)) && inSpan(crossRows(offCh)) && clrOn >= 2 * clrOff
+              && onCh.legs[0].lengthM < offCh.legs[0].lengthM * 1.05,
+        () => "on: crosses at rows " + JSON.stringify(crossRows(onCh)) + ", " + clrOn.toFixed(0) + " m off, " + onCh.legs[0].lengthM.toFixed(0)
+              + " m; off: rows " + JSON.stringify(crossRows(offCh)) + ", " + clrOff.toFixed(0) + " m off, " + offCh.legs[0].lengthM.toFixed(0) + " m");
+
+  // a straight coast down column 60 and a headland out to column 80 (rows 120-135); the way past it runs 6 cells off its tip
+  const hl = grid(TX, TY), head = [];
+  for (let r = 0; r < N; r++) for (let c = 0; c <= 60; c++) setC(hl, c, r, C.GRID_HARD);
+  for (let r = 120; r <= 135; r++) for (let c = 61; c <= 80; c++) { setC(hl, c, r, C.GRID_HARD); head.push([c, r]); }
+  const aHl = ll(hl, 86, 10), bHl = ll(hl, 86, 245);
+  const onHl = C.planPassage({ grids: [hl], floorDm: FLOOR, points: [aHl, bHl] }), offHl = C.planPassage({ grids: [hl], floorDm: FLOOR, points: [aHl, bHl], openWater: false });
+  const fHlOn = C.buildField([hl], FLOOR), fHlOff = C.buildField([hl], FLOOR, 0, { openWater: false });
+  const sHl = C.searchLeg(fHlOn, C.cellOf(aHl), C.cellOf(bHl), []);
+  const pulledCost = C.pullTaut(fHlOn, sHl.cells, []), pulledLevel = C.pullTaut(fHlOff, sHl.cells, []);
+  const cSearch = leastFrom(sHl.cells, head), cCost = leastFrom(passed(pulledCost.map((c) => C.cellLL(c.gx, c.gy))), head);
+  const cLevel = leastFrom(passed(pulledLevel.map((c) => C.cellLL(c.gx, c.gy))), head);
+  const cOn = leastFrom(passed(onHl.legs[0].pts), head), cOff = leastFrom(passed(offHl.legs[0].pts), head);
+  check("20b. THE PULL KEEPS THE BERTH: past a headland the open-water search keeps " + cSearch.toFixed(0) + " m off, and the "
+        + "taut route keeps within 10% of that; the level rule alone, pulling the SAME search's cells, cuts it back toward "
+        + "the headland (the straight way past it), as the passage with it off runs",
+        () => !sHl.error && cCost >= 0.9 * cSearch && cLevel < 0.75 * cSearch && pulledLevel.length === 2
+              && Math.abs(cOn - cCost) < 1 && cOff < 0.75 * cOn,
+        () => "search " + cSearch.toFixed(0) + " m, pulled by cost " + cCost.toFixed(0) + " m (" + pulledCost.length + " cells), by level "
+              + cLevel.toFixed(0) + " m (" + pulledLevel.length + "); the passage on " + cOn.toFixed(0) + " m, off " + cOff.toFixed(0) + " m");
+
+  // a dock 10 cells inside land (a port), an islet 1.3 km off it inside the port's circle, the sea 14 km east
+  const pt = grid(TX, TY);
+  for (let r = 0; r < N; r++) for (let c = 0; c < 60; c++) setC(pt, c, r, C.GRID_HARD);
+  for (let r = 126; r <= 131; r++) for (let c = 66; c <= 68; c++) setC(pt, c, r, C.GRID_HARD);
+  const fPtOn = C.buildField([pt], FLOOR), fPtOff = C.buildField([pt], FLOOR, 0, { openWater: false });
+  const aPt = C.cellOf(ll(pt, 50, 128)), bPt = C.cellOf(ll(pt, 230, 128));
+  const sPtOn = C.searchLeg(fPtOn, aPt, bPt, [aPt]), sPtOff = C.searchLeg(fPtOff, aPt, bPt, [aPt]);
+  const key20 = (r) => (r.cells || []).map((c) => c.gx + "," + c.gy).join(" ");
+  const WK20 = fs.readFileSync(path.join(APP, "static", "js", "coarse_worker.js"), "utf8"), posted20 = [];
+  const self20 = { postMessage: (m) => posted20.push(m) };
+  // eslint-disable-next-line no-new-func
+  new Function("self", "buildField", "coarseHomeField", "decodeGrid", "planPassage", WK20.replace(/^import[^\n]*\n/m, ""))(
+    self20, C.buildField, C.coarseHomeField, C.decodeGrid, C.planPassage);
+  self20.onmessage({ data: { id: 1, grids: [ch], floorDm: FLOOR, points: [aCh, bCh] } });
+  self20.onmessage({ data: { id: 2, grids: [ch], floorDm: FLOOR, points: [aCh, bCh], openWater: false } });
+  check("20c. NOT IN A PORT'S CIRCLE: leaving a port past an islet inside its circle, the search's cells are the level rules' "
+        + "own (the harbor is the detail planner's); with it off no tile carries the cost; the worker plans with it unless "
+        + "told not to, and says which",
+        () => !sPtOn.error && key20(sPtOn) === key20(sPtOff) && fPtOn.list.some((t) => t.nr) && fPtOff.list.every((t) => !t.nr)
+              && posted20.length === 2 && posted20[0].openWater === true && posted20[1].openWater === false
+              && JSON.stringify(posted20[1].legs[0].pts) === JSON.stringify(offCh.legs[0].pts)
+              && JSON.stringify(posted20[0].legs[0].pts) === JSON.stringify(onCh.legs[0].pts),
+        () => "cells " + (sPtOn.cells || []).length + "/" + (sPtOff.cells || []).length + " same " + (key20(sPtOn) === key20(sPtOff))
+              + "; worker " + JSON.stringify(posted20.map((m) => [m.id, m.openWater, m.error || null])));
 
   console.log("\n" + (fails ? fails + " CHECK(S) FAILED (" + ran + " ran)" : "all checks passed (" + ran + ")"));
   process.exit(fails ? 1 : 0);

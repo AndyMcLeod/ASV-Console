@@ -448,7 +448,7 @@ const goto = (from, to, o) => ({ op: "nogo", args: { from, to, opts: o } });
       grab("routeStopPressed"),
       "const showBanner = (m) => rec.banners.push(m), takeDownBanner = () => {};",
       "const logClient = (kind, data) => rec.logs.push({kind, data});",
-      "const readPassageAis = async () => {}, aisKeepoutsNow = () => [];",
+      "const readPassageAis = async () => {}, aisKeepoutsNow = () => [], openWaterRead = async () => null;",
       grab("planInsideChart"),
       "return { planInsideChart, routeStopPressed };"].join("\n");
     // eslint-disable-next-line no-new-func

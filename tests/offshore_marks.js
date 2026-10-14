@@ -206,7 +206,7 @@ check("9. SINGLES FAR APART ARE NOT ONE CHANNEL: a red 2 and a green 1 of other 
 // ── THE WORDS ─────────────────────────────────────────────────────────────────────────────────────────────────────
 const say1 = P.offshoreNote({ marks: { offshore: 2, offshoreWrong: 0 } }), say2 = P.offshoreNote({ marks: { offshore: 1, offshoreWrong: 1 } });
 const say0 = P.offshoreNote({ marks: { kept: 3, offshore: 0 } }), rule9 = P.buoyageNote(false, false, south.how);
-const banners = (H.match(/\[buoyageNote\(plan\.lane, plan\.partial, plan\.how\), offshoreNote\(plan\.how\), deepNote\(plan\.deep, fmtDist\), mooredNote\(plan\)\]/g) || []).length;
+const banners = (H.match(/\[openWaterNote\(plan\.openWater, fmtDist\), buoyageNote\(plan\.lane, plan\.partial, plan\.how\), offshoreNote\(plan\.how\), deepNote\(plan\.deep, fmtDist\), mooredNote\(plan\)\]/g) || []).length;
 // the Intent card's own lines, DRIVEN (the page's offshoreWhy), and asked of every plan - after the lane's block, not in it
 const grabFn = (name) => { const st = H.indexOf("function " + name + "("); let k = H.indexOf("{", st), dp = 0;
   for (;;) { const c = H[k]; if (c === "{") dp++; else if (c === "}") { dp--; if (!dp) break; } k++; } return H.slice(st, k + 1); };
