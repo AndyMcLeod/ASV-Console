@@ -252,5 +252,43 @@ check("9. the chart rose's SET arrow is fed the SET row's own value, frame by fr
             && rsFc && rsFc.kn === 1.2 && rsFc.deg === 45 && rsFc.src === "stream",
       () => "own " + JSON.stringify(rsOwn) + "; forecast " + JSON.stringify(rsFc));
 
+// 10. THE SURGE ROW (2026-10-13, Andy: "approve 1, 1b, 2 and 6" - item 2): NOAA's STOFS-3D level minus the tide prediction
+// at her station over the next 24 h (asv_console.py surge_outlook) - the lowest and when, in the caution color past
+// SURGE_WARN_M under; the highest when it never runs under; "with the tide" within SURGE_SHOW_M; none said with why
+const sEl = el();
+// eslint-disable-next-line no-new-func
+const surgePage = new Function("sEl", "setTip", "\"use strict\"; const $ = (s) => (s === \"#v_surge\" ? sEl : null);\n"
+  + decl("^const SURGE_SHOW_M = [^;]*;") + "\n" + decl("^const SURGE_WARN_M = [^;]*;") + "\n"
+  + ["surgeWhen", "surgeText", "updateSurgeUI"].map(grab).join("\n") + "\nreturn { surgeWhen, updateSurgeUI };")(sEl, setTip);
+const T10 = Date.UTC(2026, 9, 14, 2, 0, 0) / 1000, T10b = T10 + 9 * 3600;
+const at10 = (t) => { const d = new Date(t * 1000); return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d.getDay()] + " "
+  + String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); };
+const sOk = (o) => Object.assign({ ok: true, low_m: -0.28, low_t: T10, high_m: 0.66, high_t: T10b, station: "8423898",
+  name: "Fort Point", km: 0.1, cycle: "20261013", age_h: 10, how: "datum", fit_m: null }, o);
+const s10 = {};
+surgePage.updateSurgeUI(sOk()); s10.under = { txt: sEl.textContent, tip: sEl.title, col: sEl.style.color };
+surgePage.updateSurgeUI(sOk({ low_m: -0.02, high_m: 0.03, how: "observed", fit_m: 0.06 })); s10.flat = { txt: sEl.textContent, tip: sEl.title, col: sEl.style.color };
+surgePage.updateSurgeUI(sOk({ low_m: 0.12, high_m: 0.33 })); s10.over = { txt: sEl.textContent, col: sEl.style.color };
+surgePage.updateSurgeUI({ ok: false, note: "the STOFS forecast is not loaded yet" }); s10.none = { txt: sEl.textContent, tip: sEl.title };
+check("10. THE SURGE ROW: under the tide it reads the lowest and when, in the caution color, the tooltip naming the gauge, "
+      + "the cycle and how it was tied (NOAA's datums where the gauge is down); within 5 cm it reads 'with the tide', tied "
+      + "to the gauge (to the fit); over the tide only, the highest; with no forecast, '--' and why",
+      () => s10.under.txt === "-0.28 m · " + at10(T10) && s10.under.col === "var(--warn)" && /Fort Point/.test(s10.under.tip)
+            && /Fort Point, 0 km from her/.test(s10.under.tip) && /Cycle 20261013 12Z, 10 h old/.test(s10.under.tip) && /NOAA's datums \(its gauge is not reporting\)/.test(s10.under.tip)
+            && s10.flat.txt === "with the tide" && s10.flat.col === "" && /tied to its gauge's observations \(to 0\.06 m\)/.test(s10.flat.tip)
+            && s10.over.txt === "+0.33 m · " + at10(T10b) && s10.over.col === ""
+            && s10.none.txt === "--" && /not loaded yet/.test(s10.none.tip),
+      () => JSON.stringify(s10));
+// 10b. A BORROWED SURGE (Andy approved it 2026-10-13): her tide station Seavey Island, which STOFS has no point at, takes
+// Fort Point's - the tooltip names where the surge IS, and for which station, and how far apart
+surgePage.updateSurgeUI(sOk({ station: "8419870", name: "Seavey Island", km: 0.1, from_id: "8423898", from_name: "Fort Point", from_km: 2.6 }));
+s10.lent = { txt: sEl.textContent, tip: sEl.title };
+surgePage.updateSurgeUI(sOk()); s10.own = { tip: sEl.title };
+check("10b. A BORROWED SURGE IS SAID: 'NOAA STOFS-3D at Fort Point, 0 km from her (for Seavey Island, her tide station, which "
+      + "STOFS has no point at; 2.6 km from it)' - the reading as before; a station's own surge says nothing of borrowing",
+      () => s10.lent.txt === s10.under.txt && /^NOAA STOFS-3D at Fort Point, 0 km from her \(for Seavey Island, her tide station, which STOFS has no point at; 2\.6 km from it\) against/.test(s10.lent.tip)
+            && !/for |has no point/.test(s10.own.tip) && s10.own.tip === s10.under.tip,
+      () => JSON.stringify({ lent: s10.lent, own: s10.own }));
+
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
 process.exit(fails ? 1 : 0);

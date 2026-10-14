@@ -578,6 +578,18 @@ console.log("The passage, sailed:");
               && L14.unread.m === 0 && /^chart datum - no station gave a level at 1 of its 1 points$/.test(L14.unread.say) && L14.manLow.m === 0.1 && /^\+0\.10 m, the manual water level/.test(L14.manLow.say)
               && L14.manHigh.m === 0.8 && L14.lake.m === 0.42 && /lowest observed/.test(L14.lake.say),
         () => JSON.stringify(Object.fromEntries(Object.entries(L14).map(([k, v]) => [k, v.m + " " + v.say.slice(0, 50)]))));
+  // 14f (2026-10-13, Andy: "approve 1, 1b, 2 and 6"): where NOAA's surge forecast (STOFS) set a point's lowest water, the
+  // server marks it src "stofs" with the tide prediction's own low beside it (asv_console.py fetch_water_along)
+  const L14f = {
+    stofs: lv({ points: [pt(-0.12, 3, { src: "stofs", tide_low_m: 0.16 })] }, {}, 4),
+    tide: lv({ points: [pt(0.16, 3)] }, {}, 4),
+  };
+  check("14f. WHERE NOAA'S SURGE FORECAST SET THE LOWEST WATER, it is said - the level, 'the lowest forecast', and how far "
+        + "STOFS puts it under the tide prediction; a point it did not lower reads exactly as before",
+        () => L14f.stofs.m === -0.12
+              && /^-0\.12 m, the lowest forecast along it over the next 4\.0 h \(Stn 3, 3 km off\) - NOAA's surge forecast \(STOFS\) puts it 0\.28 m under the tide prediction$/.test(L14f.stofs.say)
+              && L14f.tide.m === 0.16 && /^\+0\.16 m, the lowest predicted along it over the next 4\.0 h \(Stn 3, 3 km off\)$/.test(L14f.tide.say),
+        () => L14f.stofs.say + " | " + L14f.tide.say);
   // the read: along the section's own points, over the hours she is expected in it
   const readOf = async (from, pts, append, left) => {
     const w = { urls: [], reply: { ok: true, low_m: 0.5, points: [pt(0.5, 4)] } };

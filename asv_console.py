@@ -68,12 +68,14 @@ import urllib.request
 import webbrowser
 import zlib
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import wait as futures_wait
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import currents                            # NOAA OFS surface currents (vendored - see its header)
 import stream_fusion                       # NOAA tidal current predictions + PacIOOS models, fused with the OFS
 import ofs_s3                              # the same OFS files from NOAA's S3 bucket, when its model server is down
+import stofs                               # NOAA STOFS-3D's surge forecast at the gauges (a passage's planning water)
 import roc_tracks                          # Remote Operations Center tracking + moving HOME
 
 # --------------------------------------------------------------------------- #
@@ -124,7 +126,8 @@ BOOT_ID = "%d-%d" % (os.getpid(), int(time.time() * 1000))
 # ⚠ EVERY MODULE THE CONSOLE IMPORTS FROM BESIDE ITSELF IS LISTED HERE, and the suites that start a console from a COPY
 # of the program (tests/state_dir.py, tests/build_id.py) copy THIS list - so a new module is added here or a copied
 # console dies at import (stream_fusion.py, 2026-10-07: both suites hung on a console that never came up).
-BUILD_PY = ("asv_console.py", "currents.py", "stream_fusion.py", "ofs_s3.py", "roc_tracks.py", "ais_service.py", "gps_sim.py")
+BUILD_PY = ("asv_console.py", "currents.py", "stream_fusion.py", "ofs_s3.py", "stofs.py", "roc_tracks.py", "ais_service.py",
+            "gps_sim.py")
 BUILD_RECHECK_S = 5.0                   # how often the files are looked at again (a stat of each, not a read)
 PAGE_BUILD_TOKEN = "__ASV_PAGE_BUILD__"  # replaced in asv.html with the fingerprint it was served at
 
@@ -4543,6 +4546,196 @@ def _station_predictions(sid, datum, t0, timeout=15.0):
     return ser
 
 
+# ── NOAA STOFS-3D'S SURGE IN A PASSAGE'S WATER (Andy, 2026-10-13: "approve 1, 1b, 2 and 6") ─────────────────────────
+# Each tide station's predictions are LOWERED by the surge NOAA's Surge and Tide Operational Forecast System forecasts
+# there, where that is negative - never raised (stofs.py: the forecast held, the gauge tied by its observations or, when
+# it has too few, by NOAA's datums). Only what is already held is read, every station in parallel, by
+# STOFS_ALONG_DEADLINE_S: a station not answered by then plans on its prediction, as every station did before. With no
+# STOFS cycle held at all nothing here runs, and fetch_water_along answers exactly as it did.
+STOFS = stofs.Stofs(os.path.join(CHART_DIR, "stofs"))      # inert until main() starts it (no fetch at import)
+STOFS_ALONG_DEADLINE_S = 8.0
+STOFS_OUTLOOK_S = 24 * 3600                                # the card's surge outlook looks this far ahead
+COOPS_DATUMS_URL = "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/%s/datums.json?units=metric"
+# A BORROWED SURGE (Andy, 2026-10-13, approving the proposal): a station STOFS has no point at takes the surge of the
+# nearest point within stofs.BORROW_KM, worked out at THAT point's own gauge (stofs.surge_borrowed). STOFS names a point
+# by the first six digits of its gauge's id, and the gauge need not be on the water-level list above (Fort Point, whose
+# point serves Seavey Island, is not) - so the gauge is found on NOAA's harmonic tide-prediction stations (type R: the
+# ones with 6-minute predictions), read only for this and kept TIDEPRED_TTL_S.
+COOPS_TIDEPRED_URL = "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations.json?type=tidepredictions"
+TIDEPRED_STATIONS_CACHE = os.path.join(CHART_DIR, "coops_tidepred_stations.json")
+TIDEPRED_TTL_S = 30 * 86400
+TIDEPRED_RETRY_S = 600                                     # a failed read is not tried again before this
+_tidepred = {"t": 0.0, "list": None, "failed": 0.0}
+_tidepred_lock = threading.Lock()
+
+
+def _tidepred_stations(timeout=30.0):
+    """NOAA's harmonic tide-prediction stations [{id, name, lat, lng}] - the disk cache while it is younger than
+    TIDEPRED_TTL_S, else NOAA - or None (a failed read is not tried again for TIDEPRED_RETRY_S). Never raises."""
+    now = time.time()
+    with _tidepred_lock:
+        if _tidepred["list"] is not None and now - _tidepred["t"] < TIDEPRED_TTL_S:
+            return _tidepred["list"]
+        if now - _tidepred["failed"] < TIDEPRED_RETRY_S:
+            return _tidepred["list"]
+    data, t = None, now
+    try:
+        if now - os.path.getmtime(TIDEPRED_STATIONS_CACHE) < TIDEPRED_TTL_S:
+            with open(TIDEPRED_STATIONS_CACHE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            t = os.path.getmtime(TIDEPRED_STATIONS_CACHE)
+    except (OSError, ValueError):            # no cache, or one that is not JSON: read NOAA's
+        data = None
+    if not isinstance(data, list) or not data:
+        data = None
+        try:
+            req = urllib.request.Request(COOPS_TIDEPRED_URL, headers={"User-Agent": "ASV-Console/1.0"})
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                raw = json.loads(r.read())
+            data = [{"id": str(s["id"]), "name": s.get("name"), "lat": float(s["lat"]), "lng": float(s["lng"])}
+                    for s in raw.get("stations", []) if s.get("type") == "R" and s.get("lat") and s.get("lng")]
+            if data:
+                _cache_json(TIDEPRED_STATIONS_CACHE, data)
+            t = now
+        except (OSError, ValueError, KeyError, TypeError, http.client.HTTPException):
+            data = None
+    with _tidepred_lock:
+        if data:
+            _tidepred.update(t=t, list=data)
+        else:
+            _tidepred["failed"] = now
+        return _tidepred["list"]
+
+
+def _stofs_gauge(name, lat, lon):
+    """The NOAA gauge the STOFS point `name` at (lat, lon) stands at: the harmonic station whose id begins with the name,
+    within stofs.MATCH_KM of the point, nearest first - {id, name, lat, lng} or None."""
+    best = None
+    for s in _tidepred_stations() or []:
+        if not s["id"].startswith(str(name)):
+            continue
+        d = stofs.km(lat, lon, s["lat"], s["lng"])
+        if d <= stofs.MATCH_KM and (best is None or d < best[0]):
+            best = (d, s)
+    return best[1] if best else None
+
+
+def _stofs_surge(sid, datum, lat, lon, pred, t0, now=None):
+    """Station `sid`'s surge, its own or borrowed (stofs.surge_borrowed), with the console's own NOAA readers; a borrowed
+    gauge's predictions are read for t0's days, as the station's were."""
+    return STOFS.surge_borrowed(sid, datum, lat, lon, pred, _stofs_obs, _stofs_datums, _stofs_gauge,
+                                lambda gid, dt: _station_predictions(gid, dt, t0), now)
+
+
+def _stofs_obs(sid, datum, t0, t1):
+    """A gauge's observed levels over [t0, t1]: [(epoch, m)], [] when it has none (it is down)."""
+    fmt = lambda e: time.strftime("%Y%m%d %H:%M", time.gmtime(e))
+    r = _coops_series(sid, datum, "water_level", fmt(t0), fmt(t1), timeout=8.0)
+    if not r.get("ok"):
+        return []
+    return [(e, p["v"]) for p in r["series"] for e in [_coops_epoch(p.get("t"))] if e is not None]
+
+
+def _stofs_datums(sid):
+    """NOAA's datums at a station, {name: m} on its own station datum, or None."""
+    req = urllib.request.Request(COOPS_DATUMS_URL % urllib.parse.quote(str(sid)), headers={"User-Agent": "ASV-Console/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=8.0) as r:
+            d = json.loads(r.read())
+    except (OSError, ValueError, http.client.HTTPException):
+        return None
+    out = {}
+    for x in (d.get("datums") if isinstance(d, dict) else None) or []:
+        try:
+            out[str(x["name"])] = float(x["value"])
+        except (KeyError, TypeError, ValueError):
+            pass
+    return out or None
+
+
+def _stofs_lowered(got, need, t0):
+    """{station key: its predictions lowered by STOFS} and what was asked ({cycle, age_h, used, borrowed, notes}), or
+    ({}, None) when no STOFS cycle is held for any of these stations - the answer before STOFS, unchanged. `borrowed`:
+    {station: the gauge whose STOFS surge it took}."""
+    tidal = [k for k, ser in got.items() if ser and not k[2]]
+    tidal = [k for k in tidal if STOFS.held(need[k]["lat"], need[k]["lng"])[0] is not None]
+    if not tidal:
+        return {}, None
+    ex = ThreadPoolExecutor(max_workers=min(6, len(tidal)))
+    futs = {ex.submit(_stofs_surge, k[0], k[1], need[k]["lat"], need[k]["lng"], got[k], t0): k for k in tidal}
+    done, _late = futures_wait(futs, timeout=STOFS_ALONG_DEADLINE_S)
+    ex.shutdown(wait=False, cancel_futures=True)
+    lowered, notes, borrowed, info = {}, {}, {}, None
+    for f, k in futs.items():
+        if f not in done:
+            notes[k[0]] = "not answered within %g s" % STOFS_ALONG_DEADLINE_S
+            continue
+        try:
+            sg, meta = f.result()
+        except Exception as e:                      # noqa: BLE001 - that station plans on its prediction
+            notes[k[0]] = "%s: %s" % (type(e).__name__, e)
+            continue
+        if sg is None:
+            notes[k[0]] = meta
+            continue
+        lowered[k] = stofs.lower_by_surge(got[k], sg)
+        if meta.get("from_id"):
+            borrowed[k[0]] = meta["from_id"]
+        info = meta
+    return lowered, {"cycle": info and info["cycle"], "age_h": info and info["age_h"],
+                     "used": sorted(k[0] for k in lowered), "borrowed": borrowed, "notes": notes}
+
+
+def surge_outlook(res, now=None, pos=None):
+    """The card's surge (item 2): STOFS's level minus the prediction over the next STOFS_OUTLOOK_S at the tide station
+    nearest her that STOFS forecasts - {ok, low_m, low_t, high_m, high_t, station, name, km, cycle, age_h, how, fit_m} or
+    {ok: False, note}. Her own stations (`pos`: the pool a passage's water is blended from at her position), nearest
+    first; without `pos`, the water level's own station. STOFS stands at a gauge, and the nearest may have none: at New
+    Castle the level's station is Seavey Island (Fort Point is not on the water-level list) and STOFS's point is at Fort
+    Point - so Seavey Island BORROWS Fort Point's surge (_stofs_surge; from_id / from_name / from_km say so, and `km` is
+    her distance from the gauge the surge is at). Reads only what is held: with no STOFS cycle held it asks nothing of
+    NOAA."""
+    now = time.time() if now is None else now
+    if not (res or {}).get("ok") or not res.get("station"):
+        return {"ok": False, "note": "no tide station"}
+    sts = _load_water_stations() or []
+    if pos:
+        _n, datum, _l, cands = _water_pool(sts, pos[0], pos[1]) if sts else (None, None, None, [])
+        cands = [(s, datum) for s in cands]
+    else:
+        st0 = next((s for s in sts if s["id"] == res["station"]), None)
+        cands = [(st0, res.get("datum"))] if st0 else []
+    if not cands:
+        return {"ok": False, "note": "station not in the list"}
+    if cands[0][0]["gl"]:
+        return {"ok": False, "note": "no tide to forecast a surge on"}
+    h, why = STOFS.held(cands[0][0]["lat"], cands[0][0]["lng"], now)
+    if h is None:
+        return {"ok": False, "note": why}
+    notes = []
+    for st, datum in cands:
+        sid = st["id"]
+        pred = _station_predictions(sid, datum, now)
+        if not pred:
+            notes.append("no predictions at %s" % sid)
+            continue
+        sg, meta = _stofs_surge(sid, datum, st["lat"], st["lng"], pred, now, now)
+        if sg is None:
+            notes.append(str(meta))
+            continue
+        ahead = [(t, m) for t, m in sg if now <= t <= now + STOFS_OUTLOOK_S]
+        if not ahead:
+            notes.append("the STOFS forecast does not reach the next hours at %s" % sid)
+            continue
+        lo, hi = min(ahead, key=lambda x: x[1]), max(ahead, key=lambda x: x[1])
+        at = (meta.pop("from_lat", None), meta.pop("from_lng", None))
+        at = at if at[0] is not None else (st["lat"], st["lng"])      # km: to the gauge the surge is AT (borrowed or own)
+        return dict(meta, ok=True, low_m=round(lo[1], 2), low_t=lo[0], high_m=round(hi[1], 2), high_t=hi[0],
+                    station=sid, name=st.get("name"),
+                    km=round(_haversine_km(pos[0], pos[1], at[0], at[1]), 1) if pos else None)
+    return {"ok": False, "note": "; ".join(notes) or "no surge forecast"}
+
+
 def fetch_water_along(points, t0, t1, timeout=15.0):
     """The lowest water above chart datum at each of `points` [(lat, lon)] between epochs t0 and t1 (a passage's
     section, while she sails it): {ok, low_m, at, t, points: [{lat, lon, km, low_m, t, kind, datum, stations}], note}.
@@ -4570,6 +4763,26 @@ def fetch_water_along(points, t0, t1, timeout=15.0):
         with ThreadPoolExecutor(max_workers=min(6, len(need))) as ex:
             for k, ser in ex.map(_job, list(need)):
                 got[k] = ser
+    lowered, sinfo = _stofs_lowered(got, need, t0)    # ({}, None) with no STOFS cycle held: the answer as before
+
+    def _low(use, gl):
+        # the window's slots, and the one either side of it: a low between two slots is not missed at an edge
+        vals = [{e: v for e, v in ser if t0 - WATER_PRED_SLOT_S <= e <= t1 + WATER_PRED_SLOT_S} for _s, _k, ser in use]
+        slots = [t0] if gl else sorted(set().union(*[set(v) for v in vals]))
+        low = None
+        for e in slots:
+            num = den = 0.0
+            for (_s, km, ser), v in zip(use, vals):
+                x = ser[0][1] if gl else v.get(e)
+                if x is None:
+                    continue
+                w = 1.0 / max(km, 0.01) ** WATER_IDW_POWER
+                num += w * x
+                den += w
+            if den > 0 and (low is None or num / den < low[0]):
+                low = (num / den, e)
+        return low
+
     out = []
     for lat, lon, datum, cand in pools:
         row = {"lat": lat, "lon": lon, "km": round(cand[0][1], 1), "low_m": None, "t": None, "kind": None,
@@ -4578,30 +4791,22 @@ def fetch_water_along(points, t0, t1, timeout=15.0):
         use = [(s, km, ser) for s, km, ser in use if ser]
         if use:
             gl = bool(use[0][0]["gl"])
-            # the window's slots, and the one either side of it: a low between two slots is not missed at an edge
-            vals = [{e: v for e, v in ser if t0 - WATER_PRED_SLOT_S <= e <= t1 + WATER_PRED_SLOT_S} for _s, _k, ser in use]
-            slots = [t0] if gl else sorted(set().union(*[set(v) for v in vals]))
-            low = None
-            for e in slots:
-                num = den = 0.0
-                for (_s, km, ser), v in zip(use, vals):
-                    x = ser[0][1] if gl else v.get(e)
-                    if x is None:
-                        continue
-                    w = 1.0 / max(km, 0.01) ** WATER_IDW_POWER
-                    num += w * x
-                    den += w
-                if den > 0 and (low is None or num / den < low[0]):
-                    low = (num / den, e)
+            low = _low(use, gl)
             if low is not None:
                 row.update(low_m=round(low[0], 3), t=low[1], kind="observed" if gl else "predicted",
                            km=round(use[0][1], 1), name=use[0][0]["name"], stations=[s["id"] for s, _k, _v in use])
+                keys = [(s["id"], datum, bool(s["gl"])) for s, _k, _v in use]
+                if not gl and any(k in lowered for k in keys):
+                    plan = _low([(s, km, lowered.get(k, ser)) for (s, km, ser), k in zip(use, keys)], gl)
+                    if plan is not None and plan[0] < low[0] - 0.0005:     # STOFS set this point's lowest water
+                        row.update(low_m=round(plan[0], 3), t=plan[1], src="stofs", tide_low_m=round(low[0], 3))
         out.append(row)
     have = [r for r in out if r["low_m"] is not None]
     if not have:
-        return {"ok": False, "note": "no station gave a level along it", "points": out}
+        return dict({"ok": False, "note": "no station gave a level along it", "points": out}, **({"stofs": sinfo} if sinfo else {}))
     lo = min(have, key=lambda r: r["low_m"])
-    return {"ok": True, "low_m": lo["low_m"], "at": {"lat": lo["lat"], "lon": lo["lon"]}, "t": lo["t"], "points": out}
+    return dict({"ok": True, "low_m": lo["low_m"], "at": {"lat": lo["lat"], "lon": lo["lon"]}, "t": lo["t"], "points": out},
+                **({"stofs": sinfo} if sinfo else {}))
 
 
 def _water_along_query(path):
@@ -4682,6 +4887,7 @@ class WaterLevel:
         self._fetched_at = None       # when _last was fetched (epoch)
         self._error = None            # the last pass's failure, if it raised - see _monitor_pass
         self._tide_cache = None       # (epoch, result) for the tide-chart series
+        self._surge = {"ok": False, "note": "waiting for a tide station"}   # surge_outlook - the card's SURGE row
         self._force = threading.Event()
         self._stop = threading.Event()
         threading.Thread(target=self._loop, daemon=True).start()
@@ -4705,6 +4911,7 @@ class WaterLevel:
             base = dict(self._last)
             m = self._manual
             fetched, err = self._fetched_at, self._error
+            base["surge"] = dict(self._surge)
         if m is not None:
             base = dict(base, ok=True, offset_m=round(m, 3), source="manual",
                         note="manual override (%.2f m)" % m)
@@ -4747,6 +4954,7 @@ class WaterLevel:
                 pos = self._pos
             if pos:
                 _monitor_pass(self, "water", lambda: self._fetch(pos))
+                self._surge_pass(pos)
             # Cleared only when the wait says it was SET: clearing after a wait that timed out swallowed a
             # refresh, or a 3 km move, that landed between the two calls - until the next poll (review #13).
             if self._force.wait(self.POLL_S):
@@ -4758,8 +4966,24 @@ class WaterLevel:
             self._last = res
             self._fetched_at = time.time()
 
+    def _surge_pass(self, pos):
+        """The card's surge outlook (surge_outlook), with failures of its own: a STOFS answer that cannot be had must
+        never mark the LEVEL as failed (_monitor_pass's `_error` is the level's). Asks the STOFS thread for her domain at
+        sea - never on a Great Lake, where STOFS has no gauge. Never raises."""
+        with self._lock:
+            res = dict(self._last)
+        try:
+            if res.get("ok") and not res.get("lake"):
+                STOFS.wants(pos[0], pos[1])
+            out = surge_outlook(res, pos=pos)
+        except Exception as e:                      # noqa: BLE001 - said on the card, the level untouched
+            out = {"ok": False, "note": "the surge outlook failed: %s: %s" % (type(e).__name__, e)}
+        with self._lock:
+            self._surge = out
+
 
 WATER = WaterLevel()
+STOFS.on_new = WATER.refresh_now          # a new STOFS cycle held: the card's surge is worked out again at once
 
 
 # --------------------------------------------------------------------------- #
@@ -10522,6 +10746,7 @@ def main():
     LOG = SessionLogger(enabled=not args.no_log, log_dir=LOG_DIR, quiet_after_s=args.log_quiet_s)
     STORAGE.start()                               # sizes of logs/ and charts/, and a warning when a drive runs low
     SUPERVISION.start()                           # says when the supervising tab stops reporting (review #14)
+    STOFS.start()                                 # NOAA STOFS-3D's surge forecast, fetched for the domain she is in
     if LOG.enabled:
         LOG.event("session_start", pid=os.getpid(), argv=sys.argv[1:],
                   host=args.host, port=args.port)

@@ -2539,6 +2539,29 @@ of the operator.
    were sent as RTHs (the console: behavior rth, a 295 m hold disc). A reload kept the way home.
    `tests/passage_sail.js` 12-14e, `tests/water_along.py`, `tests/mission_store.py` 17e-17f.
 
+   **NOAA's surge forecast in a section's water (2026-10-13).** Tide predictions carry no storm
+   surge and no wind setdown, so a section is now planned on the **lower** of each station's
+   prediction and NOAA's Surge and Tide Operational Forecast System (STOFS-3D, built on the SCHISM
+   model; `stofs.py`) where STOFS stands at that station - never higher. Its station file (about
+   16 MB, once a day) is fetched in the background for the domain she is in and cached under
+   `charts/stofs/`. Each station's STOFS series is tied to the gauge by its own observations, or by
+   NOAA's published NAVD88 offset where the gauge is not reporting, and its difference from the
+   prediction is averaged over one tide before the negative part lowers the prediction (the
+   model's tide runs minutes off the prediction's, which alone reads as tenths of a meter on a
+   steep tide). With no STOFS forecast held, or at a station STOFS has no point at, the water is
+   planned exactly as before. A section STOFS lowered says so ("the lowest forecast ... NOAA's
+   surge forecast (STOFS) puts it 0.28 m under the tide prediction"), and the Mission Status
+   card's **SURGE** row shows the surge at the nearest tide station STOFS stands at, over the next
+   24 h. Measured on the 2026-10-13 cycle over the 12 hours it shared with the gauges' own
+   observations: 0.04 m RMS at Lewes where the tide prediction ran 0.28 m, 0.22 m at Portland
+   against 0.35 m. A station
+   STOFS has no point at **borrows** the surge of the nearest point within 5 km, worked out at that
+   point's own gauge against its own prediction (two stations' tides are never compared), and the
+   card's tooltip names both: at New Castle the console's tide station is Seavey Island, which STOFS
+   has no point at, so it takes Fort Point's, 2.6 km off. A station STOFS does stand at keeps its
+   own answer, even when its fit is refused. `tests/stofs.py`, `tests/passage_sail.js` 14f,
+   `tests/reading_age.js` 10-10b.
+
    **A section's chart image, read where it can find something (2026-10-12).** Every passage
    section raised "CHART IMAGE NOT COMPARED - the area is too large to read the chart image ...
    command it again once the chart has drawn in": a 20 km section's one box is past the image

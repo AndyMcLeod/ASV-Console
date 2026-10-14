@@ -837,6 +837,7 @@
       <div class="vrow"><span class="vk">Set / crab</span><span class="vv" id="v_set" title="Environmental set (leeway) the boat is fighting, and the crab angle (heading minus course made good).">--</span></div>
       <div class="vrow"><span class="vk">Current</span><span class="vv" id="v_current" title="Surface current FORECAST at the vessel's own position, from a NOAA Operational Forecast System (dbofs by default). Set is where the water GOES, degrees true. This is a model prediction for real water — not a measurement, and not the same thing as the Set/crab row above, which is the leeway the boat is actually fighting.">--</span></div>
       <div class="vrow"><span class="vk">Water lvl</span><span class="vv" id="v_water" title="Live water level above chart datum, added to charted depths">--</span></div>
+      <div class="vrow"><span class="vk">Surge</span><span class="vv" id="v_surge" title="NOAA's surge forecast (STOFS-3D) at the boat's tide station against the tide prediction, next 24 h. A passage is planned on the lower of the two.">--</span></div>
       <!-- Nogo: text + tooltip are both written by updateNogoUI() -> nogoReadout(), which
            names the STATE (reading / n zones / clear water / no chart) rather than a bare
            count. This title is only what shows before the first paint. -->
@@ -11897,8 +11898,12 @@ function sectionLevel(r, wl, hours){
   const n = pts.length;
   let say;
   if(m === null){ m = 0; say = "chart datum - no level could be read along it" + (r && r.note ? " (" + r.note + ")" : ""); }
-  else if(at) say = lvl(m) + ", the lowest " + (at.kind === "observed" ? "observed" : "predicted") + " along it over the next "
-    + hours.toFixed(1) + " h (" + (at.name || (at.stations || [])[0] || "a station") + ", " + Math.round(at.km) + " km off)";
+  else if(at) say = lvl(m) + ", the lowest " + (at.src === "stofs" ? "forecast" : at.kind === "observed" ? "observed" : "predicted")
+    + " along it over the next " + hours.toFixed(1) + " h (" + (at.name || (at.stations || [])[0] || "a station") + ", "
+    + Math.round(at.km) + " km off)"
+    // (2026-10-13) NOAA's surge forecast set it: the water planned on is under the tide prediction by this much
+    + (at.src === "stofs" && Number.isFinite(at.tide_low_m) && Number.isFinite(at.low_m)
+       ? " - NOAA's surge forecast (STOFS) puts it " + (at.tide_low_m - at.low_m).toFixed(2) + " m under the tide prediction" : "");
   else say = "chart datum - " + [far ? far + " of its " + n + " points have no station within " + WATER_REMOTE_KM + " km" : "",
                                  unread ? "no station gave a level at " + unread + " of its " + n + " points" : ""].filter(Boolean).join("; ");
   const man = wl && wl.source === "manual" && Number.isFinite(wl.offset_m) ? wl.offset_m : null;
@@ -19522,6 +19527,7 @@ function onState(s){
   // Both calls no-op cheaply unless the card is open and something actually changed.
   if($("#chartPanel") && $("#chartPanel").style.display !== "none"){ ensureChartInfo(); updateChartCard(); }
   updateWaterUI(water);
+  updateSurgeUI(water && water.surge);
 
   // environmental simulator (SIM ONLY): wind + sea state pushing the boat
   updateEnvUI(s.env || {}, st);
@@ -19788,6 +19794,40 @@ function fmtAge(s){
 function monitorErrTxt(r){
   return (r && r.monitor_error) ? "\n\nThe last update failed: " + r.monitor_error
     + ". The monitor carries on; the reading above is the last one it had." : "";
+}
+// THE SURGE ROW (Andy, 2026-10-13: "approve 1, 1b, 2 and 6" - item 2): NOAA's STOFS-3D level minus the tide prediction
+// at her tide station over the next 24 h - its lowest and when, or its highest when it never runs under (asv_console.py
+// surge_outlook). DISPLAY ONLY: the server plans a passage's water on the lower of the two (fetch_water_along), and the
+// water now stays the gauge's; nothing here changes a depth.
+const SURGE_SHOW_M = 0.05;          // a surge smaller than this either way reads as the tide
+const SURGE_WARN_M = 0.15;          // ... and one this far under it is in the caution color
+function surgeWhen(t){
+  const d = new Date(t * 1000), p = (n) => String(n).padStart(2, "0");
+  return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d.getDay()] + " " + p(d.getHours()) + ":" + p(d.getMinutes());
+}
+function surgeText(s){
+  if(!s || !s.ok) return {txt: "--", tip: "No surge forecast" + (s && s.note ? ": " + s.note : "") + "."};
+  const sgn = (v) => (v >= 0 ? "+" : "") + v.toFixed(2) + " m";
+  const txt = s.low_m <= -SURGE_SHOW_M ? sgn(s.low_m) + " · " + surgeWhen(s.low_t)
+            : s.high_m >= SURGE_SHOW_M ? sgn(s.high_m) + " · " + surgeWhen(s.high_t) : "with the tide";
+  const tie = s.how === "datum" ? "tied by NOAA's datums (its gauge is not reporting)"
+            : "tied to its gauge's observations" + (Number.isFinite(s.fit_m) ? " (to " + s.fit_m.toFixed(2) + " m)" : "");
+  // WHERE: the nearest of her tide stations STOFS forecasts. A station STOFS has no point at BORROWS the nearest point's
+  // surge within 5 km (Andy approved it, 2026-10-13: at New Castle Seavey Island takes Fort Point's) - said, with both names
+  const at = s.from_id ? (s.from_name || s.from_id) : (s.name || s.station);
+  const lent = s.from_id ? " (for " + (s.name || s.station) + ", her tide station, which STOFS has no point at; "
+    + (Number.isFinite(s.from_km) ? s.from_km.toFixed(1) + " km" : "close") + " from it)" : "";
+  return {txt, tip: "NOAA STOFS-3D at " + at + (Number.isFinite(s.km) ? ", " + Math.round(s.km) + " km from her" : "") + lent
+    + " against the tide prediction, next 24 h: lowest " + sgn(s.low_m)
+    + " (" + surgeWhen(s.low_t) + "), highest " + sgn(s.high_m) + " (" + surgeWhen(s.high_t) + "). Cycle " + s.cycle + " 12Z, "
+    + s.age_h + " h old; " + tie + ". A passage is planned on the lower of the forecast and the prediction; the water now is the gauge's."};
+}
+function updateSurgeUI(s){
+  const el = $("#v_surge"); if(!el) return;
+  const {txt, tip} = surgeText(s);
+  if(el.textContent !== txt) el.textContent = txt;
+  setTip(el, tip);
+  el.style.color = (s && s.ok && s.low_m <= -SURGE_WARN_M) ? "var(--warn)" : "";
 }
 function updateWaterUI(wl){
   const off = (wl.ok && wl.offset_m!=null) ? wl.offset_m : null;
