@@ -1126,7 +1126,7 @@ ladder and its trim; a navigation channel between two runs keeps the turn-water 
 **Ask the chart what a line is.** Right-click a line → **What is this line?** and the console
 names the layer it belongs to: a committed survey line (yellow, with its number, length and
 heading), the uploaded route (green, the only green), the **pattern preview** (cyan, *not in the
-plan* — ADD TO PLAN commits it, SURV → RESET clears it), a **red join** in that preview (which two
+plan* — ADD TO PLAN commits it, Reset on the Survey tab clears it), a **red join** in that preview (which two
 runs it joins, and whether it is a reversal with no flyable turn — Add to plan refused — or a
 hop Upload will route again), the survey boundary, a measurement you
 drew (magenta, never uploaded), the vessel's trail, or a keep-out read off the chart. The
@@ -1175,8 +1175,23 @@ at zoom 13 and 17 (was 27.0); neither layer was redrawn once in 30 s. The chart 
 frame, hidden or not: pausing it in a covered window would risk a chart that stops updating in front
 of the operator.
 
-1. **Plan** — `WPT` to drop/remove waypoints, or `SURV` for a **CAMP-style
-   3-click survey pattern**: click the start corner, the opposite (diagonal)
+**THE PATH PLANNING CARD (2026-10-13).** Every way a path is drawn is one card, always loaded - in
+the ASV Controls window when it is open, otherwise on the chart (where ▾ folds it to its tabs).
+Five tabs: **Survey** (the plan's surveys in run order, the pattern, its **Area**, Max depth, the
+survey and turn speeds, leads, turn shape, Punch Out), **Search**, **Transit** (Follow, or plan
+and sail it as a passage), **Go-To** and **Waypoints**. A tab only chooses what the card shows;
+**Draw** in the card's head arms the chart for it, so a click to look at the chart is never a
+point added to a plan. A tab with nothing drawn yet arms itself (Waypoints never does: a click
+there adds a waypoint); **Esc**, Add to plan, Follow, Sail passage and Go put the chart back to
+panning, and while it draws the chart says so (*DRAWING SURVEY PATTERN · ESC TO STOP*).
+**Route rules** under every tab is what every behavior routes by - Min depth, Water, Buffer,
+Transit kn, Channel rocks, the chart features - and the only copy: the command bar no longer
+repeats Buffer, Min depth or Transit kn. The plan as a whole (waypoints, length, CLR PLAN) is the
+card's foot. The WPT / SURV / BND / SRCH / TRAN buttons are gone. `tests/path_card.js`.
+
+1. **Plan** — on the **Path planning card**: the **Waypoints** tab to drop/remove
+   waypoints, or the **Survey** tab for a **CAMP-style 3-click survey pattern**: press
+   **Draw**, then click the start corner, the opposite (diagonal)
    corner, then a third point that sets the **line spacing** (distance from the
    start) and **orientation** (its bearing). Parallel lines fill the box
    automatically as a boustrophedon (lawnmower) route — the line *count* is
@@ -1285,7 +1300,7 @@ of the operator.
    chart colour this console had not spent — because a measurement is an *annotation*:
    it is never uploaded, saved to the mission, sent to the vessel, or logged.
 
-   **Search patterns.** `SRCH` generates a canned search route (à la CCOM's
+   **Search patterns.** The card's **Search** tab generates a canned search route (à la CCOM's
    Project 11 `track_patterns`): **Expanding box**, **Sector**, or **Parallel /
    creeping-line**. Click a datum, tune the params (leg / radius / spacing /
    heading / turn), and `Add to plan`. Legs clip to the nogo zones just like a
@@ -1303,8 +1318,8 @@ of the operator.
    **nogo model** every behaviour avoids — off land / shoreline / **piers & docks**,
    outside the depth window, and clear of fixed aids, hazards and (optionally)
    dredged/restricted areas, each expanded by the keep-clear **Buffer**. The buffer
-   and the enforce toggles are **shared** (edit the buffer from the SURV panel or the
-   command bar's *Buf m*); lowering it (to ~1.5–2 m) lets the small boat thread a
+   and the enforce toggles are **shared** (edit the buffer under the Path planning card's
+   **Route rules**, shown on every tab); lowering it (to ~1.5–2 m) lets the small boat thread a
    tight marina. The buffer can never drop **below the active vessel's own**
    `planning.nogo_buffer_m` — a plan saved against a small boat must not quietly narrow
    a bigger one's clearance.
@@ -1401,7 +1416,7 @@ of the operator.
    - *Add to plan* **appends** (once nothing red is a reversal, and not after the water
      level has moved since Punch Out): each run's two ends, then its joining points to the
      next run. A second pattern runs after the first, in the order you added them. Editing
-     never re-orders: a `WPT` click adds a waypoint at the **end**, and SHIFT-deleting a
+     never re-orders: a Waypoints-tab click adds a waypoint at the **end**, and SHIFT-deleting a
      committed line removes its two ends but **leaves the turns either side** — so the
      boat still travels that line's track, uncounted. Strike the run off *before* Add to
      plan to have the order, the turns and the transits rebuilt around the gap.
@@ -1424,7 +1439,7 @@ of the operator.
      Survey card lists the plan's surveys **in the order they run**, one row each: the number,
      a **name** you type (shown on the chart and in the LINES card), its line count and
      coverage, and four buttons. **▲ ▼** run it a place earlier or later - its lines and every
-     waypoint it put in the plan move with it, a free waypoint (a `WPT`, a search) between two
+     waypoint it put in the plan move with it, a free waypoint (one added on the Waypoints tab, a search) between two
      surveys stays between them, and Upload sends the new order. **✎** loads the survey back
      onto the card - its drawing **and its own settings**: its boundary, Max depth, leads and
      turn shape, which each survey now records at Add to plan. Punch Out, and the button reads
@@ -1493,7 +1508,7 @@ of the operator.
      start no longer makes it give up.
 
    **Speed is chosen per job, not once for the plan.** A survey run is three different
-   things and they do not want the same speed, so the SURV card carries three: **Survey**
+   things and they do not want the same speed, so the Path planning card carries three: **Survey**
    (the coverage lines — the speed the sensor is specified at, and what the per-line plan
    times are computed from), **Turn** (the reversals between them) and **Transit** (the
    approach out, hops between regions, and Go-To / RTH / Transit). The console commands
@@ -1532,7 +1547,7 @@ of the operator.
    line ends was clear of the chart model, so the boat was sent a 180° it cannot track,
    beside whatever refused the turn — 17 times in one Honolulu plan uploaded that
    evening. A plan added before then can still carry them, and so can one whose turn
-   points were deleted in `WPT` (nothing re-checks a committed turn): clear it and draw
+   points were deleted on the Waypoints tab (nothing re-checks a committed turn): clear it and draw
    it again. And **a punch the water level throws away** — every tide update does, since
    the runs were cut against the old level — now keeps Add to plan refused until Punch
    Out runs again; it used to leave the *un-punched* pattern to be added in its place,
@@ -1577,7 +1592,7 @@ of the operator.
 
    **Lead-in and lead-out (the run is longer than the coverage).** The first stretch of
    a survey line is not usable data: coming out of the reversal the steering is still
-   settling onto the track and the IMU is still settling with it. The SURV card takes a
+   settling onto the track and the IMU is still settling with it. The Survey tab takes a
    **lead-in** and a **lead-out**, and a **unit** — metres or seconds. Punch Out extends
    every run by that much past both ends of the coverage, so the boat rolls out, steadies,
    and the coverage the operator drew starts exactly where they drew it. A duration is
@@ -2251,8 +2266,8 @@ of the operator.
    Needs a connection the first time an area is fetched; features cache to
    `charts/enc/` for offline reuse.
 
-   **Arbitrary survey-area boundary.** `BND` draws a **CAMP-style survey-area
-   polygon** — click the chart to drop points, click the first point to close
+   **Arbitrary survey-area boundary.** The Survey tab's **Area** row draws a **CAMP-style
+   survey-area polygon** — press its **Draw**, click the chart to drop points, click the first point to close
    (vertices are draggable). The survey lines are clipped exactly to that polygon,
    including concave shapes (legs crossing a notch split into two). **With a boundary
    closed, the lines are laid across the boundary itself** (2026-10-11), at the pattern's
@@ -2266,9 +2281,9 @@ of the operator.
    parallel lines); inside, every point is within half a spacing of a line. It **composes
    with Punch Out**: the boundary keeps lines *inside* the area, ENC features keep
    them *out* of hazards / shallow water. The boundary **persists** (saved in
-   `mission.json`, so it survives a reload / a session at sea), and **`AREA`**
-   shows / hides the boundary overlay — hidden, it still clips the lines; editing
-   in `BND` always shows it.
+   `mission.json`, so it survives a reload / a session at sea), and the Area row's
+   **Show** shows / hides the boundary overlay — hidden, it still clips the lines;
+   drawing the area always shows it.
 
    **ENC nogo — every behaviour avoids it.** On the first GPS fix the console
    extracts the ENC for the operating area and builds a persistent **nogo model**:
@@ -3078,8 +3093,10 @@ of the operator.
 
 2. **Behaviours (no survey plan needed).** Beyond a survey/search plan, the command
    bar drives one-off autonomy behaviours, all available once **Armed**:
-   - **Go-To** — click a point; the boat drives there (around obstacles) and holds.
-   - **Transit** — `TRAN`, draw a single- or multi-segment line, then **Follow**; the
+   - **Go-To** — the card's **Go-To** tab (click a point or type it, then **Go**; it
+     shows the bearing, range and time first), or right-click the chart; the boat
+     drives there (around obstacles) and holds.
+   - **Transit** — the card's **Transit** tab, draw a single- or multi-segment line, then **Follow**; the
      boat drives the line clear of obstacles and station-keeps at the end.
    - **Hold** — station-keep at the present position.
    - **RTH** — Return-to-Home: drive to the home point (auto-set at launch, or **Set
@@ -3711,7 +3728,7 @@ node tests/survey_card.js
 **Survey card** — that a COMMITTED plan is still described on the survey card instead of
 blanking the moment its pattern anchors are dropped, and that the figures are derived from
 the committed lines rather than remembered (so they cannot drift from the plan, survive a
-refresh, and follow a plan edited in WPT mode).
+refresh, and follow a plan edited on the Waypoints tab).
 
 ```
 node tests/survey_lead.js

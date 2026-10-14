@@ -432,15 +432,19 @@ console.log("Speed by mode - three settings, and the console governs which one i
   check("12. the old speed selector is GONE from the chart command bar",
         () => !/id="c_speed"/.test(H) && !/\$\("#c_speed"\)/.test(H),
         "no markup and no handler left behind");
-  check("13. ... and the survey card carries one select per role",
+  // 2026-10-13: the Path planning card. Survey and turn are the Survey tab's (#linePanel); TRANSIT governs Go-To, RTH
+  // and a transit as well, so it is under ROUTE RULES, shown under every tab.
+  const SURVEY_TAB = H.slice(H.indexOf('id="linePanel"'), H.indexOf('id="searchPanel"'));
+  const RULES = H.slice(H.indexOf('id="pp_rules"'), H.indexOf('id="pp_plan"'));
+  check("13. ... and the Path planning card carries one select per role: survey and turn on its Survey tab, transit "
+        + "under Route rules",
         () => SPEED_ROLES.every(r => new RegExp('id="sp_spd_' + r + '"').test(H)) &&
-              /id="linePanel"/.test(H) &&
-              H.indexOf('id="sp_spd_survey"') > H.indexOf('id="linePanel"'),
-        "sp_spd_survey / sp_spd_turn / sp_spd_transit, inside #linePanel");
+              /id="sp_spd_survey"/.test(SURVEY_TAB) && /id="sp_spd_turn"/.test(SURVEY_TAB) && /id="sp_spd_transit"/.test(RULES),
+        "sp_spd_survey / sp_spd_turn on the Survey tab, sp_spd_transit under Route rules");
   // The card is BRIDGED to the controls window, so the split layout gets them too - a
   // control only reachable in one of the two windows is how the split grows a hole.
-  check("13b. ... and #linePanel is bridged, so the controls window has them as well",
-        () => /UI_BRIDGED = \[[^\]]*"#linePanel"/.test(H),
+  check("13b. ... and the card (#pathPanel) is bridged, so the controls window has them as well",
+        () => /UI_BRIDGED = \[[^\]]*"#pathPanel"/.test(H),
         "otherwise the speeds are unreachable whenever the operator splits the windows");
 }
 // 14. THE OPERATOR'S SETTING AND THE COMMANDED VALUE ARE TWO FIELDS. The governor writes

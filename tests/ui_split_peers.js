@@ -168,11 +168,11 @@ advance(3000);
 s0 = syncsFrom(B);
 for (let i = 0; i < 8; i++) { mutate(B, "<div id='alertCard'>B " + i + "</div>"); advance(250); }
 mutate(A, "<div id='alertCard'>A</div>"); advance(250);
-C1.bus.postMessage({ t: "ev", kind: "click", id: "lineBtn" });
+C1.bus.postMessage({ t: "ev", kind: "click", id: "pp_draw" });
 check("3. two charts: the SUPERVISING one alone hides its cards, mirrors into the controls window and carries out its "
       + "clicks; the view-only one keeps its own cards, sends nothing however its picture changes, and runs no click",
       () => A.split() && !B.split() && syncsFrom(B) - s0 === 0 && C1.dom["#alertCard"] === "<div id='alertCard'>A</div>"
-            && A.clicks.join() === "lineBtn" && B.clicks.length === 0,
+            && A.clicks.join() === "pp_draw" && B.clicks.length === 0,
       () => "split A " + A.split() + " B " + B.split() + "; syncs from B " + (syncsFrom(B) - s0) + "; clicks A "
             + A.clicks + " B " + B.clicks + "; controls shows " + C1.dom["#alertCard"]);
 

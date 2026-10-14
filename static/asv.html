@@ -98,6 +98,40 @@
     color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;user-select:none;
     display:flex;align-items:center;gap:6px;}
   .panel .phead::before{content:"⠿";color:var(--ink-faint);font-size:11px;line-height:1;}
+  /* THE PATH PLANNING CARD (2026-10-13): one card, five tabs, always loaded. 236 px: five tabs, and the Survey rows the
+     old 158 px card squeezed (its own note measured the name field at 7.6 px on one line). */
+  #pathPanel{width:236px;max-height:calc(100vh - 150px);overflow:auto;}
+  #pathPanel .phead{position:sticky;top:-8px;z-index:2;}
+  #pathPanel .pptitle{flex:1;}
+  #pathPanel .phead .ctl{height:18px;padding:0 6px;font-size:9px;}
+  #pp_draw.on{background:rgba(224,165,58,.18);border-color:#e0a53a;color:#e0a53a;}
+  .pptabs{display:flex;gap:2px;}
+  .pptab{flex:1 1 0;min-width:0;padding:4px 0;background:transparent;border:1px solid var(--line2);border-radius:2px;
+    color:var(--ink-dim);font-family:var(--mono);font-size:8.5px;letter-spacing:.03em;text-transform:uppercase;cursor:pointer;}
+  .pptab.on{border-color:#39c0ff;color:#39c0ff;background:rgba(57,192,255,.10);}
+  .ppbody{display:none;flex-direction:column;gap:6px;}
+  .ppbody.on{display:flex;}
+  .ppsub{font-family:var(--mono);font-size:9px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;}
+  .pparea{display:flex;flex-direction:column;gap:4px;padding:4px;border:1px solid var(--line);border-radius:2px;}
+  .pparea .ppbtns{display:flex;gap:2px;flex-wrap:wrap;justify-content:flex-end;}
+  .pparea .ppbtns .ctl{height:18px;padding:0 5px;font-size:9px;}
+  #bnd_draw.on{background:rgba(224,165,58,.18);border-color:#e0a53a;color:#e0a53a;}
+  #gt_lat,#gt_lon{width:96px;}
+  .pprules{border-top:1px solid var(--line);padding-top:5px;display:flex;flex-direction:column;gap:6px;}
+  .pprules-head{display:flex;justify-content:space-between;align-items:baseline;gap:6px;cursor:pointer;font-family:var(--mono);
+    font-size:9px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;user-select:none;}
+  .pprules-head::before{content:"\25BE";margin-right:-2px;}
+  .pprules.fold .pprules-head::before{content:"\25B8";}
+  .pprules .pprsum{text-transform:none;letter-spacing:0;color:var(--ink-faint);font-size:8.5px;text-align:right;}
+  .pprules-body{display:flex;flex-direction:column;gap:6px;}
+  .pprules.fold .pprules-body{display:none;}
+  .ppplan{border-top:1px solid var(--line);padding-top:5px;display:flex;align-items:center;justify-content:space-between;gap:6px;
+    font-family:var(--mono);font-size:9px;color:var(--ink-dim);}
+  .ppplan .ctl{height:18px;padding:0 6px;font-size:9px;}
+  #pathPanel.ppfold>:not(.phead):not(.pptabs){display:none!important;}
+  .drawtag{position:absolute;top:88px;left:50%;transform:translateX(-50%);z-index:8;pointer-events:none;
+    background:rgba(10,17,25,.92);border:1px solid #e0a53a;border-radius:3px;padding:3px 10px;
+    color:#e0a53a;font:600 10px var(--mono);letter-spacing:.06em;white-space:nowrap;}
 
   .readout{position:absolute;left:14px;bottom:84px;z-index:5;font-family:var(--mono);font-size:11px;color:var(--ink-dim);
     background:rgba(10,17,25,.8);border:1px solid var(--line);border-radius:3px;padding:6px 10px;display:flex;gap:16px;}
@@ -431,12 +465,6 @@
     <button class="ctl" id="zin" title="Zoom in">+</button>
     <button class="ctl" id="zout" title="Zoom out">&minus;</button>
     <button class="ctl small on" id="follow" title="Keep the boat centerd">BOAT</button>
-    <button class="ctl small" id="wptBtn" title="Waypoint / edit mode: drag a waypoint to move it, click a waypoint to delete, SHIFT-click a survey line to delete it, click open water to add. Edit a punched plan before Upload.">WPT</button>
-    <button class="ctl small" id="lineBtn" title="Survey pattern (CAMP 3-click): click start corner, opposite corner, then a point that sets line spacing + direction. Lines fill the box automatically.">SURV</button>
-    <button class="ctl small" id="bndBtn" title="Survey-area boundary (CAMP-style): click the chart to drop points, click the first point to close. Survey lines are clipped to this arbitrary polygon.">BND</button>
-    <button class="ctl small" id="srchBtn" title="Search patterns (Project-11 style): Expanding box / Sector / Parallel search. Click a datum, set params, Add to plan.">SRCH</button>
-    <button class="ctl small" id="tranBtn" title="Transit: click the chart to draw a single- or multi-segment transit line, then Follow. The ASV drives it clear of ENC obstacles and station-keeps at the end. No survey plan needed.">TRAN</button>
-    <button class="ctl small on" id="areaBtn" title="Show / hide the survey-area boundary overlay (persisted). It still clips the lines while hidden; editing in BND always shows it.">AREA</button>
     <button class="ctl small on" id="chrtBtn" title="Show / hide ENC chart features (shoreline, docks, depths, hazards) fetched by Punch Out">CHRT</button>
     <button class="ctl small" id="nogoBtn" title="Show / hide the ENC NOGO zones (shoreline, manmade features, water shallower than 1 m corrected). Every behavior routes clear of these. Click to toggle; established automatically at startup.">NOGO</button>
     <button class="ctl small" id="aisBtn" title="AIS: show nearby vessels (name, position, course, speed) from the AIS service (ais_service.py, proxied at /api/ais). Colored by ship type, drawn to scale when the chart can show her, each ship points the way her BOW does: her true heading; her course over the ground only while she is under way, because a stopped ship's course is noise. A dashed circle: stopped with no heading reported — she can lie any way round. The red outline round a contact near your boat is the clearance guard's KEEP-OUT: the same hull, pointed by the same rule, dashed ahead where she will be within the look-ahead. Hover a ship for details. Needs the AIS service running.">AIS</button>
@@ -448,178 +476,230 @@
   <!-- Quick Start / help button — pinned to the LOWER-LEFT corner (opens the popup, which also anchors there). -->
   <button class="ctl" id="helpBtn" title="Quick start / help" style="position:absolute;left:14px;bottom:14px;z-index:7;">?</button>
 
-  <div class="panel" id="linePanel" style="display:none">
-    <div class="phead" id="linePanelHead" title="Drag to move">Survey settings</div>
-    <!-- THE SURVEYS IN THE PLAN (sequenced surveys, phase 2, 2026-10-02): one row per survey, in the order the plan
-         runs them. The number stays with the survey; the name is the operator's; ▲ ▼ change the run order; ✎ loads
-         the survey back into the drawing below (its pattern, boundary, Max depth, leads and turn shape) so Punch Out
-         and "Update" replace it where it stands; ✕ takes it out. Every control carries an id, because the controls
-         window forwards clicks and edits BY ID (setupUISplit). Built by renderSurveyTable. -->
-    <style>
-      #sv_table{display:flex;flex-direction:column;gap:2px;margin:2px 0 4px;}
-      /* TWO LINES A ROW: the card is ~125 px inside, and one line left the name field 7.6 px wide (measured live). */
-      #sv_table .svrow{display:flex;flex-wrap:wrap;align-items:center;gap:2px 2px;padding:2px 2px;border-left:2px solid transparent;cursor:pointer;}
-      #sv_table .svrow.on{border-left-color:#ffd76a;background:rgba(255,215,106,0.06);}
-      #sv_table .svrow.edit{border-left-color:#39c0ff;background:rgba(57,192,255,0.10);}
-      #sv_table .svno{font-family:var(--mono);font-size:10px;color:#ffd76a;min-width:20px;}
-      #sv_table .svname{flex:1 1 60px;min-width:0;font-size:10px;padding:1px 3px;}
-      #sv_table .svbr{flex-basis:100%;height:0;}
-      #sv_table .svinfo{flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;font-family:var(--mono);font-size:8.5px;color:var(--ink-dim);white-space:nowrap;}
-      #sv_table button{width:15px;height:16px;padding:0;font-size:9px;line-height:1;flex:0 0 auto;}
-      /* the picked row's actions (3a): short labels, two to a line in the ~125 px card (four lines on the first try) */
-      #sv_table .svacts{display:flex;flex-wrap:wrap;gap:2px;width:100%;}
-      #sv_table .svacts button{width:auto;padding:0 4px;font-size:8.5px;}
-      #sv_table .svcont{width:100%;height:18px;font-size:9px;color:#39c0ff;border-color:#2b5a74;}
-      #sv_head{display:flex;align-items:center;gap:4px;}
-      #sv_head button{margin-left:auto;width:auto;height:16px;padding:0 5px;font-size:8.5px;}
-    </style>
-    <div id="sv_head" style="display:none;font-family:var(--mono);font-size:9px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;"><span>Surveys, in run order</span><button class="ctl small" id="sv_punchall">Punch all</button></div>
-    <div id="sv_table" style="display:none"></div>
-    <div class="phint" id="sv_note" style="display:none"></div>
-    <div class="prow"><label>Align</label>
-      <select id="sp_align" title="Where the leftover margin goes across the survey width">
-        <option value="0" selected>Start</option><option value="1">Center</option><option value="2">Finish</option>
-      </select></div>
-    <div class="prow"><label>Backwards</label><input type="checkbox" id="sp_reverse" style="width:auto" title="RUN THE SURVEY BACKWARDS: Punch Out walks the pattern from its other end - entered at the far end of its last line, the lines in reverse order and each the other way. The same coverage; the turns and leads are built for the reversed path. Recorded with the survey (✎ puts it back)."/></div>
-    <div class="prow"><label>Spacing m</label><input type="number" id="sp_spacing" min="0.5" step="0.5" title="Line spacing - type to force it, or set it by placing the 3rd (C) point"/></div>
-    <div class="prow"><label>Direction°</label><input type="number" id="sp_dir" min="0" max="359" step="1" title="Survey line bearing (°true) — type to rotate the pattern (keeps spacing + box), or set it by placing the 3rd (C) point"/></div>
-    <div class="prow"><label>Line len</label><span class="phint" id="sp_len" style="color:var(--ink);">--</span></div>
-    <div class="prow"><label>Width</label><span class="phint" id="sp_width" style="color:var(--ink);">--</span></div>
-    <div class="prow"><label>Lines</label><span class="phint" id="sp_count" style="color:var(--ink);">--</span></div>
-    <div class="prow punchsep"><label>Min depth m</label><input type="number" id="sp_mindepth" value="2" min="0" max="500" step="0.5" title="Survey COVERAGE minimum — don't survey shallower than this. Separate from the fixed 1 m nogo navigability floor (which every behavior always avoids)."/></div>
-    <div class="prow"><label>Max depth m</label><input type="number" id="sp_maxdepth" value="" min="0" max="1000" step="1" placeholder="none" title="Survey coverage maximum. Blank = no maximum (deep water is fine to survey). Deep water is never a nogo — the boat may transit it."/></div>
-    <div class="prow"><label>Water m</label>
-      <span style="display:flex;gap:3px;align-items:center;">
-        <input type="number" id="sp_water" step="0.05" placeholder="auto" title="Live water level above chart datum (LWD in the Great Lakes, MLLW in the oceans), ADDED to charted depths. Blank = auto from the nearest NOAA tide station; type a value to override."/>
-        <button class="ctl small" id="sp_water_ref" style="width:22px;height:22px;padding:0;font-size:13px;" title="Refresh from the nearest tide station">&#8635;</button>
-      </span></div>
-    <div class="phint" id="sp_water_note">tide station: --</div>
-    <div class="prow"><label>Buffer m</label><input type="number" id="sp_buffer" value="3" min="0" max="200" step="1" title="Keep-clear buffer around every nogo zone. SHARED — this is the buffer all behaviors (Go-To / RTH / search / survey) route clear by."/></div>
-    <!-- SPEED BY ROLE. A survey run is three jobs and they do not want one speed; the
-         console commands each as the boat moves between them. They start EQUAL, so a
-         console that has never been told otherwise behaves exactly as it always did.
-         IN WHOLE KNOTS since 2026-10-09, the hull's own range: the options are filled from the
-         vessel (fillSpeedSelects), so the markup carries none. -->
-    <div class="prow punchsep"><label>Survey kn</label>
-      <select id="sp_spd_survey" title="Speed held on the COVERAGE LINES — the one the sensor is specified at. The per-line plan times in the LINES table are computed from it. Whole knots, COMMANDED through the water: the current and the wind make her speed over the ground differ."></select></div>
-    <div class="prow"><label>Turn kn</label>
-      <select id="sp_spd_turn" title="Speed through the REVERSALS between lines. It also sets the RADIUS every generated turn is built at — a hull can only hold v/ω — so a slower turn is tighter and reaches less far outboard, which is what buys clearance from a dock at the end of a line. Whole knots, COMMANDED through the water."></select></div>
-    <div class="prow"><label>Transit kn</label>
-      <select id="sp_spd_transit" title="Speed on everything that is not coverage and not a turn: the approach out to the survey area, hops between separated regions, and the Go-To / RTH / Transit behaviors. Whole knots, COMMANDED through the water: the current and the wind make her speed over the ground differ."></select></div>
-    <div class="phint" id="sp_spd_note">speeds: --</div>
-    <!-- LEAD-IN / LEAD-OUT. The first stretch of a survey line is not usable data: the
-         steering is still settling onto the track after the reversal, and the IMU is
-         still settling with it. So the RUN is made longer than the COVERAGE — the boat
-         rolls out, steadies, and the coverage the operator drew starts exactly where
-         they drew it. The lead-out is the same argument at the far end.
-         DISTANCE OR DURATION, because settling is specified both ways: a steering
-         settle is a distance (boat lengths), an IMU settle is a time. A duration is
-         converted at the SURVEY speed, which is the speed the lead is flown at —
-         flying it at anything else is what the settling is there to avoid. -->
-    <div class="prow punchsep"><label>Lead in/out</label>
-      <span style="display:flex;gap:3px;align-items:center;">
-        <input type="number" id="sp_lead_in" value="0" min="0" max="2000" step="1" style="min-width:0" title="LEAD-IN — how far (or how long) the boat runs ON the line BEFORE the coverage starts, so steering and IMU are settled by the first usable ping. 0 = none. Applied by Punch Out, which is what checks the extra water is clear."/>
-        <input type="number" id="sp_lead_out" value="0" min="0" max="2000" step="1" style="min-width:0" title="LEAD-OUT — how far (or how long) the boat keeps running past the END of the coverage before the turn begins. 0 = none. Applied by Punch Out, which is what checks the extra water is clear."/>
-        <select id="sp_lead_mode" style="width:46px" title="Whether the two figures are a DISTANCE in meters or a DURATION in seconds. A duration is converted at the survey speed.">
-          <option value="m" selected>m</option><option value="s">s</option>
-        </select>
-      </span></div>
-    <div class="phint" id="sp_lead_note">lead: none</div>
-    <!-- EASED TURNS. Every reversal this console draws steps its curvature from nothing to
-         1/R the instant the boat leaves the line — an infinite rudder rate, which no hull
-         can answer, so it overshoots and settles. That settling is exactly what the lead-in
-         above exists to hide. An EASED turn ramps instead: a clothoid in, the arc, a
-         clothoid out, so the helm rate is constant and the boat rolls onto the next line
-         with the wheel already amidships.
-         OFF BY DEFAULT, and deliberately: it needs a few meters more outboard water and
-         roughly twice the waypoints, so a console that has never been told otherwise plans
-         exactly the turns it always did. The spiral length is the VESSEL's steering settle
-         time times the turn speed, so a profile that does not declare one cannot ease. -->
-    <div class="prow"><label>Turn shape</label>
-      <select id="sp_turn_ease" title="ARC is the plain reversal this console has always drawn: its curvature steps from zero to 1/R at the line end, which the hull answers by overshooting and settling. EASED ramps the curvature in and out over a spiral, so the steering rate is constant and the boat arrives on the next line already straight — at the cost of a little more outboard water and about twice the waypoints. Needs the vessel profile to declare a steering settle time.">
-        <option value="arc" selected>Arc</option><option value="eased">Eased</option>
-      </select></div>
-    <div class="phint" id="sp_ease_note">turns: arc</div>
-    <div class="prow" title="HOW A ROCK IN A BUOYED CHANNEL IS PASSED by the Rule 9 lane - a charted rock, wreck or obstruction, a small shoal patch or islet with water all round it. It is never the channel's edge: the lane holds its line and passes it to EITHER side. LAND gives it the lane's own clearance from a bank (twice the buffer and two meters, or more). SHOAL gives it only the keep-clear - the buffer, or the guard's standoff in a set - and two meters (half the buffer where that is more), as a shallow point of the sea bottom: any spot of water shallower than the floor. Anything built - a pier, a pile, a dolphin, a float, a bridge support - and every buoy or beacon is the bank either way - except a fish weir or other structure charted only as an obstruction, which cannot be told from a rock and is passed as one. This is the lane between SINGLE channel marks only: in a charted channel, between buoy pairs or in unmarked narrow water a rock is passed at the ordinary keep-clear either way. For trying both: the next Go-To, RTH, transit, survey approach or leg into a later survey is planned with what this says (a fresh page starts on Land)."><label>Channel rocks</label><select id="enf_rock"><option value="land" selected>Land</option><option value="bottom">Shoal</option></select></div>
-    <div class="enf" title="Which ENC features form the NOGO model — SHARED by every behavior (Go-To / RTH / search / survey), not just Punch Out. Toggling these re-routes all behaviors.">
-      <label><input type="checkbox" id="enf_land" checked/>Land / shore / docks</label>
-      <label><input type="checkbox" id="enf_depth" checked/>Water shallower than floor</label>
-      <label><input type="checkbox" id="enf_haz" checked/>Aids &amp; hazards</label>
-      <label><input type="checkbox" id="enf_area"/>Dredged / restricted</label>
-      <label title="Charted WRECKS - wreck points and wreck areas - as keep-outs. Uncheck to DISREGARD them: every behavior (survey, Go-To, RTH, search) may then route and survey over a charted wreck, so check the chart and the water first. It only ever narrows: with Aids &amp; hazards off (wreck points) or Land / shore / docks off (wreck areas), wrecks are off whatever this says."><input type="checkbox" id="enf_wreck" checked/>Shipwrecks</label>
-      <label title="The SURVEY's channel rules: a navigation channel a survey line runs all the way ACROSS is cut out of the coverage, and a channel no coverage line enters is closed to the reversal turns and the line order. Uncheck to DISREGARD them: lines keep their coverage across the channel and turns may use channel water - survey in traffic only with that in mind. Survey only: Go-To, RTH and transits still keep right in a channel (COLREGS Rule 9)."><input type="checkbox" id="enf_chan" checked/>Shipping channels</label>
+  <!-- THE PATH PLANNING CARD (Andy, 2026-10-13: "Consider a single path planning card that holds all these behaviors
+       and presents the necessary controls and readings for each when chosen. Kill the chips and permanently load the Path
+       Planning card in the ASV Controls browser on start", then "add Go-To and go", and "Consider removing the repeats in
+       the command bar"). ONE card for every way a path is drawn, always loaded: a TAB picks the behavior the card shows
+       (Survey with its area, Search, Transit, Go-To, Waypoints) and DRAW in its head arms the chart for that tab. A tab
+       arms the chart on its own only when it has nothing drawn yet (Waypoints never), so a click to look at the chart is
+       not a point added to a plan (pathSelect / pathDraw). Esc, Add to plan, Follow, Sail passage and Go put the chart
+       back to panning, and the chart says while it is drawing (#r_draw). ROUTE RULES - what every behavior routes by - is
+       one section under every tab, and the only copy: the command bar no longer repeats Buffer, Min depth or Transit kn.
+       The bodies keep the ids the four mode cards had: the controls window relays clicks and edits BY ID. -->
+  <div class="panel" id="pathPanel">
+    <div class="phead" id="pathPanelHead" title="Drag to move"><span class="pptitle">Path planning</span>
+      <button class="ctl small" id="pp_draw" title="Arm the chart for this tab: each click draws (Survey corners, the search datum, transit points, the Go-To point; on Waypoints, edits). Press again, or Esc, to go back to panning.">Draw</button>
+      <button class="ctl small" id="pp_fold" title="Fold the card to its tabs, or open it again">&#9662;</button></div>
+    <div class="pptabs">
+      <button class="pptab" id="pp_tab_survey" title="Survey patterns: the plan's surveys in run order, the pattern, its area, depths, speeds, leads and turns, Punch Out">Survey</button>
+      <button class="pptab" id="pp_tab_search" title="Search patterns: expanding box, sector, parallel">Search</button>
+      <button class="pptab" id="pp_tab_transit" title="A drawn transit line: Follow it now, or plan and sail it as a passage">Transit</button>
+      <button class="pptab" id="pp_tab_goto" title="Go-To a point">Go-To</button>
+      <button class="pptab" id="pp_tab_wpt" title="The plan's waypoints: move, delete or add them">Waypoints</button>
     </div>
-    <button class="ctl small punch" id="sp_punch" title="Trim survey-line extents to ENC chart features (shoreline, docks, aids, hazards, water below min depth)">Punch Out</button>
-    <button class="ctl small" id="sp_add" disabled>Add to plan</button>
-    <!-- WHY ADD TO PLAN IS REFUSED (punchRefusal), directly under the button it explains - in amber like the
-         truncated-pattern hint: nothing has reached the boat, the pattern is what has to change. -->
-    <div class="phint" id="sp_refuse" style="display:none;color:var(--warn)"></div>
-    <div class="prow" style="gap:4px">
-      <button class="ctl small" id="sp_reset" title="Discard the pattern being drawn" style="flex:1">Reset</button>
-      <button class="ctl small" id="ln_clr" title="Delete all waypoints and planned lines" style="flex:1">CLR&nbsp;PLAN</button>
+    <div class="ppbody" id="linePanel" data-tab="survey">
+      <!-- THE SURVEYS IN THE PLAN (sequenced surveys, phase 2, 2026-10-02): one row per survey, in the order the plan
+           runs them. The number stays with the survey; the name is the operator's; ▲ ▼ change the run order; ✎ loads
+           the survey back into the drawing below (its pattern, boundary, Max depth, leads and turn shape) so Punch Out
+           and "Update" replace it where it stands; ✕ takes it out. Every control carries an id, because the controls
+           window forwards clicks and edits BY ID (setupUISplit). Built by renderSurveyTable. -->
+      <style>
+        #sv_table{display:flex;flex-direction:column;gap:2px;margin:2px 0 4px;}
+        /* TWO LINES A ROW: the card is ~125 px inside, and one line left the name field 7.6 px wide (measured live). */
+        #sv_table .svrow{display:flex;flex-wrap:wrap;align-items:center;gap:2px 2px;padding:2px 2px;border-left:2px solid transparent;cursor:pointer;}
+        #sv_table .svrow.on{border-left-color:#ffd76a;background:rgba(255,215,106,0.06);}
+        #sv_table .svrow.edit{border-left-color:#39c0ff;background:rgba(57,192,255,0.10);}
+        #sv_table .svno{font-family:var(--mono);font-size:10px;color:#ffd76a;min-width:20px;}
+        #sv_table .svname{flex:1 1 60px;min-width:0;font-size:10px;padding:1px 3px;}
+        #sv_table .svbr{flex-basis:100%;height:0;}
+        #sv_table .svinfo{flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;font-family:var(--mono);font-size:8.5px;color:var(--ink-dim);white-space:nowrap;}
+        #sv_table button{width:15px;height:16px;padding:0;font-size:9px;line-height:1;flex:0 0 auto;}
+        /* the picked row's actions (3a): short labels, two to a line in the ~125 px card (four lines on the first try) */
+        #sv_table .svacts{display:flex;flex-wrap:wrap;gap:2px;width:100%;}
+        #sv_table .svacts button{width:auto;padding:0 4px;font-size:8.5px;}
+        #sv_table .svcont{width:100%;height:18px;font-size:9px;color:#39c0ff;border-color:#2b5a74;}
+        #sv_head{display:flex;align-items:center;gap:4px;}
+        #sv_head button{margin-left:auto;width:auto;height:16px;padding:0 5px;font-size:8.5px;}
+      </style>
+      <div id="sv_head" style="display:none;font-family:var(--mono);font-size:9px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;"><span>Surveys, in run order</span><button class="ctl small" id="sv_punchall">Punch all</button></div>
+      <div id="sv_table" style="display:none"></div>
+      <div class="phint" id="sv_note" style="display:none"></div>
+      <div class="prow"><label>Align</label>
+        <select id="sp_align" title="Where the leftover margin goes across the survey width">
+          <option value="0" selected>Start</option><option value="1">Center</option><option value="2">Finish</option>
+        </select></div>
+      <div class="prow"><label>Backwards</label><input type="checkbox" id="sp_reverse" style="width:auto" title="RUN THE SURVEY BACKWARDS: Punch Out walks the pattern from its other end - entered at the far end of its last line, the lines in reverse order and each the other way. The same coverage; the turns and leads are built for the reversed path. Recorded with the survey (✎ puts it back)."/></div>
+      <div class="prow"><label>Spacing m</label><input type="number" id="sp_spacing" min="0.5" step="0.5" title="Line spacing - type to force it, or set it by placing the 3rd (C) point"/></div>
+      <div class="prow"><label>Direction°</label><input type="number" id="sp_dir" min="0" max="359" step="1" title="Survey line bearing (°true) — type to rotate the pattern (keeps spacing + box), or set it by placing the 3rd (C) point"/></div>
+      <div class="prow"><label>Line len</label><span class="phint" id="sp_len" style="color:var(--ink);">--</span></div>
+      <div class="prow"><label>Width</label><span class="phint" id="sp_width" style="color:var(--ink);">--</span></div>
+      <div class="prow"><label>Lines</label><span class="phint" id="sp_count" style="color:var(--ink);">--</span></div>
+      <!-- THE SURVEY AREA (was its own BND card): only ever the polygon the survey's lines are clipped to, so it
+           lives with the survey. Draw arms the chart for it ("bound"); the AREA show/hide toggle came with it. -->
+      <div class="pparea" id="boundPanel">
+        <div class="prow"><label>Area</label><span class="ppbtns">
+          <button class="ctl small" id="bnd_draw" title="Draw the survey area: each chart click drops a boundary point, a click on the first point closes it. Press again (or Esc) to stop.">Draw</button>
+          <button class="ctl small" id="bnd_close" title="Close the polygon (needs ≥3 points)">Close</button>
+          <button class="ctl small" id="bnd_clr" title="Delete the boundary polygon">Clear</button>
+          <button class="ctl small on" id="areaBtn" title="Show / hide the survey-area boundary overlay (persisted). It still clips the lines while hidden; drawing the area always shows it.">Show</button></span></div>
+        <div class="phint" id="bnd_hint">Press Draw, then click the chart to drop boundary points; click the first point to close. Survey lines clip to this area.</div>
+      </div>
+      <div class="prow"><label>Max depth m</label><input type="number" id="sp_maxdepth" value="" min="0" max="1000" step="1" placeholder="none" title="Survey coverage maximum. Blank = no maximum (deep water is fine to survey). Deep water is never a nogo — the boat may transit it."/></div>
+      <!-- SPEED BY ROLE. A survey run is three jobs and they do not want one speed; the
+           console commands each as the boat moves between them. They start EQUAL, so a
+           console that has never been told otherwise behaves exactly as it always did.
+           IN WHOLE KNOTS since 2026-10-09, the hull's own range: the options are filled from the
+           vessel (fillSpeedSelects), so the markup carries none. -->
+      <div class="prow punchsep"><label>Survey kn</label>
+        <select id="sp_spd_survey" title="Speed held on the COVERAGE LINES — the one the sensor is specified at. The per-line plan times in the LINES table are computed from it. Whole knots, COMMANDED through the water: the current and the wind make her speed over the ground differ."></select></div>
+      <div class="prow"><label>Turn kn</label>
+        <select id="sp_spd_turn" title="Speed through the REVERSALS between lines. It also sets the RADIUS every generated turn is built at — a hull can only hold v/ω — so a slower turn is tighter and reaches less far outboard, which is what buys clearance from a dock at the end of a line. Whole knots, COMMANDED through the water."></select></div>
+      <div class="phint" id="sp_spd_note">speeds: --</div>
+      <!-- LEAD-IN / LEAD-OUT. The first stretch of a survey line is not usable data: the
+           steering is still settling onto the track after the reversal, and the IMU is
+           still settling with it. So the RUN is made longer than the COVERAGE — the boat
+           rolls out, steadies, and the coverage the operator drew starts exactly where
+           they drew it. The lead-out is the same argument at the far end.
+           DISTANCE OR DURATION, because settling is specified both ways: a steering
+           settle is a distance (boat lengths), an IMU settle is a time. A duration is
+           converted at the SURVEY speed, which is the speed the lead is flown at —
+           flying it at anything else is what the settling is there to avoid. -->
+      <div class="prow punchsep"><label>Lead in/out</label>
+        <span style="display:flex;gap:3px;align-items:center;">
+          <input type="number" id="sp_lead_in" value="0" min="0" max="2000" step="1" style="min-width:0" title="LEAD-IN — how far (or how long) the boat runs ON the line BEFORE the coverage starts, so steering and IMU are settled by the first usable ping. 0 = none. Applied by Punch Out, which is what checks the extra water is clear."/>
+          <input type="number" id="sp_lead_out" value="0" min="0" max="2000" step="1" style="min-width:0" title="LEAD-OUT — how far (or how long) the boat keeps running past the END of the coverage before the turn begins. 0 = none. Applied by Punch Out, which is what checks the extra water is clear."/>
+          <select id="sp_lead_mode" style="width:46px" title="Whether the two figures are a DISTANCE in meters or a DURATION in seconds. A duration is converted at the survey speed.">
+            <option value="m" selected>m</option><option value="s">s</option>
+          </select>
+        </span></div>
+      <div class="phint" id="sp_lead_note">lead: none</div>
+      <!-- EASED TURNS. Every reversal this console draws steps its curvature from nothing to
+           1/R the instant the boat leaves the line — an infinite rudder rate, which no hull
+           can answer, so it overshoots and settles. That settling is exactly what the lead-in
+           above exists to hide. An EASED turn ramps instead: a clothoid in, the arc, a
+           clothoid out, so the helm rate is constant and the boat rolls onto the next line
+           with the wheel already amidships.
+           OFF BY DEFAULT, and deliberately: it needs a few meters more outboard water and
+           roughly twice the waypoints, so a console that has never been told otherwise plans
+           exactly the turns it always did. The spiral length is the VESSEL's steering settle
+           time times the turn speed, so a profile that does not declare one cannot ease. -->
+      <div class="prow"><label>Turn shape</label>
+        <select id="sp_turn_ease" title="ARC is the plain reversal this console has always drawn: its curvature steps from zero to 1/R at the line end, which the hull answers by overshooting and settling. EASED ramps the curvature in and out over a spiral, so the steering rate is constant and the boat arrives on the next line already straight — at the cost of a little more outboard water and about twice the waypoints. Needs the vessel profile to declare a steering settle time.">
+          <option value="arc" selected>Arc</option><option value="eased">Eased</option>
+        </select></div>
+      <div class="phint" id="sp_ease_note">turns: arc</div>
+      <button class="ctl small punch" id="sp_punch" title="Trim survey-line extents to ENC chart features (shoreline, docks, aids, hazards, water below min depth)">Punch Out</button>
+      <button class="ctl small" id="sp_add" disabled>Add to plan</button>
+      <!-- WHY ADD TO PLAN IS REFUSED (punchRefusal), directly under the button it explains - in amber like the
+           truncated-pattern hint: nothing has reached the boat, the pattern is what has to change. -->
+      <div class="phint" id="sp_refuse" style="display:none;color:var(--warn)"></div>
+      <div class="prow" style="gap:4px">
+        <button class="ctl small" id="sp_reset" title="Discard the pattern being drawn" style="flex:1">Reset</button>
+      </div>
+      <div class="phint" id="sp_hint">Click the survey start corner (A).</div>
+      <!-- STRIKING A PUNCHED RUN OFF. Its own row rather than another branch of `sp_hint`:
+           that element already has five branches writing it and a comment warning that a
+           sixth would forget to reset the warning color. This one says what is selected,
+           what Delete will do, and — because a deletion with no way back is a trap and a
+           struck run is not on the chart to click a second time — carries the only way
+           home as a real control rather than a sentence describing one. -->
+      <div class="phint" id="sp_strike" style="display:none"></div>
     </div>
-    <div class="phint" id="sp_hint">Click the survey start corner (A).</div>
-    <!-- STRIKING A PUNCHED RUN OFF. Its own row rather than another branch of `sp_hint`:
-         that element already has five branches writing it and a comment warning that a
-         sixth would forget to reset the warning color. This one says what is selected,
-         what Delete will do, and — because a deletion with no way back is a trap and a
-         struck run is not on the chart to click a second time — carries the only way
-         home as a real control rather than a sentence describing one. -->
-    <div class="phint" id="sp_strike" style="display:none"></div>
-  </div>
-
-  <div class="panel" id="boundPanel" style="display:none">
-    <div style="font-family:var(--mono);font-size:9px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;">Survey area</div>
-    <button class="ctl small" id="bnd_close" title="Close the polygon (needs ≥3 points)">Close area</button>
-    <button class="ctl small" id="bnd_clr" title="Delete the boundary polygon">Clear area</button>
-    <div class="phint" id="bnd_hint">Click the chart to drop boundary points; click the first point to close. Survey lines clip to this area.</div>
-  </div>
-
-  <div class="panel" id="searchPanel" style="display:none">
-    <div style="font-family:var(--mono);font-size:9px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;">Search pattern</div>
-    <div class="prow"><label>Pattern</label>
-      <select id="sr_type" title="Canned search-pattern generator (à la Project-11 track_patterns)">
-        <option value="expbox" selected>Expanding box</option>
-        <option value="sector">Sector</option>
-        <option value="parallel">Parallel</option>
-      </select></div>
-    <div class="prow"><label>Heading°</label><input type="number" id="sr_heading" value="0" min="0" max="359" step="5" title="Initial leg bearing (°true)"/></div>
-    <div class="prow"><label>Turn</label>
-      <select id="sr_turn" title="Direction the pattern rotates / steps">
-        <option value="1" selected>CW</option><option value="-1">CCW</option>
-      </select></div>
-    <!-- Expanding box -->
-    <div class="prow sr-expbox"><label>Leg step m</label><input type="number" id="sr_step" value="8" min="1" step="2" title="First leg length; each pair of legs grows by this."/></div>
-    <div class="prow sr-expbox"><label>Legs</label><input type="number" id="sr_legs" value="10" min="2" max="60" step="1" title="Number of legs in the spiral"/></div>
-    <!-- Sector -->
-    <div class="prow sr-sector" style="display:none"><label>Radius m</label><input type="number" id="sr_radius" value="20" min="5" step="5" title="Leg length from the datum (triangle side)"/></div>
-    <div class="prow sr-sector" style="display:none"><label>Sectors</label><input type="number" id="sr_sectors" value="3" min="1" max="12" step="1" title="Number of triangular passes"/></div>
-    <div class="prow sr-sector" style="display:none"><label>Rotate°</label><input type="number" id="sr_rotate" value="120" min="10" max="180" step="10" title="Bearing rotation between passes"/></div>
-    <!-- Parallel -->
-    <div class="prow sr-parallel" style="display:none"><label>Lane len m</label><input type="number" id="sr_length" value="30" min="5" step="5" title="Length of each parallel lane"/></div>
-    <div class="prow sr-parallel" style="display:none"><label>Spacing m</label><input type="number" id="sr_spacing" value="5" min="1" step="1" title="Across-track lane spacing"/></div>
-    <div class="prow sr-parallel" style="display:none"><label>Lanes</label><input type="number" id="sr_lanes" value="8" min="1" max="80" step="1" title="Number of lanes"/></div>
-    <div class="prow"><label>Legs</label><span class="phint" id="sr_count" style="color:var(--ink);">--</span></div>
-    <button class="ctl small" id="sr_add" disabled>Add to plan</button>
-    <button class="ctl small" id="sr_reset" title="Discard the search pattern being drawn">Reset</button>
-    <div class="phint" id="sr_hint">Click the chart to set the datum (search origin), then tune the params.</div>
-  </div>
-
-  <div class="panel" id="transitPanel" style="display:none">
-    <div style="font-family:var(--mono);font-size:9px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;">Transit line</div>
-    <div class="prow"><label>Points</label><span class="phint" id="tr_count" style="color:var(--ink);">0</span></div>
-    <button class="ctl small punch" id="tr_follow" disabled title="Drive the transit line now (ENC-routed around obstacles), station-keep at the end. Requires ARM.">Follow</button>
-    <div class="prow" style="gap:4px">
-      <button class="ctl small" id="tr_undo" title="Remove the last transit point" style="flex:1">Undo</button>
-      <button class="ctl small" id="tr_clr" title="Discard the transit line" style="flex:1">Clear</button>
+    <div class="ppbody" id="searchPanel" data-tab="search">
+      <div style="font-family:var(--mono);font-size:9px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;">Search pattern</div>
+      <div class="prow"><label>Pattern</label>
+        <select id="sr_type" title="Canned search-pattern generator (à la Project-11 track_patterns)">
+          <option value="expbox" selected>Expanding box</option>
+          <option value="sector">Sector</option>
+          <option value="parallel">Parallel</option>
+        </select></div>
+      <div class="prow"><label>Heading°</label><input type="number" id="sr_heading" value="0" min="0" max="359" step="5" title="Initial leg bearing (°true)"/></div>
+      <div class="prow"><label>Turn</label>
+        <select id="sr_turn" title="Direction the pattern rotates / steps">
+          <option value="1" selected>CW</option><option value="-1">CCW</option>
+        </select></div>
+      <!-- Expanding box -->
+      <div class="prow sr-expbox"><label>Leg step m</label><input type="number" id="sr_step" value="8" min="1" step="2" title="First leg length; each pair of legs grows by this."/></div>
+      <div class="prow sr-expbox"><label>Legs</label><input type="number" id="sr_legs" value="10" min="2" max="60" step="1" title="Number of legs in the spiral"/></div>
+      <!-- Sector -->
+      <div class="prow sr-sector" style="display:none"><label>Radius m</label><input type="number" id="sr_radius" value="20" min="5" step="5" title="Leg length from the datum (triangle side)"/></div>
+      <div class="prow sr-sector" style="display:none"><label>Sectors</label><input type="number" id="sr_sectors" value="3" min="1" max="12" step="1" title="Number of triangular passes"/></div>
+      <div class="prow sr-sector" style="display:none"><label>Rotate°</label><input type="number" id="sr_rotate" value="120" min="10" max="180" step="10" title="Bearing rotation between passes"/></div>
+      <!-- Parallel -->
+      <div class="prow sr-parallel" style="display:none"><label>Lane len m</label><input type="number" id="sr_length" value="30" min="5" step="5" title="Length of each parallel lane"/></div>
+      <div class="prow sr-parallel" style="display:none"><label>Spacing m</label><input type="number" id="sr_spacing" value="5" min="1" step="1" title="Across-track lane spacing"/></div>
+      <div class="prow sr-parallel" style="display:none"><label>Lanes</label><input type="number" id="sr_lanes" value="8" min="1" max="80" step="1" title="Number of lanes"/></div>
+      <div class="prow"><label>Legs</label><span class="phint" id="sr_count" style="color:var(--ink);">--</span></div>
+      <div class="prow"><label>Length</label><span class="phint" id="sr_len" style="color:var(--ink);" title="The pattern's length as drawn (or as routed clear of the chart, once that is worked out)">--</span></div>
+      <button class="ctl small" id="sr_add" disabled>Add to plan</button>
+      <button class="ctl small" id="sr_reset" title="Discard the search pattern being drawn">Reset</button>
+      <div class="phint" id="sr_hint">Click the chart to set the datum (search origin), then tune the params.</div>
     </div>
-    <div class="phint" id="tr_hint">Click the chart to drop transit points (1+). Then Follow.</div>
-    <button class="ctl small" id="tr_read" disabled title="Read the chart along the line now - every chart tile within 5 km of the boat and the line's points, at whatever scale charts it - and keep it, so the passage's chart is on hand (offline too). A route through water no chart covers is refused; this shows where that is before you plan. Moves nothing.">Read chart</button>
-    <div class="phint" id="tr_read_st"></div>
-    <button class="ctl small punch" id="tr_sail" disabled title="Sail the planned passage: section by section, each planned in detail by the console as she nears it and sent ahead of her. She HOLDS at the end of the last section sent if the next is not, and waits at each fuel stop for Continue passage (beside Start). Requires ARM.">Sail passage</button>
-    <div class="phint" id="tr_sail_st"></div>
-    <button class="ctl small" id="tr_plan" disabled title="Plan the line as a PASSAGE (diesel hulls): read the chart along it, plan it coarse over the whole length, and check her fuel leg by leg - each leg between fuel stops must arrive with 20% of the tank. Click a point to make it a fuel stop. The water round each port and the narrow stretches are planned in detail as she comes to them. Moves nothing.">Plan passage</button>
-    <div class="phint" id="tr_plan_st"></div>
+    <div class="ppbody" id="transitPanel" data-tab="transit">
+      <div style="font-family:var(--mono);font-size:9px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;">Transit line</div>
+      <div class="prow"><label>Points</label><span class="phint" id="tr_count" style="color:var(--ink);">0</span></div>
+      <div class="prow"><label>Length</label><span class="phint" id="tr_len" style="color:var(--ink);" title="The drawn line's length, point to point. Follow routes it clear of the chart, which can be longer.">--</span></div>
+      <div class="prow"><label>Time</label><span class="phint" id="tr_time" style="color:var(--ink);" title="The drawn length at the Transit speed (Route rules), through the water - current and wind change it">--</span></div>
+      <button class="ctl small punch" id="tr_follow" disabled title="Drive the transit line now (ENC-routed around obstacles), station-keep at the end. Requires ARM.">Follow</button>
+      <div class="prow" style="gap:4px">
+        <button class="ctl small" id="tr_undo" title="Remove the last transit point" style="flex:1">Undo</button>
+        <button class="ctl small" id="tr_clr" title="Discard the transit line" style="flex:1">Clear</button>
+      </div>
+      <div class="phint" id="tr_hint">Click the chart to drop transit points (1+). Then Follow.</div>
+      <button class="ctl small" id="tr_read" disabled title="Read the chart along the line now - every chart tile within 5 km of the boat and the line's points, at whatever scale charts it - and keep it, so the passage's chart is on hand (offline too). A route through water no chart covers is refused; this shows where that is before you plan. Moves nothing.">Read chart</button>
+      <div class="phint" id="tr_read_st"></div>
+      <button class="ctl small punch" id="tr_sail" disabled title="Sail the planned passage: section by section, each planned in detail by the console as she nears it and sent ahead of her. She HOLDS at the end of the last section sent if the next is not, and waits at each fuel stop for Continue passage (beside Start). Requires ARM.">Sail passage</button>
+      <div class="phint" id="tr_sail_st"></div>
+      <button class="ctl small" id="tr_plan" disabled title="Plan the line as a PASSAGE (diesel hulls): read the chart along it, plan it coarse over the whole length, and check her fuel leg by leg - each leg between fuel stops must arrive with 20% of the tank. Click a point to make it a fuel stop. The water round each port and the narrow stretches are planned in detail as she comes to them. Moves nothing.">Plan passage</button>
+      <div class="phint" id="tr_plan_st"></div>
+    </div>
+    <!-- GO-TO (Andy, 2026-10-13: "add Go-To"). The point is set by a chart click while drawing, or typed; a click
+         ONLY sets it (setGotoTarget) - nothing is commanded until Go, which is doGoTo exactly as the chart menu's
+         "Go-To here" row runs it. The readings are straight-line: the route Go plans goes round the chart's keep-outs. -->
+    <div class="ppbody" id="gotoPanel" data-tab="goto">
+      <div class="ppsub">Go-To a point</div>
+      <div class="prow"><label>Lat</label><input type="number" id="gt_lat" step="0.00001" min="-90" max="90" placeholder="click chart" title="The point's latitude, decimal degrees (north +). Set by a chart click while drawing, or typed."/></div>
+      <div class="prow"><label>Lon</label><input type="number" id="gt_lon" step="0.00001" min="-180" max="180" placeholder="click chart" title="The point's longitude, decimal degrees (east +, so west is negative). Set by a chart click while drawing, or typed."/></div>
+      <div class="prow"><label>Brg · range</label><span class="phint" id="gt_range" style="color:var(--ink);" title="From the boat, straight line">--</span></div>
+      <div class="prow"><label>Time</label><span class="phint" id="gt_time" style="color:var(--ink);" title="The straight-line range at the Transit speed (Route rules). The route Go plans goes round the chart's keep-outs and can be longer.">--</span></div>
+      <button class="ctl small punch" id="gt_go" disabled title="Route her to the point, clear of the chart's keep-outs, and hold there. Requires ARM.">Go</button>
+      <button class="ctl small" id="gt_clr" title="Discard the point">Clear</button>
+      <div class="phint" id="gt_hint">Press Draw and click the chart to set the point, or type it. Then Go.</div>
+    </div>
+    <!-- WAYPOINTS (was WPT): editing the plan itself, so it never arms on its own - a click while editing ADDS a
+         waypoint. Edit arms it; the gestures are the old WPT mode's. -->
+    <div class="ppbody" id="wptPanel" data-tab="wpt">
+      <div class="ppsub">The plan's waypoints</div>
+      <div class="prow"><label>Waypoints</label><span class="phint" id="wp_n" style="color:var(--ink);">--</span></div>
+      <div class="prow"><label>Survey lines</label><span class="phint" id="wp_lines" style="color:var(--ink);">--</span></div>
+      <div class="prow"><label>Length</label><span class="phint" id="wp_len" style="color:var(--ink);" title="Waypoint to waypoint, in plan order">--</span></div>
+      <div class="phint" id="wp_hint">Press Edit, then: drag a waypoint to move it, click one to delete it, click open water to add one, SHIFT-click a survey line to delete it. Edit a punched plan before Upload.</div>
+    </div>
+    <div class="pprules" id="pp_rules">
+      <div class="pprules-head" id="pp_rules_head" title="What every behavior routes by - Go-To, RTH, transit, search and survey. Click to fold or open."><span>Route rules</span><span class="pprsum"></span></div>
+      <div class="pprules-body">
+        <div class="prow punchsep"><label>Min depth m</label><input type="number" id="sp_mindepth" value="2" min="0" max="500" step="0.5" title="MINIMUM WATER for every route - Go-To, RTH, transit, search and survey alike - and the shallow edge of survey coverage. The floor actually used is the deeper of this and the hull's own (draft + under-keel clearance), so a lower number here cannot narrow her clearance. Max depth (Survey tab) is coverage only: deep water is never a keep-out."/></div>
+        <div class="prow"><label>Water m</label>
+          <span style="display:flex;gap:3px;align-items:center;">
+            <input type="number" id="sp_water" step="0.05" placeholder="auto" title="Live water level above chart datum (LWD in the Great Lakes, MLLW in the oceans), ADDED to charted depths. Blank = auto from the nearest NOAA tide station; type a value to override."/>
+            <button class="ctl small" id="sp_water_ref" style="width:22px;height:22px;padding:0;font-size:13px;" title="Refresh from the nearest tide station">&#8635;</button>
+          </span></div>
+        <div class="phint" id="sp_water_note">tide station: --</div>
+        <div class="prow"><label>Buffer m</label><input type="number" id="sp_buffer" value="3" min="0" max="200" step="1" title="Keep-clear buffer around every nogo zone. SHARED — this is the buffer all behaviors (Go-To / RTH / search / survey) route clear by."/></div>
+        <div class="prow"><label>Transit kn</label>
+          <select id="sp_spd_transit" title="Speed on everything that is not coverage and not a turn: the approach out to the survey area, hops between separated regions, and the Go-To / RTH / Transit behaviors. Whole knots, COMMANDED through the water: the current and the wind make her speed over the ground differ."></select></div>
+        <div class="prow" title="HOW A ROCK IN A BUOYED CHANNEL IS PASSED by the Rule 9 lane - a charted rock, wreck or obstruction, a small shoal patch or islet with water all round it. It is never the channel's edge: the lane holds its line and passes it to EITHER side. LAND gives it the lane's own clearance from a bank (twice the buffer and two meters, or more). SHOAL gives it only the keep-clear - the buffer, or the guard's standoff in a set - and two meters (half the buffer where that is more), as a shallow point of the sea bottom: any spot of water shallower than the floor. Anything built - a pier, a pile, a dolphin, a float, a bridge support - and every buoy or beacon is the bank either way - except a fish weir or other structure charted only as an obstruction, which cannot be told from a rock and is passed as one. This is the lane between SINGLE channel marks only: in a charted channel, between buoy pairs or in unmarked narrow water a rock is passed at the ordinary keep-clear either way. For trying both: the next Go-To, RTH, transit, survey approach or leg into a later survey is planned with what this says (a fresh page starts on Land)."><label>Channel rocks</label><select id="enf_rock"><option value="land" selected>Land</option><option value="bottom">Shoal</option></select></div>
+        <div class="enf" title="Which ENC features form the NOGO model — SHARED by every behavior (Go-To / RTH / search / survey), not just Punch Out. Toggling these re-routes all behaviors.">
+          <label><input type="checkbox" id="enf_land" checked/>Land / shore / docks</label>
+          <label><input type="checkbox" id="enf_depth" checked/>Water shallower than floor</label>
+          <label><input type="checkbox" id="enf_haz" checked/>Aids &amp; hazards</label>
+          <label><input type="checkbox" id="enf_area"/>Dredged / restricted</label>
+          <label title="Charted WRECKS - wreck points and wreck areas - as keep-outs. Uncheck to DISREGARD them: every behavior (survey, Go-To, RTH, search) may then route and survey over a charted wreck, so check the chart and the water first. It only ever narrows: with Aids &amp; hazards off (wreck points) or Land / shore / docks off (wreck areas), wrecks are off whatever this says."><input type="checkbox" id="enf_wreck" checked/>Shipwrecks</label>
+          <label title="The SURVEY's channel rules: a navigation channel a survey line runs all the way ACROSS is cut out of the coverage, and a channel no coverage line enters is closed to the reversal turns and the line order. Uncheck to DISREGARD them: lines keep their coverage across the channel and turns may use channel water - survey in traffic only with that in mind. Survey only: Go-To, RTH and transits still keep right in a channel (COLREGS Rule 9)."><input type="checkbox" id="enf_chan" checked/>Shipping channels</label>
+        </div>
+      </div>
+    </div>
+    <div class="ppplan" id="pp_plan"><span class="ppsum">plan: empty</span><button class="ctl small" id="ln_clr" title="Delete the whole plan: every waypoint and planned line" style="flex:0 0 auto">CLR&nbsp;PLAN</button></div>
   </div>
 
   <!-- ROC / HOME card: track each Remote Operations Center (shore or ship/Mothership)
@@ -657,12 +737,12 @@
     #rocPanel input:disabled{opacity:.55;}
   </style>
   <!-- left:186px is LOAD-BEARING, not styling. `.panel` defaults every panel to
-       left:14px/top:96px, which is where the MODE panels (SURV / BND / SRCH / TRAN)
+       left:14px/top:96px, which is where the PATH PLANNING card sits (the four mode panels until 2026-10-13)
        sit; the ROC card is a `.panel` too, so on a fresh profile it opened exactly on
        top of them. That collision is why the ROC button used to cancel the chart mode.
-       14 + 158 (the mode panels' width) = 172, so this clears them with a 14px gap and
-       the mode can be left alone. A dragged position is persisted and overrides it. -->
-  <div class="panel" id="rocPanel" style="display:none;width:252px;left:186px;">
+       14 + 236 (the Path planning card's width) = 250, so 264 clears it with a 14px gap
+       and the mode can be left alone. A dragged position is persisted and overrides it. -->
+  <div class="panel" id="rocPanel" style="display:none;width:252px;left:264px;">
     <div class="phead" id="rocPanelHead" title="Drag to move">ROC · HOME</div>
     <div class="phint">Remote Operations Centers. Click + Shore or + Ship, then click the chart to
       place it. Edit its position (and a ship's heading/speed) here, then Confirm to start it —
@@ -676,6 +756,10 @@
     <div class="phint" id="roc_hint" style="margin-top:5px;">Pick a ROC's HOME radio to anchor Return-to-Home to it.</div>
   </div>
 
+  <!-- THE CHART SAYS WHEN A CLICK DRAWS (2026-10-13). Its own pill at the top of the chart, not in the readout strip:
+       on a single window the Path planning card sits over the strip's left end, and with the card in the controls
+       window this is the only word on the chart that a click will draw. -->
+  <div class="drawtag" id="r_draw" style="display:none" title="The chart is armed by the Path planning card: a click draws. Esc (or Draw on the card) puts it back to panning."></div>
   <div class="readout">
     <span>cursor <b id="r_cursor">--</b></span>
     <span>z <b id="r_zoom">13</b></span>
@@ -751,31 +835,9 @@
     <input id="c_approach" type="number" value="1" min="0.5" max="50" step="0.5"
       title="Waypoint approach radius — the ASV line-follows to within this of each turn (~1 m recommended). Separate from arrival radius / Punch-Out buffer. Applies live to the sim."
       style="width:44px;background:var(--abyss);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:11px;padding:6px 4px;border-radius:2px;">
-    <label style="font-family:var(--mono);font-size:9px;color:var(--ink-faint);text-transform:uppercase;" title="Nogo keep-clear buffer: how far the ASV stays off every charted structure / shallow when routing (Go-To / RTH / search / survey). Lower it (e.g. 3-5 m) to thread a tight marina; raise it for more standoff. Shared with the SURV panel Buffer; re-routes live.">Buf m</label>
-    <input id="c_buffer" type="number" value="3" min="0" max="200" step="1"
-      title="Nogo keep-clear buffer (m) — the tightness the ASV threads between piers. Lower for tight marinas (3-5 m), raise for more standoff. SHARED by every behavior; re-routes live."
-      style="width:44px;background:var(--abyss);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:11px;padding:6px 4px;border-radius:2px;">
-    <!-- MIN DEPTH, and it is a ROUTING FLOOR for every behavior now, not a survey setting.
-         Andy, 2026-09-07: "On GOTO selection without survey in place there is no option for
-         speed selection or depth buffers." Both of those lived only in the SURV card, which
-         is closed unless you are planning a survey - so a bare Go-To could be given neither.
-         Mirrored with the SURV panel's Min depth through setMinDepth(), exactly as Buf m is
-         mirrored with the panel's Buffer. The effective floor is the DEEPER of this and the
-         hull's own (see nogoDR in chart.js); Max depth stays survey-coverage-only, because
-         deep water is not a hazard and enforcing it would make a deep channel unroutable. -->
-    <label style="font-family:var(--mono);font-size:9px;color:var(--ink-faint);text-transform:uppercase;" title="Minimum water the ASV will route through, for EVERY behavior (Go-To / RTH / search / survey) — not just survey coverage. The floor actually used is the deeper of this and the hull's own navigability limit (draft + under-keel clearance), so setting it lower than the hull needs cannot narrow its clearance. Shared with the SURV panel Min depth; re-routes live.">Min dep m</label>
-    <input id="c_mindepth" type="number" value="2" min="0" max="500" step="0.5"
-      title="Minimum water depth to route through (m) — SHARED by every behavior. The hull's own floor is the lower bound; ask for more water here and every route respects it. Max depth is survey-coverage only (deep water is never a keep-out)."
-      style="width:44px;background:var(--abyss);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:11px;padding:6px 4px;border-radius:2px;">
-    <!-- TRANSIT SPEED. The other two roles (survey, turn) are survey concepts and stay in the
-         SURV card; TRANSIT is the one that governs Go-To, RTH and a drawn Transit, so it is
-         the one an operator needs with no survey drawn. Mirrored with #sp_spd_transit through
-         setRoleSpeed(). (The single #c_speed selector removed on 2026-08-31 was the OLD
-         one-speed-for-everything control; this is not that coming back.) Whole knots, filled
-         from the vessel like the panel's three (fillSpeedSelects). -->
-    <label style="font-family:var(--mono);font-size:9px;color:var(--ink-faint);text-transform:uppercase;" title="Speed for everything that is not survey coverage and not a reversal: Go-To, RTH, a drawn Transit, the approach out to a survey and hops between coverage regions. Shared with the SURV panel's Transit kn.">Transit kn</label>
-    <select id="c_spd_transit" title="TRANSIT speed in whole knots — governs Go-To, RTH, Transit, the approach to a survey and region hops. COMMANDED through the water: the current and the wind make her speed over the ground differ. Shared with the SURV panel's Transit kn; applies live, mid-run included." style="background:var(--abyss);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:11px;padding:6px 4px;border-radius:2px;">
-    </select>
+    <!-- BUF M, MIN DEP M AND TRANSIT KN LEFT THIS BAR on 2026-10-13 (Andy: "Consider removing the repeats in the command
+         bar"). They were put here on 2026-09-07 because they lived only on the SURV card, which was closed unless a survey
+         was being drawn; the Path planning card is always loaded now and carries them under Route rules on every tab. -->
     <select id="c_completion" title="What the ASV does at the end of the plan (Survey / search route): RTH = chain the Return-to-Home behavior (ENC-routed) and station-keep at home (default); Complete = stop; Loiter = station-keep at the last waypoint; Repeat = loop the route until Stop." style="background:var(--abyss);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:11px;padding:6px 4px;border-radius:2px;">
       <option value="rth" selected>RTH</option><option value="complete">Complete</option><option value="loiter">Loiter</option><option value="repeat">Repeat</option>
     </select>
@@ -923,21 +985,22 @@
     <div class="qh"><b>Quick Start &mdash; Survey Planning</b><span class="qx" id="qsClose" title="Close">&times;</span></div>
     <div class="qb">
       <ol>
-        <li><b>Plan a survey area.</b> Click <span class="tag">SURV</span>, then click three points on the chart:
+        <li><b>The Path planning card</b> holds every way a path is drawn: pick a tab (<span class="tag">Survey</span>, <span class="tag">Search</span>, <span class="tag">Transit</span>, <span class="tag">Go-To</span>, <span class="tag">Waypoints</span>) and press <span class="tag">Draw</span> to make chart clicks draw for it; <b>Esc</b> (or Draw again) puts the chart back to panning. <b>Route rules</b> under every tab is what every behavior routes by: min depth, water, buffer, transit speed and the chart features kept clear of.</li>
+        <li><b>Plan a survey area.</b> On the <span class="tag">Survey</span> tab press <span class="tag">Draw</span>, then click three points on the chart:
           <ol type="a">
             <li><b>Start corner</b> (A)</li>
             <li><b>Opposite / diagonal corner</b> (B) &mdash; sets each line's length and the area width</li>
             <li><b>Spacing &amp; direction</b> (C) &mdash; distance from A sets the line spacing; its bearing sets the line orientation</li>
           </ol>
           Parallel survey lines fill the box automatically (boustrophedon). <b>Drag A / B / C</b> to adjust &mdash; spacing, line count and dimensions update live, or <b>type a Spacing</b> to force it. Click <span class="tag">Add&nbsp;to&nbsp;plan</span> to commit.</li>
-        <li><b>Survey area (optional).</b> Click <span class="tag">BND</span> and drop points to draw <i>any</i> survey-area polygon (click the first point to close; drag vertices to adjust). The pattern's lines are clipped to that area &mdash; concave shapes split legs correctly.</li>
+        <li><b>Survey area (optional).</b> On the Survey tab press <span class="tag">Draw</span> beside <b>Area</b> and drop points to draw <i>any</i> survey-area polygon (click the first point to close; drag vertices to adjust). The pattern's lines are clipped to that area &mdash; concave shapes split legs correctly.</li>
         <li><b>Punch Out (optional).</b> Click <span class="tag">Punch&nbsp;Out</span> to trim the survey lines to the <b>same nogo zones every behavior avoids</b> (off land / docks, aids &amp; hazards, water below the 1&nbsp;m floor) &mdash; segments clip cyan, transits auto-route amber, unroutable flag red. The survey <b>Min / Max depth</b> is an extra <i>coverage</i> window on top of the nogo (survey only 3&ndash;10&nbsp;m, say). <b>Buffer</b> and the <b>enforce toggles</b> are <i>shared</i> &mdash; changing them re-routes Go-To / RTH / search too. Composes with the survey-area boundary. <span class="tag">CHRT</span> / <span class="tag">NOGO</span> show the chart / nogo overlays. Planning aid only &mdash; verify the plan.</li>
-        <li><b>Search pattern (alternative to a survey).</b> Click <span class="tag">SRCH</span>, pick a pattern (<b>Expanding box</b> / <b>Sector</b> / <b>Parallel</b>), click the chart to set the <b>datum</b> (drag the D handle to move it), tune the params, then <span class="tag">Add&nbsp;to&nbsp;plan</span>. Legs clip to the nogo zones (cyan kept / amber routed-around / red blocked). The ASV runs it via the same Arm / Upload / Start flow.</li>
+        <li><b>Search pattern (alternative to a survey).</b> On the <span class="tag">Search</span> tab, pick a pattern (<b>Expanding box</b> / <b>Sector</b> / <b>Parallel</b>), click the chart to set the <b>datum</b> (drag the D handle to move it), tune the params, then <span class="tag">Add&nbsp;to&nbsp;plan</span>. Legs clip to the nogo zones (cyan kept / amber routed-around / red blocked). The ASV runs it via the same Arm / Upload / Start flow.</li>
         <li><b>NOGO zones (automatic).</b> On startup the console extracts ENC nogo boundaries for the operating area &mdash; shoreline, manmade features, and water shallower than <b>1&nbsp;m corrected</b> (charted depth + live water level). <span class="tag">NOGO</span> shows / hides the red overlay. <b>Every</b> behavior avoids them: <span class="tag">Go-To</span> and <span class="tag">RTH</span> route around them (or refuse an unreachable target), and search / survey legs clip to clear water. If there's no ENC coverage the console warns and routes direct &mdash; verify the plan.</li>
-        <li>Or click <span class="tag">WPT</span> to place / remove individual waypoints.</li>
-        <li>Set the <b>arrival radius</b>, <b>speed</b> (Low / Survey / High), and <b>completion</b> in the command bar &mdash; <b>RTH</b> (Return-to-Home at the end, ENC-routed, then station-keep &mdash; the default), <b>Complete</b> (stop at the end), <b>Loiter</b> (station-keep at the last waypoint), or <b>Repeat</b> (loop the route until Stop). Applies on the next Upload; shown as <i>Type</i> and <i>End mode</i> in the <b>Run</b> section of the <b>Mission Status</b> card.</li>
+        <li>Or, on the <span class="tag">Waypoints</span> tab, press <span class="tag">Edit</span> to move, remove or add individual waypoints.</li>
+        <li>Set the <b>arrival radius</b> and <b>completion</b> in the command bar (the speeds are on the Survey tab and under Route rules) &mdash; <b>RTH</b> (Return-to-Home at the end, ENC-routed, then station-keep &mdash; the default), <b>Complete</b> (stop at the end), <b>Loiter</b> (station-keep at the last waypoint), or <b>Repeat</b> (loop the route until Stop). Applies on the next Upload; shown as <i>Type</i> and <i>End mode</i> in the <b>Run</b> section of the <b>Mission Status</b> card.</li>
         <li>Command a <b>survey / search</b> plan: <span class="tag">Arm</span> &rarr; <span class="tag">Upload</span> &rarr; <span class="tag">Start</span>. Use <span class="tag">Pause</span> / <span class="tag">Stop</span> / <span class="tag">E-STOP</span> as needed.</li>
-        <li><b>Transit (no survey needed).</b> Click <span class="tag">TRAN</span>, click the chart to draw a single- or multi-segment transit line, then <span class="tag">Arm</span> and press <span class="tag">Follow</span> &mdash; the ASV drives the line clear of ENC obstacles and station-keeps at the end. <span class="tag">Go-To</span> (single point), <span class="tag">Hold</span>, and <span class="tag">RTH</span> are the other plan-free behaviors &mdash; all available once Armed, no survey plan required.</li>
+        <li><b>Transit (no survey needed).</b> On the <span class="tag">Transit</span> tab, click the chart to draw a single- or multi-segment transit line, then <span class="tag">Arm</span> and press <span class="tag">Follow</span> &mdash; the ASV drives the line clear of ENC obstacles and station-keeps at the end. <span class="tag">Go-To</span> (single point: its own tab on the card, or right-click the chart), <span class="tag">Hold</span>, and <span class="tag">RTH</span> are the other plan-free behaviors &mdash; all available once Armed, no survey plan required.</li>
       </ol>
       <div class="qnote">The RC transmitter is master &mdash; Sw A &amp; the RC E-STOP are the true failsafe.</div>
     </div>
@@ -1205,8 +1268,7 @@ const uiPeers = new Map();         // chart window: controls page id -> when las
 let uiYielded = false;             // controls window: it stepped aside for an older one
 // Every pop-out this console has. There is no Mission entry: the Mission readout is a
 // section of #vcard, so it rides across on that card's mirror.
-const UI_BRIDGED = [".controls", "#linePanel", "#boundPanel", "#searchPanel",
-                    "#transitPanel", "#rocPanel", "#lineTablePanel", "#aisTablePanel",
+const UI_BRIDGED = [".controls", "#pathPanel", "#rocPanel", "#lineTablePanel", "#aisTablePanel",
                     "#aisReopen", "#chartPanel",
                     "#alertCard"];                    // the alerts card (2026-09-28): the messages and the buttons that answer them
 document.body.classList.add("ui-" + UIROLE);
@@ -1218,7 +1280,7 @@ document.body.classList.add("ui-" + UIROLE);
   // MOVING BASE belongs to the chart: it narrates a chart movement, and the port picker
   // that starts it lives on the .topbar, which this window hides.
   "body.ui-controls #portMove,"+
-  "body.ui-controls #vReopen,body.ui-controls #helpBtn,body.ui-controls #aisTip,"+
+  "body.ui-controls #vReopen,body.ui-controls #helpBtn,body.ui-controls #aisTip,body.ui-controls #r_draw,"+
   // the context menu belongs to the CHART: it is opened by a right-click on #map (hidden
   // here) and every row acts on a chart coordinate, so there is nothing for it to act on.
   "body.ui-controls #chartMenu{display:none!important;}"+
@@ -1234,6 +1296,10 @@ document.body.classList.add("ui-" + UIROLE);
   // chart window's own code to write into.
   "body.ui-controls #vcard{display:none!important;}"+
   "body.ui-controls{overflow:hidden;}"+
+  // the Path planning card in its .uicard: the card scrolls, not the panel inside it, and the grip names it
+  "body.ui-controls #pathPanel{max-height:none!important;overflow:visible!important;}"+
+  "body.ui-controls #pathPanel .phead{position:static;cursor:default;margin-top:0;}"+
+  "body.ui-controls #pathPanel .pptitle{visibility:hidden;}"+
   // buttons: a fixed vertical column pinned to the left
   "body.ui-controls .controls{position:fixed!important;left:12px!important;top:12px!important;right:auto!important;"+
     "flex-direction:column!important;flex-wrap:nowrap!important;gap:8px!important;max-height:calc(100vh - 24px);overflow:auto;z-index:6;}"+
@@ -1253,8 +1319,8 @@ document.body.classList.add("ui-" + UIROLE);
   // peer — --single-window, or the controls window closed/crashed — everything shows on
   // main again, so the app is never left without its toolbar.
   "body.ui-split #ctlReopen{display:none!important;}"+
-  "body.ui-split .controls,body.ui-split #linePanel,body.ui-split #boundPanel,body.ui-split #searchPanel,"+
-  "body.ui-split #transitPanel,body.ui-split #rocPanel,body.ui-split #lineTablePanel,body.ui-split #aisTablePanel,"+
+  "body.ui-split .controls,body.ui-split #pathPanel,"+
+  "body.ui-split #rocPanel,body.ui-split #lineTablePanel,body.ui-split #aisTablePanel,"+
   "body.ui-split #chartPanel,"+
   "body.ui-split #aisReopen{display:none!important;}"+
   // THE ALERTS CARD IS IN ONE PLACE (2026-09-28): while a controls window is alive and the operator has it there,
@@ -5381,7 +5447,19 @@ function renderIntent(){
   el.innerHTML = html;
 }
 let runUnsafe = [];                              // uploaded legs that still cross a nogo (flagged red)
-let mode = "pan", saveTimer = null;   // no `activeLine`: the chart highlights runLineIdx
+let mode = "pan", saveTimer = null;
+// THE PATH PLANNING CARD's state (2026-10-13): the tab it shows, the Go-To point and its two folds. Up here beside `mode`
+// because setMode reads pathTab. A TAB is what the card shows; DRAWING is the chart's mode (PATH_TAB_OF names the tab
+// each drawing mode belongs to - the survey AREA is the Survey tab's).
+const PATH_TABS = ["survey", "search", "transit", "goto", "wpt"];
+const PATH_TAB_OF = {survey: "survey", bound: "survey", search: "search", transit: "transit", goto: "goto", wpt: "wpt"};
+const PATH_DRAW = {survey: "survey", search: "search", transit: "transit", goto: "goto", wpt: "wpt"};
+const PATH_TAG = {survey: "SURVEY PATTERN", bound: "SURVEY AREA", search: "SEARCH DATUM", transit: "TRANSIT LINE",
+                  goto: "GO-TO POINT", wpt: "WAYPOINTS"};
+const PATH_TAB_KEY = "asv_path_tab_v1", PATH_FOLD_KEY = "asv_path_fold_v1", PATH_RULES_KEY = "asv_path_rules_fold_v1";
+let pathTab = PATH_TABS.includes(lsGet(PATH_TAB_KEY, "survey")) ? lsGet(PATH_TAB_KEY, "survey") : "survey";
+let pathFold = lsBool(PATH_FOLD_KEY, false), pathRulesFold = lsBool(PATH_RULES_KEY, false);
+let gotoTarget = null;                          // the Go-To tab's point, {lat, lon} or null - in memory, like every draft   // no `activeLine`: the chart highlights runLineIdx
 // CAMP-style 3-click survey pattern: A=start, B=diagonal end, C=spacing/direction
 let pat = {A:null, B:null, C:null, align:0};   // align 0=start 1=center 2=finish
 // THE SURVEY BEING EDITED (sequenced surveys phase 2, 2026-10-02): its id while its drawing is loaded back into the
@@ -5844,21 +5922,17 @@ async function loadMission(){
         if(!mission.speeds[r]) mission.speeds[r] = mission.speed || "survey";
         const el = $("#sp_spd_" + r); if(el) el.value = mission.speeds[r];
       });
-      // ... and the command bar's TRANSIT copy, the same value on a second control (see
-      // setRoleSpeed). Missed here it would open showing the markup default while the panel
-      // showed the truth - the two-controls-one-value trap, on the load path.
-      if($("#c_spd_transit")) $("#c_spd_transit").value = mission.speeds.transit;
       // The operator MIN DEPTH is a routing floor now, so it is restored the same way the
-      // buffer is below: onto both controls AND into V, which is what nogoDR() reads.
+      // buffer is below: onto the card's control AND into V, which is what nogoDR() reads.
       V.OPER_MIN_DEPTH_M = mission.min_depth_m ?? 2;
-      $("#sp_mindepth").value = V.OPER_MIN_DEPTH_M; $("#c_mindepth").value = V.OPER_MIN_DEPTH_M;
+      $("#sp_mindepth").value = V.OPER_MIN_DEPTH_M;
       updateSpeedNote();
       $("#c_completion").value = mission.completion || "rth";
-      // Apply the persisted nogo buffer to both controls + the shared model, but never
+      // Apply the persisted nogo buffer to the card's control + the shared model, but never
       // BELOW the active vessel's own planning.nogo_buffer_m - a plan saved against a
       // small boat must not quietly narrow a big one's clearance.
       nogo.buffer = bufferFloor(mission.buffer_m);
-      $("#c_buffer").value = nogo.buffer; $("#sp_buffer").value = nogo.buffer;
+      $("#sp_buffer").value = nogo.buffer;
       // The lead controls, restored onto the card. The MODE first: the two numbers mean
       // different lengths depending on it, and a mode restored after them would leave the
       // note quoting meters for a duration until the next keystroke.
@@ -5907,8 +5981,7 @@ function applyVesselToUI(v){
   // its own file demands. The operator can always widen it beyond the floor.
   if(nogo.buffer < V.NOGO_BUFFER_M){
     nogo.buffer = bufferFloor(nogo.buffer);
-    const cb=$("#c_buffer"), sb=$("#sp_buffer");
-    if(cb) cb.value = nogo.buffer;
+    const sb=$("#sp_buffer");
     if(sb) sb.value = nogo.buffer;
   }
   // nogo navigability floor = draft + under-keel clearance (deep-draft vessels
@@ -6589,6 +6662,7 @@ function render(){
   drawTransit(toScreen);
   drawPassage(toScreen);
   drawSail(toScreen);
+  drawGotoTarget(toScreen);
   // the uploaded ENC-routed run path (approach from the boat + obstacle detours),
   // so the operator sees the real path the ASV will take, clear of land. Only the
   // portion STILL AHEAD of the boat is drawn (from the boat to the next unreached
@@ -9864,12 +9938,12 @@ function seedPatternFromBoundary(){          // convenience: lines appear as soo
 function closeBoundary(){
   if(boundary.length < 3){ $("#bnd_hint").textContent="Need at least 3 points to close the area."; return; }
   boundaryClosed = true; boundDrag = null; patClip = null; seedPatternFromBoundary();
-  $("#bnd_hint").textContent = "Area set. Draw / adjust the SURV pattern; lines clip to this area.";
+  $("#bnd_hint").textContent = "Area set. Draw / adjust the survey pattern; lines clip to this area.";
   updatePatReadout(); saveMission(); render();
 }
 function clearBoundary(){
   boundary = []; boundaryClosed = false; boundDrag = null; patClip = null;
-  $("#bnd_hint").textContent = "Click the chart to drop boundary points; click the first point to close.";
+  $("#bnd_hint").textContent = "Press Draw, then click the chart to drop boundary points; click the first point to close.";
   updatePatReadout(); saveMission(); render();
 }
 // boundary overlay visibility toggle (persisted per browser)
@@ -9986,7 +10060,7 @@ function computeSearchNogo(){
 function scheduleSearchNogo(){                    // debounced (routing is a touch heavy)
   searchRouted = null;
   clearTimeout(searchNogoTimer);
-  if(!search.datum || mode!=="search" || !nogo.ready) return;
+  if(!search.datum || !searchShown() || !nogo.ready) return;
   searchNogoTimer = setTimeout(()=>{ computeSearchNogo();
     $("#sr_count").textContent = search.datum ? routeCountLabel() : "--"; render(); }, 180);
 }
@@ -9996,7 +10070,7 @@ function routeCountLabel(){
   return searchRoute().length+" wpts";
 }
 function drawSearch(toScreen){
-  if(mode!=="search" || !search.datum) return;
+  if(!searchShown() || !search.datum) return;
   const raw=searchRoute();
   const drawPoly=(pts,close)=>{ ctx.beginPath(); pts.forEach((p,i)=>{ const s=toScreen(p.lat,p.lon); i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y); }); if(close)ctx.closePath(); ctx.stroke(); };
   ctx.save();
@@ -10030,8 +10104,9 @@ function updateSearchPanel(){
   $("#sr_hint").textContent = search.datum
     ? (nogo.ready ? "Drag the D datum or tune params; legs clip to nogo (cyan kept / amber routed / red blocked). Add to plan."
                   : "Drag the D datum or tune params; Add to plan. (Nogo not loaded — route not ENC-checked.)")
-    : "Click the chart to set the datum (search origin).";
+    : "Press Draw, then click the chart to set the datum (search origin).";
   scheduleSearchNogo();
+  pathReadings();
 }
 function resetSearch(){ search.datum=null; searchDrag=false; searchRouted=null; clearTimeout(searchNogoTimer); updateSearchPanel(); render(); }
 function commitSearch(){
@@ -11037,7 +11112,8 @@ function updateTransitPanel(){
   $("#tr_hint").textContent = transit.length
     ? (S.armed ? "Follow to drive the transit (ENC-routed), or click to add more points. Click a point to make it a fuel stop."
                : "ARM to Follow. Click to add more points; click a point to make it a fuel stop.")
-    : "Click the chart to drop transit points (1+). Then Follow.";
+    : "Press Draw, then click the chart to drop transit points (1+). Then Follow.";
+  pathReadings();
 }
 // ── THE CHART ALONG A ROUTE (2026-10-11, step 3 of the long-transit plan) ──────────────────────────────────────────
 // Andy: read a corridor, not a box - for a passage, the tiles within a few km of the route (asv_console.py
@@ -13883,7 +13959,7 @@ function extendLead(from, toward, want, ref, ko, buf){
 async function punchOut(){
   if(punchBusy) return;
   const sp=currentPattern();
-  if(!sp){ $("#sp_hint").textContent="Draw a survey pattern first (SURV, then 3 clicks)."; return; }
+  if(!sp){ $("#sp_hint").textContent="Draw a survey pattern first (Survey tab, Draw, then 3 clicks)."; return; }
   const surveyDr=depthRange();                     // survey COVERAGE window (panel)
   const dr={min: Math.max(V.NOGO_MIN_DEPTH_M, surveyDr.min), max: surveyDr.max};  // >= the fixed nogo floor
   applyNogoControls();                             // fold panel buffer/enforce into the shared nogo
@@ -14876,8 +14952,10 @@ window.addEventListener("mouseup", e=>{
     if(hit >= 0) toggleFuelStop(hit);
     else { transit.push({lat:ll.lat, lon:ll.lon}); transitEdited(); }
     updateTransitPanel(); render();
-  // (the "goto" and "spawn" MODES are gone with their toolbar buttons — the right-click
-  //  menu carries the point, so there was nothing left to arm and no way to reach them.)
+  } else if(mode === "goto"){                    // the Go-To tab's point: SET here, commanded only by the card's Go
+    setGotoTarget(ll);
+  // (The "goto" and "spawn" MODES of 2026-08 went with their toolbar buttons: a click there COMMANDED. The Go-To tab's
+  //  mode above only places the point; the chart menu's "Go-To here" still commands at the click, as it always has.)
   } else if(mode === "measure"){
     // CLICK, MOVE, CLICK. The first click anchors; the leg then follows the pointer
     // (mousemove, below) until a second click fixes its far end. It rides this handler's
@@ -14979,18 +15057,10 @@ function setMode(m){
   if(mode !== "measure") measPend = null;         // ... and leaving the ruler drops a half-drawn leg
                                                   // (COMPLETED legs stay: they are annotations on the
                                                   //  chart, not a mode's working state)
-  // pattern + boundary persist across mode switches (they compose); use Reset /
-  // Clear BND to discard them explicitly.
-  $("#wptBtn").classList.toggle("mode-on", mode==="wpt");
-  $("#lineBtn").classList.toggle("mode-on", mode==="survey");
-  $("#bndBtn").classList.toggle("mode-on", mode==="bound");
-  $("#srchBtn").classList.toggle("mode-on", mode==="search");
-  $("#tranBtn").classList.toggle("mode-on", mode==="transit");
-  showPanel($("#linePanel"), mode==="survey");   // draggable: re-clamp when shown ("flex"
-                                                // is now derived - see showPanel)
-  $("#boundPanel").style.display = mode==="bound" ? "flex" : "none";
-  $("#searchPanel").style.display = mode==="search" ? "flex" : "none";
-  $("#transitPanel").style.display = mode==="transit" ? "flex" : "none";
+  // pattern + boundary persist across mode switches (they compose); Reset / Clear on the card discard them.
+  // A DRAWING MODE BRINGS ITS TAB (2026-10-13): the card shows what the chart is drawing - a survey put back on the
+  // card from its table (✎) arms "survey", and must not leave the card showing Transit.
+  if(PATH_TAB_OF[mode] && PATH_TAB_OF[mode] !== pathTab){ pathTab = PATH_TAB_OF[mode]; lsSet(PATH_TAB_KEY, pathTab); }
   mapEl.style.cursor = mode==="pan" ? "" : "crosshair";
   if(mode==="survey") updatePatReadout();
   if(mode==="search"){                             // seed a datum so a preview appears
@@ -14998,6 +15068,7 @@ function setMode(m){
     updateSearchPanel();
   }
   if(mode==="transit") updateTransitPanel();
+  pathRender();                                    // the card's tab, its Draw button and the chart's DRAWING tag
   render();
 }
 // --- the chart context menu ------------------------------------------------ //
@@ -15088,13 +15159,13 @@ function identifyAt(ll){
     if(!seg || seg.length < 2) continue;
     scan(seg.map(at), false, "preview",
       "the PATTERN PREVIEW, which is NOT in the plan — cyan, redrawn from the A / B / C anchors every time they move. "
-      + "It is not committed and the vessel will not run it: press ADD TO PLAN to commit it, or SURV then RESET to "
+      + "It is not committed and the vessel will not run it: press ADD TO PLAN to commit it, or Reset on the Survey tab to "
       + "clear the anchors and the preview with them.");
   }
   // 4. the survey-area boundary the pattern is clipped to (the LIVE one the page holds, not the saved copy)
   if((boundary || []).length > 1)
     scan(boundary.map(at), !!boundaryClosed, "boundary",
-      "the SURVEY AREA boundary — the polygon the pattern is clipped to, not a line the vessel runs. CLR BND clears it.");
+      "the SURVEY AREA boundary — the polygon the pattern is clipped to, not a line the vessel runs. Clear on the Survey tab's Area row clears it.");
   // 5. a measurement the operator drew - MAGENTA, the mariner's own ink, never uploaded
   for(const m of measures.concat(measPend && measPend.b ? [measPend] : [])){
     if(!m || !m.a || !m.b) continue;
@@ -15123,7 +15194,7 @@ function identifyAt(ll){
     for(const L of (ko.lines || [])) if(L && (L.pts || []).length > 1 && (!L.bb || inBB(en, L.bb, reach)))
       scan(L.pts.map(enAt), false, "keepout",
         "a KEEP-OUT the console routes around — a charted structure or shoal edge, red. It is not something the "
-        + "vessel runs; the plan is kept clear of it by the buffer on the SURV card.");
+        + "vessel runs; the plan is kept clear of it by the Buffer under the Path planning card's Route rules.");
     for(const A of (ko.polys || [])) if(A && (A.ring || []).length > 2 && (!A.bb || inBB(en, A.bb, reach)))
       scan(A.ring.map(enAt), true, "keepout",
         "the edge of a KEEP-OUT AREA — water the console will not take the vessel into, red.");
@@ -15301,19 +15372,137 @@ window.addEventListener("keydown", e=>{
   if(measPend){ measPend = null; render(); return; }
   if(measures.length){ clearMeasures(); return; }
   if(mode === "measure") setMode("pan");
+  else pathEscape();                               // the Path planning card's drawing (2026-10-13)
 });
 
-$("#wptBtn").onclick = ()=>setMode("wpt");
-$("#lineBtn").onclick = ()=>setMode("survey");
-$("#bndBtn").onclick = ()=>setMode("bound");
-$("#srchBtn").onclick = ()=>setMode("search");
+// --- the Path planning card ---------------------------------------------------------------------------------------- //
+// ONE card, always loaded, for every way a path is drawn (2026-10-13; the markup's note has Andy's words). The rules:
+//  * the TAB is what the card shows and DRAWING is the chart's mode, apart on purpose: with the card up all the time, a
+//    tab that armed the chart would make every click meant to look at the chart a point in a plan;
+//  * a tab arms the chart by itself only when it has nothing drawn yet - the old chip's first click - and Waypoints
+//    never does, because a click there ADDS a waypoint to the plan;
+//  * Esc, Add to plan, Follow, Sail passage and Go end the drawing, and the chart says while it is drawing (#r_draw).
+function pathDrawing(){ return !!PATH_TAB_OF[mode]; }
+function pathEmpty(tab){
+  return tab === "survey" ? !pat.A
+       : tab === "search" ? !search.datum
+       : tab === "transit" ? !transit.length
+       : tab === "goto" ? !gotoTarget
+       : false;                                     // Waypoints: never armed by choosing it
+}
+function pathSelect(tab){
+  if(!PATH_TABS.includes(tab)) return;
+  if(tab === pathTab){ pathRender(); return; }      // the tab already showing: nothing changes
+  pathTab = tab; lsSet(PATH_TAB_KEY, tab);
+  const want = PATH_DRAW[tab];
+  if(pathEmpty(tab)){ if(mode !== want) setMode(want); else pathRender(); }
+  else if(pathDrawing()) setMode("pan");            // drawing for another tab: stop, rather than draw for this one
+  else pathRender();
+  if(tab === "search") updateSearchPanel();         // its preview is drawn while its tab shows (searchShown)
+  else if(tab === "transit") updateTransitPanel();
+  render();
+}
+function pathDraw(){ if(pathDrawing()) setMode("pan"); else setMode(PATH_DRAW[pathTab]); }
+function pathStopDrawing(){ if(pathDrawing()) setMode("pan"); }
+function pathEscape(){ if(!pathDrawing()) return false; setMode("pan"); return true; }
+// The search pattern is a PREVIEW: drawn (and routed clear of the chart) while its tab shows, drawing or not.
+function searchShown(){ return mode === "search" || pathTab === "search"; }
+// THE GO-TO POINT. A chart click while drawing, or the typed fields, SET it; nothing reaches the boat until Go.
+function setGotoTarget(ll){
+  gotoTarget = (ll && Number.isFinite(+ll.lat) && Number.isFinite(+ll.lon)) ? {lat: +ll.lat, lon: +ll.lon} : null;
+  const la = $("#gt_lat"), lo = $("#gt_lon");
+  if(la) la.value = gotoTarget ? gotoTarget.lat.toFixed(6) : "";
+  if(lo) lo.value = gotoTarget ? gotoTarget.lon.toFixed(6) : "";
+  pathReadings(); render();
+}
+function gotoFromInputs(){
+  const lat = parseFloat($("#gt_lat").value), lon = parseFloat($("#gt_lon").value);
+  gotoTarget = (Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180) ? {lat, lon} : null;
+  pathReadings(); render();
+}
+function drawGotoTarget(toScreen){
+  if(!gotoTarget || !(pathTab === "goto" || mode === "goto")) return;
+  const p = toScreen(gotoTarget.lat, gotoTarget.lon);
+  ctx.save();
+  ctx.strokeStyle = "#39c0ff"; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(p.x, p.y, 9, 0, 2 * Math.PI); ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(p.x - 15, p.y); ctx.lineTo(p.x - 4, p.y); ctx.moveTo(p.x + 4, p.y); ctx.lineTo(p.x + 15, p.y);
+  ctx.moveTo(p.x, p.y - 15); ctx.lineTo(p.x, p.y - 4); ctx.moveTo(p.x, p.y + 4); ctx.lineTo(p.x, p.y + 15);
+  ctx.stroke();
+  ctx.fillStyle = "#39c0ff"; ctx.font = "10px Consolas,monospace"; ctx.fillText("GO-TO", p.x + 12, p.y - 10);
+  ctx.restore();
+}
+function pathLen(pts){ let m = 0; for(let i = 1; i < (pts || []).length; i++) m += distTo(pts[i - 1], pts[i]); return m; }
+// A length as time at the TRANSIT speed - through the water, so current and wind change it.
+function pathTimeTxt(m){ const v = roleSpeedMS("transit"); return (m > 0 && v > 0) ? fmtDur(m / v) + " at " + spdTxt(roleSpeed("transit")) : "--"; }
+function pathRender(){
+  const card = $("#pathPanel"); if(!card) return;
+  PATH_TABS.forEach(t => { const b = $("#pp_tab_" + t); if(b) b.classList.toggle("on", t === pathTab); });
+  card.querySelectorAll(".ppbody").forEach(b => b.classList.toggle("on", b.dataset.tab === pathTab));
+  const drawing = pathDrawing();
+  const db = $("#pp_draw");
+  if(db){
+    db.classList.toggle("on", drawing);
+    const t = drawing ? (mode === "bound" ? "Drawing area" : mode === "wpt" ? "Editing" : "Drawing") : (pathTab === "wpt" ? "Edit" : "Draw");
+    if(db.textContent !== t) db.textContent = t;
+  }
+  const ba = $("#bnd_draw");
+  if(ba){ ba.classList.toggle("on", mode === "bound"); const t = mode === "bound" ? "Drawing" : "Draw"; if(ba.textContent !== t) ba.textContent = t; }
+  const tag = $("#r_draw");                         // the chart's own word: the card may be on another monitor
+  if(tag){
+    const t = drawing ? (mode === "wpt" ? "EDITING " : "DRAWING ") + PATH_TAG[mode] + " · ESC TO STOP" : "";
+    if(tag.textContent !== t) tag.textContent = t;
+    tag.style.display = drawing ? "" : "none";
+  }
+  card.classList.toggle("ppfold", pathFold);
+  const fb = $("#pp_fold"); if(fb){ const t = pathFold ? "\u25B8" : "\u25BE"; if(fb.textContent !== t) fb.textContent = t; }
+  const rules = $("#pp_rules"); if(rules) rules.classList.toggle("fold", pathRulesFold);
+  pathReadings();
+}
+// The card's readings. Written only when they change: the card is mirrored to the controls window on every change.
+function pathReadings(){
+  if(!$("#pathPanel")) return;
+  const set = (sel, v) => { const el = $(sel); if(el && el.textContent !== v) el.textContent = v; };
+  const tl = pathLen(transit);
+  set("#tr_len", transit.length > 1 ? fmtDist(tl) : "--");
+  set("#tr_time", transit.length > 1 ? pathTimeTxt(tl) : "--");
+  set("#sr_len", search.datum ? fmtDist(pathLen(searchRouted ? searchRouted.route : searchRoute())) : "--");
+  const here = asv ? {lat: asv.lat, lon: asv.lon} : null, can = canCommand();
+  set("#gt_range", gotoTarget && here ? fmtBrgRange(here, gotoTarget) : "--");
+  set("#gt_time", gotoTarget && here ? pathTimeTxt(distTo(here, gotoTarget)) : "--");
+  const go = $("#gt_go"); if(go){ const off = !(gotoTarget && can); if(go.disabled !== off) go.disabled = off; }
+  set("#gt_hint", !gotoTarget ? "Press Draw and click the chart to set the point, or type it. Then Go."
+    : !can ? "ARM to Go (and no E-STOP). Go plans the route round the chart's keep-outs and holds her at the point."
+    : "Go plans the route round the chart's keep-outs and holds her at the point.");
+  const wps = mission.waypoints || [], n = wps.length, len = pathLen(wps);
+  set("#wp_n", String(n)); set("#wp_lines", String((mission.lines || []).length)); set("#wp_len", n > 1 ? fmtDist(len) : "--");
+  set("#pp_plan .ppsum", n ? "plan: " + n + " wpts · " + fmtDist(len) : "plan: empty");
+  const v = sel => { const el = $(sel); return el ? String(el.value).trim() : ""; };
+  set("#pp_rules .pprsum", "min " + (v("#sp_mindepth") || "--") + " m · buf " + (v("#sp_buffer") || "--") + " m · water "
+    + (v("#sp_water") ? v("#sp_water") + " m" : "auto") + " · " + spdTxt(roleSpeed("transit")));
+}
+PATH_TABS.forEach(t => { $("#pp_tab_" + t).onclick = () => pathSelect(t); });
+$("#pp_draw").onclick = pathDraw;
+$("#pp_fold").onclick = () => { pathFold = !pathFold; lsSet(PATH_FOLD_KEY, pathFold); pathRender(); };
+$("#pp_rules_head").onclick = () => { pathRulesFold = !pathRulesFold; lsSet(PATH_RULES_KEY, pathRulesFold); pathRender(); };
+$("#bnd_draw").onclick = () => setMode("bound");   // toggles: drawing the area, or back to panning
+$("#gt_lat").onchange = gotoFromInputs;
+$("#gt_lon").onchange = gotoFromInputs;
+$("#gt_clr").onclick = () => setGotoTarget(null);
+$("#gt_go").onclick = () => {
+  if(!gotoTarget) return;
+  if(!canCommand()){ flashNote("Go-To: ARM first."); return; }
+  pathStopDrawing();
+  doGoTo({lat: gotoTarget.lat, lon: gotoTarget.lon}).catch(err => flashNote("Go-To failed: " + ((err && err.message) || err)));
+};
+document.querySelectorAll("#pp_rules input, #pp_rules select").forEach(el => el.addEventListener("change", () => pathReadings()));
 $("#sr_type").onchange = ()=>{ search.type = $("#sr_type").value; updateSearchPanel(); render(); };
 $("#sr_turn").onchange = ()=>{ search.turn = parseInt($("#sr_turn").value)||1; updateSearchPanel(); render(); };
 ["#sr_heading","#sr_step","#sr_legs","#sr_radius","#sr_sectors","#sr_rotate","#sr_length","#sr_spacing","#sr_lanes"]
   .forEach(id=>{ $(id).oninput = ()=>{ updateSearchPanel(); render(); }; });
-$("#sr_add").onclick = commitSearch;
+$("#sr_add").onclick = ()=>{ commitSearch(); if(!search.datum) pathStopDrawing(); };   // added: stop drawing
 $("#sr_reset").onclick = resetSearch;
-$("#tranBtn").onclick = ()=>setMode("transit");
 $("#tr_follow").onclick = doTransit;
 $("#tr_read").onclick = () => readCorridor();
 $("#tr_undo").onclick = ()=>{ transit.pop(); transitEdited(); updateTransitPanel(); render(); };
@@ -15322,7 +15511,7 @@ $("#tr_plan").onclick = () => planPassageNow();
 $("#areaBtn").onclick = ()=>setBoundaryShow(!boundaryShow);
 $("#bnd_close").onclick = closeBoundary;
 $("#bnd_clr").onclick = clearBoundary;
-$("#sp_add").onclick = commitPattern;
+$("#sp_add").onclick = async ()=>{ await commitPattern(); if(!pat.A) pathStopDrawing(); };   // added (the pattern resets): stop drawing
 $("#sp_reset").onclick = ()=>{ resetPattern(); render(); };
 $("#sp_align").onchange = ()=>{ pat.align = parseInt($("#sp_align").value)||0; patClip=null; updatePatReadout(); render(); };
 // Backwards (3a) is geometry like the alignment: a changed direction is a different plan, so the punch goes with it.
@@ -15354,9 +15543,8 @@ function applyNogoControls(){
               wreck:$("#enf_wreck").checked, chan:$("#enf_chan").checked};
   if(nogo.features && nogo.features.length) rebuildNogo();   // behaviors update immediately
 }
-// The nogo keep-clear buffer, edited from EITHER the command bar (#c_buffer, always
-// accessible - lower it to thread a tight marina) or the SURV panel (#sp_buffer).
-// Both stay in sync; it persists and re-routes every behavior live.
+// The nogo keep-clear buffer - lower it to thread a tight marina - edited under the Path planning card's Route rules
+// (#sp_buffer; the command bar's copy went 2026-10-13). One writer: it persists and re-routes every behavior live.
 function setBuffer(v){
   // ⚠⚠ THE VESSEL'S OWN planning.nogo_buffer_m IS A FLOOR HERE TOO, not only on mission load
   // and vessel switch (2878, 2920). A ZERO buffer does not merely narrow the model - IT
@@ -15367,18 +15555,16 @@ function setBuffer(v){
   // whole CLASS of keep-out has stopped existing - a console that looks armed and is not.
   v = bufferFloor(Math.max(0, Math.min(200, parseFloat(v)||0)));
   nogo.buffer = v;
-  $("#sp_buffer").value = v; $("#c_buffer").value = v;
+  $("#sp_buffer").value = v;
   mission.buffer_m = v; saveMission();
   if(nogo.features && nogo.features.length) rebuildNogo();    // re-route Go-To/RTH/search/survey
   patClip = null; updatePatReadout(); render();
 }
-$("#c_buffer").onchange = ()=>setBuffer($("#c_buffer").value);
 $("#vesselSel").onchange = (e)=>switchVessel(e.target.value);
 if($("#portSel")) $("#portSel").onchange = (e)=>switchPort(e.target.value);
 $("#sp_buffer").onchange = ()=>setBuffer($("#sp_buffer").value);
-// MIN DEPTH — a routing floor for EVERY behavior, edited from either the command bar
-// (#c_mindepth, always accessible) or the SURV panel (#sp_mindepth). Same shape as
-// setBuffer above, and for the same reason: one writer, both controls mirrored, persisted,
+// MIN DEPTH — a routing floor for EVERY behavior, edited under the Path planning card's Route rules (#sp_mindepth; the
+// command bar's copy went 2026-10-13). Same shape as setBuffer above, and for the same reason: one writer, persisted,
 // and the shared model rebuilt so Go-To / RTH / search / survey all re-route live.
 //
 // A REBUILD, NOT A RE-FETCH: depthExcluded re-reads each feature's own DRVAL1/DRVAL2 against
@@ -15387,12 +15573,11 @@ $("#sp_buffer").onchange = ()=>setBuffer($("#sp_buffer").value);
 function setMinDepth(v){
   v = Math.max(0, Math.min(500, parseFloat(v)||0));
   V.OPER_MIN_DEPTH_M = v;                                    // read by nogoDR()
-  $("#sp_mindepth").value = v; $("#c_mindepth").value = v;
+  $("#sp_mindepth").value = v;
   mission.min_depth_m = v; saveMission();
   if(nogo.features && nogo.features.length) rebuildNogo();    // re-route every behavior
   patClip = null; updateNogoUI(); updatePatReadout(); render();
 }
-$("#c_mindepth").onchange  = ()=>setMinDepth($("#c_mindepth").value);
 $("#sp_mindepth").onchange = ()=>setMinDepth($("#sp_mindepth").value);
 // Max depth is still survey-only: a COVERAGE ceiling, not a keep-out. Deep water is water.
 $("#sp_maxdepth").onchange = ()=>{ patClip=null; updatePatReadout(); render(); };
@@ -15644,16 +15829,14 @@ function recalcCommittedForSpeed(){
 // rather than a value being sent from here. `commandedSpeed = null` is that ask - the next
 // telemetry frame sends the new value if, and only if, it is the job the boat is doing.
 //
-// ⚠ TRANSIT HAS TWO CONTROLS AND ONE WRITER. It is the role that governs Go-To, RTH and a
-// drawn Transit, so it also sits on the always-visible command bar (#c_spd_transit) for the
-// operator who never opens the SURV card - Andy, 2026-09-07: "On GOTO selection without survey
-// in place there is no option for speed selection". Both mirror through setRoleSpeed, the way
-// Buf m and the panel Buffer mirror through setBuffer; a second handler writing `mission.speeds`
-// on its own is exactly the "two places holding one value" fault this console keeps re-learning.
+// TRANSIT IS ONE CONTROL AGAIN (2026-10-13). It governs Go-To, RTH and a drawn Transit, so from 2026-09-07 it also sat
+// on the command bar (#c_spd_transit) for the operator who never opened the SURV card - Andy: "On GOTO selection
+// without survey in place there is no option for speed selection". The Path planning card is always loaded now and
+// carries it under Route rules on every tab, so the copy went ("Consider removing the repeats in the command bar").
+// Still one writer: a second handler writing `mission.speeds` on its own is the "two places holding one value" fault.
 function setRoleSpeed(role, v){
   mission.speeds = {...(mission.speeds||{}), [role]: v};
   const panel = $("#sp_spd_" + role); if(panel) panel.value = v;
-  if(role === "transit" && $("#c_spd_transit")) $("#c_spd_transit").value = v;
   saveMission();
   commandedSpeed = null;            // let the governor decide whether this one is live now
   // ⚠ THIS IS "until user changes speed manually" (Andy, 2026-09-09), AND IT IS THE ONLY
@@ -15682,7 +15865,6 @@ SPEED_ROLES.forEach(role=>{
   const el = $("#sp_spd_" + role); if(!el) return;
   el.onchange = ()=>setRoleSpeed(role, el.value);
 });
-if($("#c_spd_transit")) $("#c_spd_transit").onchange = ()=>setRoleSpeed("transit", $("#c_spd_transit").value);
 // SPEED IN WHOLE KNOTS (Andy, 2026-10-09: "Change speed selection to knots in integer increments. This is commanded
 // speed that environmental forcing will affect. All ASV's."). The four selectors offer the hull's whole knots, its low
 // rounded up to its high rounded down - V.SPEED_STEPS, derived by the console and sent with the vessel (apply_vessel),
@@ -15692,8 +15874,7 @@ if($("#c_spd_transit")) $("#c_spd_transit").onchange = ()=>setRoleSpeed("transit
 // with a named speed comes back from the console moved to the nearest whole knot (_norm_speeds).
 // And all of it is COMMANDED speed, through the water: the stream and the wind are added, and her speed over the
 // ground is the sum - which is why the vessel card's SOG and the selector need not agree.
-const SPEED_SELECTS = [["transit", "#sp_spd_transit"], ["turn", "#sp_spd_turn"], ["survey", "#sp_spd_survey"],
-                       ["transit", "#c_spd_transit"]];
+const SPEED_SELECTS = [["transit", "#sp_spd_transit"], ["turn", "#sp_spd_turn"], ["survey", "#sp_spd_survey"]];
 function isStepKey(k){ return /^\d+$/.test(String(k)); }
 // A speed key as the operator reads it: a whole knot is "7 kn"; a named one is its name, as every message naming one
 // always said ("SLOWED to low").
@@ -16125,8 +16306,7 @@ function uiYield(){
 // The alerts card FIRST: with no saved layout it takes the first tile, beside the button column, because it is
 // the card the operator answers from (2026-09-28); a saved layout still wins for every card.
 const UI_CARD_TITLES = {"#alertCard":"Alerts",
-  "#linePanel":"Survey", "#boundPanel":"Survey area", "#searchPanel":"Search",
-  "#transitPanel":"Transit", "#rocPanel":"ROC · HOME",
+  "#pathPanel":"Path planning", "#rocPanel":"ROC · HOME",
   "#lineTablePanel":"Lines", "#aisTablePanel":"AIS traffic", "#chartPanel":"Chart source"};
 const UI_LAYOUT_KEY = "asv_ui_cards_v1";
 function loadUILayout(){ return lsGet(UI_LAYOUT_KEY, {}); }
@@ -16324,8 +16504,7 @@ const RESIZABLE_CARDS = [
   {sel:"#aisTablePanel",  body:"#aisTableBody"},   // traffic list, grows with the sea
   {sel:"#chartPanel",     body:"#chartBody"},
   {sel:"#rocPanel",       body:"#roc_list"},       // one row per operations center
-  {sel:"#linePanel"}, {sel:"#boundPanel"}, {sel:"#searchPanel"},
-  {sel:"#transitPanel"},                           // forms: no body to nominate, scroll whole
+  {sel:"#pathPanel"},                              // the Path planning card (2026-10-13): one form, scroll whole
 ];
 function loadCardSizes(){ return lsGet(CARD_SIZE_KEY, {}); }
 // ONLY A SIZE THE OPERATOR SET. Several cards carry an authored inline width in the markup,
@@ -16487,17 +16666,16 @@ placeVcard();
 makeCardsResizable();      // chart-window cards: one resize mechanism, one key
 
 // --- draggable pop-out panels: one mechanism, one registration each ------- //
-// SURV is the only mode panel that drags; the others stay put. LINES starts
+// The Path planning card drags by its head (not by its Draw and fold buttons). LINES starts
 // bottom-anchored (bottom:44px) and AIS right-anchored, so both name the anchor the
 // helper must release once they are placed by left/top. Only the header grabs — the
 // bodies scroll freely.
-const SURVPANEL_KEY  = "asv_survpanel_pos_v1";
+const PATHPANEL_KEY  = "asv_pathpanel_pos_v1";   // the Path planning card (the SURV card's was asv_survpanel_pos_v1)
 const LINESPANEL_KEY = "asv_linespanel_pos_v1";
 const AISPANEL_KEY   = "asv_aispanel_pos_v1";
-const linePanelEl = $("#linePanel"),      linePanelHead = $("#linePanelHead");
 const lineTableEl = $("#lineTablePanel"), lineTableHead = $("#lineTablePanelHead");
 const aisTableEl  = $("#aisTablePanel"),  aisTableHead  = $("#aisTablePanelHead");
-makeDraggablePanel(linePanelEl, linePanelHead, {key: SURVPANEL_KEY});
+makeDraggablePanel($("#pathPanel"), $("#pathPanelHead"), {key: PATHPANEL_KEY, ignore: "#pp_draw,#pp_fold"});
 makeDraggablePanel($("#alertCard"), $("#alertHead"), {key: ALERTCARD_KEY, unanchor: "bottom", uncenter: true,
                                                     ignore: "#alertWhere"});   // 2026-09-28; uncenter 2026-09-29
 makeDraggablePanel(lineTableEl, lineTableHead, {key: LINESPANEL_KEY, unanchor: "bottom"});
@@ -17745,6 +17923,7 @@ $("#b_continue").onclick = () => continueSurvey();
 $("#b_passage").onclick = () => continuePassage();
 $("#b_passDrop").onclick = () => dropPassage();
 $("#tr_sail").onclick = () => sailPassage();
+$("#tr_sail").addEventListener("click", () => pathStopDrawing());   // the Path planning card: sailing ends the drawing
 $("#b_contSel").onchange = (e) => { breakSel = e.target.value; applyCmdState(S); };
 $("#b_contDrop").onclick = () => dropBreak();
 
@@ -18045,7 +18224,7 @@ async function resumeFromHere(ll){
   const line = lineNo(hit.line);
   if(!leg){
     showBanner('⚠ CANNOT RESUME FROM THERE ' + '—' + " the route " + (g ? "the guard is holding" : "aboard") + " does not run line " + line
-      + (rr0.length ? " (a resumed remainder holds only the lines still to fly, and a plan edited in WPT mode need not run its lines end to end)"
+      + (rr0.length ? " (a resumed remainder holds only the lines still to fly, and a plan edited on the Waypoints tab need not run its lines end to end)"
                     : " (this page does not hold the route the vessel is flying)")
       + ". Stop and upload the survey again to run it from there.");
     return;
@@ -19362,6 +19541,7 @@ function applyCmdState(s){
   // transit Follow follows the same motion gate as Go-To (no survey plan needed)
   const trf = $("#tr_follow");
   if(trf) trf.disabled = !(transit.length>=1 && canCommand(s));
+  pathReadings();                                // the Path planning card: Go-To range and gate, the plan at its foot
 }
 
 // --- live data via SSE --------------------------------------------------- //
@@ -19806,7 +19986,8 @@ function surgeWhen(t){
   return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d.getDay()] + " " + p(d.getHours()) + ":" + p(d.getMinutes());
 }
 function surgeText(s){
-  if(!s || !s.ok) return {txt: "--", tip: "No surge forecast" + (s && s.note ? ": " + s.note : "") + "."};
+  const have = !!(s && s.ok);
+  if(!have) return {txt: "--", tip: "No surge forecast" + (s && s.note ? ": " + s.note : "") + "."};
   const sgn = (v) => (v >= 0 ? "+" : "") + v.toFixed(2) + " m";
   const txt = s.low_m <= -SURGE_SHOW_M ? sgn(s.low_m) + " · " + surgeWhen(s.low_t)
             : s.high_m >= SURGE_SHOW_M ? sgn(s.high_m) + " · " + surgeWhen(s.high_t) : "with the tide";
@@ -20367,7 +20548,7 @@ function tickClock(){ const d=new Date(), p=n=>String(n).padStart(2,"0");
 setInterval(tickClock, 1000); tickClock();
 // The controls window is a mirror only - it runs no app logic, no SSE, no chart. Only
 // the main window boots the app; both wire the UI-split bridge.
-if(UIROLE === "main"){ setFollow(); render();
+if(UIROLE === "main"){ setFollow(); pathRender(); render();
   // PORTS FIRST: it seeds the chart center, so the first paint is the operating
   // area rather than the literal above it.
   loadPorts().then(loadVessel).then(loadMission); applyNogoControls(); updateNogoUI(); connect(); }

@@ -66,7 +66,7 @@ function fakeSelect() {
   return el;
 }
 const DOM = { "#sp_spd_transit": fakeSelect(), "#sp_spd_turn": fakeSelect(), "#sp_spd_survey": fakeSelect(),
-              "#c_spd_transit": fakeSelect(), "#sp_spd_note": { textContent: "" } };
+              "#sp_spd_note": { textContent: "" } };
 function $(id) { return DOM[id] || null; }
 global.document = { createElement: () => ({ value: "", textContent: "" }) };
 
@@ -111,13 +111,15 @@ check("1. the vessel's whole knots join the named three in V.SPEED_KN (\"7\" -> 
             && V.SPEED_KN.low === 4 && V.SPEED_KN.survey === 7 && V.SPEED_KN.high === 10
             && Object.keys(V.SPEED_KN).length === 10,
       () => JSON.stringify(V.SPEED_KN));
-check("1b. ALL FOUR selectors offer exactly those, labelled in knots, and show the plan's speeds - the command bar's "
-      + "transit copy included",
-      () => ["#sp_spd_transit", "#sp_spd_turn", "#sp_spd_survey", "#c_spd_transit"].every(id =>
+check("1b. ALL THREE selectors offer exactly those, labelled in knots, and show the plan's speeds (the command bar's "
+      + "transit copy went 2026-10-13: Transit kn is under the Path planning card's Route rules)",
+      () => ["#sp_spd_transit", "#sp_spd_turn", "#sp_spd_survey"].every(id =>
               opts(DOM[id]) === "4=4 kn,5=5 kn,6=6 kn,7=7 kn,8=8 kn,9=9 kn,10=10 kn")
-            && DOM["#sp_spd_transit"].value === "9" && DOM["#c_spd_transit"].value === "9"
-            && DOM["#sp_spd_turn"].value === "4" && DOM["#sp_spd_survey"].value === "7",
-      () => opts(DOM["#sp_spd_survey"]) + " | " + ["#sp_spd_transit", "#sp_spd_turn", "#sp_spd_survey", "#c_spd_transit"]
+            && DOM["#sp_spd_transit"].value === "9"
+            && DOM["#sp_spd_turn"].value === "4" && DOM["#sp_spd_survey"].value === "7"
+            && /const SPEED_SELECTS = \[\["transit", "#sp_spd_transit"\], \["turn", "#sp_spd_turn"\], \["survey", "#sp_spd_survey"\]\];/.test(H)
+            && !/id="c_spd_transit"/.test(H),
+      () => opts(DOM["#sp_spd_survey"]) + " | " + ["#sp_spd_transit", "#sp_spd_turn", "#sp_spd_survey"]
               .map(id => DOM[id].value).join("/"));
 
 // 2. A WHOLE KNOT IS A SPEED LIKE ANY OTHER to everything that turns a key into one.
@@ -144,7 +146,7 @@ check("3b. the note under them reads in knots and says they are COMMANDED throug
 setRoleSpeed("turn", "8"); setRoleSpeed("transit", "8");
 check("3c. ... and when the three agree it says so, in knots",
       () => /^all three at 8 kn — set them apart to differ/.test(DOM["#sp_spd_note"].textContent)
-            && DOM["#c_spd_transit"].value === "8",
+            && DOM["#sp_spd_transit"].value === "8",
       () => DOM["#sp_spd_note"].textContent);
 
 // 4. THE WORDS.
@@ -162,7 +164,7 @@ check("5. the slowest speed the operator can SELECT is the first whole knot - 4 
       + "hull, whose low (1.5) is on no selector - and a switch re-fills every selector with the new hull's knots",
       () => slow712 === "4" && slowestSelectableKey() === "2" && V.SPEED_KN.low === 1.5 && V.SPEED_KN["10"] === undefined
             && opts(DOM["#sp_spd_turn"]) === "2=2 kn,3=3 kn,4=4 kn,5=5 kn,6=6 kn"
-            && DOM["#sp_spd_turn"].value === "2" && DOM["#c_spd_transit"].value === "6",
+            && DOM["#sp_spd_turn"].value === "2" && DOM["#sp_spd_transit"].value === "6",
       () => "EM712 " + slow712 + ", small " + slowestSelectableKey() + "; " + opts(DOM["#sp_spd_turn"]));
 V.SPEED_STEPS = [];
 check("5b. with no whole knots (no vessel yet) it falls back to `low`, as the advice did before",
@@ -185,12 +187,12 @@ check("6b. the spacing advice likewise (\"or set the turn speed to N kn\"), and 
 
 // 7. THE MARKUP carries no options - they come from the vessel - and the labels say knots.
 const sel = id => { const i = H.indexOf('<select id="' + id + '"'); return H.slice(i, H.indexOf("</select>", i)); };
-check("7. none of the four selectors carries an option in the markup (a Low / Survey / High left there would show "
+check("7. none of the three selectors carries an option in the markup (a Low / Survey / High left there would show "
       + "before the vessel arrives and be a speed the console no longer offers), and their labels read kn",
-      () => ["sp_spd_survey", "sp_spd_turn", "sp_spd_transit", "c_spd_transit"].every(id => !/<option/.test(sel(id)))
+      () => ["sp_spd_survey", "sp_spd_turn", "sp_spd_transit"].every(id => H.indexOf('<select id="' + id + '"') > 0 && !/<option/.test(sel(id)))
             && /<label>Survey kn<\/label>/.test(H) && /<label>Turn kn<\/label>/.test(H)
-            && /<label>Transit kn<\/label>/.test(H) && />Transit kn<\/label>/.test(H),
-      () => ["sp_spd_survey", "sp_spd_turn", "sp_spd_transit", "c_spd_transit"].map(id => id + ":" + /<option/.test(sel(id))).join(" "));
+            && /<label>Transit kn<\/label>/.test(H),
+      () => ["sp_spd_survey", "sp_spd_turn", "sp_spd_transit"].map(id => id + ":" + /<option/.test(sel(id))).join(" "));
 
 // 8. THE READOUTS say a whole knot once ("told 7 kn", "transit 9 kn", the vessel card's "7 kn") - pinned in the source.
 check("8. the route card's told and speeds rows and the vessel card read a whole knot as \"N kn\" (a named key keeps "

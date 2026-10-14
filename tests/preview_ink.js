@@ -119,10 +119,10 @@ check("3. the preview says what it is on the chart - PREVIEW — not in plan, in
   const RAW = [{ lat: 0, lon: 0 }, { lat: 0, lon: 10 }, { lat: 1, lon: 10 }];
   // eslint-disable-next-line no-eval
   const f = eval("(function(){ \"use strict\";\n"
-    + "const mode = 'search', search = { datum: {} }, searchRoute = () => RAW,"
+    + "const mode = 'search', pathTab = 'search', search = { datum: {} }, searchRoute = () => RAW,"
     + " searchRouted = { clipped: [RAW.slice(0, 2)], routes: [RAW.slice(1)], unsafe: [RAW.slice(0, 2)] },"
     + " searchScreen = () => ({ x: 50, y: 60 });\n"
-    + DECL + "\n" + grab("drawPreviewLabel") + "\n" + grab("drawSearch") + "\n return drawSearch; })()");
+    + DECL + "\n" + grab("drawPreviewLabel") + "\n" + grab("searchShown") + "\n" + grab("drawSearch") + "\n return drawSearch; })()");
   f(toScreen);
   const kept = log.filter((r) => r.op === "stroke" && r.w === 2.5);
   const amber = log.filter((r) => r.op === "stroke" && r.ink.startsWith("rgba(217,154,60"));

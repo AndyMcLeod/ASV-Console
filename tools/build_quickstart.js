@@ -52,7 +52,7 @@ c.push(P("The vessel drives there, around anything charted in the way, and stati
 // ------------------------------------------------------------------
 c.push(H1("4  Your first survey"));
 c.push(H2("4.1  Draw the pattern"));
-c.push(P("Press `SURV` and click three times:"));
+c.push(P("On the Path planning card, choose the Survey tab - with no pattern yet it arms the chart (otherwise press Draw; Esc stops) - and click three times:"));
 c.push(B("The START CORNER of the area you want covered."));
 c.push(B("The OPPOSITE (diagonal) corner."));
 c.push(B("A third point — its DISTANCE from the start sets the line spacing, its BEARING sets the line direction."));
@@ -86,7 +86,8 @@ c.push(TBL(["Try", "Why"], [
   ["`SRC`", "The chart's own title block and the SURVEY CONFIDENCE under the vessel. Some water is charted far better than other water."],
   ["Wind / Sea / Set on the vessel card", "Real wind and sea push the simulated vessel off track. Watch SET and the crab angle change as it steers out of the drift."],
   ["Switch vessel", "The picker in the top bar. A different hull changes speeds, turn radius and the depth floor — watch the keep-out model change with it."],
-  ["`TRAN`", "Draw a multi-segment transit and Follow it, when you want a specific path rather than the router's."],
+  ["Transit tab", "On the Path planning card: draw a multi-segment transit and Follow it, when you want a specific path rather than the router's."],
+  ["Go-To tab", "Click or type a point on the Path planning card: its bearing, range and time show before Go moves anything."],
   ["`ROC`", "Place a mothership, set it steaming, make it HOME — then Return-to-Home chases a moving recovery point."],
   ["Playback", "Every session is recorded. Replay it on the same chart with a timeline of every command."],
 ], [1700, 7660]));

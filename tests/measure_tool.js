@@ -537,15 +537,18 @@ check("15c Go-To, Spawn and Set Home are gone from the command bar",
     && /id="b_estop"/.test(CMDBAR) && /id="b_rth"/.test(CMDBAR),   // ... the rest still there
   () => ["b_goto", "b_spawn", "b_home"].filter(b => H.includes('id="' + b + '"')).join(",") || "all three removed");
 
-// Their MODES were reachable only from those buttons. Dead mode branches are how a console
-// grows a second way to do something that nobody can reach and nobody deletes.
-check("15d ... and the goto/spawn placement modes went with them",
-  () => !/setMode\("goto"\)/.test(H) && !/setMode\("spawn"\)/.test(H)
-    && !/mode\s*===\s*"goto"/.test(H) && !/mode\s*===\s*"spawn"/.test(H)
+// Their MODES were reachable only from those buttons, and a click there COMMANDED. Dead mode branches are how a
+// console grows a second way to do something that nobody can reach and nobody deletes. 2026-10-13 brought a "goto"
+// mode back as the Path planning card's Go-To tab - reachable, and one that only PLACES the point (setGotoTarget): the
+// command is the card's Go, and the chart menu's row. So: no spawn mode at all, and the goto click commands nothing.
+const GOTO_BRANCH = (H.match(/\} else if\(mode === "goto"\)\{[\s\S]*?\} else if\(mode === "measure"\)/) || [""])[0];
+check("15d ... the spawn placement mode went with them, and the Go-To tab's mode only PLACES the point",
+  () => !/setMode\("spawn"\)/.test(H) && !/mode\s*===\s*"spawn"/.test(H)
+    && /setGotoTarget\(ll\);/.test(GOTO_BRANCH) && !/doGoTo|routeCmd|postJSON|fetch\(/.test(GOTO_BRANCH)
     && /S\.behavior\s*===\s*"goto"/.test(H),      // the SERVER's behaviour name is not a mode
-  "no unreachable placement mode left behind");
+  () => GOTO_BRANCH ? "goto click: " + GOTO_BRANCH.replace(/\s+/g, " ").slice(0, 140) : "no goto click branch found");
 
-const MENU_SRC = H.slice(H.indexOf("// --- the chart context menu ---"), H.indexOf('$("#wptBtn").onclick'));
+const MENU_SRC = H.slice(H.indexOf("// --- the chart context menu ---"), H.indexOf("// --- the Path planning card ---"));
 check("16 ... and the menu section contains no second copy of either rule", () =>
   MENU_SRC.length > 500 && !/S\.armed|\.estop|mode\s*===?\s*["']sim["']|s\.mode/.test(MENU_SRC),
   () => (MENU_SRC.match(/S\.armed|\.estop|mode\s*===?\s*["']sim["']|s\.mode/) || ["clean"])[0]);

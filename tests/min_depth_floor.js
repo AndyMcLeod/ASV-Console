@@ -122,17 +122,17 @@ check("3. an unset operator floor leaves the hull's exactly as it was",
   // ⚠ THE REBUILD IS ASSERTED WITH ITS GUARD. `/rebuildNogo\(\)/` alone matched a mutation
   // that had changed the condition to `if(false)` - the call was still in the text, doing
   // nothing. A source-shape check has to pin the STATEMENT, not the identifier.
-  check("6. ONE writer mirrors both controls and rebuilds the shared model",
-        () => /\$\("#sp_mindepth"\)\.value\s*=/.test(SET) && /\$\("#c_mindepth"\)\.value\s*=/.test(SET)
+  check("6. ONE writer sets the card's control and rebuilds the shared model (the command bar's copy went 2026-10-13)",
+        () => /\$\("#sp_mindepth"\)\.value\s*=/.test(SET) && !/#c_mindepth/.test(SET)
               && /V\.OPER_MIN_DEPTH_M\s*=/.test(SET)
               && /if\(nogo\.features && nogo\.features\.length\)\s*rebuildNogo\(\)/.test(SET),
         "the setBuffer shape: clamp, mirror, persist, rebuild-when-there-is-a-model");
 
   const code = noComments(H);
-  check("6b. ...and BOTH controls go through it, neither writing on its own",
-        () => /\$\("#c_mindepth"\)\.onchange\s*=\s*\(\)=>setMinDepth/.test(code)
+  check("6b. ...and the card's control goes through it - and there is no second control to write on its own",
+        () => !/c_mindepth/.test(code)
               && /\$\("#sp_mindepth"\)\.onchange\s*=\s*\(\)=>setMinDepth/.test(code),
-        "two controls, one value - the trap this console keeps re-learning");
+        "two controls, one value - the trap this console keeps re-learning"); 
 
   // ⚠⚠ 6c. AND THE BUFFER HAS A FLOOR AT ITS WRITERS TOO, NOT ONLY ON THE LOAD PATH. The
   // hull's planning.nogo_buffer_m was applied on mission load and on vessel switch - and by
@@ -193,21 +193,28 @@ check("3. an unset operator floor leaves the hull's exactly as it was",
         "1561 zones beside 'floor 2.3 m' is a count the operator cannot reconcile");
 }
 
-// --- 11. the command bar carries what a bare Go-To needs ------------------- //
+// --- 11. what a bare Go-To needs is always on screen ------------------------ //
+// 2026-09-07 put Min depth and Transit kn on the command bar: they lived only on the SURV card, closed unless a survey
+// was drawn. 2026-10-13 the Path planning card is always loaded, with ROUTE RULES under every tab, and the bar's copies
+// went (Andy: "Consider removing the repeats in the command bar") - one control each, where every behavior is planned.
 {
-  check("11. Min depth and TRANSIT speed are on the always-visible command bar",
-        () => /id="c_mindepth"/.test(H) && /id="c_spd_transit"/.test(H),
-        "the reported gap: with no survey drawn, the SURV card is closed");
+  const RULES = H.slice(H.indexOf('id="pp_rules"'), H.indexOf('id="pp_plan"'));
+  check("11. Min depth, Buffer and TRANSIT speed are under Route rules on the always-loaded Path planning card, and the "
+        + "command bar no longer repeats them",
+        () => RULES.length > 200 && /id="sp_mindepth"/.test(RULES) && /id="sp_buffer"/.test(RULES) && /id="sp_spd_transit"/.test(RULES)
+              && /<div class="panel" id="pathPanel">/.test(H) && /UI_BRIDGED = \[[^\]]*"#pathPanel"/.test(H)
+              && !/id="c_mindepth"|id="c_spd_transit"|id="c_buffer"/.test(H),
+        "the reported gap: with no survey drawn, the SURV card was closed");
 
   const SRS = grab(H, "setRoleSpeed");
-  check("11b. ...and the bar's transit select shares ONE writer with the panel's",
-        () => /#sp_spd_/.test(SRS) && /#c_spd_transit/.test(SRS)
+  check("11b. ...and the transit select has ONE writer",
+        () => /#sp_spd_/.test(SRS) && !/#c_spd_transit/.test(SRS)
               && /mission\.speeds/.test(SRS) && /recalcForSpeed\(\)/.test(SRS),
         "a second handler writing mission.speeds is the two-places fault again");
 
-  check("11c. ...and the load path seeds the bar copy, not just the panel's",
-        () => /\$\("#c_spd_transit"\)\.value\s*=\s*mission\.speeds\.transit/.test(H),
-        "or it opens showing the markup default while the panel shows the truth");
+  check("11c. ...and the load path seeds the card's selects",
+        () => /const el = \$\("#sp_spd_" \+ r\); if\(el\) el\.value = mission\.speeds\[r\];/.test(H),
+        "or it opens showing the markup default while the plan says otherwise");
 }
 
 // --- 12-16. the TIDE is a depth input too, and the model has to follow it ---- //
