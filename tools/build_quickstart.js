@@ -68,7 +68,7 @@ c.push(P("Watch the RUN block: type, waypoint progress, distance and time to the
 
 // ------------------------------------------------------------------
 c.push(H1("5  Know where it will end up"));
-c.push(P("The `End of plan` selector in the command bar decides what happens when the plan finishes — RTH (return home and station-keep), Complete (stop), Loiter (hold at the last waypoint), or Repeat (loop until you stop it)."));
+c.push(P("The `End of plan` selector on the Path planning card (under Waypoints and end of plan, on every tab) decides what happens when the plan finishes — RTH (return home and station-keep), Complete (stop), Loiter (hold at the last waypoint), or Repeat (loop until you stop it)."));
 c.push(P("The RUN block's `End mode` row tells you where THIS run will leave the vessel, from the moment it starts. With RTH selected it says so throughout — and it only says RTH when the return can actually happen. (Ops manual 11.5)"));
 
 // ------------------------------------------------------------------

@@ -731,6 +731,19 @@
         </div>
       </div>
     </div>
+    <!-- WAYPOINTS AND END OF PLAN (2026-10-14, from the command bar): how she takes each waypoint of an uploaded plan and
+         what she does at its last one. Shared by every tab, like Route rules: the arrival and approach radii go up with
+         every plan (Upload, Go-To, RTH, Transit), and the end of plan is the uploaded plan's. Folds like Route rules. -->
+    <div class="pprules" id="pp_follow">
+      <div class="pprules-head" id="pp_follow_head" title="How she takes each waypoint of a plan and what she does at its last one. Click to fold or open."><span>Waypoints and end of plan</span><span class="pprsum"></span></div>
+      <div class="pprules-body">
+        <div class="prow"><label>Arrival m</label><input id="c_arrival" type="number" value="2" min="1" max="50" step="1" title="Vendor VCU waypoint ARRIVAL radius, uploaded in the route plan: how close counts as reaching a waypoint. Separate from the Punch-Out Buffer."/></div>
+        <div class="prow"><label>Approach m</label><input id="c_approach" type="number" value="1" min="0.5" max="50" step="0.5" title="Waypoint APPROACH radius: the ASV follows the line to within this of each turn before turning onto the next leg (about 1 m recommended). Separate from the arrival radius and the Punch-Out buffer. Applies live to the simulator."/></div>
+        <div class="prow"><label>End of plan</label><select id="c_completion" title="What the ASV does at the end of the plan (Survey / search route): RTH = chain the Return-to-Home behavior (ENC-routed) and station-keep at home (default); Complete = stop; Loiter = station-keep at the last waypoint; Repeat = loop the route until Stop.">
+          <option value="rth" selected>RTH</option><option value="complete">Complete</option><option value="loiter">Loiter</option><option value="repeat">Repeat</option>
+        </select></div>
+      </div>
+    </div>
     <div class="ppplan" id="pp_plan"><span class="ppsum">plan: empty</span><button class="ctl small" id="ln_clr" title="Delete the whole plan: every waypoint and planned line" style="flex:0 0 auto">CLR&nbsp;PLAN</button></div>
   </div>
 
@@ -859,21 +872,13 @@
 
   <!-- run parameters + command bar -->
   <div class="cmdbar">
-    <label style="font-family:var(--mono);font-size:9px;color:var(--ink-faint);text-transform:uppercase;" title="Vendor VCU waypoint arrival radius uploaded in the route plan. Separate from the Punch-Out Buffer. The ASV follows the survey line and approaches within ~1 m of each waypoint turn.">Arr m</label>
-    <input id="c_arrival" type="number" value="2" min="1" max="50" step="1"
-      title="Vendor VCU waypoint arrival radius (route-plan parameter). NOT the Punch-Out obstacle buffer."
-      style="width:44px;background:var(--abyss);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:11px;padding:6px 4px;border-radius:2px;">
-    <label style="font-family:var(--mono);font-size:9px;color:var(--ink-faint);text-transform:uppercase;" title="Waypoint approach radius: how close the ASV follows the survey line before turning onto the next leg. Separate from the arrival radius and the Punch-Out buffer. Applies live to the simulator.">Appr m</label>
-    <input id="c_approach" type="number" value="1" min="0.5" max="50" step="0.5"
-      title="Waypoint approach radius — the ASV line-follows to within this of each turn (~1 m recommended). Separate from arrival radius / Punch-Out buffer. Applies live to the sim."
-      style="width:44px;background:var(--abyss);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:11px;padding:6px 4px;border-radius:2px;">
     <!-- BUF M, MIN DEP M AND TRANSIT KN LEFT THIS BAR on 2026-10-13 (Andy: "Consider removing the repeats in the command
          bar"). They were put here on 2026-09-07 because they lived only on the SURV card, which was closed unless a survey
          was being drawn; the Path planning card is always loaded now and carries them under Route rules on every tab. -->
-    <select id="c_completion" title="What the ASV does at the end of the plan (Survey / search route): RTH = chain the Return-to-Home behavior (ENC-routed) and station-keep at home (default); Complete = stop; Loiter = station-keep at the last waypoint; Repeat = loop the route until Stop." style="background:var(--abyss);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:11px;padding:6px 4px;border-radius:2px;">
-      <option value="rth" selected>RTH</option><option value="complete">Complete</option><option value="loiter">Loiter</option><option value="repeat">Repeat</option>
-    </select>
-    <span class="cdiv"></span>
+    <!-- ARR M, APPR M AND THE END OF PLAN LEFT THIS BAR on 2026-10-14 (Andy: "Move waypoint approach and arrival status
+         and end of plan to the Path Planning card"). They are the card's "Waypoints and end of plan" section, under every
+         tab beside Route rules, with the same ids - so the mission load, the console's echo of the end of plan and the
+         controls window's relay (by id) all find them where they are now. -->
     <button class="cbtn arm" id="b_arm">Arm</button>
     <button class="cbtn" id="b_upload" disabled>Upload</button>
     <button class="cbtn go" id="b_start" disabled>Start</button>
@@ -1030,7 +1035,7 @@
         <li><b>Search pattern (alternative to a survey).</b> On the <span class="tag">Search</span> tab, pick a pattern (<b>Expanding box</b> / <b>Sector</b> / <b>Parallel</b>), click the chart to set the <b>datum</b> (drag the D handle to move it), tune the params, then <span class="tag">Add&nbsp;to&nbsp;plan</span>. Legs clip to the nogo zones (cyan kept / amber routed-around / red blocked). The ASV runs it via the same Arm / Upload / Start flow.</li>
         <li><b>NOGO zones (automatic).</b> On startup the console extracts ENC nogo boundaries for the operating area &mdash; shoreline, manmade features, and water shallower than <b>1&nbsp;m corrected</b> (charted depth + live water level). <span class="tag">NOGO</span> shows / hides the red overlay. <b>Every</b> behavior avoids them: <span class="tag">Go-To</span> and <span class="tag">RTH</span> route around them (or refuse an unreachable target), and search / survey legs clip to clear water. If there's no ENC coverage the console warns and routes direct &mdash; verify the plan.</li>
         <li>Or, on the <span class="tag">Waypoints</span> tab, press <span class="tag">Edit</span> to move, remove or add individual waypoints.</li>
-        <li>Set the <b>arrival radius</b> and <b>completion</b> in the command bar (the speeds are on the Survey tab and under Route rules) &mdash; <b>RTH</b> (Return-to-Home at the end, ENC-routed, then station-keep &mdash; the default), <b>Complete</b> (stop at the end), <b>Loiter</b> (station-keep at the last waypoint), or <b>Repeat</b> (loop the route until Stop). Applies on the next Upload; shown as <i>Type</i> and <i>End mode</i> in the <b>Run</b> section of the <b>Mission Status</b> card.</li>
+        <li>Set the <b>arrival radius</b>, the <b>approach radius</b> and the <b>end of plan</b> under the Path planning card's <b>Waypoints and end of plan</b>, on every tab (the speeds are on the Survey tab and under Route rules) &mdash; <b>RTH</b> (Return-to-Home at the end, ENC-routed, then station-keep &mdash; the default), <b>Complete</b> (stop at the end), <b>Loiter</b> (station-keep at the last waypoint), or <b>Repeat</b> (loop the route until Stop). Applies on the next Upload; shown as <i>Type</i> and <i>End mode</i> in the <b>Run</b> section of the <b>Mission Status</b> card.</li>
         <li>Command a <b>survey / search</b> plan: <span class="tag">Arm</span> &rarr; <span class="tag">Upload</span> &rarr; <span class="tag">Start</span>. Use <span class="tag">Pause</span> / <span class="tag">Stop</span> / <span class="tag">E-STOP</span> as needed.</li>
         <li><b>Transit (no survey needed).</b> On the <span class="tag">Transit</span> tab, click the chart to draw a single- or multi-segment transit line, then <span class="tag">Arm</span> and press <span class="tag">Follow</span> &mdash; the ASV drives the line clear of ENC obstacles and station-keeps at the end. <span class="tag">Go-To</span> (single point: its own tab on the card, or right-click the chart), <span class="tag">Hold</span>, and <span class="tag">RTH</span> are the other plan-free behaviors &mdash; all available once Armed, no survey plan required.</li>
       </ol>
@@ -5521,8 +5526,10 @@ const PATH_DRAW = {survey: "survey", search: "search", transit: "transit", goto:
 const PATH_TAG = {survey: "SURVEY PATTERN", bound: "SURVEY AREA", search: "SEARCH DATUM", transit: "TRANSIT LINE",
                   goto: "GO-TO POINT", wpt: "WAYPOINTS"};
 const PATH_TAB_KEY = "asv_path_tab_v1", PATH_FOLD_KEY = "asv_path_fold_v1", PATH_RULES_KEY = "asv_path_rules_fold_v1";
+const PATH_FOLLOW_KEY = "asv_path_follow_fold_v1";   // the Waypoints and end of plan section's fold (2026-10-14)
 let pathTab = PATH_TABS.includes(lsGet(PATH_TAB_KEY, "survey")) ? lsGet(PATH_TAB_KEY, "survey") : "survey";
 let pathFold = lsBool(PATH_FOLD_KEY, false), pathRulesFold = lsBool(PATH_RULES_KEY, false);
+let pathFollowFold = lsBool(PATH_FOLLOW_KEY, false);
 let gotoTarget = null;                          // the Go-To tab's point, {lat, lon} or null - in memory, like every draft   // no `activeLine`: the chart highlights runLineIdx
 // CAMP-style 3-click survey pattern: A=start, B=diagonal end, C=spacing/direction
 let pat = {A:null, B:null, C:null, align:0};   // align 0=start 1=center 2=finish
@@ -15391,7 +15398,11 @@ cmRow("#cmMeasure", ()=>{
 });
 cmRow("#cmWhat",  ll => sayWhatIsHere(ll));
 cmRow("#cmClear", ()=>{ clearMeasures(); flashNote("Measurements cleared."); });
-cmRow("#cmGoto",  ll => doGoTo(ll));
+// THE MENU'S GO-TO FILLS THE CARD'S GO-TO POINT (Andy, 2026-10-14: "When a GOTO is clicked on chart, fill in the
+// latitude/longitude entries in the Path Planning Card"): the fields, the point and its range show where she was sent,
+// set BEFORE the command so a refused Go-To still leaves the point there for Go. The command is the row's, as before -
+// and its promise is returned, so cmRow still says when it fails.
+cmRow("#cmGoto",  ll => { setGotoTarget(ll); return doGoTo(ll); });
 cmRow("#cmDivert", ll => divertPassage(ll));
 cmRow("#cmResume", ll => resumeFromHere(ll));   // paused runs only (2026-09-26)
 cmRow("#cmAvoid",   ll => avoidContactAt(ll));   // over a contact (2026-09-27)
@@ -15555,6 +15566,7 @@ function pathRender(){
   card.classList.toggle("ppfold", pathFold);
   const fb = $("#pp_fold"); if(fb){ const t = pathFold ? "\u25B8" : "\u25BE"; if(fb.textContent !== t) fb.textContent = t; }
   const rules = $("#pp_rules"); if(rules) rules.classList.toggle("fold", pathRulesFold);
+  const follow = $("#pp_follow"); if(follow) follow.classList.toggle("fold", pathFollowFold);
   pathReadings();
 }
 // The card's readings. Written only when they change: the card is mirrored to the controls window on every change.
@@ -15579,11 +15591,15 @@ function pathReadings(){
   set("#pp_rules .pprsum", "min " + (v("#sp_mindepth") || "--") + " m · buf " + (v("#sp_buffer") || "--") + " m · water "
     + (v("#sp_water") ? v("#sp_water") + " m" : "auto") + " · " + spdTxt(roleSpeed("transit"))
     + (v("#enf_openwater") === "off" ? " · open water off" : ""));
+  const end = $("#c_completion");
+  set("#pp_follow .pprsum", "arrive " + (v("#c_arrival") || "--") + " m · approach " + (v("#c_approach") || "--") + " m · "
+    + (end && end.selectedIndex >= 0 ? end.options[end.selectedIndex].text : "--"));
 }
 PATH_TABS.forEach(t => { $("#pp_tab_" + t).onclick = () => pathSelect(t); });
 $("#pp_draw").onclick = pathDraw;
 $("#pp_fold").onclick = () => { pathFold = !pathFold; lsSet(PATH_FOLD_KEY, pathFold); pathRender(); };
 $("#pp_rules_head").onclick = () => { pathRulesFold = !pathRulesFold; lsSet(PATH_RULES_KEY, pathRulesFold); pathRender(); };
+$("#pp_follow_head").onclick = () => { pathFollowFold = !pathFollowFold; lsSet(PATH_FOLLOW_KEY, pathFollowFold); pathRender(); };
 $("#bnd_draw").onclick = () => setMode("bound");   // toggles: drawing the area, or back to panning
 $("#gt_lat").onchange = gotoFromInputs;
 $("#gt_lon").onchange = gotoFromInputs;
@@ -15594,7 +15610,8 @@ $("#gt_go").onclick = () => {
   pathStopDrawing();
   doGoTo({lat: gotoTarget.lat, lon: gotoTarget.lon}).catch(err => flashNote("Go-To failed: " + ((err && err.message) || err)));
 };
-document.querySelectorAll("#pp_rules input, #pp_rules select").forEach(el => el.addEventListener("change", () => pathReadings()));
+document.querySelectorAll("#pp_rules input, #pp_rules select, #pp_follow input, #pp_follow select")
+  .forEach(el => el.addEventListener("change", () => pathReadings()));
 $("#sr_type").onchange = ()=>{ search.type = $("#sr_type").value; updateSearchPanel(); render(); };
 $("#sr_turn").onchange = ()=>{ search.turn = parseInt($("#sr_turn").value)||1; updateSearchPanel(); render(); };
 ["#sr_heading","#sr_step","#sr_legs","#sr_radius","#sr_sectors","#sr_rotate","#sr_length","#sr_spacing","#sr_lanes"]
@@ -16199,13 +16216,27 @@ async function holdDiscTick(s, st){
 // Close the loop: the selector mirrors the SERVER's setting, so the two can never drift
 // apart unnoticed. Skipped while the operator has the control open, so it can't fight a
 // selection mid-change.
+// ⚠ AND SKIPPED WHILE THE OPERATOR'S PICK IS ON ITS WAY TO THE CONSOLE (2026-10-14, when the selector moved to the
+// Path planning card). The pick is saved 400 ms later (saveMission's debounce), and every frame in between still
+// carries the OLD end of plan - so this put the old one back, and the save then sent it. Picked in the chart the
+// selector keeps the focus and the guard above held; picked in the CONTROLS WINDOW, where the card now lives, the
+// chart's copy never has the focus: measured on a scratch console, Loiter picked there, the console stayed RTH and
+// the controls window went back to RTH as soon as the focus left. So the pick is waited for until the console reports
+// it, or COMPLETION_ECHO_MS pass (a save that failed says so on its own, and then the console's value is the truth).
+const COMPLETION_ECHO_MS = 5000;
+let completionAsked = null;                     // {v, at}: the operator's pick, until the console reports it
 function syncCompletionSel(s){
   const el=$("#c_completion"); if(!el || !s || !s.completion) return;
   if(document.activeElement===el) return;
+  if(completionAsked){
+    if(s.completion !== completionAsked.v && Date.now() - completionAsked.at < COMPLETION_ECHO_MS) return;
+    completionAsked = null;
+  }
   if(el.value !== s.completion){ el.value = s.completion; mission.completion = s.completion; }
 }
 $("#c_completion").onchange = ()=>{
   mission.completion = $("#c_completion").value; saveMission();
+  completionAsked = {v: mission.completion, at: Date.now()};
   // "Applies on the next Upload" was only half true and misled in the dangerous
   // direction. The SETTING is live the moment it is saved - the end-of-plan RTH chain
   // gates on `s.completion` every telemetry frame, so switching to RTH mid-run arms a

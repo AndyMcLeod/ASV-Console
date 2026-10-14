@@ -1210,8 +1210,14 @@ there adds a waypoint); **Esc**, Add to plan, Follow, Sail passage and Go put th
 panning, and while it draws the chart says so (*DRAWING SURVEY PATTERN · ESC TO STOP*).
 **Route rules** under every tab is what every behavior routes by - Min depth, Water, Buffer,
 Transit kn, Open water, Channel rocks, the chart features - and the only copy: the command bar no longer
-repeats Buffer, Min depth or Transit kn. The plan as a whole (waypoints, length, CLR PLAN) is the
-card's foot. The WPT / SURV / BND / SRCH / TRAN buttons are gone. `tests/path_card.js`.
+repeats Buffer, Min depth or Transit kn. **Waypoints and end of plan**, under every tab after Route
+rules (2026-10-14, Andy: "Move waypoint approach and arrival status and end of plan to the Path
+Planning card"), holds what the command bar did: the arrival radius (Arrival m), the approach
+radius (Approach m) and the End of plan; it folds to one line like Route rules. An End of plan
+picked is kept until the console reports it: the console's echo of the old one, every frame
+until the save lands, used to put the old one back - picked in the controls window, the pick was
+lost. The plan as a whole (waypoints, length, CLR PLAN) is the card's foot. The WPT / SURV / BND /
+SRCH / TRAN buttons are gone. `tests/path_card.js`.
 
 1. **Plan** — on the **Path planning card**: the **Waypoints** tab to drop/remove
    waypoints, or the **Survey** tab for a **CAMP-style 3-click survey pattern**: press
@@ -1225,9 +1231,10 @@ card's foot. The WPT / SURV / BND / SRCH / TRAN buttons are gone. `tests/path_ca
    direction are preserved exactly. An alignment option
    (start / center / finish) positions the leftover margin. Both **Spacing** and
    **Direction** are editable fields — type a value to force the spacing or rotate
-   the whole pattern to a bearing. `Add to plan` commits the lines + waypoints. Set
-   arrival radius, the transit speed (whole knots, the hull's own range), and **completion** (below) in the
-   command bar. The plan persists server-side (`mission.json`). Reads and writes are locked and
+   the whole pattern to a bearing. `Add to plan` commits the lines + waypoints. Set the
+   arrival and approach radii and **completion** (the End of plan, below) under the card's
+   **Waypoints and end of plan**, and the transit speed (whole knots, the hull's own range) under
+   Route rules. The plan persists server-side (`mission.json`). Reads and writes are locked and
    retried; a file that is there but cannot be read as a plan is refused rather than treated as
    empty (a corrupt one is copied aside as `mission.json.corrupt-*`); and each change to the
    plan's geometry keeps the previous plan as `mission.json.bak1`..`bak5`. A live speed command
@@ -3155,7 +3162,9 @@ card's foot. The WPT / SURV / BND / SRCH / TRAN buttons are gone. `tests/path_ca
    bar drives one-off autonomy behaviours, all available once **Armed**:
    - **Go-To** — the card's **Go-To** tab (click a point or type it, then **Go**; it
      shows the bearing, range and time first), or right-click the chart; the boat
-     drives there (around obstacles) and holds.
+     drives there (around obstacles) and holds. A Go-To from the chart menu fills the tab's
+     latitude and longitude with its point (2026-10-14), before it is commanded - so a refused
+     one leaves the point there for **Go**.
    - **Transit** — the card's **Transit** tab, draw a single- or multi-segment line, then **Follow**; the
      boat drives the line clear of obstacles and station-keeps at the end.
    - **Hold** — station-keep at the present position.
@@ -3173,7 +3182,7 @@ card's foot. The WPT / SURV / BND / SRCH / TRAN buttons are gone. `tests/path_ca
    banner gives both numbers (the console used to keep the first 1000 waypoints and drop the
    rest). The transit is
    routed clear of obstacles at Upload, which never re-orders the plan (see *How the plan
-   becomes the route the boat runs*, above); **completion** (command bar) sets what happens
+   becomes the route the boat runs*, above); **completion** (the Path planning card's End of plan) sets what happens
    at the end — **RTH** (chain the ENC-routed Return-to-Home and station-keep at home;
    the default), **Complete** (stop), **Loiter** (station-keep at the last waypoint), or
    **Repeat** (loop the route). Watch waypoint progress, track, and battery.

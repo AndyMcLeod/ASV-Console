@@ -16,9 +16,23 @@
 //   4-4b  Esc stops drawing - and the chart says while it draws, in its own pill, hidden in the controls window
 //   5-5c  the Go-To point: a chart click SETS it (nothing commanded), typed fields set it only when both are valid, Go is
 //         gated on ARM and stops drawing before it commands
-//   6     the readings: transit length and time at the transit speed, the plan at the foot, Route rules folded to a line
+//   5f    the chart menu's Go-To fills the card's point (its latitude and longitude) before it commands (2026-10-14)
+//   1d    WAYPOINTS AND END OF PLAN (2026-10-14, Andy: "Move waypoint approach and arrival status and end of plan to the
+//         Path Planning card"): Arrival m, Approach m and End of plan are a section of the card under every tab, after
+//         Route rules, keeping their ids - and the command bar no longer carries them
+//   6-6b  the readings: transit length and time at the transit speed, the plan at the foot, Route rules folded to a line;
+//         Waypoints and end of plan in one line too, and its fold
 //   7     Add to plan, Sail passage and Follow end the drawing; the search preview follows its tab
 //   8     the first render runs once every name it reads is declared
+//   9     an END OF PLAN PICKED IS KEPT until the console reports it: the console's echo of the old one, every frame
+//         until the debounced save lands, no longer puts it back (it did, picked in the controls window - measured)
+//
+// TEETH (1d, 6b, 9) - 7 sidecar mutations RUN, 7/7 caught:
+//   Arr m back on the command bar -> 1d          the section before Route rules -> 1d
+//   the summary dropped -> 6b                    the fold not applied -> 6b
+//   the echo not waited for -> 9                 the pick never recorded -> 9
+//   the wait never ending -> 9
+// and 5f, 2 more, 2/2 caught: the menu row not filling the point -> 5f; its promise not returned -> 5f
 //
 //     node tests/path_card.js      # exit 0 = pass, 1 = fail
 "use strict";
@@ -88,8 +102,21 @@ check("1c. ROUTE RULES IS THE ONE COPY: Min depth, Water, Buffer, Transit kn, Ch
       + "are under it, shown under every tab - and the command bar no longer repeats Buffer, Min depth or Transit kn",
       () => { const R = CARD.slice(CARD.indexOf('id="pp_rules"'), CARD.indexOf('id="pp_plan"'));
               return ["sp_mindepth", "sp_water", "sp_buffer", "sp_spd_transit", "enf_rock", "enf_land", "enf_chan"].every(id => R.includes('id="' + id + '"'))
-                && !/id="(c_buffer|c_mindepth|c_spd_transit)"/.test(H) && /id="c_arrival"/.test(CMDBAR) && /id="c_completion"/.test(H); },
-      "Arr m, Appr m and End of plan stay on the bar: nothing else carries them");
+                && !/id="(c_buffer|c_mindepth|c_spd_transit)"/.test(H); },
+      "(Arr m, Appr m and End of plan stayed on the bar on 10-13; they joined the card on 10-14 - 1d)");
+const WHOLE_BAR = H.slice(H.indexOf('<div class="cmdbar">'), H.indexOf("</div>", H.indexOf('id="b_estop"')));
+check("1d. WAYPOINTS AND END OF PLAN IS ON THE CARD: Arrival m, Approach m and End of plan - their ids kept, one of each "
+      + "in the page - in a section of their own under every tab, after Route rules and before the plan line, folding "
+      + "like Route rules; the command bar carries none of them",
+      () => { const F = CARD.slice(CARD.indexOf('<div class="pprules" id="pp_follow">'), CARD.indexOf('id="pp_plan"'));
+              return CARD.indexOf('id="pp_rules"') < CARD.indexOf('id="pp_follow"') && F.length > 0
+                && ["c_arrival", "c_approach", "c_completion"].every(id => F.includes('id="' + id + '"') && H.split('id="' + id + '"').length === 2)
+                && /<option value="rth" selected>RTH<\/option><option value="complete">Complete<\/option><option value="loiter">Loiter<\/option><option value="repeat">Repeat<\/option>/.test(F)
+                && !/id="(c_arrival|c_approach|c_completion)"/.test(WHOLE_BAR) && /id="b_arm"/.test(WHOLE_BAR)
+                && /\$\("#pp_follow_head"\)\.onclick = \(\) => \{ pathFollowFold = !pathFollowFold; lsSet\(PATH_FOLLOW_KEY, pathFollowFold\); pathRender\(\); \};/.test(H)
+                && /#pp_follow input, #pp_follow select/.test(H); },
+      () => "section at " + CARD.indexOf('id="pp_follow"') + " (Route rules at " + CARD.indexOf('id="pp_rules"') + "); on the bar: "
+            + (["c_arrival", "c_approach", "c_completion"].filter(id => WHOLE_BAR.includes('id="' + id + '"')).join(",") || "none"));
 
 // ── the sandbox: the page's own functions over a small DOM ─────────────────────────────────────────────────────────────
 function mkEl(id, extra) {
@@ -107,10 +134,14 @@ function world() {
   const ids = ["#pathPanel", "#pp_draw", "#pp_fold", "#pp_rules", "#bnd_draw", "#r_draw", "#gt_lat", "#gt_lon", "#gt_range",
     "#gt_time", "#gt_go", "#gt_hint", "#tr_len", "#tr_time", "#sr_len", "#wp_n", "#wp_lines", "#wp_len", "#pp_plan .ppsum",
     "#pp_rules .pprsum", "#sp_mindepth", "#sp_buffer", "#sp_water",
+    "#pp_follow", "#pp_follow .pprsum", "#c_arrival", "#c_approach", "#c_completion",
     "#pp_tab_survey", "#pp_tab_search", "#pp_tab_transit", "#pp_tab_goto", "#pp_tab_wpt"];
   const D = {};
   for (const i of ids) D[i] = mkEl(i);
   D["#sp_mindepth"].value = "2"; D["#sp_buffer"].value = "5"; D["#sp_water"].value = "";
+  D["#c_arrival"].value = "2"; D["#c_approach"].value = "1";
+  D["#c_completion"].options = [{ text: "RTH" }, { text: "Complete" }, { text: "Loiter" }, { text: "Repeat" }];
+  D["#c_completion"].selectedIndex = 0;
   const bodies = ["survey", "search", "transit", "goto", "wpt"].map(t => mkEl("body-" + t, { dataset: { tab: t } }));
   D["#pathPanel"].querySelectorAll = () => bodies;
   const log = { renders: 0, readings: 0, ls: {} };
@@ -130,7 +161,7 @@ function world() {
            roleSpeed, roleSpeedMS, spdTxt, searchRoute} = env;
     const render = () => env.render();
     let mode = "pan", rocPlaceKind = null, measPend = null, center = {lat: 43, lon: -70.7};
-    let pathTab = "survey", pathFold = false, pathRulesFold = false, gotoTarget = null, searchRouted = env.searchRouted;
+    let pathTab = "survey", pathFold = false, pathRulesFold = false, pathFollowFold = false, gotoTarget = null, searchRouted = env.searchRouted;
     let pat = {A: null, B: null, C: null}, search = {type: "expbox", datum: null}, transit = [], asv = {lat: 43.07, lon: -70.71};
     let mission = {waypoints: [], lines: []}, armed = false;
     const canCommand = () => armed;
@@ -139,7 +170,7 @@ function world() {
              pathReadings, get mode(){ return mode; }, get tab(){ return pathTab; }, get target(){ return gotoTarget; },
              set: (k, v) => { if(k === "pat") pat = v; else if(k === "transit") transit = v; else if(k === "search") search = v;
                               else if(k === "mission") mission = v; else if(k === "armed") armed = v; else if(k === "tab") pathTab = v;
-                              else if(k === "rulesFold") pathRulesFold = v; } };`)(env);
+                              else if(k === "rulesFold") pathRulesFold = v; else if(k === "followFold") pathFollowFold = v; } };`)(env);
   return { api, D, bodies, log };
 }
 const shown = (w) => w.bodies.filter(b => b.classList.contains("on")).map(b => b.dataset.tab).join(",");
@@ -251,8 +282,22 @@ const tabOn = (w) => ["survey", "search", "transit", "goto", "wpt"].filter(t => 
   const CLICK = (H.match(/\} else if\(mode === "goto"\)\{[\s\S]*?\} else if\(mode === "measure"\)/) || [""])[0];
   check("5b. ... and a CHART CLICK in the Go-To mode only calls setGotoTarget - no doGoTo, no request - the command is "
         + "the card's Go (and the chart menu's own row, as before)",
-        () => /setGotoTarget\(ll\);/.test(CLICK) && !/doGoTo|routeCmd|postJSON|fetch\(/.test(CLICK) && /cmRow\("#cmGoto",\s*ll => doGoTo\(ll\)\);/.test(H),
+        () => /setGotoTarget\(ll\);/.test(CLICK) && !/doGoTo|routeCmd|postJSON|fetch\(/.test(CLICK) && /cmRow\("#cmGoto",\s*ll => \{/.test(H),
         () => CLICK.replace(/\s+/g, " ").slice(0, 160));
+  // 5f (2026-10-14, Andy: "When a GOTO is clicked on chart, fill in the latitude/longitude entries in the Path Planning
+  // Card"): the menu's Go-To row, run as the page has it, with setGotoTarget and doGoTo stubbed
+  const ROW = (H.match(/cmRow\("#cmGoto",\s*(ll => \{[^\n]*\})\);/) || [])[1];
+  const calls = [];
+  const failed = Promise.reject(new Error("refused"));
+  failed.catch(() => {});
+  // eslint-disable-next-line no-new-func
+  const row = ROW && new Function("setGotoTarget", "doGoTo", "return " + ROW + ";")(
+    (ll) => calls.push("set " + ll.lat + "," + ll.lon), (ll) => { calls.push("go " + ll.lat + "," + ll.lon); return failed; });
+  const ret = row ? row({ lat: 43.1, lon: -70.6 }) : null;
+  check("5f. THE MENU'S GO-TO FILLS THE CARD'S POINT: the row sets the Go-To point - the fields, the range, Go - at the "
+        + "clicked position BEFORE it commands the Go-To there, and returns the command's promise so a refusal is still said",
+        () => calls.join(";") === "set 43.1,-70.6;go 43.1,-70.6" && ret === failed,
+        () => JSON.stringify({ row: ROW ? ROW.slice(0, 80) : "not found", calls, returned: ret === failed }));
   const GO = H.slice(H.indexOf('$("#gt_go").onclick'), H.indexOf("document.querySelectorAll(\"#pp_rules input"));
   check("5c. GO is refused unARMED in words, stops the drawing, then commands exactly as the menu's Go-To does (doGoTo)",
         () => /if\(!canCommand\(\)\)\{ flashNote\("Go-To: ARM first\."\); return; \}/.test(GO)
@@ -298,6 +343,17 @@ const tabOn = (w) => ["survey", "search", "transit", "goto", "wpt"].filter(t => 
               && r.plan === "plan: 3 wpts · 1.82 km" && empty === "plan: empty"
               && r.rules === "min 2 m · buf 5 m · water auto · 6 kn",
         () => JSON.stringify({ r, empty }));
+  const fol0 = w.D["#pp_follow .pprsum"].textContent;
+  w.D["#c_arrival"].value = "5"; w.D["#c_completion"].selectedIndex = 2; a.pathReadings();
+  const fol1 = w.D["#pp_follow .pprsum"].textContent;
+  a.pathRender(); const open = w.D["#pp_follow"].classList.contains("fold");
+  a.set("followFold", true); a.pathRender(); const folded = w.D["#pp_follow"].classList.contains("fold");
+  const rulesWith = w.D["#pp_rules"].classList.contains("fold");
+  check("6b. WAYPOINTS AND END OF PLAN IN ONE LINE TOO - the arrival, the approach and the end of plan as the selector "
+        + "names it - following an edit; and it folds on its own, Route rules left open",
+        () => fol0 === "arrive 2 m · approach 1 m · RTH" && fol1 === "arrive 5 m · approach 1 m · Loiter"
+              && open === false && folded === true && rulesWith === false,
+        () => JSON.stringify({ fol0, fol1, open, folded, rulesWith }));
 }
 
 // ── 7. what ends the drawing, and the search preview ───────────────────────────────────────────────────────────────────
@@ -330,6 +386,56 @@ check("8. THE FIRST RENDER RUNS AFTER EVERY NAME IT READS IS DECLARED - S (canCo
             && !/\npathRender\(\);/.test(H.slice(H.indexOf("// --- the Path planning card ---"), H.indexOf("let S = {};")))
             && /pathReadings\(\);\s+\/\/ the Path planning card: Go-To range and gate/.test(grab("applyCmdState")),
       "a const read before its declaration is a ReferenceError at load, not an undefined");
+
+// ── 9. the end of plan picked is kept until the console has it ─────────────────────────────────────────────────────────
+// Driven: the page's own syncCompletionSel (called on every state frame) and the selector's own onchange, with the
+// clock, the focus and the save stubbed. The console's frames carry s.completion; until the debounced save lands they
+// carry the OLD one.
+{
+  const at = H.indexOf('$("#c_completion").onchange = ()=>{');
+  if (at < 0) throw new Error("test setup: the end of plan's onchange not found (renamed?)");
+  let k = H.indexOf("{", at), depth = 0;
+  for (;;) { const c = H[k]; if (c === "{") depth++; else if (c === "}") { depth--; if (!depth) break; } k++; }
+  const ONCHANGE = H.slice(at, k + 2);
+  const make = () => {
+    const env = { t: 0, saves: 0, focus: null, el: { value: "rth" } };
+    // eslint-disable-next-line no-new-func
+    const api = new Function("env", `"use strict";
+      const Date = { now: () => env.t };
+      const $ = (s) => (s === "#c_completion" ? env.el : null);
+      const document = { get activeElement(){ return env.focus; } };
+      const saveMission = () => { env.saves++; }, flashNote = () => {}, updateMissionCard = () => {}, renderLineTable = () => {};
+      let mission = { completion: "rth" };
+      ${decl("^const COMPLETION_ECHO_MS = .*$")}
+      ${decl("^let completionAsked = .*$")}
+      ${grab("syncCompletionSel")}
+      ${ONCHANGE}
+      return { sync: syncCompletionSel, get mission(){ return mission; } };`)(env);
+    return { env, api };
+  };
+  const pick = (w, v, t) => { w.env.t = t; w.env.el.value = v; w.env.el.onchange(); };
+  const frame = (w, v, t) => { w.env.t = t; w.api.sync({ completion: v }); return w.env.el.value + "/" + w.api.mission.completion; };
+  // a: picked Loiter; the console still says RTH for two frames, then Loiter; later another writer makes it Complete
+  const a = make();
+  pick(a, "loiter", 1000);
+  const aRun = [frame(a, "rth", 1250), frame(a, "rth", 1500), frame(a, "loiter", 1750), frame(a, "complete", 2000)];
+  // b: picked Loiter; the save never lands (refused) - the console's RTH is put back once the wait is over, not before
+  const b = make();
+  pick(b, "loiter", 1000);
+  const bRun = [frame(b, "rth", 1000 + 4900), frame(b, "rth", 1000 + 5100)];
+  // c: nothing picked: the selector follows the console at once; and not while the operator has it open
+  const c = make();
+  const cRun = [frame(c, "complete", 100)];
+  c.env.focus = c.env.el; cRun.push(frame(c, "repeat", 200));
+  check("9. AN END OF PLAN PICKED IS KEPT UNTIL THE CONSOLE HAS IT: Loiter picked, the frames still carrying RTH leave it "
+        + "Loiter (selector and plan), the frame carrying Loiter ends the wait, and a later change elsewhere is followed; "
+        + "a pick the console never reports gives way to the console's value after COMPLETION_ECHO_MS; with no pick the "
+        + "selector follows at once, and never while the operator has it open",
+        () => a.env.saves === 1 && aRun.join(" ") === "loiter/loiter loiter/loiter loiter/loiter complete/complete"
+              && bRun.join(" ") === "loiter/loiter rth/rth" && cRun.join(" ") === "complete/complete complete/complete"
+              && /^const COMPLETION_ECHO_MS = 5000;/m.test(H) && /syncCompletionSel\(s\);/.test(H),
+        () => JSON.stringify({ aRun, bRun, cRun, saves: a.env.saves }));
+}
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
 process.exit(fails ? 1 : 0);
