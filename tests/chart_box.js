@@ -292,13 +292,13 @@ const fresh = () => { banners = []; downs = []; covers = []; aisTaken = 0; cover
   let wide = null;
   try {
     world(SMALL, extract(SMALL));
-    const far = { route: [at(0, 200000)], uncharted: P.beyondChart([A, at(0, 200000)], SMALL), error: "x", reason: { mode: "uncharted" } };
+    const far = { route: [at(0, 250000)], uncharted: P.beyondChart([A, at(0, 250000)], SMALL), error: "x", reason: { mode: "uncharted" } };
     wide = await planInsideChart([A, B], undefined, () => far, "Go-To");
   } finally { restore(); }
   check("4d. a route whose read would be wider than the server extracts is refused WITHOUT asking (the model in hand "
         + "is kept): the reason names the extract it would take and the limit, and replaces the planner's error",
         () => wide && covers.length === 0 && wide.uncharted.say && wide.error === wide.uncharted.say
-              && /^the route runs 199\.\d\d km beyond the water the chart was read over - reading the chart over it would take an extract of 0\.\d\d° × 1\.8\d°, and the console reads at most 1\.5° on a side$/.test(wide.uncharted.say)
+              && /^the route runs 249\.\d\d km beyond the water the chart was read over - reading the chart over it would take an extract of 0\.\d\d° × 2\.2\d°, and the console reads at most 2\.0° on a side$/.test(wide.uncharted.say)
               && wide.uncharted.rounds === 0,
         () => wide ? wide.uncharted.say : "?");
 
@@ -349,7 +349,7 @@ const fresh = () => { banners = []; downs = []; covers = []; aisTaken = 0; cover
   // planned - planning one was measured at 15-31 s of the page's only thread for a Go-To 1.5-2 degrees off.
   fresh();
   let tooFar = null, planned = 0;
-  const FAR = at(0, 200000);                                         // 1.8 degrees north: past the server's limit
+  const FAR = at(0, 250000);                                         // 2.25 degrees north: past the server's limit
   try {
     world(SMALL, extract(SMALL));
     tooFar = await planInsideChart([A, FAR], undefined, () => { planned++; return P.planNogoRoute(A, FAR, {}); }, "Go-To");
@@ -359,7 +359,7 @@ const fresh = () => { banners = []; downs = []; covers = []; aisTaken = 0; cover
         () => tooFar && planned === 0 && covers.length === 0 && aisTaken === 0
               && tooFar.error === tooFar.uncharted.say && tooFar.reason.mode === "uncharted"
               && Math.abs(tooFar.reason.at.lat - FAR.lat) < 1e-12 && tooFar.uncharted.rounds === 0
-              && /^the target lies 199\.\d\d km beyond the water the chart was read over - reading the chart over it would take an extract of 0\.\d\d° × 1\.8\d°, and the console reads at most 1\.5° on a side$/.test(tooFar.error)
+              && /^the target lies 249\.\d\d km beyond the water the chart was read over - reading the chart over it would take an extract of 0\.\d\d° × 2\.2\d°, and the console reads at most 2\.0° on a side$/.test(tooFar.error)
               && tooFar.uncharted.cause === "size" && tooFar.reason.near === false,
         () => tooFar ? planned + " plans, " + covers.length + " reads: " + tooFar.error : "?");
   fresh();
@@ -405,14 +405,14 @@ const fresh = () => { banners = []; downs = []; covers = []; aisTaken = 0; cover
   let joined = null, planned5 = 0;
   try {
     world(SMALL, extract(SMALL));
-    nogo.bbox = union(SMALL, { W: SMALL.W, S: SMALL.S, E: SMALL.W + 1.49, N: SMALL.N });   // an earlier read, 1.49 deg wide
+    nogo.bbox = union(SMALL, { W: SMALL.W, S: SMALL.S, E: SMALL.W + 1.99, N: SMALL.N });   // an earlier read, 1.99 deg wide
     const C = at(-1500, 2500);
     joined = await planInsideChart([A, C], undefined, () => { planned5++; return P.planNogoRoute(A, C, {}); }, "Go-To");
   } finally { restore(); }
   check("4l. a point that alone would read fine, refused because the water ALREADY read makes the extract too wide, "
         + "says so - the span already read, then the extract it would take",
         () => joined && planned5 === 0 && covers.length === 0
-              && /^the target lies 2\.\d\d km beyond the water the chart was read over - reading the chart over it as well as the water already read \(1\.49° × 0\.0\d°\) would take an extract of 1\.5[1-9]° × 0\.0\d°, and the console reads at most 1\.5° on a side$/.test(joined.error),
+              && /^the target lies 2\.\d\d km beyond the water the chart was read over - reading the chart over it as well as the water already read \(1\.99° × 0\.0\d°\) would take an extract of 2\.0[1-9]° × 0\.0\d°, and the console reads at most 2\.0° on a side$/.test(joined.error),
         () => joined ? planned5 + " plans: " + joined.error : "?");
 
   // 4o. THE WIDENING PAD (the review's fuzz on his chart): with 300 m, a re-plan that drifted only a few hundred meters
@@ -439,7 +439,7 @@ const fresh = () => { banners = []; downs = []; covers = []; aisTaken = 0; cover
   let joinedLoop = null, jPlans = 0;
   try {
     world(SMALL, extract(SMALL));
-    nogo.bbox = union(SMALL, { W: SMALL.W, S: SMALL.S, E: SMALL.W + 1.49, N: SMALL.N });
+    nogo.bbox = union(SMALL, { W: SMALL.W, S: SMALL.S, E: SMALL.W + 1.99, N: SMALL.N });
     joinedLoop = await planInsideChart([A, B], undefined, () => { jPlans++;
       const r = [{ lat: A.lat, lon: SMALL.W - 200 / (M_PER_DEG_LAT * Math.cos(A.lat * Math.PI / 180)) }];
       return { route: r, unroutable: [], uncharted: P.beyondChart([A, ...r], nogo.bbox) }; }, "Transit");
@@ -447,7 +447,7 @@ const fresh = () => { banners = []; downs = []; covers = []; aisTaken = 0; cover
   check("4p. a route whose read would be too wide only because of the water ALREADY read is refused WITHOUT asking - "
         + "the loop joins the box already read too - and says so",
         () => joinedLoop && joinedLoop.uncharted && jPlans === 1 && covers.length === 0 && joinedLoop.uncharted.cause === "size"
-              && /reading the chart over it as well as the water already read \(1\.49° × 0\.0\d°\) would take an extract of 1\.5[1-9]° × 0\.0\d°/.test(joinedLoop.uncharted.say),
+              && /reading the chart over it as well as the water already read \(1\.99° × 0\.0\d°\) would take an extract of 2\.0[1-9]° × 0\.0\d°/.test(joinedLoop.uncharted.say),
         () => joinedLoop && joinedLoop.uncharted ? jPlans + " plan(s), " + covers.length + " read(s): " + joinedLoop.uncharted.say : "?");
 
   // 4m-4n. WHAT TO DO ABOUT IT, by cause; and the planner's own words in the operator's units.
@@ -471,10 +471,11 @@ const fresh = () => { banners = []; downs = []; covers = []; aisTaken = 0; cover
   check("5. the page's ENC_MAX_SPAN_DEG is the server's (asv_console.py), and encSpanRefusal refuses past it on "
         + "either side and not at it",
         () => srv && +srv[1] === ENC_MAX_SPAN_DEG
-              && encSpanRefusal({ W: 0, S: 0, E: 1.5, N: 1.5 }) === null
-              && /^an extract of 1\.51° × 0\.20°/.test(encSpanRefusal({ W: 0, S: 0, E: 1.5004, N: 0.2 }))   // just past: rounded UP
-              && /^an extract of 1\.60° × 0\.20°/.test(encSpanRefusal({ W: 0, S: 0, E: 1.6, N: 0.2 }))
-              && /^an extract of 0\.20° × 1\.60°/.test(encSpanRefusal({ W: 0, S: 0, E: 0.2, N: 1.6 })),
+              && encSpanRefusal({ W: 0, S: 0, E: 2.0, N: 2.0 }) === null
+              && /^an extract of 2\.01° × 0\.20°, and the console reads at most 2\.0° on a side$/.test(encSpanRefusal({ W: 0, S: 0, E: 2.0004, N: 0.2 }))   // just past: rounded UP
+              && /^an extract of 2\.10° × 0\.20°/.test(encSpanRefusal({ W: 0, S: 0, E: 2.1, N: 0.2 }))
+              && /^an extract of 0\.20° × 2\.10°/.test(encSpanRefusal({ W: 0, S: 0, E: 0.2, N: 2.1 }))
+              && ENC_MAX_SPAN_DEG === 2.0,
         "server " + (srv && srv[1]) + ", page " + ENC_MAX_SPAN_DEG);
   const rn = grab("refreshNogo");
   check("5b. refreshNogo asks it of a box it is HANDED before it waits, claims or fetches anything - and returns",

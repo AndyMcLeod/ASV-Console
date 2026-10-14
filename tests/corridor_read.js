@@ -71,16 +71,16 @@ console.log("The chart along a route, on the page:");
 // ── the page's block, lifted ──────────────────────────────────────────────────────────────────────────────────────
 const world = (o) => {
   const w = Object.assign({ posts: [], gets: [], banners: [], notes: [], logs: [], renders: 0, sup: true,
-                            asv: { lat: 43.07, lon: -70.70 }, transit: [], seq: [] }, o || {});
+                            asv: { lat: 43.07, lon: -70.70 }, passageWps: [], seq: [] }, o || {});
   const src = "let corridorRead = null, corridorBusy = false, corridorAhead = {at: null, route: null};\n"
     + "const CORRIDOR_HALF_KM = " + constOf("CORRIDOR_HALF_KM") + ", CORRIDOR_POLL_MS = 0, CORRIDOR_AHEAD_M = " + AHEAD
     + ", CORRIDOR_AHEAD_EVERY_M = " + EVERY + ";\n"
     + "const CORRIDOR_SCALES = [\"harbour\", \"approach\", \"coastal\", \"general\"];\n"
     + [grab("toCorridor"), grab("corridorSummary"), grab("readCorridor"), grab("routeAhead"), grab("corridorAheadTick")].join("\n")
     + "\nreturn {readCorridor, corridorSummary, routeAhead, corridorAheadTick, toCorridor, state: () => ({corridorRead, corridorBusy, corridorAhead})};";
-  w.api = new Function("asv", "transit", "postCorridor", "getCorridor", "updateTransitPanel", "render", "showBanner", "flashNote",
+  w.api = new Function("asv", "passageWps", "postCorridor", "getCorridor", "updateTransitPanel", "render", "showBanner", "flashNote",
     "logClient", "fmtMS", "distTo", "supervising", "indexedRoute", "window", "NOGO_RADIUS_M", src)(
-    w.asv, w.transit, async (b) => { w.posts.push(b); return w.seq.length ? w.seq.shift() : { id: "j1", state: "done", total: 1, done: 1 }; },
+    w.asv, w.passageWps, async (b) => { w.posts.push(b); return w.seq.length ? w.seq.shift() : { id: "j1", state: "done", total: 1, done: 1 }; },
     async (id) => { w.gets.push(id); return w.seq.shift(); }, () => {}, () => { w.renders++; }, (t) => w.banners.push(t),
     (t) => w.notes.push(t), (k, d) => w.logs.push([k, d]), fmtMS, distTo, () => w.sup, () => w.route, w.win || { _wpIndex: 0 }, NOGO_R);
   return w;
@@ -88,7 +88,7 @@ const world = (o) => {
 
 (async () => {
   // ── 1. Read chart ───────────────────────────────────────────────────────────────────────────────────────────────
-  const A = world({ transit: [{ lat: 43.0, lon: -70.6 }, { lat: 42.5, lon: -70.0 }] });
+  const A = world({ passageWps: [{ lat: 43.0, lon: -70.6 }, { lat: 42.5, lon: -70.0 }] });
   const run = (d) => ({ id: "j1", state: "running", total: 4, done: d, failed: [], bands: {}, unread: [], unread_n: 0, half_km: 5, seconds: d, eta_s: 4 - d });
   A.seq = [run(0), run(1), run(3), { id: "j1", state: "done", total: 4, done: 4, failed: [], bands: { harbour: 1, coastal: 3 },
            unread: [[-70.1, 42.6, -70.09, 42.61]], unread_n: 1, half_km: 5, seconds: 12 }];
@@ -97,18 +97,18 @@ const world = (o) => {
   check("1. READ CHART reads the corridor of the boat and the line's points, 5 km either side; polls the job while it "
         + "runs; keeps the final status with its unread squares as {W, S, E, N}; says the start and the end on the "
         + "banner and in the session log; and is free again after",
-        () => A.posts.length === 1 && JSON.stringify(A.posts[0].route) === JSON.stringify([{ lat: 43.07, lon: -70.70 }, ...A.transit])
+        () => A.posts.length === 1 && JSON.stringify(A.posts[0].route) === JSON.stringify([{ lat: 43.07, lon: -70.70 }, ...A.passageWps])
               && A.posts[0].half_km === 5 && A.gets.length === 3 && s.corridorRead.state === "done"
               && JSON.stringify(s.corridorRead.unread) === JSON.stringify([{ W: -70.1, S: 42.6, E: -70.09, N: 42.61, failed: false }])
               && /^Reading the chart along the line: 4 tile/.test(A.banners[0]) && /^Chart read along the line: 4 tile/.test(A.banners[A.banners.length - 1])
               && A.logs.length === 2 && A.logs[0][1].state === "started" && A.logs[1][1].state === "done" && s.corridorBusy === false,
         () => JSON.stringify({ posts: A.posts.length, gets: A.gets.length, last: A.banners[A.banners.length - 1], logs: A.logs.length }).slice(0, 300));
-  const N = world({ transit: [] }); await N.api.readCorridor();
-  const R = world({ transit: [{ lat: 43, lon: -70 }] }); R.seq = [{ error: "that corridor reaches 900 chart tiles; at most 600 are read at once - read it in parts" }];
+  const N = world({ passageWps: [] }); await N.api.readCorridor();
+  const R = world({ passageWps: [{ lat: 43, lon: -70 }] }); R.seq = [{ error: "that corridor reaches 900 chart tiles; at most 600 are read at once - read it in parts" }];
   await R.api.readCorridor();
-  check("1b. no transit line: nothing asked, a note says to draw one; a refusal from the console is said in its own "
+  check("1b. no passage line (the Passage tab's, since 2026-10-14): nothing asked, a note says to draw one; a refusal from the console is said in its own "
         + "words, and nothing is kept",
-        () => N.posts.length === 0 && /Draw a transit line first/.test(N.notes[0] || "") && R.posts.length === 1
+        () => N.posts.length === 0 && /Draw the passage's line on the Passage tab first/.test(N.notes[0] || "") && R.posts.length === 1
               && /^Chart NOT read along the line: that corridor reaches 900 chart tiles/.test(R.banners[0] || "")
               && R.api.state().corridorRead === null && R.api.state().corridorBusy === false,
         () => JSON.stringify({ n: N.notes, r: R.banners }).slice(0, 200));

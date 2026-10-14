@@ -18,6 +18,11 @@
 //     way the chart FOLLOWS the boat, so the view-keyed ENC layer missed on every frame as well.
 //     Both are held in a layer drawn over the view plus LAYER_PAD_PX a side (drawLayer), redrawn
 //     only when the view leaves it or an input changes (checks 2, 2b and 10-14)
+//   * 2026-10-14, his session at 15:48 (14,534 zones, 3.36 million vertices in the box): every zoom change redrew both
+//     layers whole - 1.6 to 12.9 s each, the guard blind meanwhile. A layer now traces only what is on its canvas, no
+//     vertex within 0.7 px of the last (a ring's or path's last always), no area or line under half a pixel, a hazard's
+//     symbol whatever its size (checks 15-17b; 5 sidecar mutations, 5/5 caught). Measured on a scratch console, 8 zoom
+//     changes: 0.73-3.22 s on 20,078 zones before, 0.32-1.07 s on 22,661 after
 //
 //   node tests/enc_cache.js      # exit 0 = pass, 1 = fail   (stdlib Node)
 //
@@ -83,7 +88,10 @@ function fakeCtx() {
            moveTo: pt, lineTo: pt, stroke: noop, fill: noop, arc: () => { arcs++; },
            clearRect: noop, setLineDash: noop,
            drawImage: (src, x, y) => { blits++; lastBlit = { x, y }; },
-           fillStyle: "", strokeStyle: "", lineWidth: 0, font: "", lineCap: "" };
+           fillStyle: "", strokeStyle: "", lineWidth: 0, font: "", lineCap: "",
+           // the canvas a draw is on (2026-10-14, layerSees culls to it): the screen's own is unbounded here; a layer's
+           // is the one drawLayer sized (set below)
+           canvas: { width: 1e9, height: 1e9 } };
 }
 const ctx = fakeCtx();
 // ⚠ THE CACHES' OWN STATE, AT MODULE SCOPE. The page declares them as `const encLayer = makeLayer()`
@@ -105,6 +113,7 @@ function eachPoint(g, fn) { if (g && g.type === "Point") fn(g.coordinates); }
 // the offscreen canvas the page asks the DOM for
 globalThis.document = { createElement: () => {
   const c = { width: 0, height: 0, _ctx: fakeCtx() };
+  c._ctx.canvas = c;
   c.getContext = () => c._ctx;
   return c;
 } };
@@ -129,7 +138,8 @@ const { overheadBlocks } = require("../static/js/keepouts.js");
 // the margin a layer is drawn with, read from the page so a change to it moves these checks with it
 const PAD = +(H.match(/const LAYER_PAD_PX = (\d+);/) || [])[1];
 // eslint-disable-next-line no-eval
-eval("const LAYER_PAD_PX = " + PAD + ";\n" + grab("makeLayer") + "\n" + grab("layerHolds") + "\n" + grab("drawLayer")
+eval("const LAYER_PAD_PX = " + PAD + ";\nconst featBox = new WeakMap();\n" + grab("featureBox") + "\n" + grab("layerSees")
+     + "\n" + grab("tracePx") + "\n" + grab("makeLayer") + "\n" + grab("layerHolds") + "\n" + grab("drawLayer")
      + "\n" + grab("drawENC") + "\n" + grab("encLayerKeyNow") + "\n" + grab("drawENCCached")
      + "\n" + grab("drawNogo") + "\n" + grab("nogoLayerKeyNow") + "\n" + grab("drawNogoCached"));
 encLayer = makeLayer(); nogoLayer = makeLayer();
@@ -418,6 +428,58 @@ check("6. a refetch of the same water is a MISS - the data is compared by identi
   check("14. render() draws the keep-out layer THROUGH the cache, not directly",
         () => /drawNogoCached\(toScreen, w, h, o\);/.test(rn) && !/drawNogo\(toScreen/.test(rn),
         "render in static/asv.html");
+}
+
+// -- 15-17. ONLY WHAT THE LAYER SHOWS, NO FINER THAN A PIXEL (2026-10-14) ------------------
+// His session's 14,534 zones - 3.36 million vertices in the box - were redrawn whole on every zoom change, for 1.6 to
+// 12.9 s, the guard blind while they were. A layer draws only what is on its canvas, traces no vertex within 0.7 px of
+// the last, and draws no line or area under half a pixel; a hazard's symbol is drawn whatever its size. Drawn here
+// straight into an 800 x 600 canvas: 1 degree is 100 px.
+{
+  const c8 = fakeCtx(); c8.canvas = { width: 800, height: 600 };
+  const ring = (pts) => ({ type: "Polygon", coordinates: [pts] });
+  const IN = { role: "land", geometry: ring([[1, 1], [1, 2], [2, 2], [1, 1]]) };
+  const OUT = { role: "land", geometry: ring([[50, 1], [50, 2], [51, 2], [50, 1]]) };
+  const SPECK = { role: "land", geometry: ring([[3, 3], [3, 3.002], [3.002, 3.002], [3, 3]]) };
+  const ROCK = { role: "hazard_point", cls: "Underwater_Awash_Rock_point", geometry: { type: "Point", coordinates: [3.001, 3.001] } };
+  const fine = [];                                   // 200 vertices 0.1 px apart, then a box round
+  for (let k = 0; k < 200; k++) fine.push([4 + k * 0.001, 1]);
+  const DENSE = { role: "land", geometry: ring([...fine, [6, 1], [6, 2], [4, 1]]) };
+  const COARSE = { role: "land", geometry: ring([[1, 4], [1.05, 4], [1.1, 4], [1.15, 4], [1.15, 4.5], [1, 4]]) };   // 5 px apart
+  const run = (fs) => { sea.enc = { features: fs }; rec = []; drawENC(toScreen, c8); const r = rec; rec = null; return r; };
+  const has = (r, x, y) => r.some((v) => Math.abs(v[0] - x) < 1e-6 && Math.abs(v[1] - y) < 1e-6);
+  const inOut = run([IN, OUT]);
+  check("15. A FEATURE OFF THE LAYER'S CANVAS IS NOT TRACED: one 48 degrees east of an 800 px canvas draws no vertex, "
+        + "the one on it all of its own",
+        () => inOut.length === 4 && has(inOut, 100, 100) && has(inOut, 200, 200) && !inOut.some((v) => v[0] > 1000),
+        () => inOut.length + " vertices: " + JSON.stringify(inOut));
+  const dense = run([DENSE]), coarse = run([COARSE]);
+  check("16. A VERTEX WITHIN 0.7 px OF THE LAST TRACED IS NOT TRACED - 203 vertices 0.1 px apart come to "
+        + dense.length + " - and the ring's last vertex always is; vertices 5 px apart are traced every one",
+        () => dense.length < 40 && dense.length > 3 && has(dense, 400, 100) && has(dense, 600, 200)
+              && dense[dense.length - 1][0] === 400 && dense[dense.length - 1][1] === 100 && coarse.length === 6,
+        () => "dense " + dense.length + ", last " + JSON.stringify(dense[dense.length - 1]) + "; coarse " + coarse.length);
+  const speck = run([SPECK]), rock = run([ROCK]);
+  check("17. AN AREA UNDER HALF A PIXEL IS NOT DRAWN - a 0.2 px speck of land - but a HAZARD'S SYMBOL IS, whatever its "
+        + "size (its cross at the same place)",
+        () => speck.length === 0 && rock.length >= 4 && rock.some((v) => Math.abs(v[0] - 300.1) < 5 && Math.abs(v[1] - 300.1) < 5),
+        () => "speck " + speck.length + " vertices; rock " + rock.length + ": " + JSON.stringify(rock.slice(0, 4)));
+  // ... a PATH whose last vertex is 0.3 px past the one before it ends there, not short of it
+  const SHORE = { role: "shore_line", geometry: { type: "LineString", coordinates: [[1, 5], [1.5, 5], [1.503, 5]] } };
+  const shore = run([SHORE]);
+  check("16b. ... and a line's LAST vertex is traced however near the one before it (0.3 px): the coast ends where it ends",
+        () => shore.length === 3 && Math.abs(shore[2][0] - 150.3) < 1e-6,
+        () => JSON.stringify(shore));
+  // THE KEEP-OUT LAYER THE SAME: a zone off the canvas is not traced, one on it is
+  const keepWas = nogo.features, inkWas = chartInk;
+  nogo.features = [{ ...IN, d: 0 }, { ...OUT, d: 0 }]; chartInk = { lines: [], areas: [] };   // (the checks above leave ink)
+  rec = []; drawNogo(toScreen, c8); const zones = rec; rec = null;
+  nogo.features = keepWas; chartInk = inkWas;
+  check("17b. THE KEEP-OUT LAYER DRAWS ONLY WHAT IT SHOWS TOO: of two land zones, the one 48 degrees off the canvas is "
+        + "not traced",
+        () => zones.length === 4 && !zones.some((v) => v[0] > 1000),
+        () => zones.length + " vertices: " + JSON.stringify(zones));
+  sea.enc = { features: [] };
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED" : "\nall checks passed (" + ran + ")");

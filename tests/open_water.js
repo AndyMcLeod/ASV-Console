@@ -40,6 +40,15 @@
 //   9    THE WORDS: the banner's (openWaterNote) and the Intent card's (openWaterWhy);
 //   10   THE PAGE: the Route rules switch and its summary, the three banners, the Intent card (driven), the read of the
 //        water it searches (openWaterRead, driven), its place in planInsideChart, the imports, the default.
+//   11-11f ENDS FIRST, THEN INWARD (2026-10-14, his 120 km Go-To from a Portland wharf: at 152 m cells the search could
+//        not start, "no open-water path"): a harbor end planned on its own fine field (endField) - up an inlet, out of
+//        a basin by the water the route runs longest through - said; the search starting at the exit and ending at the
+//        entry that do the WHOLE leg best (seeds, goals: driven on a plain field); the router's own route only where the
+//        fine field finds none (a 40 m inlet); and no shortcut of the spine nearer a hazard than the stretch it replaces.
+//
+// TEETH (11-11f) - 11 sidecar mutations RUN, 11/11 caught (the search always from her, the fine ends not searched, the
+// router's head dropped, the fine way out dropped, an exit's or an entry's cost ignored, the first water the route
+// meets, the harbor field at the leg's resolution, the banner or the Intent card silent, a shortcut nearer).
 //
 //   node tests/open_water.js      # exit 0 = pass, 1 = fail   (stdlib Node)
 
@@ -445,6 +454,156 @@ const BA = gll(0, 11000), BB = gll(0, -11000);
               && PIC.indexOf("await readPassageAis(pts);") < PIC.indexOf("let p = await plan()")
               && /import \{ openWaterBox, openWaterNote, openWaterWhy \} from "\/static\/js\/openwater\.js";/.test(H),
         "order in planInsideChart, the import");
+
+  // ── 11. ENDS FIRST, THEN INWARD (2026-10-14) ─────────────────────────────────────────────────────────────────────────
+  // His 120 km Go-To from a Portland wharf: the field's cells were 152 m, every one within 900 m of her blocked by the
+  // harbor, and the search could not start - "no open-water path", the threading route shipped. Here the bay with a
+  // HARBOR at its north end: an inlet 250 m wide and 2 km long, her berth 1.5 km up it, and cells of about 150 m (the
+  // field's MAX_DIM lowered to make them what his long leg made them).
+  {
+    const HARB = world([...islands, land(-9000, -20000, -7000, 20000),
+                        land(-2000, 11000, -125, 14000), land(125, 11000, 2000, 14000), land(-2000, 14000, 2000, 15000)]);
+    const HA = gll(0, 12500), O150 = { MAX_DIM: 250 };
+    const legH = R.legPath(HA, BB, GF, HARB, 5);
+    const enH = [en(HA), ...(legH || []).map(en)];
+    const dH = Math.hypot(en(BB).e - en(HA).e, en(BB).n - en(HA).n);
+    const mH = Math.min(OW.OPEN_WATER.MARGIN_MAX_M, Math.max(OW.OPEN_WATER.MARGIN_MIN_M, OW.OPEN_WATER.MARGIN_FRAC * dH));
+    const fld = OW.openWaterField(Math.min(...enH.map((p) => p.e)) - mH, Math.min(...enH.map((p) => p.n)) - mH,
+                                  Math.max(...enH.map((p) => p.e)) + mH, Math.max(...enH.map((p) => p.n)) + mH, HARB, 5, { ...OW.OPEN_WATER, ...O150 });
+    // the old code's dead end: no free cell within its snap (6 cells, or 400 m) of her
+    const R6 = Math.max(6, Math.ceil(400 / fld.cell)), ga = en(HA), gx = Math.round((ga.e - fld.x0) / fld.cell), gy = Math.round((ga.n - fld.y0) / fld.cell);
+    let freeNearHer = 0;
+    for (let y = gy - R6; y <= gy + R6; y++) for (let x = gx - R6; x <= gx + R6; x++)
+      if (x >= 0 && y >= 0 && x < fld.W && y < fld.H && !fld.blk[y * fld.W + x]) freeNearHer++;
+    const r = legH ? OW.openWaterLeg(HA, BB, GF, HARB, 5, legH, { params: O150 }) : null;
+    const pts = r ? [HA, ...r.leg] : [];
+    const clear = pts.every((q, i) => i === 0 || K.legClear(pts[i - 1], q, GF, HARB, 5));
+    // the head: the way out planned on its own fine field (endField) - up the inlet, inside it - then open water
+    const onRouter = (q) => { const p = en(q); let d = Infinity;
+      for (let i = 1; i < enH.length; i++) { const a = enH[i - 1], b = enH[i], dx = b.e - a.e, dy = b.n - a.n, l2 = dx * dx + dy * dy;
+        const t = l2 ? Math.max(0, Math.min(1, ((p.e - a.e) * dx + (p.n - a.n) * dy) / l2)) : 0;
+        d = Math.min(d, Math.hypot(p.e - a.e - t * dx, p.n - a.n - t * dy)); } return d; };
+    let walked = 0, headSame = !!(r && r.used && r.ends);           // (the name kept: "the head is the harbor's own way")
+    for (let i = 0; headSame && i < pts.length - 1 && walked < r.ends.startM - 1; i++) {
+      walked += Math.hypot(en(pts[i + 1]).e - en(pts[i]).e, en(pts[i + 1]).n - en(pts[i]).n);
+      const q = en(pts[i + 1]);
+      if (q.n > 11000 + 1 && Math.abs(q.e) > 125) headSame = false;   // above the mouth: inside the inlet's 250 m
+    }
+    void onRouter;
+    const cR = legH ? leastClear(HARB, [HA, ...legH].filter((q) => en(q).n < 10500)) : null;
+    const cO = r && r.used ? leastClear(HARB, pts.filter((q) => en(q).n < 10500)) : null;
+    check("11. ENDS FIRST, THEN INWARD: her berth 1.5 km up a 250 m inlet, cells of " + f0(fld.cell) + " m - no free cell "
+          + "within the old search's reach of her (" + freeNearHer + "), where it said \"no open-water path\" - and now the "
+          + "way up the inlet is planned on its own fine field (" + f0(r && r.ends && r.ends.startM) + " m, inside the inlet) "
+          + "and open water taken from the mouth: off the island chain (least clearance south of the mouth " + f0(cR) + " -> " + f0(cO) + " m), every "
+          + "leg clear at the buffer",
+          () => fld.cell > 140 && freeNearHer === 0 && r && r.used === true && r.why === "open water"
+                && r.ends.startM > 1000 && r.ends.startM < 3500 && r.ends.endM === 0 && r.ends.startBy === "fine" && r.ends.endBy === null
+                && headSame && clear && cO > 4 * cR,
+          () => JSON.stringify({ cell: fld.cell, freeNearHer, why: r && r.why, ends: r && r.ends, headSame, clear, cR, cO }));
+    const km2 = (m) => (m >= 1000 ? (m / 1000).toFixed(2) + " km" : Math.round(m) + " m");
+    const note = r ? OW.openWaterNote({ ...r, held: 0 }, km2) : "";
+    const why = r ? OW.openWaterWhy([{ ...r, held: 0 }], km2) : [];
+    const noEnds = OW.openWaterNote({ ...wide, held: 0 }, km2);
+    check("11b. ... and SAID: the banner and the Intent card say how far at her end was planned in detail, and why; a leg "
+          + "searched end to end says nothing of it (the bay's, check 3)",
+          () => /, in detail for the first 1\.\d\d km \(harbor water too tight for the wider search\)$/.test(note)
+                && why.length && /; planned in detail for the first 1\.\d\d km, harbor water too tight for the wider search - the way out and in chosen with the open water beyond them/.test(why[0].s)
+                && wide.ends && wide.ends.startM === 0 && wide.ends.endM === 0 && !/in detail for/.test(noEnds),
+          () => note + " | " + (why[0] && why[0].s.slice(-160)) + " | " + noEnds.slice(-80));
+    // A BASIN UP THE INLET: open water of its own the search CAN start in (1.2 km across), joined to the bay only by the
+    // narrows its cells close. The water the search takes is the one the route runs the LONGEST through - the bay - not
+    // the first it meets: started in the basin it could reach nothing, and the leg came out "short".
+    const BAS = world([...islands, land(-9000, -20000, -7000, 20000),
+                       land(-2000, 11000, -125, 12000), land(125, 11000, 2000, 12000),
+                       land(-2000, 12000, -600, 14000), land(600, 12000, 2000, 14000), land(-2000, 13600, 2000, 15000)]);
+    const BA2 = gll(0, 12800), legB2 = R.legPath(BA2, BB, GF, BAS, 5);
+    const r2 = legB2 ? OW.openWaterLeg(BA2, BB, GF, BAS, 5, legB2, { params: O150 }) : null;
+    const pts2 = r2 ? [BA2, ...r2.leg] : [];
+    const clear2 = pts2.every((q, i) => i === 0 || K.legClear(pts2[i - 1], q, GF, BAS, 5));
+    check("11c. ... A BASIN UP THE INLET, water the search could start in but not leave: the search takes the bay - the "
+          + "water the route runs longest through - from the mouth (" + f0(r2 && r2.ends && r2.ends.startM) + " m planned "
+          + "on the fine field, out of the basin and down the narrows)",
+          () => r2 && r2.used === true && r2.ends.startM > 1500 && r2.ends.startM < 3500 && r2.ends.startBy === "fine" && clear2,
+          () => JSON.stringify({ why: r2 && r2.why, ends: r2 && r2.ends, clear2 }));
+  }
+
+  // 11d. THE WAY OUT IS THE ONE THAT DOES THE WHOLE LEG BEST (endField's exits as the search's `seeds`, the far harbor's
+  // entries as its `goals`). The first cut took the nearest exit by its own price - on his Portland Go-To, Hussey Sound,
+  // 22 m off a charted shoal - before the leg's search had a say. Driven on an open field 100 x 40 cells, 10 m each, B at
+  // the right: an exit far from B that cost nothing to reach, and one near B that cost a little - the search starts at
+  // the one with the cheaper WHOLE, whichever that is; and ends likewise at the entry with the cheaper whole.
+  {
+    const W = 100, H = 40, cell = 10, N = W * H;
+    const fld = { x0: 0, y0: 0, cell, W, H, blk: new Uint8Array(N), dist: new Float32Array(N).fill(1e7), trust: new Float32Array(N) };
+    const at = (gx, gy) => gy * W + gx, A = { e: 0, n: 200 }, Bp = { e: 990, n: 200 };
+    const run = (seeds, goals) => OW.searchField(fld, A, Bp, OW.OPEN_WATER, { seeds, goals });
+    const far = at(5, 20), near = at(60, 20);
+    const nearCheap = run(new Map([[far, 0], [near, 30]]), null);          // near: 30 to reach, 39 on - far: 0, 94 on
+    const nearDear = run(new Map([[far, 0], [near, 120]]), null);          // near: 120 + 39 > 0 + 94
+    const inA = at(80, 20), inB = at(98, 5);
+    const endCheap = run(null, new Map([[inA, 5], [inB, 1]]));             // ... to an entry, at its own cost on
+    const endDear = run(null, new Map([[inA, 5], [inB, 200]]));
+    check("11d. THE WAY OUT IS THE ONE THAT DOES THE WHOLE LEG BEST: of two exits, the search begins at the one whose cost "
+          + "to reach plus the way on is least - the near one at 30 to reach, the far one when the near costs 120 - and "
+          + "ends at the entry whose way there plus its cost on is least",
+          () => nearCheap && nearCheap[0] === near && nearDear && nearDear[0] === far
+                && endCheap && endCheap[endCheap.length - 1] === inA && endDear && endDear[endDear.length - 1] === inA
+                && run(null, new Map([[inA, 60], [inB, 1]]))[run(null, new Map([[inA, 60], [inB, 1]])).length - 1] === inB,
+          () => JSON.stringify({ nearCheap: nearCheap && nearCheap[0], nearDear: nearDear && nearDear[0],
+                                 endCheap: endCheap && endCheap[endCheap.length - 1], endDear: endDear && endDear[endDear.length - 1] }));
+  }
+
+  // 11e. AN END TOO TIGHT EVEN FOR THE FINE FIELD: her berth 1 km up an inlet 40 m wide - no free cell of the harbor's own
+  // 27 m field within its reach of her - keeps the ROUTER's own route out to the water, as the first cut of ends first did.
+  {
+    const TIGHT = world([...islands, land(-9000, -20000, -7000, 20000),
+                         land(-2000, 11000, -20, 13000), land(20, 11000, 2000, 13000), land(-2000, 13000, 2000, 15000)]);
+    const TA = gll(0, 12000), legT = R.legPath(TA, BB, GF, TIGHT, 5);
+    const r3 = legT ? OW.openWaterLeg(TA, BB, GF, TIGHT, 5, legT, { params: { MAX_DIM: 250 } }) : null;
+    const enT = [en(TA), ...(legT || []).map(en)];
+    const onT = (q) => { const p = en(q); let d = Infinity;
+      for (let i = 1; i < enT.length; i++) { const a = enT[i - 1], b = enT[i], dx = b.e - a.e, dy = b.n - a.n, l2 = dx * dx + dy * dy;
+        const t = l2 ? Math.max(0, Math.min(1, ((p.e - a.e) * dx + (p.n - a.n) * dy) / l2)) : 0;
+        d = Math.min(d, Math.hypot(p.e - a.e - t * dx, p.n - a.n - t * dy)); } return d; };
+    const pts3 = r3 ? [TA, ...r3.leg] : [];
+    let w3 = 0, on3 = !!(r3 && r3.used && r3.ends);
+    for (let i = 0; on3 && i < pts3.length - 1 && w3 < r3.ends.startM - 1; i++) {
+      w3 += Math.hypot(en(pts3[i + 1]).e - en(pts3[i]).e, en(pts3[i + 1]).n - en(pts3[i]).n);
+      if (onT(pts3[i + 1]) > 0.5) on3 = false;
+    }
+    check("11e. ... AN END TOO TIGHT EVEN FOR THE HARBOR'S FINE FIELD (a 40 m inlet, her berth 1 km up it) keeps the "
+          + "router's own route out of it (" + f0(r3 && r3.ends && r3.ends.startM) + " m, on its line) - and the open "
+          + "water is still taken from where that reaches the bay",
+          () => r3 && r3.used === true && r3.ends.startBy === "router" && r3.ends.startM > 900 && on3,
+          () => JSON.stringify({ why: r3 && r3.why, ends: r3 && r3.ends, on3 }));
+  }
+  // 11f. A SHORTCUT IS NEVER NEARER A HAZARD THAN THE STRETCH IT REPLACES (spineOf). Driven on a field 60 x 30 cells of
+  // 10 m: a hazard at cell (30, 8); the search's path goes up and over it - 80 m off at its nearest - and down again. The
+  // straight line between its ends passes 40 m off and, priced alone, costs less for being shorter; it is not taken.
+  {
+    const W = 60, H = 30, cell = 10, N = W * H, hz = { x: 30, y: 8 };
+    const dist = new Float32Array(N), blk = new Uint8Array(N);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) dist[y * W + x] = Math.hypot(x - hz.x, y - hz.y) * cell;
+    blk[hz.y * W + hz.x] = 1;
+    const fld = { x0: 0, y0: 0, cell, W, H, blk, dist, trust: new Float32Array(N) };
+    const cells = [];
+    for (let k = 0; k <= 12; k++) cells.push((4 + k) * W + k);          // up the diagonal from (0, 4) to (12, 16)
+    for (let x = 13; x <= 47; x++) cells.push(16 * W + x);                // along y = 16
+    for (let k = 1; k <= 12; k++) cells.push((16 - k) * W + 47 + k);      // down to (59, 4)
+    const F0 = { fromEN: (e, n) => ({ lat: n, lon: e }) };
+    const spine = OW.spineOf(fld, cells, { lat: 40, lon: 0 }, { lat: 40, lon: 590 }, F0, OW.OPEN_WATER);
+    let leastS = Infinity;                           // the spine's least clearance, sampled every 5 m
+    for (let i = 1; i < spine.length; i++) {
+      const a = spine[i - 1], b = spine[i], L = Math.hypot(b.lon - a.lon, b.lat - a.lat), n = Math.max(1, Math.ceil(L / 5));
+      for (let k = 0; k <= n; k++) { const e = a.lon + (b.lon - a.lon) * k / n, m = a.lat + (b.lat - a.lat) * k / n;
+        leastS = Math.min(leastS, Math.hypot(e / cell - hz.x, m / cell - hz.y) * cell); }
+    }
+    check("11f. A SHORTCUT IS NEVER NEARER A HAZARD THAN THE STRETCH IT REPLACES: the path keeps 80 m off; the straight "
+          + "line between its ends would pass 40 m off; the spine keeps " + f0(leastS) + " m",
+          () => spine.length > 2 && leastS >= 80 - cell,
+          () => spine.length + " points: " + JSON.stringify(spine.map((q) => [Math.round(q.lon), Math.round(q.lat)])));
+  }
 
   console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
   process.exit(fails ? 1 : 0);

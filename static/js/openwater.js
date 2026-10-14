@@ -38,6 +38,16 @@
  * price the search pays - by GAIN_MIN or more, at no more than DETOUR_MAX longer; otherwise the router's route stands
  * exactly as before. Everything after the search - deep water first, the Rule 9 lanes, the marks, the smoothing, the
  * gate - runs on whichever it is, unchanged.
+ *
+ * ENDS FIRST, THEN INWARD (Andy, 2026-10-14: "The open ocean planning does not seem to be applied. The ASV is winding its
+ * way among shoals and islands rather than standing offshore for a clean transit"; then "do it in segments starting
+ * with beginning and end and then working inward"). The field's cell grows with the leg (MAX_DIM cells along the long
+ * side): 152 m on his 120 km Go-To from a Portland wharf, where every cell within 900 m of her was blocked by the
+ * harbor's docks and banks - the search could not start, and said "no open-water path" whatever chart was read
+ * (replayed on his charts: the same over the box the page read and the wider one it asked for). So the ends are the
+ * ROUTER's: its own route, which threads a harbor at full resolution, is kept from each end out to where it first
+ * reaches the open water the field can search - the connected water it runs the longest through - and the search runs
+ * between those two points. A leg whose ends are both in that water is searched end to end, exactly as before.
  */
 import { rasterKeepouts } from './raster.js';
 import { legClear } from './keepouts.js';
@@ -64,6 +74,8 @@ export const OPEN_WATER = {
   ISOLATED_DANGER_R_M: 150,
   LATERAL_TRUST_R_M: 250,   // the water round a lateral (channel) mark, and either side of a reach between two of them
   LATERAL_REACH_MAX_M: 2500,
+  WAY_OUT_R_M: 12000,       // ENDS FIRST: the fine search round an end the leg's field cannot search from, this far each way
+  WAY_OUT_MAX_DIM: 900,     // ... in cells along its side (27 m) - its own, whatever the leg's MAX_DIM makes the leg's cells
   MARK_HOLD_M: 1500,        // A BUOY OUTRANKS OPEN WATER (passage.js buoysOutrankOpenWater): the router's own route kept
                             // within this of a mark the open water would leave on its wrong hand
 };
@@ -225,22 +237,165 @@ export function exposureOn(fld, en, O = OPEN_WATER) {
   return E;
 }
 
-/** The clearance-weighted search over `fld` from EN `a` to `b`: the cells' EN path, or null. */
-function searchField(fld, a, b, O) {
-  const { x0, y0, cell, W, H, blk, dist, trust } = fld, N = W * H;
-  const freeNear = (e, n) => {
-    const gx = Math.round((e - x0) / cell), gy = Math.round((n - y0) / cell);
-    const R = Math.max(6, Math.ceil(400 / cell));
-    for (let r = 0; r <= R; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
-      if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
-      const x = gx + dx, y = gy + dy;
-      if (x >= 0 && y >= 0 && x < W && y < H && !blk[y * W + x]) return y * W + x;
+/** The free cell nearest EN (e, n), within the larger of 6 cells and 400 m - where a search may start - or -1. */
+function freeNear(fld, e, n) {
+  const { x0, y0, cell, W, H, blk } = fld;
+  const gx = Math.round((e - x0) / cell), gy = Math.round((n - y0) / cell);
+  const R = Math.max(6, Math.ceil(400 / cell));
+  for (let r = 0; r <= R; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+    if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+    const x = gx + dx, y = gy + dy;
+    if (x >= 0 && y >= 0 && x < W && y < H && !blk[y * W + x]) return y * W + x;
+  }
+  return -1;
+}
+
+/** The field's free cells labelled by the connected water they lie in (1, 2, ...; 0 blocked), moving as the search
+ *  moves - eight ways, never cutting a blocked corner - so two cells share a label exactly when a search joins them. */
+function waterLabels(fld) {
+  const { W, H, blk } = fld, N = W * H, lab = new Int32Array(N), q = new Int32Array(N);
+  let next = 0;
+  for (let s0 = 0; s0 < N; s0++) {
+    if (blk[s0] || lab[s0]) continue;
+    lab[s0] = ++next;
+    let qh = 0, qt = 0;
+    q[qt++] = s0;
+    while (qh < qt) {
+      const c = q[qh++], cx = c % W, cy = (c / W) | 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        if (!dx && !dy) continue;
+        const x = cx + dx, y = cy + dy;
+        if (x < 0 || y < 0 || x >= W || y >= H) continue;
+        const i = y * W + x;
+        if (blk[i] || lab[i]) continue;
+        if (dx && dy && (blk[cy * W + x] || blk[y * W + cx])) continue;
+        lab[i] = next;
+        q[qt++] = i;
+      }
     }
-    return -1;
+  }
+  return lab;
+}
+
+/**
+ * ENDS FIRST (the design note above): where along the router's route `en` (EN, A first) the open-water search takes
+ * over and hands back. The route sampled every half cell; the connected water it runs the longest through is the
+ * search's; the search starts at A when A's own free cell is in it, else at the route's first sample in it, and ends at
+ * B likewise, else at its last. {entry, exit} - each {i, t, e, n}: on the route's segment en[i-1] -> en[i] at t (i 0: A
+ * itself; i en.length - 1, t 1: B) - or null when the route never reaches searchable water.
+ */
+function searchEnds(fld, en) {
+  const { x0, y0, cell, W, H } = fld, lab = waterLabels(fld);
+  const at = (e, n) => { const gx = Math.round((e - x0) / cell), gy = Math.round((n - y0) / cell);
+    return gx < 0 || gy < 0 || gx >= W || gy >= H ? 0 : lab[gy * W + gx]; };
+  const samples = [], runM = new Map();
+  for (let i = 1; i < en.length; i++) {
+    const a = en[i - 1], b = en[i], L = Math.hypot(b.e - a.e, b.n - a.n), n = Math.max(1, Math.ceil(L / (cell / 2)));
+    for (let k = 0; k <= n; k++) {
+      const t = k / n, e = a.e + (b.e - a.e) * t, nn = a.n + (b.n - a.n) * t, l = at(e, nn);
+      samples.push({ i, t, e, n: nn, l });
+      if (l && k < n) runM.set(l, (runM.get(l) || 0) + L / n);
+    }
+  }
+  let main = 0, best = 0;
+  for (const [l, m] of runM) if (m > best) { best = m; main = l; }
+  if (!main) return null;
+  const endIn = (p) => { const c = freeNear(fld, p.e, p.n); return c >= 0 && lab[c] === main; };
+  const A = en[0], B = en[en.length - 1];
+  const first = samples.find((q) => q.l === main), last = [...samples].reverse().find((q) => q.l === main);
+  const entry = endIn(A) ? { i: 0, t: 0, e: A.e, n: A.n } : first;
+  const exit = endIn(B) ? { i: en.length - 1, t: 1, e: B.e, n: B.n } : last;
+  return { entry, exit, lab, main, entryIn: endIn(A), exitIn: endIn(B) };
+}
+
+/**
+ * THE WAY OUT OF A HARBOR (ends first, in detail). An end the leg's field cannot search from - its cells too coarse for
+ * the harbor round it - is searched on a FINE field of its own, WAY_OUT_R_M each way round it (cells of
+ * 2 * WAY_OUT_R_M / WAY_OUT_MAX_DIM: 27 m), at the same clearance-weighted price, ALL of it: every cell of the leg's searchable
+ * water (`big`'s `lab` === `main`) it reaches is an EXIT, and carries what the harbor cost to get there into the leg's
+ * own search (searchField's `seeds`, or `goals` at the far end). So the way out is whichever does the WHOLE leg best -
+ * not the nearest open water, nor the router's shortest. The first cut took the nearest by price: on his Portland Go-To
+ * that was Hussey Sound, 22 m off a charted shoal 7.2 km out, before the leg's own search had a say; and the router's own
+ * route, before that, threaded north-east among the Casco Bay islands for 17.9 km.
+ * {seeds: Map(big cell -> {g: the cost there, in the big field's cell units, lc: the fine cell}), pathTo(lc)}; pathTo is
+ * the way out to fine cell `lc`, string-pulled on the fine field and made exact leg by leg by the router, as the leg's
+ * spine is: {path: LL from the end (excluded) to the join (included), join} - or null where a leg would not route.
+ * null when the end has no free cell of its own.
+ */
+function endField(endLL, F, ko, buf, O, chart, big, lab, main) {
+  const e = F.toEN(endLL), R = O.WAY_OUT_R_M;
+  const loc = openWaterField(e.e - R, e.n - R, e.e + R, e.n + R, ko, buf, { ...O, MAX_DIM: O.WAY_OUT_MAX_DIM }, chart);
+  const { x0, y0, cell, W, H, blk, dist, trust } = loc, N = W * H;
+  const s0 = freeNear(loc, e.e, e.n);
+  if (s0 < 0) return null;
+  const cost = (i) => 1 + O.WEIGHT * (1 - O.TRUST * trust[i]) * nearCost(dist[i], O);
+  const gc = new Float64Array(N).fill(Infinity), came = new Int32Array(N).fill(-1), closed = new Uint8Array(N);
+  const hF = [], hI = [];
+  const push = (f, i) => { hF.push(f); hI.push(i); let k = hF.length - 1;
+    while (k > 0) { const q = (k - 1) >> 1; if (hF[q] <= hF[k]) break; [hF[q], hF[k]] = [hF[k], hF[q]]; [hI[q], hI[k]] = [hI[k], hI[q]]; k = q; } };
+  const pop = () => { const top = hI[0], lf = hF.pop(), li = hI.pop();
+    if (hF.length) { hF[0] = lf; hI[0] = li; let k = 0; const n = hF.length;
+      for (;;) { const l = 2 * k + 1, r = l + 1; let m = k; if (l < n && hF[l] < hF[m]) m = l; if (r < n && hF[r] < hF[m]) m = r; if (m === k) break;
+        [hF[m], hF[k]] = [hF[k], hF[m]]; [hI[m], hI[k]] = [hI[k], hI[m]]; k = m; } }
+    return top; };
+  gc[s0] = 0; push(0, s0);
+  const NB = [[1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1], [1, 1, Math.SQRT2], [1, -1, Math.SQRT2], [-1, 1, Math.SQRT2], [-1, -1, Math.SQRT2]];
+  const seeds = new Map(), unit = cell / big.cell;
+  while (hF.length) {
+    const cur = pop();
+    if (closed[cur]) continue;
+    closed[cur] = 1;
+    const gx = Math.round((x0 + (cur % W) * cell - big.x0) / big.cell), gy = Math.round((y0 + ((cur / W) | 0) * cell - big.y0) / big.cell);
+    if (gx >= 0 && gy >= 0 && gx < big.W && gy < big.H) {
+      const bi = gy * big.W + gx;
+      if (lab[bi] === main) {                        // an exit: the leg's own water. Not searched on from - the leg's search is
+        const g = gc[cur] * unit, had = seeds.get(bi);
+        if (!had || g < had.g) seeds.set(bi, { g, lc: cur });
+        continue;
+      }
+    }
+    const cx = cur % W, cy = (cur / W) | 0, cc = cost(cur);
+    for (const [dx, dy, w] of NB) {
+      const nx = cx + dx, ny = cy + dy;
+      if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+      const ni = ny * W + nx;
+      if (blk[ni] || closed[ni]) continue;
+      if (dx && dy && (blk[cy * W + nx] || blk[ny * W + cx])) continue;
+      const cand = gc[cur] + w * (cc + cost(ni)) / 2;
+      if (cand < gc[ni]) { gc[ni] = cand; came[ni] = cur; push(cand, ni); }
+    }
+  }
+  const pathTo = (lc) => {
+    const cells = [];
+    for (let c = lc; c !== -1; c = came[c]) cells.push(c);
+    cells.reverse();
+    const join = F.fromEN(x0 + (lc % W) * cell, y0 + ((lc / W) | 0) * cell);
+    const spine = cells.length > 1 ? spineOf(loc, cells, endLL, join, F, O) : [endLL, join];
+    const path = [];
+    for (let i = 0; i < spine.length - 1; i++) {
+      const p = spine[i], q = spine[i + 1];
+      if (legClear(p, q, F, ko, buf)) { path.push({ lat: q.lat, lon: q.lon }); continue; }
+      const sub = legPath(p, q, F, ko, buf, { quick: true }) || legPath(p, q, F, ko, buf);
+      if (!sub) return null;
+      path.push(...sub.map((r) => ({ lat: r.lat, lon: r.lon })));
+    }
+    return { path, join };
   };
-  const s = freeNear(a.e, a.n), g = freeNear(b.e, b.n);
-  if (s < 0 || g < 0) return null;
-  const gxG = g % W, gyG = (g / W) | 0;
+  return { seeds, pathTo };
+}
+
+/** The clearance-weighted search over `fld` from EN `a` to `b`: the cells' EN path, or null. ENDS FIRST (endField):
+ *  `ends.seeds` (Map cell -> what reaching it cost) begins it from a harbor's exits instead of `a`'s own cell, and
+ *  `ends.goals` (Map cell -> what it costs on from there to `b`) ends it at the far harbor's entries - the search then
+ *  stops at the cheapest whole (a virtual end node reached from each entry at its own cost on), its heuristic the
+ *  straight way to `b` itself, which no entry's cost on can undercut. */
+export function searchField(fld, a, b, O, ends = null) {
+  const { x0, y0, cell, W, H, blk, dist, trust } = fld, N = W * H;
+  const seeds = ends && ends.seeds && ends.seeds.size ? ends.seeds : null;
+  const goals = ends && ends.goals && ends.goals.size ? ends.goals : null;
+  const s = seeds ? -2 : freeNear(fld, a.e, a.n), g = goals ? -2 : freeNear(fld, b.e, b.n);
+  if (s === -1 || g === -1) return null;
+  const gxG = g >= 0 ? g % W : (b.e - x0) / cell, gyG = g >= 0 ? (g / W) | 0 : (b.n - y0) / cell;
   const cost = (i) => 1 + O.WEIGHT * (1 - O.TRUST * trust[i]) * nearCost(dist[i], O);
   const gc = new Float64Array(N).fill(Infinity), came = new Int32Array(N).fill(-1), closed = new Uint8Array(N);
   const hF = [], hI = [];
@@ -252,14 +407,21 @@ function searchField(fld, a, b, O) {
         [hF[m], hF[k]] = [hF[k], hF[m]]; [hI[m], hI[k]] = [hI[k], hI[m]]; k = m; } }
     return top; };
   const hh = (i) => Math.hypot((i % W) - gxG, ((i / W) | 0) - gyG);
-  gc[s] = 0; push(hh(s), s);
+  if (seeds) { for (const [c, g0] of seeds) if (!blk[c] && g0 < gc[c]) { gc[c] = g0; push(g0 + hh(c), c); } }
+  else { gc[s] = 0; push(hh(s), s); }
   const NB = [[1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1], [1, 1, Math.SQRT2], [1, -1, Math.SQRT2], [-1, 1, Math.SQRT2], [-1, -1, Math.SQRT2]];
-  let found = false;
+  const END = N;                                     // the virtual end, reached from a goal at its own cost on
+  let found = false, endAt = g, endBest = Infinity;
   while (hF.length) {
     const cur = pop();
+    if (cur === END) { found = true; break; }
     if (closed[cur]) continue;
     closed[cur] = 1;
-    if (cur === g) { found = true; break; }
+    if (!goals && cur === g) { found = true; break; }
+    if (goals && goals.has(cur)) {
+      const tot = gc[cur] + goals.get(cur);
+      if (tot < endBest) { endBest = tot; endAt = cur; push(tot, END); }
+    }
     const cx = cur % W, cy = (cur / W) | 0, cc = cost(cur);
     for (const [dx, dy, w] of NB) {
       const nx = cx + dx, ny = cy + dy;
@@ -273,7 +435,7 @@ function searchField(fld, a, b, O) {
   }
   if (!found) return null;
   const cells = [];
-  for (let c = g; c !== -1; c = came[c]) cells.push(c);
+  for (let c = endAt; c !== -1; c = came[c]) cells.push(c);
   cells.reverse();
   return cells;
 }
@@ -284,8 +446,12 @@ function searchField(fld, a, b, O) {
  * same price the search paid, length weighted by nearness - so it can straighten the path's grid zig-zag but never
  * bring it nearer a hazard to save distance. (A rule on clearance alone let the first leg out of a harbor, where the
  * path itself runs close, hug the shore for kilometers: its own start set the bar.)
+ * ⚠ AND NO NEARER THAN THE STRETCH IT REPLACES (2026-10-14). The price alone did not hold the line it claims above: a
+ * shortcut can pay more per meter for running closer and still cost less for being shorter. On his Portland Go-To the
+ * way out through Hussey Sound came out 22 m off a charted shoal. So a shortcut is taken only where its least
+ * clearance is no less than the least of the path it replaces - the price decides among the ways that pass that.
  */
-function spineOf(fld, cells, aLL, bLL, F, O) {
+export function spineOf(fld, cells, aLL, bLL, F, O) {
   const { x0, y0, cell, W, H, blk, dist, trust } = fld;
   const costAt = (i) => 1 + O.WEIGHT * (1 - O.TRUST * trust[i]) * nearCost(dist[i], O);
   // the path's cumulative cost, in meters, cell to cell as the search priced it
@@ -303,14 +469,15 @@ function spineOf(fld, cells, aLL, bLL, F, O) {
   }
   key.push(cells.length - 1);
   const en = (k) => ({ e: x0 + (cells[k] % W) * cell, n: y0 + ((cells[k] / W) | 0) * cell });
-  const shortcut = (p, q) => {                    // the straight leg's cost, or Infinity where the raster blocks it
+  // the straight leg's cost, or Infinity where the raster blocks it or it runs nearer a hazard than `floor`
+  const shortcut = (p, q, floor) => {
     const L = Math.hypot(q.e - p.e, q.n - p.n), n = Math.max(1, Math.ceil(L / (cell / 2)));
     let c = 0;
     for (let k = 0; k < n; k++) {
       const t = (k + 0.5) / n, gx = Math.round((p.e + (q.e - p.e) * t - x0) / cell), gy = Math.round((p.n + (q.n - p.n) * t - y0) / cell);
       if (gx < 0 || gy < 0 || gx >= W || gy >= H) return Infinity;
       const i = gy * W + gx;
-      if (blk[i]) return Infinity;
+      if (blk[i] || dist[i] < floor) return Infinity;
       c += (L / n) * costAt(i);
     }
     return c;
@@ -319,9 +486,12 @@ function spineOf(fld, cells, aLL, bLL, F, O) {
   let ki = 0;
   while (ki < key.length - 1) {
     let best = ki + 1;
+    // the least clearance of the path from key[ki] on - what no shortcut from there may go below
+    const least = new Float64Array(cells.length);
+    for (let k = key[ki], m = Infinity; k < cells.length; k++) { m = Math.min(m, dist[cells[k]]); least[k] = m; }
     for (let kj = key.length - 1; kj > ki + 1; kj--) {
       const i = key[ki], j = key[kj];
-      if (shortcut(en(i), en(j)) <= cum[j] - cum[i] + cell) { best = kj; break; }
+      if (shortcut(en(i), en(j), least[j]) <= cum[j] - cum[i] + cell) { best = kj; break; }
     }
     out.push(best);
     ki = best;
@@ -335,7 +505,10 @@ function spineOf(fld, cells, aLL, bLL, F, O) {
 /**
  * OPEN WATER FIRST for one passage leg: from `A` to `B` (LL), in frame `F`, keep-out model `ko` at clearance `buf`,
  * beside the router's own route `leg` (legPath's: excluding A, ending at B). {leg, used, why, lenM, lenRouterM,
- * exposure, exposureRouter, ms} - `leg` the open-water route where it is taken, else the router's, unchanged.
+ * exposure, exposureRouter, ms, ends} - `leg` the open-water route where it is taken, else the router's, unchanged.
+ * `ends` {startM, endM, startBy, endBy}: the meters at each end planned before the open water (ENDS FIRST, above; 0
+ * where the search reaches the end itself), and by what - "fine" (endField's search) or "router" (its own route, where
+ * the fine search found no way) - or null.
  * `opts.chart` {box, unread, edgeM}: the water the chart was read over (openWaterField); `opts.params` overrides.
  */
 export function openWaterLeg(A, B, F, ko, buf, leg, opts = {}) {
@@ -355,13 +528,51 @@ export function openWaterLeg(A, B, F, ko, buf, leg, opts = {}) {
   // 1 km off it was 31 % longer and refused outright - all or nothing threw away the 500 m berth between them.
   const fld = openWaterField(Math.min(...ex) - m, Math.min(...nx) - m, Math.max(...ex) + m, Math.max(...nx) + m, ko, buf, O,
                              opts.chart ? { ...opts.chart, F, from: A } : null);
+  // ENDS FIRST: the router's own route from each end out to the water the search can reach (searchEnds)
+  const E = searchEnds(fld, routerEN);
+  if (!E) return say(false, "no open-water path", { exposureRouter: exposureOn(fld, routerEN, O), clearM: O.CLEAR_M });
+  const legLL = [A, ...leg];                         // routerEN's points, as LL
+  const atLL = (q) => (q.i === 0 ? A : q.i === routerEN.length - 1 && q.t === 1 ? B : F.fromEN(q.e, q.n));
+  const entryLL = atLL(E.entry), exitLL = atLL(E.exit);
+  // A harbor end: its fine field, every exit into the leg's water offered to the leg's search (endField). An end with
+  // none - no free water of its own, or none it reaches - keeps the router's own route out to the water (searchEnds).
+  const chartOf = opts.chart ? { ...opts.chart, F, from: A } : null;
+  const outF = E.entryIn ? null : endField(A, F, ko, buf, O, chartOf, fld, E.lab, E.main);
+  const inF = E.exitIn ? null : endField(B, F, ko, buf, O, chartOf ? { ...chartOf, from: B } : null, fld, E.lab, E.main);
+  const useOut = !!(outF && outF.seeds.size), useIn = !!(inF && inF.seeds.size);
+  const rHead = [], rTail = [];                      // the router's own route kept, where no fine way was found
+  if (!useOut && E.entry.i > 0) {
+    for (let j = 1; j < E.entry.i; j++) rHead.push(legLL[j]);
+    if (E.entry.t > 0) rHead.push(entryLL);
+  }
+  if (!useIn && !(E.exit.i === routerEN.length - 1 && E.exit.t === 1)) {
+    for (let j = E.exit.t === 1 ? E.exit.i + 1 : E.exit.i; j < legLL.length; j++) rTail.push(legLL[j]);
+  }
+  const fromEN = useOut ? a : F.toEN(entryLL), toEN = useIn ? b : F.toEN(exitLL);
+  if (Math.hypot(toEN.e - fromEN.e, toEN.n - fromEN.n) < O.MIN_LEG_M) return say(false, "short");
+  const seeds = useOut ? new Map([...outF.seeds].map(([c, v]) => [c, v.g])) : null;
+  const goals = useIn ? new Map([...inF.seeds].map(([c, v]) => [c, v.g])) : null;
   let last = null;
   for (const f of O.BERTHS_FRAC) {
     const Oc = { ...O, CLEAR_M: O.CLEAR_M * f };
     const exposureRouter = exposureOn(fld, routerEN, Oc);
-    const cells = searchField(fld, a, b, Oc);
+    const cells = searchField(fld, fromEN, toEN, Oc, { seeds, goals });
     if (!cells) return say(false, "no open-water path", { exposureRouter, clearM: Oc.CLEAR_M });   // the same raster at every berth
-    const spine = spineOf(fld, cells, A, B, F, Oc);
+    // the ends: the fine way out to the exit the search began at, and in from the entry it ended at
+    let head = rHead, tail = rTail, startLL = entryLL, endLL = exitLL;
+    if (useOut) {
+      const w = outF.pathTo(outF.seeds.get(cells[0]).lc);
+      if (!w) { last = say(false, "a spine leg would not route", { exposureRouter, clearM: Oc.CLEAR_M }); continue; }
+      head = w.path; startLL = w.join;
+    }
+    if (useIn) {
+      const w = inF.pathTo(inF.seeds.get(cells[cells.length - 1]).lc);
+      if (!w) { last = say(false, "a spine leg would not route", { exposureRouter, clearM: Oc.CLEAR_M }); continue; }
+      tail = [...w.path.slice(0, -1).reverse(), B]; endLL = w.join;
+    }
+    const ends = { startM: lenOf([a, ...head.map((q) => F.toEN(q))]), endM: lenOf([F.toEN(endLL), ...tail.map((q) => F.toEN(q))]),
+                   startBy: useOut ? "fine" : rHead.length ? "router" : null, endBy: useIn ? "fine" : rTail.length ? "router" : null };
+    const spine = spineOf(fld, cells, startLL, endLL, F, Oc);
     // EXACT, leg by leg: a spine leg the router's own test passes stands; one it does not is routed by the router
     const out = [];
     let ok = true;
@@ -372,10 +583,11 @@ export function openWaterLeg(A, B, F, ko, buf, leg, opts = {}) {
       if (!sub) { ok = false; break; }
       out.push(...sub.map((r) => ({ lat: r.lat, lon: r.lon })));
     }
-    if (!ok) { last = say(false, "a spine leg would not route", { exposureRouter, clearM: Oc.CLEAR_M }); continue; }
-    const owEN = [a, ...out.map((q) => F.toEN(q))];
+    if (!ok) { last = say(false, "a spine leg would not route", { exposureRouter, clearM: Oc.CLEAR_M, ends }); continue; }
+    const full = [...head, ...out, ...tail];
+    const owEN = [a, ...full.map((q) => F.toEN(q))];
     const lenM = lenOf(owEN), exposure = exposureOn(fld, owEN, Oc);
-    const extra = { leg: out, lenM, exposure, exposureRouter, cell: fld.cell, spine, clearM: Oc.CLEAR_M };
+    const extra = { leg: full, lenM, exposure, exposureRouter, cell: fld.cell, spine, clearM: Oc.CLEAR_M, ends };
     if (lenM > (1 + O.DETOUR_MAX) * lenRouterM) { last = say(false, "too long", extra); continue; }
     // STRICTLY less: a router's route with nothing near it has nothing to take away, and "0 <= 0.9 x 0" took a different
     // route over open sea for no gain at all (tests/open_water.js 2, the first cut)
@@ -403,6 +615,17 @@ const owBerth = (used, f) => {
   const lo = Math.min(...c), hi = Math.max(...c);
   return lo === hi ? f(lo) : f(lo) + " to " + f(hi);
 };
+// ENDS FIRST, said: a leg's harbor ends planned in detail before the open water, where the water was too tight for the
+// wider search (under 50 m of it is not worth a word - a search that starts at her snaps that far anyway)
+const owEnds = (used, f) => {
+  const s = used.reduce((t, l) => t + ((l.ends && l.ends.startM) || 0), 0);
+  const e = used.reduce((t, l) => t + ((l.ends && l.ends.endM) || 0), 0);
+  if (used.length > 1) return s + e >= 50 ? f(s + e) + " at the legs' ends" : "";
+  const parts = [];
+  if (s >= 50) parts.push("the first " + f(s));
+  if (e >= 50) parts.push("the last " + f(e));
+  return parts.join(" and ");
+};
 const owAdded = (used, f) => {
   const d = used.reduce((s, l) => s + ((l.lenM ?? 0) - (l.lenRouterM ?? l.lenM ?? 0)), 0);
   return Math.abs(d) < 50 ? "about the close-in route's length"
@@ -415,7 +638,8 @@ export function openWaterNote(ow, fmt) {
   const held = used.reduce((s, l) => s + (l.held || 0), 0);
   return "open water first: a " + owBerth(used, f) + " berth off charted dangers where the water allows"
     + (used.length > 1 ? ", on " + used.length + " legs" : "") + ", " + owAdded(used, f)
-    + (held ? ", the close-in way kept past " + held + " buoy" + (held === 1 ? "" : "s") + " for " + (held === 1 ? "its" : "their") + " proper hand" : "");
+    + (held ? ", the close-in way kept past " + held + " buoy" + (held === 1 ? "" : "s") + " for " + (held === 1 ? "its" : "their") + " proper hand" : "")
+    + (owEnds(used, f) ? ", in detail for " + owEnds(used, f) + " (harbor water too tight for the wider search)" : "");
 }
 /** The Intent card's lines: what was taken, and each leg long enough to be asked that kept the close-in route, and why. */
 export function openWaterWhy(ow, fmt) {
@@ -427,7 +651,9 @@ export function openWaterWhy(ow, fmt) {
       + "not threading the islands and ledges close in" + (used.length > 1 ? " (" + used.length + " legs)" : "")
       + " - " + owAdded(used, f)
       + (used.some((l) => l.held) ? "; the close-in way kept within " + OPEN_WATER.MARK_HOLD_M + " m of "
-         + used.reduce((s, l) => s + (l.held || 0), 0) + " buoy(s) the wider way would have left on the wrong hand" : "") });
+         + used.reduce((s, l) => s + (l.held || 0), 0) + " buoy(s) the wider way would have left on the wrong hand" : "")
+      + (owEnds(used, f) ? "; planned in detail for " + owEnds(used, f) + ", harbor water too tight for the wider search - "
+         + "the way out and in chosen with the open water beyond them" : "") });
   if (kept.length)
     out.push({ t: "route", s: "open water first: the close-in route kept" + (all.length > 1 ? " on " + kept.length + " leg" + (kept.length === 1 ? "" : "s") : "")
       + " - " + [...new Set(kept.map((l) => OW_KEPT[l.why]))].join("; ") });

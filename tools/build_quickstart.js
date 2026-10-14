@@ -86,6 +86,7 @@ c.push(TBL(["Try", "Why"], [
   ["`SRC`", "The chart's own title block and the SURVEY CONFIDENCE under the vessel. Some water is charted far better than other water."],
   ["Wind / Sea / Set on the vessel card", "Real wind and sea push the simulated vessel off track. Watch SET and the crab angle change as it steers out of the drift."],
   ["Switch vessel", "The picker in the top bar. A different hull changes speeds, turn radius and the depth floor — watch the keep-out model change with it."],
+  ["Passage tab", "On the Path planning card: a long passage (diesel hulls) - drop its points, Plan passage (its two ends planned in detail first), Sail passage. A Go-To past 50 km on a diesel hull is planned as one."],
   ["Transit tab", "On the Path planning card: draw a multi-segment transit and Follow it, when you want a specific path rather than the router's."],
   ["Go-To tab", "Click or type a point on the Path planning card: its bearing, range and time show before Go moves anything."],
   ["`ROC`", "Place a mothership, set it steaming, make it HOME — then Return-to-Home chases a moving recovery point."],

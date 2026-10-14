@@ -2426,7 +2426,7 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    chart service offline, an extract missing a layer) leaves the model of the water already read
    in place, and the command is refused, saying why. A wider read of the same chart keeps the
    piers and floats the chart-image reads found earlier. A command whose own target lies past what
-   the console can read (the server extracts at most 1.5° on a side) is refused at once, without
+   the console can read (the server extracts at most 2.0° on a side; 1.5° until 2026-10-14) is refused at once, without
    planning, and the refusal names the extract it would take. A box that size used to be asked
    for anyway: the server refused it, the refusal emptied the model, and the Go-To was planned
    straight, unchecked, with the guard blind. The hold disc a command carries is kept inside the
@@ -2465,9 +2465,40 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    no longer read, so an area visited only before this change has no chart offline until it has been
    read online once.
 
-   **Reading the chart along a passage (2026-10-11).** A box read stops at 1.5° on a side, about 90
-   nm; a passage needs the chart along its route, not a box round it. The transit panel's **Read
-   chart** reads every chart tile within 5 km of the boat and the line's points, in the background,
+   **The Passage tab, and a long Go-To as a passage (2026-10-14).** Andy: "consider another path
+   planning behavior called 'passage' that disregards the 9-23 directive and allows for long path
+   planning", and "do it in segments starting with beginning and end and then working inward". The
+   Path planning card's **Passage** tab has its own line - her position, then the points dropped on
+   the chart or typed (**Add**), the last the arrival (P1, P2 ... ARRIVAL, in violet); a point
+   clicked again is a fuel stop - and **Read chart**, **Plan passage** and **Sail passage**, which
+   were on the Transit tab (Transit is Follow again). A passage is read as a corridor of chart
+   tiles, never one box, so the box cap is not in its way; the corridor reaches a fifth of the
+   longest leg either side (5 to 25 km - a long straight leg along the Maine coast crosses the
+   peninsulas). **Ends first:** Plan passage plans the first and last sections in detail as soon as
+   the coarse plan is in, each on a chart read of its own beside the page's (the guard's model is
+   never swapped), in the route worker - and a harbor she cannot leave or enter makes the passage
+   NOT SAILABLE, said with why, before she sails. **A long Go-To:** the operator's Go-To (the chart
+   menu's row, the Go-To tab's Go) past 50 km on a diesel hull is planned as a passage - the tab's
+   line set to the point, read, planned, both ends planned, and sailed; refused at any step, it
+   says why and leaves the plan on the tab. A battery hull's long Go-To is the box Go-To it was
+   (Andy's choice), within the box cap. Live on a scratch console, his Portland -> Penobscot Bay
+   Go-To (118 km): 27 tiles read, planned in 7 sections, both ends planned in detail (leaving
+   20.5 km, arriving 7.9 km), section 1 sent. `tests/passage_tab.js`.
+
+   **The box cap: 2.0° (2026-10-14).** Andy: "increase that limit. its causing problems.
+   investigate ramifications"; he chose 2.0 of 2.0 / 2.5 / 3.0. 1.5° refused the wider read open
+   water asked for on his 120 km Go-To from Portland (1.71 x 0.73). What a wider box costs, measured:
+   his 21-tile read (0.25° tiles, about 11 MB each on the Maine coast) took 65 s and built 14,534
+   keep-out zones; the page stalled 1.6 to 12.9 s on zoom changes with them, the guard blind
+   meanwhile. So the chart layers now draw only what is on screen, no finer than a pixel (the
+   model the planners and the guard use is untouched): on a 22,661-zone model each zoom change
+   took 0.32 to 1.07 s, against 0.73 to 3.22 s on 20,078 before. Building a model that size still
+   holds the page for several seconds (6.5 s measured). The state-sized box the cap was put there
+   for (5.05 x 3.38°, 2026-09-23) is still refused. `tests/enc_cache.js` 15-17b, `tests/chart_box.js` 5.
+
+   **Reading the chart along a passage (2026-10-11).** A box read stops at 2.0° on a side (1.5°
+   until 2026-10-14), about 120 nm; a passage needs the chart along its route, not a box round it.
+   The Passage tab's **Read chart** (the transit panel's until 2026-10-14) reads every chart tile within 5 km of the boat and the line's points, in the background,
    with its progress on the panel ("reading chart: 12 of 67 tiles · ~4:10 left"), and ends with a
    summary: how many tiles, the most detailed scale charting each, the water no chart covers near the
    line (drawn gray, as above), and any tile that could not be read (press Read chart again; tiles
@@ -2499,8 +2530,8 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    the older copy served, offline too, and said so. A child that fails, or runs past 15 minutes, leaves the tile
    unread with the reason, as a chart that could not be read does. `tests/chart_read_stall.py`.
 
-   **Plan passage: a long passage, its fuel leg by leg (2026-10-12, diesel hulls).** The transit
-   panel's **Plan passage** plans the transit line as a passage of any length: her position (or T1
+   **Plan passage: a long passage, its fuel leg by leg (2026-10-12, diesel hulls).** The Passage
+   tab's **Plan passage** plans its line as a passage of any length: her position (or P1
    with no fix) is the departure, the last point the arrival, and a **click on a point** makes it a
    **fuel stop** (an amber ring and "FUEL"; click again to undo). It reads the chart along the line
    (as Read chart) with each tile's **planning grid** made, then plans the whole passage coarse in a
@@ -2529,7 +2560,7 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    serves a grid. `tests/passage_grid.py`, `tests/passage_plan.js`.
 
    **Sail passage: the passage sailed a section at a time (2026-10-12, diesel hulls).** Once a
-   passage is planned (its fuel legs all arriving with 20%), **Sail passage** on the transit panel
+   passage is planned (its fuel legs all arriving with 20%), **Sail passage** on the Passage tab
    sails it. The coarse plan is cut into **sections** of about 20 km, each ending at a port (a fuel
    stop or the arrival) or at a point with water clear all round it to hold in, and never beside a
    danger or inside a port's 4 km circle. Each section is planned in detail by the console's own
@@ -3139,15 +3170,26 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    ("reading the chart over the open water round the way there"). The banner and the Intent
    card say the berth and what it added or saved ("open water first: a 1.00 km berth off
    charted dangers where the water allows, 3.70 km shorter than the close-in route");
-   **Open water** under Route rules (First / Off) turns it off. Plan passage's coarse route
+   **Open water** under Route rules (First / Off) turns it off. **Ends first (2026-10-14):** the
+   search's grid grows with the leg - 152 m cells on his 120 km Go-To from a Portland wharf, where
+   every cell within 900 m of her was blocked and the search could not start ("no open-water
+   path", the threading route shipped, whatever chart was read). A harbor end is now searched on a
+   fine grid of its own (27 m), every exit into open water offered to the leg's search with what
+   reaching it cost, so the way out is the one that does the whole leg best; and the spine never
+   cuts a corner nearer a hazard than the path it straightens. That Go-To, replayed on his charts:
+   132.2 km against 128.6, 4.8 km of it within 250 m of a charted danger against 22.7 km (10.4 km
+   within 500 m against 55.3), 16 turns against 29. Open water's own route keeps 56.6 m or more off
+   every danger; the Rule 9 lane through Hussey Sound's buoyed channel then passes a shoal at its
+   edge 22 m off. The banner says how far each harbor end was planned in detail. Plan passage's coarse route
    and the fuel monitor's way home keep the same berth. His Go-To from Castine to the Fox
    Islands Thorofare now runs down the open bay west of North Haven, as his drawing did:
-   38.1 km against 42.5, 2.7 km of it within 250 m of a charted danger against 19.3 km, 3
-   turns against 41. Across 12 Go-Tos in his four areas (Penobscot, Casco, the
-   Piscataqua, Cape Ann - his own two and ten more across the same waters) it was taken on 11 (Shoals to Rye kept: no safer way), and
-   the routes ran 7.6 km within 250 m of a charted danger instead of 65.7 km (0.9 km within
-   100 m instead of 12.7), with 36 turns instead of 111 and no buoy on its wrong hand instead
-   of one, for 4.0% more distance in all - from 10% shorter (Castine) to 30% longer (Gloucester
+   38.5 km against 42.5, 2.6 km of it within 250 m of a charted danger against 19.3 km, no
+   turn against 41 (replayed with ends first, 2026-10-14). Across 13 Go-Tos in his four areas
+   (Penobscot, Casco, the Piscataqua, Cape Ann - his own two and eleven more across the same
+   waters) it was taken on 12 (Shoals to Rye kept: no safer way), and the routes ran 8.3 km
+   within 250 m of a charted danger instead of 71.3 km (0.9 km within 100 m instead of 13.7),
+   with 28 turns instead of 113 and no buoy on its wrong hand instead of one, for 5.1% more
+   distance in all - from 10% shorter (Castine) to 30% longer (Gloucester
    to Rockport, outside Thacher Island). `tests/open_water.js`; the Go-Tos in his own waters:
    `node tools/open_water_missions.js --charts <his chart cache>`.
 

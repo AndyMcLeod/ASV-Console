@@ -766,7 +766,8 @@ async function drive(fetchResult) {
   // `nogo.ready = false`, so a Go-To to a point 170 km off threw away the model of the water she was IN and
   // planned the leg straight, unchecked. A route that runs past the box is refused now and the page reads the
   // chart over it (tests/chart_box.js), so a wider read is asked for routinely - and one that cannot be had must
-  // leave the model alone. Driven: a model of her water, then a plan reaching 1.6 degrees north of it.
+  // leave the model alone. Driven: a model of her water, then a plan reaching 2.1 degrees north of it (1.6 when the
+  // limit was 1.5; 2.0 since 2026-10-14).
   {
     setNogo({ ready: false, busy: false, frame: null, ko: null, band: null,
               note: "nogo not loaded", enf: {}, features: null, bbox: null, center: null });
@@ -777,20 +778,20 @@ async function drive(fetchResult) {
     const had = { ready: nogo.ready, features: nogo.features, bbox: nogo.bbox, ko: nogo.ko, frame: nogo.frame };
     const f0 = fetches;
     banners = [];
-    const answer = await ensureNogoCovers([{ lat: 43.07, lon: -70.70 }, { lat: 44.70, lon: -70.70 }], 300);
+    const answer = await ensureNogoCovers([{ lat: 43.07, lon: -70.70 }, { lat: 45.20, lon: -70.70 }], 300);
     check("26. a plan whose box would be wider than the server extracts is NOT fetched: the model of the water "
           + "already read stays - ready, its features, its box, its keep-outs - the plan is told its water is "
           + "not covered (false), and the banner names the extract it would take",
           answer === false && fetches === f0 && had.ready === true && nogo.ready === true
           && nogo.features === had.features && nogo.bbox === had.bbox && nogo.ko === had.ko && nogo.frame === had.frame
-          && banners.some((t) => /^Chart NOT read over that water: it would take an extract of 0\.40° × 1\.7\d°, and the console reads at most 1\.5° on a side\. The model of the water already read is kept\.$/.test(t)),
+          && banners.some((t) => /^Chart NOT read over that water: it would take an extract of 0\.40° × 2\.2\d°, and the console reads at most 2\.0° on a side\. The model of the water already read is kept\.$/.test(t)),
           "answered " + answer + ", " + (fetches - f0) + " fetch(es), ready " + nogo.ready + "; banners "
           + JSON.stringify(banners));
   }
   {
-    const said = await drive(() => ({ error: "the requested area spans 2.10 x 0.40 degrees; the console extracts at most 1.5 degrees on a side (about 166 km) - set home nearer, or transit in legs" }));
+    const said = await drive(() => ({ error: "the requested area spans 2.40 x 0.40 degrees; the console extracts at most 2.0 degrees on a side (about 222 km) - set home nearer, or transit in legs" }));
     check("26b. an extract the server REFUSED is named by the server's own words, not as 'no coverage / offline'",
-          nogo.ready === false && /^the requested area spans 2\.10 x 0\.40 degrees/.test(nogo.note) && !/offline/.test(said.last),
+          nogo.ready === false && /^the requested area spans 2\.40 x 0\.40 degrees/.test(nogo.note) && !/offline/.test(said.last),
           "note: " + JSON.stringify(nogo.note) + "; final paint: " + JSON.stringify(said.last));
   }
   // 26c. THE READ SAYS WHAT IT IS (2026-10-03). The reading of the chart along a refused route ran 53 s on the live check

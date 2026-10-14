@@ -342,22 +342,24 @@ const FLOOR = 30;
   const world = (o) => {
     const w = Object.assign({ posts: [], gets: [], fetches: [], banners: [], notes: [], logs: [], renders: 0, workerMsgs: [],
                               asv: { lat: 43.07, lon: -70.71 }, transit: [], seq: [], model, kn: 7, status: { fuel_l: 200 },
+                              ends: { dep: { ok: true, km: 2.5, wpts: 40 }, arr: { ok: true, km: 3.1, wpts: 55 } },
                               grid404: [], worker: null, ops: [] }, o || {});
-    const src = "let passage = null, passageBusy = false, passageStatus = \"\", transitGen = 0, corridorRead = null;\n"
-      + "const PASSAGE_HALF_KM = 5, PASSAGE_GRID_FETCHES = 6, CORRIDOR_POLL_MS = 0;\n"
+    const src = "let passage = null, passageBusy = false, passageStatus = \"\", passageGen = 0, corridorRead = null;\n"
+      + "const PASSAGE_HALF_KM = 5, PASSAGE_HALF_MAX_KM = 25, PASSAGE_GRID_FETCHES = 6, CORRIDOR_POLL_MS = 0;\n"
       + "const PASSAGE_LEG_WHY = " + /const PASSAGE_LEG_WHY = (\{[\s\S]*?\});/.exec(H)[1] + ";\n"
       + fuelSrc + "\n"
-      + ["transitEdited", "transitPointAt", "toggleFuelStop", "passageRefusal", "passagePoints", "passageName", "passageFuelLegs",
-         "passageAlong", "passageSummary", "passageLine", "passageGrids", "planPassageNow", "drawPassage"].map(grab).join("\n")
-      + "\nreturn {transitEdited, transitPointAt, toggleFuelStop, passageRefusal, passagePoints, passageFuelLegs, passageAlong,"
-      + " passageSummary, passageLine, planPassageNow, drawPassage, state: () => ({passage, passageBusy, transitGen}),"
-      + " setPassage: (p) => { passage = p; }, bump: () => { transitGen++; }};";
+      + ["passageEdited", "passagePointAt", "toggleFuelStop", "passageRefusal", "passagePoints", "passageName", "passageFuelLegs",
+         "passageAlong", "passageSummary", "passageLine", "passageGrids", "passageHalfKm", "passageEndsSay", "planPassageNow",
+         "drawPassage"].map(grab).join("\n")
+      + "\nreturn {passageEdited, passagePointAt, toggleFuelStop, passageRefusal, passagePoints, passageFuelLegs, passageAlong,"
+      + " passageSummary, passageLine, passageHalfKm, passageEndsSay, planPassageNow, drawPassage,"
+      + " state: () => ({passage, passageBusy, passageGen}), setPassage: (p) => { passage = p; }, bump: () => { passageGen++; }};";
     const ctx = new Proxy({}, { get: (t, k) => (k in t ? t[k] : (...a) => { w.ops.push([k, ...a]); }), set: (t, k, v) => { t[k] = v; return true; } });
-    w.api = new Function("asv", "transit", "fuelModel", "V", "roleSpeed", "S", "energyLevel", "passageFuel", "FUEL_RESERVE_FRAC",
+    w.api = new Function("asv", "passageWps", "planPassageEnds", "fuelModel", "V", "roleSpeed", "S", "energyLevel", "passageFuel", "FUEL_RESERVE_FRAC",
       "fmtDist", "fmtDur", "fmtMS", "distTo", "PASSAGE_PORT_R_M", "M_PER_DEG_LAT", "nogoDR", "postCorridor", "getCorridor",
       "corridorSummary", "toCorridor", "fetch", "passageInWorker", "showBanner", "flashNote", "logClient", "updateTransitPanel",
       "render", "worldPx", "zoom", "ctx", "airNeedM", src)(
-      w.asv, w.transit, () => w.model, { SPEED_KN: { transit: w.kn } }, () => "transit", { status: w.status }, F.energyLevel,
+      w.asv, w.transit, async () => { w.endsAsked = (w.endsAsked || 0) + 1; return w.ends; }, () => w.model, { SPEED_KN: { transit: w.kn } }, () => "transit", { status: w.status }, F.energyLevel,
       F.passageFuel, F.FUEL_RESERVE_FRAC, fmtDist, fmtDur, (s) => s + "s", flat, C.PORT_R_M, 111320, () => ({ min: 3.15 }),
       async (b) => { w.posts.push(b); return w.seq.length ? w.seq.shift() : { id: "j", state: "done", total: 0, done: 0, tiles: [] }; },
       async (id) => { w.gets.push(id); return w.seq.shift(); }, (st) => "SUMMARY " + JSON.stringify(st), (st) => st,
@@ -400,13 +402,13 @@ const FLOOR = 30;
   W14.api.setPassage({ old: true });
   W14.api.toggleFuelStop(3);
   const s14b = W14.api.state();
-  const hit = W14.api.transitPointAt(-70.35 * 1000 + 4, -43.3 * 1000 + 3), miss = W14.api.transitPointAt(0, 0);
+  const hit = W14.api.passagePointAt(-70.35 * 1000 + 4, -43.3 * 1000 + 3), miss = W14.api.passagePointAt(0, 0);
   check("14. A FUEL STOP is a click on a point: T2 made one, the line's plan dropped, the note says so; the arrival "
         + "(the last point) refused with a note, nothing changed; a click within a few pixels of a point finds it",
-        () => W14.transit[1].fuel === true && s14.passage === null && s14.transitGen === 1 && /T2 is a FUEL STOP/.test(W14.notes[0])
-              && !W14.transit[3].fuel && s14b.passage !== null && s14b.transitGen === 1 && /T4 is the arrival/.test(W14.notes[1])
+        () => W14.transit[1].fuel === true && s14.passage === null && s14.passageGen === 1 && /P2 is a FUEL STOP/.test(W14.notes[0])
+              && !W14.transit[3].fuel && s14b.passage !== null && s14b.passageGen === 1 && /P4 is the arrival/.test(W14.notes[1])
               && hit === 1 && miss === -1,
-        () => JSON.stringify({ fuel: W14.transit.map((p) => !!p.fuel), gen: [s14.transitGen, s14b.transitGen], notes: W14.notes, hit, miss }));
+        () => JSON.stringify({ fuel: W14.transit.map((p) => !!p.fuel), gen: [s14.passageGen, s14b.passageGen], notes: W14.notes, hit, miss }));
 
   // ── 15. fuel legs ───────────────────────────────────────────────────────────────────────────────────────────────
   const fl15 = W12.api.passageFuelLegs(P12, [{ lengthM: 10 }, { lengthM: 20 }, { lengthM: 30 }, { lengthM: 40, error: "blocked" }]);
@@ -436,7 +438,7 @@ const FLOOR = 30;
         + "and what she needs overhead (3.85 m -> 39) "
         + "and the points; the plan kept - her position to T2 from the 120 L aboard, T2 to T4 from a full tank and SHORT, "
         + "its reserve marked - said, logged (reading, planned, with the points) and free after",
-        () => W16.posts.length === 1 && W16.posts[0].grids === true && W16.posts[0].half_km === 5
+        () => W16.posts.length === 1 && W16.posts[0].grids === true && W16.posts[0].half_km === W16.api.passageHalfKm(P16)
               && W16.posts[0].route.length === 5 && W16.gets.length === 2 && W16.fetches.length === 3
               && /tile=-70.75,43,-70.5,43.25$/.test(W16.fetches[0]) && W16.workerMsgs.length === 1
               && W16.workerMsgs[0].floorDm === 32 && W16.workerMsgs[0].airDm === 39
@@ -447,6 +449,27 @@ const FLOOR = 30;
               && W16.logs[1][1].state === "planned" && W16.logs[1][1].points.length === 5 && s16.passageBusy === false,
         () => JSON.stringify({ posts: W16.posts.length, gets: W16.gets.length, fetches: W16.fetches.length, worker: W16.workerMsgs.map((m) => [m.floorDm, m.airDm, m.points.length, m.grids.length]),
                                fuel: pl && pl.fuel.map((x) => [x.start, +x.arrive.toFixed(1), x.ok]), logs: W16.logs.map((l) => l[1].state), banner: banner16.slice(0, 160) }));
+  // 16f. THE CORRIDOR WIDENS WITH THE LONGEST LEG (2026-10-14): a fifth of it, PASSAGE_HALF_KM at least, 25 km at most -
+  // a Go-To's one straight leg along the Maine coast crosses the peninsulas, and the way round Pemaquid runs more than
+  // 5 km off it
+  const hk = (km) => W16.api.passageHalfKm([{ lat: 43.6, lon: -70.25 }, { lat: 43.6 + km / 111.32, lon: -70.25 }]);
+  check("16f. THE CORRIDOR WIDENS WITH THE LONGEST LEG: 5 km either side of a 12 km leg, 24 km of a 120 km one, the "
+        + "server's 25 km of a 300 km one; this plan's longest leg (39 km) read 8 km either side",
+        () => hk(12) === 5 && hk(120) === 24 && hk(300) === 25 && W16.posts[0].half_km === 8,
+        () => [hk(12), hk(120), hk(300), W16.posts[0].half_km].join(", "));
+  // 16g. ENDS FIRST (2026-10-14): once the coarse plan is in, its first and last sections are planned in detail
+  // (planPassageEnds, stubbed here: tests/passage_tab.js drives it) - once - kept with the plan, and said
+  const W16g = world({ transit: T3.map((p) => ({ ...p })), ends: { dep: { ok: true, km: 2.5, wpts: 40 }, arr: { ok: false, why: "its end is not clear water to hold at" } } });
+  W16g.seq = [{ id: "g1", state: "done", total: 3, done: 3, tiles: tiles16, failed: [] }];
+  W16g.worker = W16.worker;
+  await W16g.api.planPassageNow();
+  const pl16g = W16g.api.state().passage, b16g = W16g.banners[W16g.banners.length - 1] || "";
+  check("16g. ENDS FIRST: the coarse plan's two ends planned in detail once it is in - asked once, kept with the plan - "
+        + "both planned said with their lengths; one that could not be said NOT SAILABLE, with why",
+        () => W16.endsAsked === 1 && pl && pl.ends && pl.ends.dep.km === 2.5 && /Both ends planned in detail \(leaving 2\.5 km, arriving 3\.1 km\)\.$/.test(banner16)
+              && W16g.endsAsked === 1 && pl16g && pl16g.ends && pl16g.ends.arr.ok === false
+              && /⚠ NOT SAILABLE - its ends could not be planned in detail: arriving: its end is not clear water to hold at\.$/.test(b16g),
+        () => JSON.stringify({ asked: [W16.endsAsked, W16g.endsAsked], b16: banner16.slice(-90), b16g: b16g.slice(-120) }));
   const W16b = world({ transit: T3.map((p) => ({ ...p })) });
   W16b.seq = [{ id: "g", state: "done", total: 1, done: 1, tiles: [tiles16[0]], failed: [] }];
   W16b.worker = W16.worker;
@@ -477,7 +500,7 @@ const FLOOR = 30;
   check("16c. A FUEL LEG PART OF WHICH COULD NOT BE PLANNED is NOT judged by Plan passage itself: its fuel null, said NOT "
         + "checked, no reserve mark; the next fuel leg judged as before",
         () => pl16e && pl16e.fuel[0] === null && pl16e.reserveAt[0] === null && pl16e.fuel[1] && pl16e.fuel[1].ok === true
-              && /Her position to T2: its fuel is NOT checked/.test(W16e.banners.pop() || ""),
+              && /Her position to P2: its fuel is NOT checked/.test(W16e.banners.pop() || ""),
         () => JSON.stringify(pl16e && pl16e.fuel));
 
   // ── 17. the words ───────────────────────────────────────────────────────────────────────────────────────────────
@@ -491,9 +514,9 @@ const FLOOR = 30;
   check("17. THE WORDS: planned IN PART (how much of it); the fuel leg with the leg not planned NOT checked; the leg "
         + "refused, why, in words; the next fuel leg judged from a full tank; the ports planned in detail and the two "
         + "narrow stretches with their length; the tiles not read; the panel's line counts all of it",
-        () => /^PASSAGE PLANNED IN PART, COARSE: .* of it from her position to T4/.test(say17)
-              && /Her position to T2: its fuel is NOT checked/.test(say17) && /T1 to T2 could NOT be planned: no water way/.test(say17)
-              && /T2 to T4: .* from a full tank/.test(say17) && /within .* of her position, T2, T4/.test(say17)
+        () => /^PASSAGE PLANNED IN PART, COARSE: .* of it from her position to P4/.test(say17)
+              && /Her position to P2: its fuel is NOT checked/.test(say17) && /P1 to P2 could NOT be planned: no water way/.test(say17)
+              && /P2 to P4: .* from a full tank/.test(say17) && /within .* of her position, P2, P4/.test(say17)
               && /2 narrow stretches \(0\.54 nm in all, yellow\)/.test(say17) && /2 chart tile\(s\) could not be read/.test(say17)
               && /1 leg\(s\) NOT planned/.test(line17) && /1 fuel leg\(s\) NOT checked/.test(line17),
         () => say17.slice(0, 600) + " || " + line17);
@@ -518,16 +541,19 @@ const FLOOR = 30;
   const WK = fs.readFileSync(path.join(APP, "static", "js", "coarse_worker.js"), "utf8");
   const wiring = {
     button: /<button class="ctl small" id="tr_plan"[^>]*>Plan passage<\/button>/.test(H) && /\$\("#tr_plan"\)\.onclick = \(\) => planPassageNow\(\);/.test(H),
-    drawn: /drawTransit\(toScreen\);\s*\n\s*drawPassage\(toScreen\);/.test(H),
-    click: /const hit = transitPointAt\(.*\);\s*\n\s*if\(hit >= 0\) toggleFuelStop\(hit\);\s*\n\s*else \{ transit\.push\(\{lat:ll\.lat, lon:ll\.lon\}\); transitEdited\(\); \}/.test(H),
-    undo: /transit\.pop\(\); transitEdited\(\);/.test(H) && /transit=\[\]; transitEdited\(\);/.test(H),
-    every_edit: (H.match(/transit\.push\(|transit\.pop\(|transit=\[\]/g) || []).length === 3,
+    drawn: /drawTransit\(toScreen\);\s*\n\s*drawPassageWps\(toScreen\);\s*\n\s*drawPassage\(toScreen\);/.test(H),
+    click: /const hit = passagePointAt\(.*\);\s*\n\s*if\(hit >= 0\) toggleFuelStop\(hit\);\s*\n\s*else \{ passageWps\.push\(\{lat:ll\.lat, lon:ll\.lon\}\); passageEdited\(\); \}/.test(H),
+    undo: /passageWps\.pop\(\); passageEdited\(\);/.test(H) && /passageWps=\[\]; passageEdited\(\);/.test(H),
+    // every edit of the passage's line drops the plan: the click, Add, Undo, Clear and a long Go-To's - and the declaration
+    every_edit: (H.match(/passageWps(\.push\(|\.pop\(|\s*=\s*\[)/g) || []).length === 6
+                && (H.match(/passageWps(\.push\([^;]*\)|\.pop\(\)|\s*=\s*\[[^;]*\]); passageEdited\(\)/g) || []).length === 5,
     imports: /passageFuel,\s*\n\s*FUEL_RESERVE_FRAC, FUEL_REARM_FRAC \} from "\/static\/js\/fuel\.js"/.test(H) && /import \{ PORT_R_M as PASSAGE_PORT_R_M, homeSections, coarseHomeDistM \} from "\/static\/js\/coarse\.js"/.test(H),
     // (the worker imports the coarse home field's functions too since 2026-10-12 - tests/fuel_rth.js 11)
     worker: /new Worker\("\/static\/js\/coarse_worker\.js", \{type: "module"\}\)/.test(H) && /import \{[^}]*\bplanPassage\b[^}]*\} from "\.\/coarse\.js"/.test(WK) && /id: d\.id/.test(WK),
   };
-  check("19. THE WIRING: the Plan passage button and its handler; the plan drawn right after the transit draft; a click "
-        + "on a point a fuel stop, elsewhere a point - and every edit of the line (add, undo, clear) drops the plan; the "
+  check("19. THE WIRING: the Plan passage button and its handler; the passage's line drawn after the transit draft and "
+        + "the plan after it; a click on a point a fuel stop, elsewhere a point - and every edit of the passage's line (a "
+        + "click, Add, Undo, Clear, a long Go-To) drops the plan; the "
         + "imports; the worker a module, answering by id",
         () => Object.values(wiring).every(Boolean),
         () => Object.entries(wiring).filter(([, v]) => !v).map(([k]) => k).join(", ") || "all wired");

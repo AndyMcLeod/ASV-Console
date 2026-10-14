@@ -172,7 +172,7 @@ console.log("The passage, sailed:");
       "const distTo = w.distTo, FUEL_RESERVE_FRAC = w.F.FUEL_RESERVE_FRAC, passageFuel = w.F.passageFuel, energyLevel = w.F.energyLevel;",
       "const fuelModel = () => w.model, V = {SPEED_KN: {transit: 7}}, roleSpeed = () => 'transit';",
       "const fuelFmt = (m, x) => x.toFixed(1) + ' L', fmtDist = (m) => (m / 1000).toFixed(1) + ' km';",
-      "const passageRefusal = () => w.refuse, passageName = (p) => p && p.t ? 'T' + p.t : 'her position';",
+      "const passageRefusal = () => w.refuse, passageName = (p) => p && p.t ? 'P' + p.t : 'her position';",
       "const canCommand = () => w.canCommand, supervising = () => w.sup;",
       "const saveMission = () => { w.saves++; }, logClient = (k, d) => w.logs.push([k, d]);",
       // a new mission's history (2026-10-14, newMission): Sail passage starts one (4, 4b)
@@ -201,7 +201,7 @@ console.log("The passage, sailed:");
       "const $ = (id) => w.dom[id] || (w.dom[id] = {style: {}, classList: {toggle(c, on){ this[c] = on; }}, disabled: false});",
       decl("PASSAGE_AHEAD_M"), decl("PASSAGE_RETRY_MS"), decl("PASSAGE_END_M"), decl("PASSAGE_ONGOING"),
       "let sailBusy = false, sailTriedAt = 0, sailSaid = null;",
-      ["sailRecord", "sailPortName", "sailRefusal", "sailSegM", "sectionRest", "sailOwns", "sailGuardQuiet", "sailLeftM", "sailSend",
+      ["passageEndsSay", "sailRecord", "sailPortName", "sailRefusal", "sailSegM", "sectionRest", "sailOwns", "sailGuardQuiet", "sailLeftM", "sailSend",
        "sailPassage", "sailAppend", "sailAtEnd", "sailBreakOff", "passageTick", "sailRestM", "sailFuelShort", "continueRefusal",
        "continuePassage", "divertPassage", "dropPassage", "renderPassageControls", "sailLine", "sailOwnsHold", "drawSail",
        "rthTooFar", "doRTH", "passageHome", "homeRecord", "sailHome"].map(grab).join("\n"),
@@ -222,16 +222,18 @@ console.log("The passage, sailed:");
   const ref = (o, plan) => world(o).api.sailRefusal(plan === undefined ? PLAN() : plan);
   const bad = PLAN(); bad.legs[1].error = "blocked";
   const shortF = PLAN(); shortF.fuel[1] = { ok: false };
+  const endsBad = PLAN(); endsBad.ends = { dep: { ok: true, km: 2, wpts: 9 }, arr: { ok: false, why: "no route clear of the chart's keep-outs on 1 leg(s)" } };
   const r2 = { none: ref({}, null), leg: ref({}, bad), fuel: ref({}, shortF), moved: ref({ asv: east(HERE, 5000) }),
                arm: ref({ canCommand: false, S: { armed: false, estop: false, run: "idle", status: {}, wp_total: 0 } }), busy: ref({ mission: { passage: { state: "running" } } }), hull: ref({ refuse: "long passages are for the diesel hulls" }),
-               ok: ref({}) };
+               ends: ref({}, endsBad), ok: ref({}) };
   check("2. THE RECORD: the plan's points and sections, ready, nothing sent - and refused first, in words: no plan, a leg "
         + "not planned, a fuel leg short of 20%, planned from where she no longer is, not armed, a passage already sailed, a "
-        + "battery hull",
+        + "battery hull; and (ENDS FIRST, 2026-10-14) a plan whose arrival could not be planned in detail",
         () => R2.state === "ready" && R2.sent === -1 && R2.sections.length === 3 && R2.points.length === 3 && !R2.breakoff
-              && /Plan passage/.test(r2.none) && /could not be planned/.test(r2.leg) && /T1 to T2 does not arrive with 20%/.test(r2.fuel)
+              && /Plan passage/.test(r2.none) && /could not be planned/.test(r2.leg) && /P1 to P2 does not arrive with 20%/.test(r2.fuel)
               && /no longer is/.test(r2.moved) && /arm her first/.test(r2.arm) && /drop it first/.test(r2.busy)
-              && /diesel/.test(r2.hull) && r2.ok === null,
+              && /diesel/.test(r2.hull) && r2.ok === null
+              && r2.ends === "its ends could not be planned in detail - arriving: no route clear of the chart's keep-outs on 1 leg(s)",
         () => JSON.stringify(r2).slice(0, 400));
 
   // ── 3. the rest of a section ────────────────────────────────────────────────────────────────────────────────────
@@ -318,8 +320,8 @@ console.log("The passage, sailed:");
   check("6. SHE HOLDS at the end of the last section sent - said: HOLDING (Continue sends the next), AT FUEL STOP T1 "
         + "(refuel, then Continue), ARRIVED (the last section)",
         () => h6.mission.passage.state === "holding" && /PASSAGE HOLDING at the end of section 1 of 3/.test(h6.banners[0] || "")
-              && port6.mission.passage.state === "at_port" && /AT FUEL STOP T1/.test(port6.banners[0] || "")
-              && done6.mission.passage.state === "done" && /PASSAGE ARRIVED at T2/.test(done6.banners[0] || "")
+              && port6.mission.passage.state === "at_port" && /AT FUEL STOP P1/.test(port6.banners[0] || "")
+              && done6.mission.passage.state === "done" && /PASSAGE ARRIVED at P2/.test(done6.banners[0] || "")
               && h6.logs.some((l) => l[0] === "passage_holding"),
         () => JSON.stringify([h6, port6, done6].map((w) => [w.mission.passage.state, (w.banners[0] || "").slice(0, 50)])));
 
@@ -361,7 +363,7 @@ console.log("The passage, sailed:");
   const under = waiting("holding"); under.S.status.holding = false;
   check("8b. AT A PORT, REFUSED UNTIL WHAT IS ABOARD REACHES THE NEXT WITH 20% (said with the numbers), sent when it does; "
         + "under way, refused",
-        () => /refuel first: 55.0 L aboard, and T2 is 20.0 km on - she needs/.test(why8 || "") && lowFuel.cmds.length === 0
+        () => /refuel first: 55.0 L aboard, and P2 is 20.0 km on - she needs/.test(why8 || "") && lowFuel.cmds.length === 0
               && full8.api.continueRefusal(full8.mission.passage) === null && /under way/.test(under.api.continueRefusal(under.mission.passage) || ""),
         () => why8);
 
@@ -530,7 +532,7 @@ console.log("The passage, sailed:");
   check("13c. REFUSED, AS CONTINUE IS, WHILE WHAT IS ABOARD DOES NOT REACH THE FIRST PORT ON THE WAY HOME WITH 20% - said "
         + "with the numbers; nothing sent, the passage as it was",
         () => W13c.cmds.length === 0 && W13c.api.st().mission.passage.id === "Pout"
-              && /RTH refused: home is 55\.0 km away, along the passage - refuel first: 52\.0 L aboard, and T1 is 15\.0 km on/.test(W13c.banners.join(" ")),
+              && /RTH refused: home is 55\.0 km away, along the passage - refuel first: 52\.0 L aboard, and P1 is 15\.0 km on/.test(W13c.banners.join(" ")),
         () => JSON.stringify(W13c.banners));
   // on the way home: the next section sent ahead of her as an RTH; at home, done; a second RTH goes home along the same passage
   const homeWorld = (o) => {

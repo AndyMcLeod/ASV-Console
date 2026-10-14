@@ -79,16 +79,16 @@ const CONTROLS = H.slice(H.indexOf('<div class="controls">'), H.indexOf("</div>"
 const CMDBAR = H.slice(H.indexOf('<div class="cmdbar">'), H.indexOf('id="b_arm"'));
 const bodyOf = (id) => { const m = CARD.match(new RegExp('<div class="ppbody" id="' + id + '" data-tab="(\\w+)">')); return m && m[1]; };
 check("1. THE CHIPS ARE GONE AND THE CARD IS ALWAYS THERE: no WPT / SURV / BND / SRCH / TRAN on the toolbar, the card "
-      + "authored shown (no display:none), five tabs, and the bodies keep the four cards' ids - Survey (#linePanel, with "
-      + "the area #boundPanel inside it), Search, Transit - beside the new Go-To and Waypoints",
+      + "authored shown (no display:none), six tabs, and the bodies keep the four cards' ids - Survey (#linePanel, with "
+      + "the area #boundPanel inside it), Search, Transit - beside Passage (2026-10-14), Go-To and Waypoints",
       () => !/id="(wptBtn|lineBtn|bndBtn|srchBtn|tranBtn|areaBtn)"/.test(CONTROLS) && !/id="(wptBtn|lineBtn|bndBtn|srchBtn|tranBtn)"/.test(H)
             && CARD.length > 5000
-            && ["survey", "search", "transit", "goto", "wpt"].every(t => new RegExp('id="pp_tab_' + t + '"').test(CARD))
+            && ["survey", "search", "transit", "passage", "goto", "wpt"].every(t => new RegExp('id="pp_tab_' + t + '"').test(CARD))
             && bodyOf("linePanel") === "survey" && bodyOf("searchPanel") === "search" && bodyOf("transitPanel") === "transit"
-            && bodyOf("gotoPanel") === "goto" && bodyOf("wptPanel") === "wpt"
+            && bodyOf("passagePanel") === "passage" && bodyOf("gotoPanel") === "goto" && bodyOf("wptPanel") === "wpt"
             && CARD.indexOf('id="boundPanel"') > CARD.indexOf('id="linePanel"') && CARD.indexOf('id="boundPanel"') < CARD.indexOf('id="searchPanel"')
             && /id="areaBtn"/.test(CARD),
-      () => "card " + CARD.length + " chars; bodies " + ["linePanel", "searchPanel", "transitPanel", "gotoPanel", "wptPanel"].map(b => b + "=" + bodyOf(b)).join(" "));
+      () => "card " + CARD.length + " chars; bodies " + ["linePanel", "searchPanel", "transitPanel", "passagePanel", "gotoPanel", "wptPanel"].map(b => b + "=" + bodyOf(b)).join(" "));
 check("1b. ... ONE card crosses to the controls window, as ONE uicard titled Path planning, ONE resizable card on the "
       + "chart - none of the four old cards named anywhere - and the chart hides it while a controls window shows it",
       () => /const UI_BRIDGED = \[".controls", "#pathPanel", "#rocPanel",/.test(H)
@@ -135,14 +135,14 @@ function world() {
     "#gt_time", "#gt_go", "#gt_hint", "#tr_len", "#tr_time", "#sr_len", "#wp_n", "#wp_lines", "#wp_len", "#pp_plan .ppsum",
     "#pp_rules .pprsum", "#sp_mindepth", "#sp_buffer", "#sp_water",
     "#pp_follow", "#pp_follow .pprsum", "#c_arrival", "#c_approach", "#c_completion",
-    "#pp_tab_survey", "#pp_tab_search", "#pp_tab_transit", "#pp_tab_goto", "#pp_tab_wpt"];
+    "#pp_tab_survey", "#pp_tab_search", "#pp_tab_transit", "#pp_tab_passage", "#pp_tab_goto", "#pp_tab_wpt"];
   const D = {};
   for (const i of ids) D[i] = mkEl(i);
   D["#sp_mindepth"].value = "2"; D["#sp_buffer"].value = "5"; D["#sp_water"].value = "";
   D["#c_arrival"].value = "2"; D["#c_approach"].value = "1";
   D["#c_completion"].options = [{ text: "RTH" }, { text: "Complete" }, { text: "Loiter" }, { text: "Repeat" }];
   D["#c_completion"].selectedIndex = 0;
-  const bodies = ["survey", "search", "transit", "goto", "wpt"].map(t => mkEl("body-" + t, { dataset: { tab: t } }));
+  const bodies = ["survey", "search", "transit", "passage", "goto", "wpt"].map(t => mkEl("body-" + t, { dataset: { tab: t } }));
   D["#pathPanel"].querySelectorAll = () => bodies;
   const log = { renders: 0, readings: 0, ls: {} };
   const env = { D, bodies, log, mapEl: { style: {} },
@@ -163,7 +163,7 @@ function world() {
     let mode = "pan", rocPlaceKind = null, measPend = null, center = {lat: 43, lon: -70.7};
     let pathTab = "survey", pathFold = false, pathRulesFold = false, pathFollowFold = false, gotoTarget = null, searchRouted = env.searchRouted;
     let pat = {A: null, B: null, C: null}, search = {type: "expbox", datum: null}, transit = [], asv = {lat: 43.07, lon: -70.71};
-    let mission = {waypoints: [], lines: []}, armed = false;
+    let mission = {waypoints: [], lines: []}, armed = false, passageWps = [];
     const canCommand = () => armed;
     ${SRC}
     return { setMode, pathSelect, pathDraw, pathEscape, pathStopDrawing, searchShown, setGotoTarget, gotoFromInputs, pathRender,
@@ -174,7 +174,7 @@ function world() {
   return { api, D, bodies, log };
 }
 const shown = (w) => w.bodies.filter(b => b.classList.contains("on")).map(b => b.dataset.tab).join(",");
-const tabOn = (w) => ["survey", "search", "transit", "goto", "wpt"].filter(t => w.D["#pp_tab_" + t].classList.contains("on")).join(",");
+const tabOn = (w) => ["survey", "search", "transit", "passage", "goto", "wpt"].filter(t => w.D["#pp_tab_" + t].classList.contains("on")).join(",");
 
 // ── 2. tab vs drawing ──────────────────────────────────────────────────────────────────────────────────────────────────
 {
@@ -285,13 +285,14 @@ const tabOn = (w) => ["survey", "search", "transit", "goto", "wpt"].filter(t => 
         () => /setGotoTarget\(ll\);/.test(CLICK) && !/doGoTo|routeCmd|postJSON|fetch\(/.test(CLICK) && /cmRow\("#cmGoto",\s*ll => \{/.test(H),
         () => CLICK.replace(/\s+/g, " ").slice(0, 160));
   // 5f (2026-10-14, Andy: "When a GOTO is clicked on chart, fill in the latitude/longitude entries in the Path Planning
-  // Card"): the menu's Go-To row, run as the page has it, with setGotoTarget and doGoTo stubbed
+  // Card"): the menu's Go-To row, run as the page has it, with setGotoTarget and its command stubbed - goToOrPassage since
+  // 2026-10-14 (a long Go-To is a passage: tests/passage_tab.js)
   const ROW = (H.match(/cmRow\("#cmGoto",\s*(ll => \{[^\n]*\})\);/) || [])[1];
   const calls = [];
   const failed = Promise.reject(new Error("refused"));
   failed.catch(() => {});
   // eslint-disable-next-line no-new-func
-  const row = ROW && new Function("setGotoTarget", "doGoTo", "return " + ROW + ";")(
+  const row = ROW && new Function("setGotoTarget", "goToOrPassage", "return " + ROW + ";")(
     (ll) => calls.push("set " + ll.lat + "," + ll.lon), (ll) => { calls.push("go " + ll.lat + "," + ll.lon); return failed; });
   const ret = row ? row({ lat: 43.1, lon: -70.6 }) : null;
   check("5f. THE MENU'S GO-TO FILLS THE CARD'S POINT: the row sets the Go-To point - the fields, the range, Go - at the "
@@ -299,10 +300,11 @@ const tabOn = (w) => ["survey", "search", "transit", "goto", "wpt"].filter(t => 
         () => calls.join(";") === "set 43.1,-70.6;go 43.1,-70.6" && ret === failed,
         () => JSON.stringify({ row: ROW ? ROW.slice(0, 80) : "not found", calls, returned: ret === failed }));
   const GO = H.slice(H.indexOf('$("#gt_go").onclick'), H.indexOf("document.querySelectorAll(\"#pp_rules input"));
-  check("5c. GO is refused unARMED in words, stops the drawing, then commands exactly as the menu's Go-To does (doGoTo)",
+  check("5c. GO is refused unARMED in words, stops the drawing, then commands exactly as the menu's Go-To does "
+        + "(goToOrPassage: doGoTo, or a passage past RTH_MAX_M)",
         () => /if\(!canCommand\(\)\)\{ flashNote\("Go-To: ARM first\."\); return; \}/.test(GO)
-              && GO.indexOf("pathStopDrawing();") > 0 && GO.indexOf("pathStopDrawing();") < GO.indexOf("doGoTo(")
-              && /doGoTo\(\{lat: gotoTarget\.lat, lon: gotoTarget\.lon\}\)\.catch\(/.test(GO),
+              && GO.indexOf("pathStopDrawing();") > 0 && GO.indexOf("pathStopDrawing();") < GO.indexOf("goToOrPassage(")
+              && /goToOrPassage\(\{lat: gotoTarget\.lat, lon: gotoTarget\.lon\}\)\.catch\(/.test(GO),
         () => GO.replace(/\s+/g, " ").slice(0, 200));
 }
 

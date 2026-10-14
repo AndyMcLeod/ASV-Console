@@ -976,7 +976,7 @@ export function planNogoRoute(from, to, opts){
           heldOff, holdClear, insideStandoff, standoffM: want,
           openWater: openWater && {used: openWater.used, why: openWater.why, held: owHeld, lenM: openWater.lenM ?? null,
                                    lenRouterM: openWater.lenRouterM ?? null, clearM: openWater.clearM ?? null, exposure: openWater.exposure ?? null,
-                                   exposureRouter: openWater.exposureRouter ?? null},
+                                   exposureRouter: openWater.exposureRouter ?? null, ends: openWater.ends ?? null},
           moored: mooredPassed([{lat: from.lat, lon: from.lon}, ...route], ref, ko.moored),
           deep: df ? deepSaid([df], marginRuns([{lat: from.lat, lon: from.lon}, ...route], ref, ko, found)
                                      .map((r) => ({...r, w1: r.v1 - 1}))) : null};   // (w1: the stretch's end in plan.route)
@@ -1140,7 +1140,8 @@ export function routePlan(start, wps, keepRightAll, standoffM, transitAt, ropts)
     let owEntry = null;
     if(transit && owMode && (owMode === "all" || leg.length > 1)){
       const ow = openWaterLeg(prev, wp, ref, kL, atStandoff ? want : buf, leg, {chart: owChart});
-      owEntry = {leg: i, used: ow.used, why: ow.why, held: 0, lenM: ow.lenM ?? null, lenRouterM: ow.lenRouterM ?? null, clearM: ow.clearM ?? null};
+      owEntry = {leg: i, used: ow.used, why: ow.why, held: 0, lenM: ow.lenM ?? null, lenRouterM: ow.lenRouterM ?? null, clearM: ow.clearM ?? null,
+                 ends: ow.ends ?? null};
       owLegs.push(owEntry);
       if(ow.used) leg = ow.leg;
     }

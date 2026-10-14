@@ -636,10 +636,16 @@ def too_many_wpts(n, limit, what="route"):
 
 
 NOGO_BUFFER_DEFAULT_M = 3.0
-# The most /api/enc will extract in one request, degrees on a side (~1.5 deg is ~165 km N-S).
+# The most /api/enc will extract in one request, degrees on a side (~2.0 deg is ~220 km N-S).
 # The page's operating area is a 10 km box; a return home ten times that is refused on the
 # page before it gets here. This is the server's own floor under any caller. See _serve_enc.
-ENC_MAX_SPAN_DEG = 1.5
+# 2.0 SINCE 2026-10-14 (Andy: "increase that limit. its causing problems. investigate ramifications"; he chose 2.0 of
+# 2.0 / 2.5 / 3.0). 1.5 refused the read open water first asked for on his 120 km Go-To from Portland (1.71 x 0.73 deg).
+# What it was put here for (57a34cc, 2026-09-23) still holds: a state-sized box - 5.05 x 3.38 deg, from a home 500 km
+# away - is refused in words. What a wider box costs: up to 64 of the 0.25-deg chart tiles (about 11 MB each on his
+# Maine coast - his 21-tile read took 65 s and built 14,534 keep-out zones), and the page's model, its zoom redraws and
+# the route search grow with the area. A passage is not read as a box at all (the corridor, below) and is not held to it.
+ENC_MAX_SPAN_DEG = 2.0
 UNDER_KEEL_CLEARANCE_M = 0.9
 # Minimum navigable water depth (m) for the active vessel = draft + under-keel
 # clearance. Water shallower than this is nogo. The client reads it via /api/vessel
