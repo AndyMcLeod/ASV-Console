@@ -89,6 +89,7 @@ function advance(ms) {
 }
 
 const SRC = [grabDecl("UI_BRIDGED"), grabDecl("UI_PEER_GONE_MS"), grab("setupUISplit"), grab("pushUISync"), grab("applyUISync"),
+             grabDecl("uiMirrored"), grab("uiSameNode"), grab("uiMorph"),      // the mirror's patch (ui_tooltips 17-18)
              grab("uiPeersPrune"), grab("uiSplitApply"), grab("uiSupervisionChanged"), grab("uiOlder"), grab("uiYield"),
              grab("supervising"), grab("applySupervisor")].join("\n");
 
@@ -129,6 +130,7 @@ function makePage(role, id, born, opts) {
   // eslint-disable-next-line no-new-func
   const f = new Function(...names,
     "const UI_BORN = born; const uiPeers = new Map(); let uiYielded = false;\n" +
+    "let tipEl = null; const tipSay = () => {};\n" +     // nothing hovered here: the tip's half is ui_tooltips 13-18
     "const SUPERVISES = UIROLE === \"main\"; let supHolder = null, supStale = false, supSaidViewOnly = false, supWas = true;\n" +
     "let supBeatMs = 2000, supStaleMs = 10000;\n" + grabDecl("uiSyncLast") + "\n" + SRC + "\n" +
     "return { setupUISplit, pushUISync, applySupervisor, peers: () => [...uiPeers.keys()], yielded: () => uiYielded };");

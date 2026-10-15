@@ -446,7 +446,13 @@ it, carries out its clicks and hides its own cards; a view-only chart keeps its 
 TAKE OVER moves the controls window with supervision. Of two controls windows the
 **newer steps aside**: it closes itself, or, where the browser will not let it, goes silent
 and says ANOTHER CONTROLS WINDOW IS ALREADY OPEN. And the mirror is sent only when it
-changes - it used to go out four times a second regardless. Pass
+changes - it used to go out four times a second regardless. **A tip you are reading holds
+still** (2026-10-14, Andy: "hovering tool tips flash rather than hold steady so I can read
+them"): the controls window brings each card up to date IN PLACE after its first picture,
+so the control under a still pointer is the same one through every reading change (it was
+rebuilt, and its tip restarted, on each); and in either window a readout that rewrites its
+tip while you read it changes the tip's words, never brings the browser's own tip back
+under the pointer. Pass
 `--single-window` to skip the second window. Those two are all the console opens at
 start-up. The official pages behind its readings are **offered, not opened** (2026-09-02):
 a **`⏏ Tide`** pill on the top bar opens the NOAA CO-OPS water-levels page for the station
@@ -2541,11 +2547,21 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    allows. Then the fuel, leg by leg between fuel stops, at the transit speed in still water:
    the first leg from what is aboard now, each leg after a fuel stop from a full tank. A leg that
    arrives with less than **20% of the tank** says how far she gets before she is down to it, marked
-   red on the chart: put a fuel stop before there. The plan is drawn (pale dashed), with a circle
-   round each port and a yellow mark on each narrow stretch, and said on the banner and the panel.
+   red on the chart: put a fuel stop before there. The plan is drawn (pale dashed, on a dark
+   casing - 2026-10-14, Andy: "the passage line drawn on the chart is hard to see": the pale dash
+   alone was 1.3:1 against a NOAA tile's white water; the Passage tab's violet line and the passage
+   being sailed are cased the same way, their labels haloed), with a circle round each port and a
+   yellow mark on each narrow stretch, and said on the banner and the panel.
    **What it does not plan**: the water within 4 km of each port, and the narrow stretches, are left
    to the console's own planner (lanes, the chart image, moored AIS) as she comes to them; the
-   coarse route runs on cells of about 100 m, so the route she sails will be a little longer. A
+   coarse route runs on cells of about 100 m, so the route she sails will be a little longer.
+   **A section that leaves or makes a port is planned as a Go-To is** (2026-10-14, Andy: "ASV exit
+   from port through channel looks like the ASV is drunk ... should all harbor entrance/exit be
+   goto?"): in one leg to its end - the Rule 9 lane, the marks and open water first over all of it -
+   with none of the coarse route's turning points, which cross a port's water on ~100 m cells and
+   blocked ones too; its chart is still read, and its water judged, along them. The sections out at
+   sea, hold to hold, still run through them. His Portland departure, flown from his wharf on a
+   scratch console: 15 coarse points and five turns past 45 degrees before, none of either after. A
    battery hull is refused ("long passages are for the diesel hulls"). Nothing moves the boat.
    Measured: a 287 nm passage, Portsmouth to the New York approaches (39 tiles), read from NOAA in
    8.6 minutes the first time and planned in 0.8 s; with open water first, New Castle to Castine

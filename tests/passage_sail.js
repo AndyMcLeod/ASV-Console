@@ -199,6 +199,8 @@ console.log("The passage, sailed:");
       "const ctx = new Proxy({}, {get: (t, k) => (k in t ? t[k] : (...a) => { w.ops.push([k, ...a]); }), set: (t, k, v) => { t[k] = v; return true; }});",
       "const doGoTo = async (ll) => { w.cmds.push(['goto', ll]); if (w.gotoTakes) { planGen++; planIntent = {kind: 'goto', why: []}; if (w.gotoRoute) runRoute = w.gotoRoute; } };",
       "const $ = (id) => w.dom[id] || (w.dom[id] = {style: {}, classList: {toggle(c, on){ this[c] = on; }}, disabled: false});",
+      decl("PASSAGE_CASING"), grab("strokeCased"), grab("fillHaloed"),
+      "const PASSAGE_PORT_R_M = w.C.PORT_R_M;", grab("sectionAtPort"),      // a section at a port: planned as a Go-To is
       decl("PASSAGE_AHEAD_M"), decl("PASSAGE_RETRY_MS"), decl("PASSAGE_END_M"), decl("PASSAGE_ONGOING"),
       "let sailBusy = false, sailTriedAt = 0, sailSaid = null;",
       ["passageEndsSay", "sailRecord", "sailPortName", "sailRefusal", "sailSegM", "sectionRest", "sailOwns", "sailGuardQuiet", "sailLeftM", "sailSend",
@@ -249,14 +251,17 @@ console.log("The passage, sailed:");
   const W4 = world();
   await W4.api.sailPassage();
   const st4 = W4.api.st(), P4 = st4.mission.passage, c4 = W4.cmds[0];
-  check("4. SAIL PASSAGE: section 1 planned from her position through its turning points to its held end, sent as a "
-        + "Transit with its hold disc and coast; the record kept on the plan - running, section 1 sent, its end and route; "
-        + "the coarse plan handed over; said and logged",
-        () => W4.planned.length === 1 && distTo(W4.planned[0].from, HERE) < 1 && W4.planned[0].line.length === 2
-              && c4 && c4[0] === "/api/cmd/transit" && c4[1].hold_clear_m === 40 && c4[1].coast_from_m === 55 && c4[1].route.length === 2
-              && P4 && P4.state === "running" && P4.sent === 0 && P4.base === 0 && distTo(P4.end, P1) < 1 && P4.route.length === 2
+  check("4. SAIL PASSAGE: section 1 - it leaves a port - planned from her position to its held end AS A GO-TO IS, none "
+        + "of the coarse route's turning points (its water still judged along them), sent as a Transit with its hold disc "
+        + "and coast; the record kept on the plan - running, section 1 sent, its end and route; the coarse plan handed "
+        + "over; said and logged",
+        () => W4.planned.length === 1 && distTo(W4.planned[0].from, HERE) < 1 && W4.planned[0].line.length === 1
+              && distTo(W4.planned[0].line[0], P1) < 1
+              && W4.waterAsked.length === 1 && W4.waterAsked[0].pts.length === 2 && distTo(W4.waterAsked[0].pts[0], east(HERE, 10000)) < 1
+              && c4 && c4[0] === "/api/cmd/transit" && c4[1].hold_clear_m === 40 && c4[1].coast_from_m === 55 && c4[1].route.length === 1
+              && P4 && P4.state === "running" && P4.sent === 0 && P4.base === 0 && distTo(P4.end, P1) < 1 && P4.route.length === 1
               && W4.saves > 0 && st4.passage === null
-              && /PASSAGE UNDER WAY: section 1 of 3 sent \(2 waypoints, planned at \+0\.35 m, the lowest predicted/.test(W4.banners.pop() || "")
+              && /PASSAGE UNDER WAY: section 1 of 3 sent \(1 waypoints, planned at \+0\.35 m, the lowest predicted/.test(W4.banners.pop() || "")
               && W4.logs.some((l) => l[0] === "passage_sail" && l[1].ok)
               && W4.missions.length === 1 && W4.missions[0].what === "Sail passage",   // a new mission's history (2026-10-14)
         () => JSON.stringify({ planned: W4.planned.length, cmd: c4 && [c4[0], c4[1].route.length, c4[1].hold_clear_m], P: P4 && [P4.state, P4.sent] }));
@@ -280,8 +285,9 @@ console.log("The passage, sailed:");
   await settle(); await settle();
   const c5 = W5.cmds[0], P5 = W5.api.st().mission.passage;
   check("5. AHEAD OF HER: with " + (8000 / 1000) + " km of route left (under PASSAGE_AHEAD_M), section 2 planned FROM the "
-        + "end of the route she flies and sent after what she has LEFT of it - read when sent - its end the section's port",
-        () => W5.planned.length === 1 && distTo(W5.planned[0].from, P1) < 1 && c5 && c5[1].route.length === 1 + 2
+        + "end of the route she flies and sent after what she has LEFT of it - read when sent - its end the section's port "
+        + "(a port's section: to its end as a Go-To is)",
+        () => W5.planned.length === 1 && distTo(W5.planned[0].from, P1) < 1 && c5 && c5[1].route.length === 1 + 1
               && distTo(c5[1].route[0], P1) < 1 && distTo(c5[1].route[c5[1].route.length - 1], P2) < 1
               && P5.sent === 1 && P5.base === 1 && distTo(P5.end, P2) < 1
               && W5.logs.some((l) => l[0] === "passage_section" && l[1].ok && l[1].water_m === 0.35)
@@ -347,13 +353,64 @@ console.log("The passage, sailed:");
   const W8b = waiting("stopped", { asv: east(HERE, 3000) });
   W8b.mission.passage.breakoff = { sec: 0, at: { lat: HERE.lat + 0.0005, lon: east(HERE, 7000).lon }, why: "a Go-To" };
   await W8b.api.continuePassage();
-  check("8. CONTINUE PASSAGE: from a hold, the next section from where she is through its turning points; left "
-        + "mid-section, back to where she left it, then the REST of that section - running again, the leaving spent",
-        () => W8.planned.length === 1 && distTo(W8.planned[0].from, P1) < 1 && W8.planned[0].line.length === 2
+  check("8. CONTINUE PASSAGE: from a hold, the next section from where she is (it makes a port: to its end as a Go-To "
+        + "is); left mid-section - a section leaving a port - back to where she left it, then its end - running again, the "
+        + "leaving spent",
+        () => W8.planned.length === 1 && distTo(W8.planned[0].from, P1) < 1 && W8.planned[0].line.length === 1
               && W8.mission.passage.state === "running" && W8.mission.passage.sent === 1
-              && W8b.planned.length === 1 && W8b.planned[0].line.length === 3 && distTo(W8b.planned[0].line[1], east(HERE, 10000)) < 1
+              && W8b.planned.length === 1 && W8b.planned[0].line.length === 2
+              && distTo(W8b.planned[0].line[0], { lat: HERE.lat + 0.0005, lon: east(HERE, 7000).lon }) < 1 && distTo(W8b.planned[0].line[1], P1) < 1
               && W8b.mission.passage.sent === 0 && W8b.mission.passage.breakoff === null && W8b.mission.passage.state === "running",
         () => JSON.stringify({ h: W8.planned.map((p) => p.line.length), b: W8b.planned.map((p) => p.line.map((q) => Math.round(distTo(HERE, q) / 1000))) }));
+  // ── 8c. A SECTION AT A PORT IS PLANNED AS A GO-TO IS; ONE OUT AT SEA THROUGH THE COARSE ROUTE'S POINTS (2026-10-14) ──
+  // Andy: "ASV exit from port through channel looks like the ASV is drunk ... should all harbor entrance/exit be goto?"
+  // His Portland departure was sent through 15 of the coarse plan's points, 8 inside the port's circle, a sharp turn at
+  // each. A passage of four sections, a port at each end, the two between ending at holds: the middle one (hold to hold)
+  // goes through its turning points - and from where she left it, through the rest of them - and the last (making the
+  // port) goes to its end with none of its own, though the first of them is 10 km out, far past the port's circle: the
+  // whole section is the Go-To's.
+  const P4x = east(HERE, 80000);
+  const PLAN_M = () => ({ points: [{ ...HERE, port: true, t: 0 }, { ...P4x, port: true, t: 1 }], legs: [{ lengthM: 80000 }], twKn: 7, floorM: 3.15,
+    sections: [sec(P0, P1, [east(HERE, 10000)]), sec(P1, P2, [east(HERE, 25000), east(HERE, 30000), east(HERE, 35000)]),
+               sec(P2, P3, [east(HERE, 50000)]), sec(P3, P4x, [east(HERE, 70000)], "port", 1)],
+    fuelLegs: [{ from: { t: 0 }, to: { t: 1 } }], fuel: [{ ok: true }] });
+  const atHold = (sent, at, bo) => {
+    const route = [{ ...at }];
+    const P = { ...world().api.sailRecord(PLAN_M()), state: bo ? "stopped" : "holding", sent, base: 0, end: { ...at }, route, breakoff: bo || null };
+    return world({ mission: { passage: P }, runRoute: route, asv: { ...at }, wpIndex: 1,
+                   S: { armed: true, estop: false, run: "running", status: { holding: true, fuel_l: 200 }, wp_total: 1 } });
+  };
+  const W8c = atHold(0, P1);
+  await W8c.api.continuePassage();
+  const BO8 = { lat: HERE.lat + 0.0005, lon: east(HERE, 27000).lon };
+  const W8d = atHold(1, east(HERE, 23000), { sec: 1, at: BO8, why: "a Go-To" });
+  await W8d.api.continuePassage();
+  const W8e = atHold(2, P3);
+  await W8e.api.continuePassage();
+  const kmL = (w) => (w.planned[0] ? w.planned[0].line.map((p) => Math.round(distTo(HERE, p) / 1000)) : null);
+  check("8c. A SECTION AT A PORT IS PLANNED AS A GO-TO IS: a middle section (hold to hold) goes through the coarse route's "
+        + "turning points, and left part way, from where she left it through the rest of them; the last (it makes the port) "
+        + "to its end with none of its own - its point 10 km out too - its water still judged along them",
+        () => JSON.stringify(kmL(W8c)) === "[25,30,35,40]" && JSON.stringify(kmL(W8d)) === "[27,30,35,40]"
+              && JSON.stringify(kmL(W8e)) === "[80]" && W8e.waterAsked.length === 1 && W8e.waterAsked[0].pts.length === 2,
+        () => JSON.stringify({ middle: kmL(W8c), rest: kmL(W8d), port: kmL(W8e), portWater: W8e.waterAsked.map((x) => x.pts.length) }));
+  // ── 8d. WHICH SECTIONS ARE A PORT'S (sectionAtPort): an end within the port's circle of a port - or of home, on the way
+  // home, home being where it left from or arrives but not itself one of its points - and only those
+  const SAP = new Function("distTo", "PASSAGE_PORT_R_M", grab("sectionAtPort") + "; return sectionAtPort;")(distTo, C.PORT_R_M);
+  const portAt = { points: [{ ...HERE, port: true }, { ...P4x, port: false }] };
+  const sap = {
+    inCircle: SAP(portAt, sec(east(HERE, 3500), east(HERE, 20000))),
+    outside: SAP(portAt, sec(east(HERE, 4500), east(HERE, 20000))),
+    arrives: SAP(portAt, sec(east(HERE, 20000), east(HERE, -100))),
+    notPort: SAP({ points: [{ ...HERE, port: false }] }, sec(P0, P1)),
+    home: SAP({ points: [{ ...P4x, port: false }], home: east(HERE, -3000) }, sec(east(HERE, 25000), { ...HERE })),
+    homeFar: SAP({ points: [{ ...P4x, port: false }], home: east(HERE, -3000) }, sec(east(HERE, 25000), east(HERE, 1500))),
+  };
+  check("8d. WHICH SECTIONS ARE A PORT'S: an end within the port's circle (" + C.PORT_R_M / 1000 + " km) of one of the "
+        + "passage's ports, at its start or its end - or of home on the way home - and not one 4.5 km out, nor a point that "
+        + "is not a port",
+        () => sap.inCircle && !sap.outside && sap.arrives && !sap.notPort && sap.home && !sap.homeFar,
+        () => JSON.stringify(sap));
   const lowFuel = waiting("at_port", { asv: { ...P2 }, S: { armed: true, estop: false, run: "running", status: { holding: true, fuel_l: 55 }, wp_total: 4 } });
   lowFuel.mission.passage.sent = 1;
   const why8 = lowFuel.api.continueRefusal(lowFuel.mission.passage);
@@ -683,7 +740,7 @@ console.log("The passage, sailed:");
     said: P14 && /planned at \+0\.35 m/.test(W14.api.sailLine(P14)),
     // (since 2026-10-12 in the route worker, on the chart at that level - koAtLevel - and on this thread, in atWaterLevel
     // at it, if the worker cannot answer: tests/route_worker.js 6)
-    wrapped: /const o = holdOpts\(\), via = pts\.slice\(0, -1\), std = transitStandoffM\(\), koLv = koAtLevel\(lv\.m\);/.test(grab("sailSend"))
+    wrapped: /const o = holdOpts\(\), via = line\.slice\(0, -1\), std = transitStandoffM\(\), koLv = koAtLevel\(lv\.m\);/.test(grab("sailSend"))
              // (and open water first on every leg of it, 2026-10-14 - tests/open_water.js)
              && /planOffThread\(\{op: "holdRoute", ko: koLv, args: \{target: c\.to, holdOpts: o, start: from, via, keepRightAll: true, standoffM: std,\s*\n\s*ropts: \{openWater: "all"\}\}\},[^\n]*\n\s*\(\) => atWaterLevel\(lv\.m, \(\) => \{\s*\n\s*ht = holdTarget\(c\.to, o\);/.test(grab("sailSend")),
     // its chart read along it as a ROUTE, where the read can find something - and any wider read the planning makes

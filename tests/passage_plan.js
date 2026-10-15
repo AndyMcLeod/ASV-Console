@@ -348,7 +348,8 @@ const FLOOR = 30;
       + "const PASSAGE_HALF_KM = 5, PASSAGE_HALF_MAX_KM = 25, PASSAGE_GRID_FETCHES = 6, CORRIDOR_POLL_MS = 0;\n"
       + "const PASSAGE_LEG_WHY = " + /const PASSAGE_LEG_WHY = (\{[\s\S]*?\});/.exec(H)[1] + ";\n"
       + fuelSrc + "\n"
-      + ["passageEdited", "passagePointAt", "toggleFuelStop", "passageRefusal", "passagePoints", "passageName", "passageFuelLegs",
+      + /const PASSAGE_CASING = [^;]*;/.exec(H)[0] + "\n"
+      + ["strokeCased", "fillHaloed", "passageEdited", "passagePointAt", "toggleFuelStop", "passageRefusal", "passagePoints", "passageName", "passageFuelLegs",
          "passageAlong", "passageSummary", "passageLine", "passageGrids", "passageHalfKm", "passageEndsSay", "planPassageNow",
          "drawPassage"].map(grab).join("\n")
       + "\nreturn {passageEdited, passagePointAt, toggleFuelStop, passageRefusal, passagePoints, passageFuelLegs, passageAlong,"

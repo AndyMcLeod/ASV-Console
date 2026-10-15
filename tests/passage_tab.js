@@ -200,6 +200,8 @@ function gotoWorld(o) {
       const passageEndWorld = async (pts) => { w.worlds.push(pts); return w.world; };
       const planOffThread = async (job, here, adopt) => { w.jobs.push(job); return w.reply === undefined ? here() : adopt(w.reply); };
       const holdOpts = () => ({o: 1}), transitStandoffM = () => 20, routeLenM = (from, route) => route.length * 1000;
+      const PASSAGE_PORT_R_M = 4000, distTo = (a, b) => Math.hypot((a.lat - b.lat) * 111320, (a.lon - b.lon) * 111320 * Math.cos(a.lat * Math.PI / 180));
+      ${grab("sectionAtPort")}
       ${grab("planPassageEnd")}
       ${grab("planPassageEnds")}
       ${grab("passageEndsSay")}
@@ -210,22 +212,31 @@ function gotoWorld(o) {
   const S2 = { from: { lat: 2, lon: 2 }, via: [], to: { lat: 2.2, lon: 2.2 } };
   const S3 = { from: { lat: 3, lon: 3 }, via: [{ lat: 3.1, lon: 3.1 }], to: { lat: 3.2, lon: 3.2 } };
   const okW = endWorld({ reply: { ht: { to: S3.to }, plan: { route: [1, 2, 3, 4] } } });
-  const ends = await okW.api.planPassageEnds({ sections: [S1, S2, S3] });
-  const job = okW.jobs[0] || {};
+  const ends = await okW.api.planPassageEnds({ points: [{ ...S1.from, port: true }, { ...S3.to, port: true }], sections: [S1, S2, S3] });
+  const job = okW.jobs[0] || {}, job2 = okW.jobs[1] || {};
   check("4. ENDS FIRST: the FIRST and the LAST sections - not the middle - each on a chart read of its own water (its start, "
         + "its points, its end), planned in the route worker on that world (holdRoute: the section's hold at its end, open "
-        + "water on every leg, at the transit standoff) - and said planned, with their lengths",
+        + "water on every leg, at the transit standoff) AS A GO-TO IS - none of the coarse route's points, each section a "
+        + "port's (2026-10-14) - and said planned, with their lengths",
         () => okW.worlds.length === 2 && JSON.stringify(okW.worlds[0]) === JSON.stringify([S1.from, ...S1.via, S1.to])
               && JSON.stringify(okW.worlds[1]) === JSON.stringify([S3.from, ...S3.via, S3.to])
               && okW.jobs.length === 2 && job.op === "holdRoute" && job.world === okW.world && job.args.target === S1.to
-              && job.args.start === S1.from && job.args.via === S1.via && job.args.keepRightAll === true && job.args.standoffM === 20
+              && job.args.start === S1.from && Array.isArray(job.args.via) && job.args.via.length === 0
+              && Array.isArray(job2.args && job2.args.via) && job2.args.via.length === 0
+              && job.args.keepRightAll === true && job.args.standoffM === 20
               && job.args.ropts.openWater === "all" && ends.dep.ok && ends.dep.km === 4 && ends.arr.ok && okW.api.passageEndsSay(ends) === "",
         () => JSON.stringify({ worlds: okW.worlds.length, jobs: okW.jobs.map((j) => j.op), ends }));
+  // ... and a section with no port at either end keeps the coarse route's points (the rule is the PORT's, not the end's)
+  const midW = endWorld({ reply: { ht: { to: S3.to }, plan: { route: [1, 2] } } });
+  await midW.api.planPassageEnd(S3, { points: [{ lat: 9, lon: 9, port: true }] });
+  const midJob = midW.jobs[0] || {};
+  check("4a. ... a section with no port within its circle (PASSAGE_PORT_R_M) of either end keeps its turning points",
+        () => midJob.args && midJob.args.via === S3.via, () => JSON.stringify(midJob.args && midJob.args.via));
   const one = endWorld({ reply: { ht: {}, plan: { route: [1] } } });
   const e1 = await one.api.planPassageEnds({ sections: [S1] });
   check("4b. ... a passage of ONE section: its one end, planned once",
         () => one.jobs.length === 1 && e1.dep.ok && e1.arr === null, () => JSON.stringify(e1));
-  const why = async (o) => (await endWorld(o).api.planPassageEnd(S3));
+  const why = async (o) => (await endWorld(o).api.planPassageEnd(S3, { points: [] }));
   const r = {
     chart: await why({ world: { error: "its chart arrived without Depth_Area" } }),
     worker: await why({ reply: undefined }),
@@ -317,6 +328,7 @@ function gotoWorld(o) {
   const ctx = new Proxy({}, { get: (t, k) => (k in t ? t[k] : (...a) => { ops.push([k, ...a]); }), set: (t, k, v) => { t[k] = v; return true; } });
   // eslint-disable-next-line no-new-func
   new Function("ctx", "w", `"use strict"; const asv = {lat: 0, lon: 0}, passageWps = w;
+    ${(/const PASSAGE_CASING = [^;]*;/.exec(H) || [""])[0]} ${grab("strokeCased")} ${grab("fillHaloed")}
     ${grab("drawPassageWps")} drawPassageWps((lat, lon) => ({x: lon, y: -lat}));`)(ctx, [{ lat: 1, lon: 1 }, { lat: 2, lon: 2, fuel: true }, { lat: 3, lon: 3 }]);
   const labels = ops.filter((o) => o[0] === "fillText").map((o) => o[1]);
   check("6. THE DRAWING: her position to the line's points, each named - P1, P2 FUEL (ringed), P3 ARRIVAL - and drawn after "
@@ -324,6 +336,80 @@ function gotoWorld(o) {
         () => labels.join("|") === "P1|P2 FUEL|P3 ARRIVAL" && ops.filter((o) => o[0] === "arc").length === 4
               && /drawTransit\(toScreen\);\s*\n\s*drawPassageWps\(toScreen\);\s*\n\s*drawPassage\(toScreen\);/.test(H),
         () => labels.join("|"));
+
+  // ── 7. THE INK: EVERY PASSAGE LINE ON A DARK CASING (2026-10-14) ─────────────────────────────────────────────────────
+  // Andy: "the passage line drawn on the chart is hard to see. higher contrast or change color". A NOAA tile is pale - white
+  // deep water, light-blue shoal water - and the planned passage was a pale blue-white dash, 1.3:1 against the white; the
+  // Passage tab's violet line 2.7:1 at 90%; the passage sailed the same pale at 50-75%. Seen live on scratch 8796: a 44 km
+  // passage off Portsmouth that a screenshot did not show at all. The three drawings are driven here with a context that
+  // records its state at every call, and the contrast is the WCAG ratio (3:1 is what it asks of a graphic):
+  //   * every line path is stroked TWICE - the casing first (PASSAGE_CASING, solid, at least 2 px wider), then its color -
+  //     and the casing stands at least 7:1 off the white and the shoal blue, the color at least 3:1 off the casing;
+  //   * every label is drawn over a halo of the casing.
+  {
+    const lum = (c) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+                         return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); };
+    const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+    const rgba = (s) => { const m = /rgba?\(([^)]+)\)/.exec(s); if (m) { const v = m[1].split(",").map(Number); return v.length === 3 ? v.concat(1) : v; }
+                          const h = /^#([0-9a-f]{6})$/i.exec(s)[1]; return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)).concat(1); };
+    const over = (c, bg) => [0, 1, 2].map((i) => c[i] * c[3] + bg[i] * (1 - c[3]));
+    const WHITE = [255, 255, 255], SHOAL = [166, 207, 232];        // a NOAA tile's deep water, and its light-blue shoal tint
+    const CASING_SRC = (/const PASSAGE_CASING = [^;]*;/.exec(H) || [""])[0];
+    const CASING = (/const PASSAGE_CASING = "([^"]+)"/.exec(H) || [])[1];
+    const inked = (names, prelude, call) => {
+      const ops = [];
+      const ctx = new Proxy({ _dash: [] }, {
+        get: (t, k) => (k in t ? t[k] : (...a) => { ops.push({ k, a, stroke: t.strokeStyle, width: t.lineWidth, dash: t._dash }); if (k === "setLineDash") t._dash = a[0]; }),
+        set: (t, k, v) => { t[k] = v; return true; } });
+      // eslint-disable-next-line no-new-func
+      new Function("ctx", `"use strict"; ${prelude}\n${CASING_SRC}\n${["strokeCased", "fillHaloed", ...names].map(grab).join("\n")}\n${call}`)(ctx);
+      return ops;
+    };
+    const toS = "(lat, lon) => ({x: lon * 1000, y: -lat * 1000})";
+    const drawings = {
+      "the Passage tab's line": inked(["drawPassageWps"], "const asv = {lat: 0, lon: 0}, passageWps = [{lat: 1, lon: 1}, {lat: 2, lon: 2, fuel: true}, {lat: 3, lon: 3}];",
+                                      `drawPassageWps(${toS});`),
+      "the planned passage": inked(["drawPassage"], "const PASSAGE_PORT_R_M = 1500, M_PER_DEG_LAT = 111320, FUEL_RESERVE_FRAC = 0.2;\n"
+        + "const passage = {points: [{lat: 0, lon: 0, port: true}, {lat: 1, lon: 1}, {lat: 2, lon: 2, port: true}], reserveAt: [null, {lat: 1.5, lon: 1.5}],\n"
+        + "  legs: [{from: {lat: 0, lon: 0}, to: {lat: 1, lon: 1}, pts: [{lat: 0, lon: 0}, {lat: 0.5, lon: 0.6}, {lat: 1, lon: 1}], narrow: [{at: {lat: 0.5, lon: 0.6}}]},\n"
+        + "         {error: 'blocked', from: {lat: 1, lon: 1}, to: {lat: 2, lon: 2}, pts: [], narrow: []}]};", `drawPassage(${toS});`),
+      "the passage sailed": inked(["drawSail"], "const mission = {passage: {sent: 0, sections: [{from: {lat: 0, lon: 0}, via: [{lat: 0.5, lon: 0.4}], to: {lat: 1, lon: 1}, end: 'hold'},\n"
+        + "  {from: {lat: 1, lon: 1}, via: [], to: {lat: 2, lon: 2}, end: 'port'}]}};", `drawSail(${toS});`),
+    };
+    const bad = [];
+    let lines = 0, labels = 0, worstCasing = Infinity, worstColor = Infinity;
+    for (const [name, ops] of Object.entries(drawings)) {
+      // each path: the ops from one beginPath to the next
+      let path = null;
+      const paths = [];
+      for (const o of ops) { if (o.k === "beginPath") { path = { draws: [], strokes: [] }; paths.push(path); } else if (path) { if (o.k === "stroke") path.strokes.push(o); else path.draws.push(o); } }
+      for (const p of paths) {
+        // a line, or a port's circle; not a point's dot, its outline or a fuel stop's ring (radius 9 or less)
+        if (!p.draws.some((d) => d.k === "lineTo" || (d.k === "arc" && d.a[2] > 9))) continue;
+        lines++;
+        const [c, d] = p.strokes;
+        if (p.strokes.length !== 2 || c.stroke !== CASING || (c.dash || []).length || !(c.width >= d.width + 2)) {
+          bad.push(name + ": a line stroked " + p.strokes.map((s) => s.stroke + "/" + s.width).join(", ") + " - no casing under it"); continue; }
+        const cas = rgba(c.stroke), col = rgba(d.stroke);
+        const onW = over(cas, WHITE), onS = over(cas, SHOAL);
+        worstCasing = Math.min(worstCasing, ratio(onW, WHITE), ratio(onS, SHOAL));
+        worstColor = Math.min(worstColor, ratio(over(col, onW), onW), ratio(over(col, onS), onS));
+      }
+      const fills = ops.filter((o) => o.k === "fillText"), halos = ops.filter((o) => o.k === "strokeText");
+      for (const f of fills) {
+        labels++;
+        if (!halos.some((h) => h.a[0] === f.a[0] && h.a[1] === f.a[1] && h.a[2] === f.a[2] && h.stroke === CASING && h.width >= 2))
+          bad.push(name + ": the label " + JSON.stringify(f.a[0]) + " has no halo");
+      }
+    }
+    check("7. THE INK: every passage line - the Passage tab's, the plan's, the passage sailed - is stroked on a dark casing "
+          + "that stands at least 7:1 off a NOAA tile's white and shoal blue, its color at least 3:1 off the casing, and every "
+          + "label haloed (the pale line was 1.3:1)",
+          () => !!CASING && bad.length === 0 && lines >= 6 && labels >= 4 && worstCasing >= 7 && worstColor >= 3,
+          () => (bad.length ? bad.join(" | ") + "; " : "") + lines + " lines, " + labels + " labels; casing " + CASING
+              + " at worst " + worstCasing.toFixed(1) + ":1 off the tile, the colors at worst " + worstColor.toFixed(1)
+              + ":1 off the casing; the old pale dash " + ratio(over([190, 230, 255, 0.95], WHITE), WHITE).toFixed(2) + ":1 off white");
+  }
 
   console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
   process.exit(fails ? 1 : 0);

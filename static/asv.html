@@ -11154,24 +11154,37 @@ function drawRoc(toScreen){
   });
 }
 
+// ⚠ THE PASSAGE IS DRAWN ON A DARK CASING (Andy, 2026-10-14: "the passage line drawn on the chart is hard to see. higher
+// contrast or change color"). A NOAA tile is pale - white deep water, light blue shoal water - and the planned passage was
+// a pale blue-white dash, 1.3:1 against the white (WCAG asks 3:1 of a graphic): no line at all. The Passage tab's violet
+// line was 2.7:1, thin and at 90%. Both now stroke their path twice - a dark solid casing (the halo every chart label here
+// gets), then the dashes in full color over it - so the gaps read dark on a pale tile and the dashes light on a dark one.
+// Their labels and the port circles are haloed the same way.
+const PASSAGE_CASING = "rgba(10,20,28,0.85)";
+function strokeCased(color, w, dash){              // the current path: the casing, then the dashes over it
+  ctx.setLineDash([]); ctx.lineJoin = "round"; ctx.strokeStyle = PASSAGE_CASING; ctx.lineWidth = w + 3; ctx.stroke();
+  ctx.setLineDash(dash); ctx.strokeStyle = color; ctx.lineWidth = w; ctx.stroke(); ctx.setLineDash([]);
+}
+function fillHaloed(t, x, y){                      // a label in the current fillStyle, over the same dark halo
+  ctx.lineJoin = "round"; ctx.lineWidth = 3; ctx.strokeStyle = PASSAGE_CASING; ctx.strokeText(t, x, y); ctx.fillText(t, x, y);
+}
 /** The Passage tab's line (2026-10-14): her position to its points, numbered P1..., a fuel stop ringed amber - violet, so
- *  it is not the transit line (cyan), the plan (amber) or the route (green). */
+ *  it is not the transit line (cyan), the plan (amber) or the route (green). On a dark casing (PASSAGE_CASING). */
 function drawPassageWps(toScreen){
   if(!passageWps.length) return;
   ctx.save();
   const line = [...(asv ? [{lat: asv.lat, lon: asv.lon}] : []), ...passageWps];
   if(line.length > 1){
-    ctx.setLineDash([7, 5]); ctx.strokeStyle = "rgba(170,140,255,0.9)"; ctx.lineWidth = 1.6;
     ctx.beginPath(); line.forEach((p, i) => { const q = toScreen(p.lat, p.lon); i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y); });
-    ctx.stroke(); ctx.setLineDash([]);
+    strokeCased("#aa8cff", 2.2, [7, 5]);
   }
-  ctx.font = "10px Consolas,monospace";
+  ctx.font = "bold 11px Consolas,monospace";
   passageWps.forEach((p, i) => { const q = toScreen(p.lat, p.lon), last = i === passageWps.length - 1;
     if(p.fuel){ ctx.beginPath(); ctx.arc(q.x, q.y, 9, 0, 2 * Math.PI); ctx.lineWidth = 2.5; ctx.strokeStyle = "#ff9f40"; ctx.stroke(); }
     ctx.beginPath(); ctx.arc(q.x, q.y, 5, 0, 2 * Math.PI); ctx.fillStyle = "#aa8cff"; ctx.fill();
     ctx.lineWidth = 1.5; ctx.strokeStyle = "#0a141c"; ctx.stroke();
     ctx.fillStyle = p.fuel ? "#ff9f40" : "#aa8cff";
-    ctx.fillText("P" + (i + 1) + (p.fuel ? " FUEL" : last ? " ARRIVAL" : ""), q.x + 7, q.y - 6); });
+    fillHaloed("P" + (i + 1) + (p.fuel ? " FUEL" : last ? " ARRIVAL" : ""), q.x + 7, q.y - 6); });
   ctx.restore();
 }
 function drawTransit(toScreen){                   // the transit DRAFT being drawn (cyan)
@@ -11678,11 +11691,32 @@ async function passageEndWorld(pts){
   const sq = (rs, failed) => (rs || []).map(r => ({W: r[0], S: r[1], E: r[2], N: r[3], failed}));
   return {ko, frame, bbox: b, unread: [...sq(d.unread, false), ...sq(d.unread_failed, true)], buffer: nogo.buffer};
 }
-/** One section planned in detail on its own chart read: {ok: true, km, wpts} or {ok: false, why}. */
-async function planPassageEnd(c){
+// ⚠⚠ A SECTION THAT LEAVES OR MAKES A PORT IS PLANNED AS A GO-TO IS (Andy, 2026-10-14: "ASV exit from port through channel
+// looks like the ASV is drunk. Channel and buoys are very clear as similar to Piscataqua river ... generalize it to harbor
+// exit/entrance"; then "should all harbor entrance/exit be goto?"). A section was planned THROUGH the coarse route's
+// turning points, and round a port that route is the coarse search's guess: on ~100 m cells, free to cross blocked ones
+// inside the port's circle (coarse.js PORT_BLOCKED_COST) - "the detail planner's". His Portland departure was sent through
+// 15 of them, a sharp turn at each, a staircase of cell steps off Portland Head, the channel run on its port side; each
+// short leg between them laned and searched alone. A Go-To from the same wharf is ONE leg - the Rule 9 lane, the marks and
+// open water first over the whole of it - and that is the Piscataqua he means. Replayed on his charts (both ends of his
+// Portland passage and of New Castle -> Castine): turns over 20 deg 11 -> 2, 1 -> 0, 10 -> 6, 4 -> 1; New Castle's least
+// clearance from a danger 68 -> 173 m, its route within 250 m of one 3.1 -> 0.7 km. Dropping only the points INSIDE the
+// circle was measured too, and lost every time (the coarse staircase runs on past it). So a section with an end within
+// PASSAGE_PORT_R_M of a port - or of home, on the way home - is planned to its end with none of them; the chart is still
+// read, and the water judged, along all of them. The middle sections, hold to hold, keep the coarse route's points: a
+// hold is never within a port's circle (coarse.js holdSafe), and out there the coarse route is the open-water choice.
+function sectionAtPort(P, c){
+  const ports = (P.points || []).filter(p => p.port);
+  if(P.home) ports.push(P.home);
+  return ports.some(p => distTo(p, c.from) <= PASSAGE_PORT_R_M || distTo(p, c.to) <= PASSAGE_PORT_R_M);
+}
+/** One section planned in detail on its own chart read: {ok: true, km, wpts} or {ok: false, why}. (Its ends are a
+ *  port's: planned as a Go-To is - sectionAtPort.) */
+async function planPassageEnd(c, plan){
   const world = await passageEndWorld([c.from, ...c.via, c.to]);
   if(world.error) return {ok: false, why: world.error};
-  const r = await planOffThread({op: "holdRoute", world, args: {target: c.to, holdOpts: holdOpts(), start: c.from, via: c.via,
+  const via = sectionAtPort(plan, c) ? [] : c.via;
+  const r = await planOffThread({op: "holdRoute", world, args: {target: c.to, holdOpts: holdOpts(), start: c.from, via,
                                                                   keepRightAll: true, standoffM: transitStandoffM(),
                                                                   ropts: {openWater: "all"}}},
                                 () => null, (x) => x);
@@ -11699,8 +11733,8 @@ async function planPassageEnd(c){
 async function planPassageEnds(plan){
   const secs = plan.sections || [];
   if(!secs.length) return null;
-  const dep = await planPassageEnd(secs[0]);
-  const arr = secs.length > 1 ? await planPassageEnd(secs[secs.length - 1]) : null;
+  const dep = await planPassageEnd(secs[0], plan);
+  const arr = secs.length > 1 ? await planPassageEnd(secs[secs.length - 1], plan) : null;
   return {dep, arr};
 }
 /** The ends in words, for the banner and the panel: "" when both were planned. */
@@ -11709,8 +11743,9 @@ function passageEndsSay(ends){
   const bad = [["leaving", ends.dep], ["arriving", ends.arr]].filter(([, e]) => e && !e.ok);
   return bad.map(([w, e]) => w + ": " + e.why).join("; ");
 }
-/** The plan on the chart: the coarse route (pale, dashed), its narrow stretches (yellow), the circle round each port
- *  the console plans in detail, a leg that could not be planned (red, straight), and the reserve marks (red). */
+/** The plan on the chart: the coarse route (pale, dashed, on a dark casing - see PASSAGE_CASING), its narrow stretches
+ *  (yellow), the circle round each port the console plans in detail, a leg that could not be planned (red, straight), and
+ *  the reserve marks (red). */
 function drawPassage(toScreen){
   const P = passage;
   if(!P) return;
@@ -11718,13 +11753,12 @@ function drawPassage(toScreen){
   for(const g of P.legs){
     if(g.error){
       const a = toScreen(g.from.lat, g.from.lon), b = toScreen(g.to.lat, g.to.lon);
-      ctx.setLineDash([3, 4]); ctx.strokeStyle = "rgba(255,80,80,0.9)"; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+      strokeCased("#ff5050", 2.5, [3, 4]);
       continue;
     }
-    ctx.setLineDash([8, 5]); ctx.strokeStyle = "rgba(190,230,255,0.95)"; ctx.lineWidth = 2;
     ctx.beginPath(); g.pts.forEach((p, i) => { const s = toScreen(p.lat, p.lon); i ? ctx.lineTo(s.x, s.y) : ctx.moveTo(s.x, s.y); });
-    ctx.stroke(); ctx.setLineDash([]);
+    strokeCased("#e4f5ff", 2.5, [8, 5]);
     for(const n of g.narrow){                 // a narrow stretch: a short thick mark at its middle, its length long
       const s = toScreen(n.at.lat, n.at.lon);
       ctx.beginPath(); ctx.arc(s.x, s.y, 5, 0, 2 * Math.PI); ctx.fillStyle = "#ffd84d"; ctx.fill();
@@ -11733,8 +11767,8 @@ function drawPassage(toScreen){
   }
   for(const p of P.points.filter(q => q.port)){
     const s = toScreen(p.lat, p.lon), n = toScreen(p.lat + PASSAGE_PORT_R_M / M_PER_DEG_LAT, p.lon);
-    ctx.setLineDash([4, 4]); ctx.strokeStyle = "rgba(190,230,255,0.6)"; ctx.lineWidth = 1.2;
-    ctx.beginPath(); ctx.arc(s.x, s.y, Math.abs(s.y - n.y), 0, 2 * Math.PI); ctx.stroke(); ctx.setLineDash([]);
+    ctx.beginPath(); ctx.arc(s.x, s.y, Math.abs(s.y - n.y), 0, 2 * Math.PI);
+    strokeCased("rgba(228,245,255,0.85)", 1.4, [4, 4]);
   }
   ctx.font = "bold 11px Consolas,monospace";
   (P.reserveAt || []).forEach((at) => {
@@ -11742,7 +11776,7 @@ function drawPassage(toScreen){
     const s = toScreen(at.lat, at.lon);
     ctx.beginPath(); ctx.arc(s.x, s.y, 6, 0, 2 * Math.PI); ctx.fillStyle = "#ff4d4d"; ctx.fill();
     ctx.lineWidth = 1.5; ctx.strokeStyle = "#0a141c"; ctx.stroke();
-    ctx.fillStyle = "#ff4d4d"; ctx.fillText(Math.round(FUEL_RESERVE_FRAC * 100) + "%", s.x + 8, s.y + 4);
+    ctx.fillStyle = "#ff4d4d"; fillHaloed(Math.round(FUEL_RESERVE_FRAC * 100) + "%", s.x + 8, s.y + 4);
   });
   ctx.restore();
 }
@@ -11851,6 +11885,9 @@ function sailLeftM(){
 async function sailSend(P, k, from, bo, append){
   const c = P.sections[k], home = P.kind === "rth";
   const pts = bo ? [bo.at, ...sectionRest(c, bo.at), c.to] : [...c.via, c.to];
+  // (a section at a port is planned as a Go-To is - to its end, or to where she left it and then its end - with none of
+  // the coarse route's points: sectionAtPort. `pts` stays the line the chart is read along and its water judged on.)
+  const line = sectionAtPort(P, c) ? (bo ? [bo.at, c.to] : [c.to]) : pts;
   const wasGen = planGen, rrWas = runRoute;
   // ITS CHART IMAGE READ ALONG IT, where the read can find something (`route`: readRouteInk) - its one box is past the
   // read's budget, and the console, not the operator, sends it - and so is any wider read the planning makes.
@@ -11861,7 +11898,7 @@ async function sailSend(P, k, from, bo, append){
   let ht = null;
   // In the route worker (planOffThread), on the chart at that water (koAtLevel); on this thread as before if it cannot.
   const plan = await planInsideChart([from, ...pts], {route: true}, () => {
-    const o = holdOpts(), via = pts.slice(0, -1), std = transitStandoffM(), koLv = koAtLevel(lv.m);
+    const o = holdOpts(), via = line.slice(0, -1), std = transitStandoffM(), koLv = koAtLevel(lv.m);
     return planOffThread({op: "holdRoute", ko: koLv, args: {target: c.to, holdOpts: o, start: from, via, keepRightAll: true, standoffM: std,
                                                             ropts: {openWater: "all"}}},   // a passage: open water on every leg
       () => atWaterLevel(lv.m, () => {
@@ -12125,14 +12162,13 @@ function drawSail(toScreen){
   if(!P) return;
   ctx.save();
   P.sections.forEach((c, k) => {
-    const line = [c.from, ...c.via, c.to];
-    ctx.setLineDash(k <= P.sent ? [] : [8, 5]);
-    ctx.strokeStyle = k <= P.sent ? "rgba(190,230,255,0.75)" : "rgba(190,230,255,0.5)"; ctx.lineWidth = 1.6;
+    const line = [c.from, ...c.via, c.to];            // on a dark casing, as the plan is (PASSAGE_CASING)
     ctx.beginPath(); line.forEach((p, i) => { const s = toScreen(p.lat, p.lon); i ? ctx.lineTo(s.x, s.y) : ctx.moveTo(s.x, s.y); });
-    ctx.stroke(); ctx.setLineDash([]);
+    strokeCased(k <= P.sent ? "#e4f5ff" : "rgba(228,245,255,0.8)", 2.2, k <= P.sent ? [] : [8, 5]);
     const e = toScreen(c.to.lat, c.to.lon);           // the section's end: a hold, or a port
-    ctx.fillStyle = c.end === "port" ? "#ff9f40" : "rgba(190,230,255,0.9)";
+    ctx.fillStyle = c.end === "port" ? "#ff9f40" : "#e4f5ff";
     ctx.fillRect(e.x - 3, e.y - 3, 6, 6);
+    ctx.lineWidth = 1.5; ctx.strokeStyle = "#0a141c"; ctx.strokeRect(e.x - 3, e.y - 3, 6, 6);
   });
   if(P.breakoff){
     const s = toScreen(P.breakoff.at.lat, P.breakoff.at.lon);
@@ -13211,9 +13247,8 @@ function updateAisTip(e){ const tip=$("#aisTip");
 // native tip), the text shows in #uiTip anchored to the ELEMENT - below its left
 // edge, flipped above when the bottom would clip, clamped to the viewport - so the
 // pointer, sitting on the control, can never sit on the tip. On leave the title is
-// restored ONLY if still absent: five readouts rewrite their titles at runtime
-// (nogo, AIS rows, water trust x2, mission speed) and a value written mid-hover
-// must win over the stash. #aisTip stays separate: it is a canvas pointer-follower
+// restored ONLY if still absent; a title written mid-hover has already gone to the
+// stash (tipWatch), so the newest words come back. #aisTip stays separate: it is a canvas pointer-follower
 // over hit-tested vessels, not an attribute tip.
 const TIP_DELAY_MS = 400, TIP_GAP = 8, TIP_MARGIN = 4;
 function tipPos(r, tw, th, ww, wh){
@@ -13238,18 +13273,44 @@ let tipTimer=null, tipEl=null, tipStash="";
 // whatever it said when the hover began.
 function setTip(el, text){
   if(!el) return;
-  if(tipEl === el){
-    tipStash = text;
-    const t = $("#uiTip");
-    if(t && t.style.display !== "none") t.textContent = text;
-    return;
-  }
+  if(tipEl === el){ tipSay(text); return; }
   el.title = text;
 }
+// The hovered control's tip has new words: they go to the stash, and to #uiTip if it is up - placed again, since a
+// tip that grew would otherwise reach down over the control it is flipped above. Empty words take the tip down.
+function tipSay(text){
+  tipStash = text;
+  const t = $("#uiTip");
+  if(!t || t.style.display === "none" || t.textContent === text) return;
+  if(!text){ t.style.display = "none"; return; }
+  t.textContent = text;
+  if(tipEl && tipEl.isConnected) tipPlace(t, tipEl);
+}
+function tipPlace(t, el){
+  t.style.left="0px"; t.style.top="-9999px";       // measure first
+  const p = tipPos(el.getBoundingClientRect(), t.offsetWidth, t.offsetHeight, innerWidth, innerHeight);
+  t.style.left=p.left+"px"; t.style.top=p.top+"px";
+}
+// ⚠⚠ EVERY TITLE WRITER, NOT ONLY setTip (2026-10-14). setTip covers the readouts that call it; twenty-odd others
+// write `.title` directly - the mission speed and activity, the water and current readouts, Pause, Passage - and the
+// speed readout's was rewritten 86 times in 8 s under a still pointer, its title back on it in 107 of 108 samples:
+// the browser's own tip re-armed under the cursor ten times a second. Andy: "hovering tool tips flash rather than
+// hold steady so I can read them". So the hovered control is WATCHED while the pointer is on it: a title written to
+// it is taken off again before the page is next drawn and its words become the tip's. The observer runs before the
+// browser paints or hit-tests, so the attribute is never there to be seen. One control at a time: observe on hover,
+// disconnect on leave.
+const tipWatch = ("MutationObserver" in window) ? new MutationObserver(()=>{
+  if(!tipEl) return;
+  const text = tipEl.getAttribute("title");
+  if(text == null) return;                         // our own removal
+  tipEl.removeAttribute("title");
+  tipSay(text);
+}) : null;
 function hideUiTip(){
   clearTimeout(tipTimer); tipTimer=null;
   $("#uiTip").style.display="none";
-  if(tipEl){ if(!tipEl.getAttribute("title")) tipEl.setAttribute("title", tipStash);
+  if(tipWatch) tipWatch.disconnect();              // before the restore, which is not a writer
+  if(tipEl){ if(tipStash && !tipEl.getAttribute("title")) tipEl.setAttribute("title", tipStash);
     tipEl=null; tipStash=""; }
 }
 document.addEventListener("mouseover", e=>{
@@ -13259,11 +13320,11 @@ document.addEventListener("mouseover", e=>{
   if(!el) return;
   const text = el.getAttribute("title"); if(!text) return;
   tipEl = el; tipStash = text; el.removeAttribute("title");   // suppress the native tip
+  if(tipWatch) tipWatch.observe(el, {attributes: true, attributeFilter: ["title"]});
   tipTimer = setTimeout(()=>{
-    const t=$("#uiTip"); t.textContent = text;
-    t.style.display="block"; t.style.left="0px"; t.style.top="-9999px";   // measure first
-    const p = tipPos(el.getBoundingClientRect(), t.offsetWidth, t.offsetHeight, innerWidth, innerHeight);
-    t.style.left=p.left+"px"; t.style.top=p.top+"px";
+    if(!tipStash) return;                          // its title was cleared during the delay
+    const t=$("#uiTip"); t.textContent = tipStash;   // the NEWEST words, not those it had when the hover began
+    t.style.display="block"; tipPlace(t, el);
   }, TIP_DELAY_MS);
 });
 document.addEventListener("mouseout", e=>{ if(tipEl && !tipEl.contains(e.relatedTarget)) hideUiTip(); });
@@ -16616,6 +16677,30 @@ function pushUISync(force){
   uiSyncLast = key;
   uiBus.postMessage({t:"sync", html, vals});
 }
+// ⚠ THE MIRROR PATCHES ITS CARDS, IT DOES NOT REPLACE THEM (2026-10-14). Each sync set the panel's outerHTML, so any
+// reading that changed - about every 3 s while she moves - put a NEW copy of every node in the card under the
+// operator's pointer: the hovered Go button was swapped 4 times in 10 s, the new one carrying its title (the browser's
+// own tip under the cursor) and ours left on the node that had gone. Andy: "hovering tool tips flash rather than hold
+// steady so I can read them". So the FIRST picture a panel gets still replaces it - dropping whatever this page's boot
+// attached to it, as it always has: the chart window owns the logic - and every later one is PATCHED: a node that is
+// still the same kind (an element: the same tag and id) in the same place is KEPT and brought up to date, and only
+// what differs is rebuilt. A title the patch writes to the hovered control goes to the tip (tipWatch), not onto it.
+const uiMirrored = new WeakSet();                     // panels whose nodes all came from a picture
+function uiSameNode(a, b){
+  return a.nodeType === b.nodeType && (a.nodeType !== 1 || (a.tagName === b.tagName && a.id === b.id));
+}
+function uiMorph(live, next){
+  for(const a of [...live.attributes]) if(!next.hasAttribute(a.name)) live.removeAttribute(a.name);
+  for(const a of next.attributes) if(live.getAttribute(a.name) !== a.value) live.setAttribute(a.name, a.value);
+  if(live === tipEl && !next.hasAttribute("title")) tipSay("");   // its title is stashed: no write for tipWatch to see
+  const want = [...next.childNodes], have = [...live.childNodes];
+  want.forEach((b, i)=>{ const a = have[i];
+    if(!a) live.appendChild(b);
+    else if(!uiSameNode(a, b)) live.replaceChild(b, a);
+    else if(a.nodeType === 1) uiMorph(a, b);
+    else if(a.nodeValue !== b.nodeValue) a.nodeValue = b.nodeValue; });
+  for(let i = want.length; i < have.length; i++) have[i].remove();
+}
 function applyUISync(m){
   const foc=document.activeElement;
   for(const s of UI_BRIDGED){ const h=m.html[s]; if(h==null) continue;
@@ -16625,7 +16710,16 @@ function applyUISync(m){
     // panel row after a button click kept focus inside that panel - the trap applies to
     // any card that re-renders its own rows while a control in it still holds focus.
     if(foc && el.contains(foc) && /^(INPUT|SELECT|TEXTAREA)$/.test(foc.tagName)) continue;
-    if(el.outerHTML!==h){ try{ el.outerHTML=h; }catch(e){} } }   // replaces the panel INSIDE its card
+    // (The hovered control's title is stashed, so a picture that DROPS it matches this card exactly: that card is
+    // always patched, or the old words would stay up and be put back on leave.)
+    if(el.outerHTML===h && !(tipEl && el.contains(tipEl))) continue;
+    if(uiMirrored.has(el)){                           // patched in place (uiMorph); a different root is replaced
+      const tpl = document.createElement("template"); tpl.innerHTML = h;
+      const next = tpl.content.firstElementChild;
+      if(next && uiSameNode(el, next)){ uiMorph(el, next); continue; }
+    }
+    try{ el.outerHTML=h; }catch(e){}                  // replaces the panel INSIDE its card
+    const n = document.querySelector(s); if(n) uiMirrored.add(n); }
   if(m.vals){ for(const id in m.vals){ const f=document.getElementById(id); if(!f || f===foc) continue;
     const v=m.vals[id]; if(f.type==="checkbox"||f.type==="radio") f.checked=v.checked; else f.value=v.value; } }
   syncUICards();                                        // a hidden panel hides its whole card

@@ -116,9 +116,9 @@ const MECH = H.slice(H.indexOf("const TIP_DELAY_MS"), H.indexOf("function drawAI
 check("5. hover STASHES the title off the element - that is what suppresses the native tip",
       () => /tipStash = text; el\.removeAttribute\("title"\)/.test(MECH),
       "two tips at once (native + ours) would be worse than the bug");
-check("6. the restore is GUARDED: a title written mid-hover by a runtime readout wins",
-      () => /if\(!tipEl\.getAttribute\("title"\)\) tipEl\.setAttribute\("title", tipStash\)/.test(MECH),
-      "five readouts rewrite titles at runtime - nogo, AIS rows, water trust x2, mission speed");
+check("6. the restore is GUARDED: a title already back on the element is not overwritten, and no empty words are put back",
+      () => /if\(tipStash && !tipEl\.getAttribute\("title"\)\) tipEl\.setAttribute\("title", tipStash\)/.test(MECH),
+      "a title written mid-hover is in the stash by then (tipWatch, 13), so the newest words come back");
 check("7. moving within the hovered control's children keeps the tip up",
       () => /if\(tipEl && tipEl\.contains\(e\.target\)\) return;/.test(MECH),
       "the title is stashed, so closest('[title]') no longer matches the hovered element itself");
@@ -142,7 +142,7 @@ check("8. a mousedown hides the tip - a click means acting, not reading",
   const uiTip = { style: { display: "none" }, textContent: "" };
   const $ = () => uiTip;
   let tipEl = null, tipStash = "";
-  eval(grab("setTip"));
+  eval(grab("setTip")); eval(grab("tipSay"));
 
   const hovered = mkEl(), other = mkEl();
   tipEl = hovered; tipStash = "old text";
@@ -213,6 +213,242 @@ check("9. the tip element is pointer-transparent and wraps long text",
         () => bad.length === 0,
         () => bad.length ? bad.join(" | ")
                          : fns.join(", ") + " all write through setTip");
+}
+
+// ==== 13-18. DRIVEN: THE TIP HOLDS STEADY UNDER A STILL POINTER (2026-10-14) ================================ //
+// Andy: "hovering tool tips flash rather than hold steady so I can read them. Fix this." Measured live on the build
+// before the fix, the pointer still for 10 s:
+//   * CHART WINDOW: the mission speed readout's title was rewritten 86 times in 8 s by a DIRECT `.title =` write (not
+//     setTip), and was back on the hovered element in 107 of 108 samples - the browser's own tip re-armed under the
+//     cursor ten times a second;
+//   * CONTROLS WINDOW: the mirror replaced the whole Path planning card on each reading change, so the hovered Go
+//     button was a NEW element 4 times in 10 s, carrying its title (the browser's tip again) while ours stayed on the
+//     node that had gone.
+// The fix, each half driven here through the page's OWN code - its whole tooltip layer and its mirror, evaluated
+// together over a small DOM:
+//   * tipWatch: the hovered control is observed while the pointer is on it; a title written to it - by ANY writer -
+//     is taken off before the page is next drawn (the microtask checkpoint, `settle` here) and becomes the tip's words
+//     (13-16);
+//   * the mirror PATCHES its cards after their first picture (uiMorph): the hovered control is kept, brought up to
+//     date (17-18).
+function grabDecl(name) {
+  for (const kw of ["const ", "let "]) {
+    const i = H.indexOf(kw + name + " =");
+    if (i >= 0) return H.slice(i, H.indexOf(";", i) + 1);
+  }
+  throw new Error("test setup: declaration " + name + " not found (renamed?)");
+}
+function pageWorld() {
+  const handlers = {}, timers = [], observers = [], queued = new Set();
+  const W = { downs: 0 };
+  // #uiTip: counts every time it is taken DOWN while up - a flash is exactly that
+  let disp = "none";
+  const style = { left: "", top: "" };
+  Object.defineProperty(style, "display", { get: () => disp,
+    set: v => { if (disp !== "none" && v === "none") W.downs++; disp = v; } });
+  const uiTip = { style, textContent: "", get offsetWidth() { return 200; },
+                  get offsetHeight() { return this.textContent.length > 40 ? 120 : 40; } };
+  W.uiTip = uiTip;
+  class MO {
+    constructor(cb) { this.cb = cb; this.on = new Set(); this.q = []; observers.push(this); }
+    observe(el, o) { this.on.add(el); this.filter = o && o.attributeFilter; }
+    disconnect() { this.on.clear(); this.q = []; queued.delete(this); }
+  }
+  function notify(el, k) {
+    for (const o of observers) {
+      if (!o.on.has(el) || (o.filter && !o.filter.includes(k))) continue;
+      o.q.push({ type: "attributes", target: el, attributeName: k }); queued.add(o);
+    }
+  }
+  // the microtask checkpoint: everything that runs before the browser next paints or hit-tests
+  W.settle = () => { for (const o of [...queued]) { queued.delete(o); const q = o.q; o.q = []; if (q.length) o.cb(q, o); } };
+  // ---- a small DOM: elements, text, attributes in order, parse and serialize ----
+  function detach(n) { if (n.parentNode) { const k = n.parentNode.kids; k.splice(k.indexOf(n), 1); n.parentNode = null; } }
+  function Text(v) { const t = { nodeType: 3, nodeValue: v, parentNode: null, remove() { detach(t); } }; return t; }
+  function El(tag) {
+    const attrs = new Map();
+    const el = { nodeType: 1, tagName: tag.toUpperCase(), kids: [], parentNode: null, rect: null,
+      get id() { return attrs.get("id") || ""; },
+      get attributes() { return [...attrs].map(([name, value]) => ({ name, value })); },
+      get childNodes() { return el.kids; },
+      get firstElementChild() { return el.kids.find(k => k.nodeType === 1) || null; },
+      get isConnected() { let n = el; while (n.parentNode) n = n.parentNode; return n === root; },
+      getAttribute: k => (attrs.has(k) ? attrs.get(k) : null), hasAttribute: k => attrs.has(k),
+      setAttribute(k, v) { attrs.set(k, String(v)); notify(el, k); },
+      removeAttribute(k) { if (attrs.delete(k)) notify(el, k); },
+      get title() { return attrs.get("title") || ""; }, set title(v) { el.setAttribute("title", v); },
+      appendChild(c) { detach(c); c.parentNode = el; el.kids.push(c); return c; },
+      replaceChild(c, old) { detach(c); el.kids[el.kids.indexOf(old)] = c; c.parentNode = el; old.parentNode = null; return old; },
+      remove() { detach(el); },
+      contains(x) { for (let n = x; n; n = n.parentNode) if (n === el) return true; return false; },
+      closest(s) { for (let n = el; n && n.nodeType === 1; n = n.parentNode) if (s === "[title]" && n.hasAttribute("title")) return n; return null; },
+      getBoundingClientRect: () => el.rect || { left: 100, top: 50, right: 180, bottom: 70, width: 80, height: 20 },
+      get outerHTML() { return ser(el); },
+      set outerHTML(h) { el.parentNode.replaceChild(parse(h), el); },
+    };
+    return el;
+  }
+  function ser(n) {
+    if (n.nodeType === 3) return n.nodeValue;
+    const t = n.tagName.toLowerCase();
+    return "<" + t + n.attributes.map(a => " " + a.name + '="' + a.value + '"').join("") + ">" + n.kids.map(ser).join("") + "</" + t + ">";
+  }
+  function parse(h) {
+    const top = El("frag"), stack = [top], re = /<(\/?)([a-z0-9]+)((?:\s+[\w-]+="[^"]*")*)\s*>|([^<]+)/gi;
+    let m;
+    while ((m = re.exec(h))) {
+      if (m[4] != null) { stack[stack.length - 1].appendChild(Text(m[4])); continue; }
+      if (m[1]) { stack.pop(); continue; }
+      const e = El(m[2]);
+      for (const a of m[3].matchAll(/([\w-]+)="([^"]*)"/g)) e.setAttribute(a[1], a[2]);
+      stack[stack.length - 1].appendChild(e); stack.push(e);
+    }
+    return top.firstElementChild;
+  }
+  function find(n, s) {
+    if (n.nodeType !== 1) return null;
+    if (s[0] === "#" ? n.id === s.slice(1) : (n.getAttribute("class") || "").split(" ").includes(s.slice(1))) return n;
+    for (const k of n.kids) { const f = find(k, s); if (f) return f; }
+    return null;
+  }
+  const root = El("body");
+  W.body = h => { root.kids.length = 0; root.appendChild(parse(h)); };
+  W.q = s => find(root, s);
+  W.el = (id, title, rect) => { const e = El("span"); e.setAttribute("id", id); if (title != null) e.setAttribute("title", title);
+                                e.rect = rect || null; root.appendChild(e); return e; };
+  W.over = el => handlers.mouseover({ target: el });
+  W.out = (el, to) => handlers.mouseout({ target: el, relatedTarget: to || null });
+  W.wait = () => { const t = timers.splice(0); t.forEach(f => f()); };          // the hover delay elapses
+  W.sync = html => W.api.applyUISync({ t: "sync", html, vals: {} });
+  const document = {
+    addEventListener: (ev, fn) => { handlers[ev] = fn; }, activeElement: null,
+    querySelector: s => find(root, s), getElementById: id => find(root, "#" + id),
+    createElement: t => (t === "template" ? { set innerHTML(h) { this.content = { firstElementChild: parse(h) }; } } : El(t)),
+  };
+  const window = { addEventListener: () => {}, MutationObserver: MO };
+  const $ = s => (s === "#uiTip" ? uiTip : null);
+  const setTimeout = fn => { timers.push(fn); return timers.length; }, clearTimeout = () => { timers.length = 0; };
+  const SRC = H.slice(H.indexOf("const TIP_DELAY_MS"), H.indexOf("function drawAIS")) + "\n"
+            + [grabDecl("UI_BRIDGED"), grabDecl("uiMirrored"), grab("uiSameNode"), grab("uiMorph"), grab("applyUISync")].join("\n");
+  // eslint-disable-next-line no-new-func
+  W.api = new Function("document", "window", "$", "setTimeout", "clearTimeout", "MutationObserver", "innerWidth", "innerHeight",
+                       "syncUICards", SRC + "\nreturn { applyUISync, setTip };")
+                      (document, window, $, setTimeout, clearTimeout, MO, 1280, 720, () => {});
+  return W;
+}
+
+// -- 13. THE CHART WINDOW'S CASE: a DIRECT title write, four times a second, under a still pointer --------------- //
+{
+  const W = pageWorld();
+  const go = W.el("mi_speed", "Speed: 6.0 kn"), other = W.el("v_wind", "Wind 5 kn");
+  W.over(go); W.wait();
+  const up = W.uiTip.style.display === "block" && W.uiTip.textContent === "Speed: 6.0 kn" && !go.hasAttribute("title");
+  let present = 0;
+  for (let i = 0; i < 40; i++) {                      // ten seconds of the frame writing it directly
+    go.title = "Speed: " + (6 + i / 100).toFixed(2) + " kn";
+    W.settle();
+    if (go.hasAttribute("title")) present++;
+  }
+  const words = W.uiTip.textContent, downs = W.downs;
+  other.title = "Wind 6 kn"; W.settle();              // ... and a control nobody is on keeps what is written to it
+  const otherKept = other.getAttribute("title") === "Wind 6 kn";
+  W.out(go, null);
+  const back = go.getAttribute("title");
+  check("13. DRIVEN: a title written DIRECTLY to the hovered control 40 times never stays on it, the tip follows "
+        + "the words without once coming down, and an un-hovered control keeps its own",
+        () => up && present === 0 && words === "Speed: 6.39 kn" && downs === 0 && otherKept && back === "Speed: 6.39 kn",
+        () => "shown " + up + "; on the hovered control after the checkpoint " + present + "/40 (the browser's own tip "
+            + "re-armed each time); tip reads " + JSON.stringify(words) + ", taken down " + downs + "x; un-hovered kept "
+            + otherKept + "; restored on leave " + JSON.stringify(back));
+}
+
+// -- 14. Words written during the hover DELAY are the ones shown ------------------------------------------------ //
+{
+  const W = pageWorld();
+  const b = W.el("mi_activity", "Transiting");
+  W.over(b); b.title = "Transiting - 2.1 km to go"; W.settle(); W.wait();
+  check("14. DRIVEN: words written during the hover delay are the ones the tip shows, not those it had when the hover began",
+        () => W.uiTip.style.display === "block" && W.uiTip.textContent === "Transiting - 2.1 km to go" && !b.hasAttribute("title"),
+        () => "tip " + W.uiTip.style.display + " " + JSON.stringify(W.uiTip.textContent));
+}
+
+// -- 15. A title CLEARED mid-hover takes the tip down, and the old words do not come back --------------------------- //
+{
+  const W = pageWorld();
+  const b = W.el("b_passage", "Plan the passage");
+  W.over(b); W.wait();
+  const was = W.uiTip.style.display;
+  b.title = ""; W.settle();
+  const after = W.uiTip.style.display;
+  W.out(b, null);
+  const back = b.getAttribute("title");
+  check("15. DRIVEN: a title CLEARED mid-hover takes the tip down, and the old words are not put back on leave",
+        () => was === "block" && after === "none" && !back,
+        () => "tip " + was + " -> " + after + "; title after leave " + JSON.stringify(back));
+}
+
+// -- 16. A tip that GROWS while up is placed again -------------------------------------------------------------- //
+{
+  const W = pageWorld();
+  const b = W.el("v_water", "short", { left: 100, top: 690, right: 180, bottom: 710, width: 80, height: 20 });
+  W.over(b); W.wait();                                  // at the bottom edge: flipped ABOVE the control
+  const top0 = parseFloat(W.uiTip.style.top);
+  b.title = "x".repeat(60); W.settle();                 // three times as tall
+  const top1 = parseFloat(W.uiTip.style.top), h1 = W.uiTip.offsetHeight;
+  check("16. DRIVEN: a tip that grows while up is placed again - flipped above the control, it never reaches down over it",
+        () => top0 + 40 <= 690 && top1 + h1 <= 690,
+        () => "before: top " + top0 + " (40 tall); after: top " + top1 + " (" + h1 + " tall), bottom " + (top1 + h1)
+            + " against the control's top 690");
+}
+
+// -- 17. THE CONTROLS WINDOW'S CASE: the mirror keeps the hovered control --------------------------------------- //
+{
+  const W = pageWorld();
+  W.body('<div id="pathPanel"><button id="gt_go" title="Go">Go</button><span id="pp_rd" title="Range">--</span></div>');
+  const boot = W.q("#gt_go");
+  const pic = km => '<div id="pathPanel"><button id="gt_go" title="Go: ' + km + ' km">Go</button>'
+                  + '<span id="pp_rd" title="Range ' + km + '">' + km + ' km</span></div>';
+  W.sync({ "#pathPanel": pic("4.0") });
+  const first = W.q("#gt_go");
+  W.over(first); W.wait();
+  let same = 0, onIt = 0;
+  for (const km of ["3.9", "3.8", "3.7"]) {             // three reading changes while the pointer is still
+    W.sync({ "#pathPanel": pic(km) }); W.settle();
+    if (W.q("#gt_go") === first) same++;
+    if (first.hasAttribute("title")) onIt++;
+  }
+  const rd = W.q("#pp_rd");
+  check("17. DRIVEN: the first picture REPLACES the card (the boot's nodes dropped); every later one PATCHES it - the "
+        + "hovered control is the same element through three reading changes, its new words in the tip, never on it",
+        () => first !== boot && same === 3 && onIt === 0 && first.isConnected && W.downs === 0
+              && W.uiTip.textContent === "Go: 3.7 km" && rd.getAttribute("title") === "Range 3.7" && rd.kids[0].nodeValue === "3.7 km",
+        () => "first picture replaced the boot's button " + (first !== boot) + "; kept " + same + "/3; title on it "
+            + onIt + "x; tip " + JSON.stringify(W.uiTip.textContent) + ", taken down " + W.downs + "x; readout "
+            + JSON.stringify(rd.kids[0].nodeValue) + " / " + JSON.stringify(rd.getAttribute("title")));
+  // ... and when the picture takes the hovered control's title AWAY, the tip comes down and nothing stale returns
+  W.sync({ "#pathPanel": '<div id="pathPanel"><button id="gt_go">Go</button><span id="pp_rd" title="Range 3.7">3.7 km</span></div>' });
+  W.settle();
+  const down = W.uiTip.style.display;
+  W.out(first, null);
+  check("17b. DRIVEN: a picture that drops the hovered control's title takes the tip down, and the old words are not put back",
+        () => down === "none" && !first.getAttribute("title"),
+        () => "tip " + down + "; title after leave " + JSON.stringify(first.getAttribute("title")));
+}
+
+// -- 18. The patch is exact: kept, rebuilt, added, removed --------------------------------------------------------- //
+{
+  const W = pageWorld();
+  W.body('<div id="rocPanel"><ul id="rl"><li id="r1">one</li></ul></div>');
+  W.sync({ "#rocPanel": '<div id="rocPanel"><ul id="rl"><li id="r1" style="color:red">one</li><li id="r2">two</li></ul><i id="gone">x</i></div>' });
+  const r1 = W.q("#r1"), r2 = W.q("#r2");
+  const want = '<div id="rocPanel" class="x"><ul id="rl"><li id="r1">one!</li><li id="r3">three</li><li id="r4">four</li></ul></div>';
+  W.sync({ "#rocPanel": want });
+  const got = W.q("#rocPanel").outerHTML;
+  check("18. DRIVEN: the patched card is EXACTLY the picture - an attribute dropped, text changed, a node of another id "
+        + "rebuilt, a row added, a trailing node removed - and the row still there is the same element",
+        () => got === want && W.q("#r1") === r1 && W.q("#r3") !== r2 && !W.q("#gone"),
+        () => (got === want ? "card == picture" : "card " + got) + "; row 1 kept " + (W.q("#r1") === r1)
+            + "; row of another id rebuilt " + (W.q("#r3") !== r2));
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"

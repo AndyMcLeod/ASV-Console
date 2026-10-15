@@ -529,7 +529,8 @@ const fresh = () => { banners = []; downs = []; covers = []; aisTaken = 0; cover
   check("6c2. a passage's section plans as the Transit does: inside planInsideChart, its hold point inside the plan, an "
         + "uncharted plan refused before it posts or draws anything",
         () => iSsPlan > 0 && iSsHt > iSsPlan && iSsUn > iSsPlan && iSsUn < iSsPost && iSsUn < iSsDraw
-              && /const o = holdOpts\(\), via = pts\.slice\(0, -1\), std = transitStandoffM\(\), koLv = koAtLevel\(lv\.m\);/.test(ss)
+              && /const o = holdOpts\(\), via = line\.slice\(0, -1\), std = transitStandoffM\(\), koLv = koAtLevel\(lv\.m\);/.test(ss)
+              // (a port's section planned as a Go-To is: `line` drops the coarse points there, 2026-10-14 - tests/passage_sail.js 8c)
               // (open water first on every leg of a section, 2026-10-14 - tests/open_water.js)
               && /return routePlan\(from, \[\.\.\.via, ht\.to\], true, std, undefined, \{openWater: "all"\}\);/.test(ss),
         "planInsideChart " + iSsPlan + ", holdTarget " + iSsHt + ", uncharted refusal " + iSsUn + ", post " + iSsPost + ", draw " + iSsDraw);
