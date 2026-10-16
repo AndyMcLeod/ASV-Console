@@ -1177,7 +1177,7 @@ import { koCount as routeKoCount, packKo as routePackKo } from "/static/js/route
 // OPEN WATER FIRST (2026-10-14): its words, for the banners and the Intent card (the planner itself is passage.js's).
 import { openWaterBox, openWaterNote, openWaterWhy } from "/static/js/openwater.js";
 import { parseBoundaryFile, ringAreaM2, ringMiddle, BOUNDARY_FILE_MAX_BYTES } from "/static/js/boundary_file.js";
-import { zoneDecision, zoneLeadM, zoneRuleTxt, zoneId, zoneApplies, noaaZones, inZone } from "/static/js/speedzones.js";
+import { zoneDecision, zoneLeadM, zoneRuleTxt, zoneId, zoneApplies, noaaZones, inZone, lawZones } from "/static/js/speedzones.js";
 import { HAZ_UNKNOWN_EXTENT, MARK_TAIL, WATER_FAR_KM, WATER_REMOTE_KM, WATER_STALE_S,
          WRECK_CLEAR_MARGIN_M, airNeedM, blocked, blockedInfo, bufferFloor, buildKeepouts, buildMargin, clearanceM,
          channelPolys, depthExcluded, effectiveWaterOffset, firstBlockAlong, hazExtent, overheadBlocks,
@@ -5171,15 +5171,16 @@ let commandedSpeed = null;
 // keep the throttle they hold: an escape's HIGH is the one place she runs faster than a zone allows, because avoiding a
 // collision comes before a speed limit (COLREGS rule 8). A page that cannot say which leg she is on (indexedRoute null)
 // still caps her - it knows where she is - and puts back the speed she had when the zone took it (zoneRestore).
-// The zones are the chart's: a state's served with it (role "speed_zone", asv_console.py speed_zones) and the chart's own
-// restricted areas whose text gives a speed (noaaZones) - read again whenever the chart is (speedZonesNow).
+// The zones are the chart's: a state's served with it (role "speed_zone", asv_console.py speed_zones), the chart's own
+// restricted areas whose text gives a speed (noaaZones), and New Hampshire's and Maine's shore-distance rules read off the
+// chart's shore in each state's water (lawZones, 2026-10-16) - read again whenever the chart is (speedZonesNow).
 let zoneHeld = null, zoneRestore = null, zonesFor = null, zonesList = [];
 const zoneSaid = new Set();
 function speedZonesNow(){
   if(zonesFor !== sea.enc){
     zonesFor = sea.enc;
     const f = (sea.enc && sea.enc.features) || [];
-    zonesList = [...f.filter(x => x.role === "speed_zone"), ...noaaZones(f)];
+    zonesList = [...f.filter(x => x.role === "speed_zone"), ...noaaZones(f), ...lawZones(f)];
   }
   return zonesList;
 }
@@ -5238,10 +5239,14 @@ function zoneTrack(zc, jobKey, toldKey){
     return;
   }
   if(zoneHeld){
-    const was = zoneHeld; zoneHeld = null;
-    if(was.capping) showBanner("CLEAR OF SPEED ZONE " + zoneName(was.zone) + ": back to " + zoneSpd(jobKey) + ", her commanded speed.");
-    else flashNote("Clear of speed zone " + zoneName(was.zone) + ".");
-    logClient("speed_zone", {state: "clear", zone: zoneName(was.zone), job: jobKey});
+    // a zone she was only coming to, let go (her way no longer meets it - a new plan, or the plan ended short of it), is
+    // not one she is CLEAR of: said as what it is (2026-10-16, live: "Clear of speed zone" of water she had not reached)
+    const was = zoneHeld, ahead = was.where === "ahead";
+    zoneHeld = null;
+    if(was.capping) showBanner((ahead ? "SPEED ZONE " + zoneName(was.zone) + " is no longer on her way" : "CLEAR OF SPEED ZONE " + zoneName(was.zone))
+                               + ": back to " + zoneSpd(jobKey) + ", her commanded speed.");
+    else if(!ahead) flashNote("Clear of speed zone " + zoneName(was.zone) + ".");
+    logClient("speed_zone", {state: "clear", zone: zoneName(was.zone), job: jobKey, was: was.where});
   }
 }
 /** THE ZONES WHEN THE GOVERNOR CANNOT SAY WHICH LEG SHE IS ON (indexedRoute null): her position alone decides. A zone
@@ -6861,6 +6866,7 @@ function render(){
   ctx.clearRect(0,0,w,h);
   const toScreen = (lat,lon)=>{ const p = worldPx(lat,lon,zoom); return {x:p.x-o.x, y:p.y-o.y}; };
   if(encShow) drawENCCached(toScreen, w, h, o);   // cached layer; see drawENCCached for the key
+  drawLawBandsCached(toScreen, w, h, o);           // the states' shore-distance rules (2026-10-16); cached too
   drawNogoCached(toScreen, w, h, o);               // cached too; see drawNogoCached (2026-09-29)
   drawMarks(toScreen);
   drawAIS(toScreen);                               // nearby AIS vessels (under own track/plan/boat)
@@ -9274,6 +9280,68 @@ function drawSpeedZones(toScreen){
     }
   }
   ctx.restore();
+}
+// THE STATES' SHORE-DISTANCE RULES ON THE CHART (2026-10-16): the water within 150 ft of New Hampshire's shore and docks
+// and 200 ft of Maine's shore, tinted amber in each state's own water with a solid amber line AT the rule's distance, the
+// Piscataqua channel New Hampshire exempts left clear and the land left as the chart draws it - the band a shore rule will
+// take her speed in. The chart's own shore features stroked twice the rule's distance wide, as the chart layer draws them:
+// a feature off the canvas not traced (layerSees), a vertex within a sixteenth of the band of the last not traced.
+// ⚠ MEASURED: the first cut stroked the rule's model edge by edge (~98,000 edges in the New Castle chart, each its own
+// round-capped piece) - 1 to 1.7 s a stroke, and the page stopped 5 s at a zoom. Traced as the features' own lines, 50 to
+// 200 ms. A cached layer: redrawn at a zoom or chart change; not drawn where the band is under LAW_BAND_MIN_PX across.
+const lawLayer = makeLayer(), LAW_BAND_MIN_PX = 3;
+let lawScratch = null;
+function drawLawBandsCached(toScreen, w, h, o){
+  if(!(w > 0 && h > 0)) return;                    // a view with no size: nothing to draw into (drawENCCached)
+  const zs = speedZonesNow().filter(z => z.law && z.law.within > 0 && z.law.roles);
+  if(!zs.length) return;
+  drawLayer(lawLayer, String(zoom), [zonesList], (ts, lctx) => drawLawBands(zs, ts, lctx), toScreen, w, h, o);
+}
+function drawLawBands(zs, toScreen, lctx){
+  const cw = lctx.canvas.width, ch = lctx.canvas.height;
+  if(!lawScratch) lawScratch = document.createElement("canvas");
+  if(lawScratch.width !== cw || lawScratch.height !== ch){ lawScratch.width = cw; lawScratch.height = ch; }
+  const sx = lawScratch.getContext("2d"), sees = layerSees(lctx, toScreen);
+  const feats = (sea.enc && sea.enc.features) || [], land = feats.filter(f => f.role === "land");
+  for(const z of zs){
+    const fr = z.law.frame, scr = (p) => { const ll = fr.fromEN(p.e, p.n); return toScreen(ll.lat, ll.lon); };
+    const a = scr({e: 0, n: 0}), b = scr({e: 100, n: 0}), pxPerM = Math.hypot(b.x - a.x, b.y - a.y) / 100;
+    const band = 2 * z.law.within * pxPerM, tol = Math.max(0.7, band / 16);
+    if(band < LAW_BAND_MIN_PX) continue;
+    const rings = (rs) => { sx.beginPath(); for(const r of rs){ r.ring.forEach((p, i) => { const s = scr(p); i ? sx.lineTo(s.x, s.y) : sx.moveTo(s.x, s.y); }); sx.closePath(); } };
+    sx.globalCompositeOperation = "source-over"; sx.clearRect(0, 0, cw, ch);
+    if(z.law.state){ rings(z.law.state); sx.fillStyle = "#000"; sx.fill(); sx.globalCompositeOperation = "source-in"; }
+    sx.beginPath();
+    const trace = (pts) => {
+      let lx = 0, ly = 0;
+      for(let i = 0; i < pts.length; i++){
+        const q = toScreen(pts[i][1], pts[i][0]);
+        if(i === 0){ sx.moveTo(q.x, q.y); lx = q.x; ly = q.y; continue; }
+        if(i < pts.length - 1 && Math.abs(q.x - lx) < tol && Math.abs(q.y - ly) < tol) continue;
+        sx.lineTo(q.x, q.y); lx = q.x; ly = q.y;
+      }
+    };
+    for(const f of feats){
+      if(!z.law.roles.includes(f.role) || !sees(f, band, true)) continue;
+      eachRing(f.geometry, trace); eachPath(f.geometry, trace);
+      eachPoint(f.geometry, (c) => { const q = toScreen(c[1], c[0]); sx.moveTo(q.x, q.y); sx.lineTo(q.x + 0.01, q.y); });
+    }
+    // the band 3 px wider than the rule's, solid; then the rule's own width taken down to a tint - which leaves a solid
+    // edge line AT the rule's distance (measured live: a 20% tint alone did not show on the chart's white water)
+    sx.lineCap = "round"; sx.lineJoin = "round"; sx.strokeStyle = "#e8b46a";
+    sx.lineWidth = band + 3; sx.stroke();
+    sx.globalCompositeOperation = "destination-out";
+    sx.globalAlpha = 0.55; sx.lineWidth = band; sx.stroke(); sx.globalAlpha = 1;
+    if(z.law.exempt && z.law.exempt.length){ rings(z.law.exempt); sx.fill(); }
+    for(const f of land){                           // each its own fill, so a lake in it stays and two that overlap still cut
+      if(!sees(f, 2, true)) continue;
+      sx.beginPath();
+      eachRing(f.geometry, (rg) => tracePx(sx, toScreen, rg));
+      sx.fill("evenodd");
+    }
+    sx.globalCompositeOperation = "source-over";
+    lctx.save(); lctx.globalAlpha = 0.8; lctx.drawImage(lawScratch, 0, 0); lctx.restore();
+  }
 }
 function drawBoundary(toScreen){
   if(!boundary.length || (!boundaryShow && mode!=="bound")) return;  // hidden, unless editing

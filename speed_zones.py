@@ -299,14 +299,141 @@ def zones_for_bbox(bbox, cache_dir, ssl_ctx=None, sources=None, timeout=SPEED_TI
     return feats, report
 
 
+# ── WHOSE WATER: New Hampshire's and Maine's, for their shore-distance rules (Andy, 2026-10-16: "model the NH and ME shore
+# distance rules") ─────────────────────────────────────────────────────────────────────────────────────────────────────
+# Their law is a distance, not a polygon (NH RSA 270-D:2 VI: headway within 150 ft of shore and docks; ME 12 MRSA
+# 13068-A(13): within 200 ft of any shoreline) - the page measures it from the chart's own shore (static/js/speedzones.js
+# lawZones). What the page cannot know from the chart is WHICH STATE's water she is in: the two meet down the Piscataqua.
+# That comes from the US Census Bureau's TIGERweb state boundaries - which carry the water, out past the shore (measured
+# 2026-10-16: mid-Piscataqua off New Castle reads ME, 6 km off Rye NH, the Isles of Shoals' east side ME) - one ring a
+# state at 0.0001 deg (~10 m), ~5,000 points: fetched once a month and CLIPPED here to the box the chart is read over.
+TIGER_STATES_URL = "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/State_County/MapServer/0/query"
+LAW_STATES = ("NH", "ME")
+LAW_REGION = (-71.6, 42.69, -66.9, 47.5)     # New Hampshire's and Maine's water, roughly: where the boundaries are asked for
+STATE_TTL_S = 30 * 86400
+STATE_SIMPLIFY_DEG = 0.0001
+STATE_PAD_DEG = 0.02                         # the clip box: the chart's box and ~2 km round it
+
+
+def clip_ring(ring, box):
+    """A ring ([[lon, lat], ...]) clipped to the box (W, S, E, N) - Sutherland-Hodgman against each edge in turn. The
+    clipped ring may run along the box's edges; inside the box its point test is the ring's own. [] when nothing is in."""
+    w, s, e, n = box
+    edges = ((lambda p: p[0] >= w, lambda a, b: _cut_x(a, b, w)), (lambda p: p[0] <= e, lambda a, b: _cut_x(a, b, e)),
+             (lambda p: p[1] >= s, lambda a, b: _cut_y(a, b, s)), (lambda p: p[1] <= n, lambda a, b: _cut_y(a, b, n)))
+    out = [list(p) for p in ring]
+    if len(out) > 1 and out[0] == out[-1]:
+        out = out[:-1]
+    for inside, cut in edges:
+        if not out:
+            break
+        src, out = out, []
+        prev = src[-1]
+        for cur in src:
+            if inside(cur):
+                if not inside(prev):
+                    out.append(cut(prev, cur))
+                out.append(cur)
+            elif inside(prev):
+                out.append(cut(prev, cur))
+            prev = cur
+    if len(out) < 3:
+        return []
+    return out + [out[0]]
+
+
+def _cut_x(a, b, x):
+    t = (x - a[0]) / (b[0] - a[0])
+    return [x, a[1] + (b[1] - a[1]) * t]
+
+
+def _cut_y(a, b, y):
+    t = (y - a[1]) / (b[1] - a[1])
+    return [a[0] + (b[0] - a[0]) * t, y]
+
+
+def _state_rings(st, cache_dir, ssl_ctx, timeout, now):
+    """A state's boundary rings, from the cache while it is a month old, else TIGERweb (the old copy if that fails)."""
+    path = os.path.join(cache_dir, "state_%s.json" % st)
+    got = None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            got = json.load(fh)
+    except (OSError, ValueError):
+        got = None
+    if got and now - float(got.get("t", 0)) < STATE_TTL_S:
+        return got["rings"], True, None
+    with _lock:
+        failed_at = _failed.get(("tiger", st))
+    if failed_at and now - failed_at < SPEED_FAIL_RETRY_S:
+        return (got or {}).get("rings"), False, "the state boundary service did not answer a few minutes ago"
+    q = {"where": "STUSAB='%s'" % st, "outFields": "STUSAB", "returnGeometry": "true", "outSR": "4326",
+         "maxAllowableOffset": str(STATE_SIMPLIFY_DEG), "geometryPrecision": "6", "f": "json"}
+    try:
+        d = _get_json(TIGER_STATES_URL + "?" + urllib.parse.urlencode(q), ssl_ctx, timeout)
+        if "error" in d:
+            raise RuntimeError("the service refused the query: %s" % (d["error"].get("message") or d["error"]))
+        rings = [r for f in d.get("features") or [] for r in ((f.get("geometry") or {}).get("rings") or []) if len(r) >= 4]
+        if not rings:
+            raise RuntimeError("no boundary came back for %s" % st)
+        tmp = path + ".tmp%d" % os.getpid()
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump({"t": now, "rings": rings}, fh)
+        os.replace(tmp, path)
+        with _lock:
+            _failed.pop(("tiger", st), None)
+        return rings, False, None
+    except Exception as e:
+        with _lock:
+            _failed[("tiger", st)] = now
+        return (got or {}).get("rings"), False, str(e)[:200]
+
+
+def state_waters_for_bbox(bbox, cache_dir, ssl_ctx=None, timeout=SPEED_TIMEOUT_S, now=None):
+    """NEW HAMPSHIRE'S AND MAINE'S WATER over a box, as features of role "state_water" ({state}): each state's boundary
+    clipped to the box and STATE_PAD_DEG round it. (features, report) - none, and no report, for a box outside the region.
+    A state whose boundary could not be read at all (no answer and no old copy) is named in every feature's `unread`, so
+    the page applies the stricter rule in the water no boundary says is the other's."""
+    now = time.time() if now is None else now
+    r = LAW_REGION
+    if bbox[2] < r[0] or bbox[0] > r[2] or bbox[3] < r[1] or bbox[1] > r[3]:
+        return [], None
+    os.makedirs(cache_dir, exist_ok=True)
+    box = (bbox[0] - STATE_PAD_DEG, bbox[1] - STATE_PAD_DEG, bbox[2] + STATE_PAD_DEG, bbox[3] + STATE_PAD_DEG)
+    feats, errs, cached, unread = [], [], 0, []
+    for st in LAW_STATES:
+        rings, hit, err = _state_rings(st, cache_dir, ssl_ctx, timeout, now)
+        cached += 1 if hit else 0
+        if err:
+            errs.append("%s: %s" % (st, err))
+        if not rings:
+            unread.append(st)
+        clipped = [c for c in (clip_ring(rg, box) for rg in (rings or [])) if c]
+        if clipped:
+            feats.append({"role": "state_water", "cls": "State_Water", "geometry": {"type": "Polygon", "coordinates": clipped},
+                          "props": {"state": st, "source": "US Census TIGERweb"}})
+    for f in feats:
+        f["props"]["unread"] = list(unread)
+    rep = {"id": "tiger_states", "name": "US Census state boundaries (NH, ME)", "ok": not errs, "count": len(feats),
+           "unread": 0, "cached": cached, "stale": 0, "error": "; ".join(errs) or None}
+    return feats, rep
+
+
 def merge_into_chart(data, bbox, cache_dir, ssl_ctx=None, sources=None):
-    """The chart's answer with the state zones in it: their features appended and `speed_sources` saying what was asked.
-    Never raises - a failure is one line in the report and the chart goes out as it was."""
+    """The chart's answer with the state zones in it - and New Hampshire's and Maine's water, for their shore rules: their
+    features appended and `speed_sources` saying what was asked. Never raises - a failure is one line in the report and
+    the chart goes out as it was."""
     try:
         feats, report = zones_for_bbox(bbox, cache_dir, ssl_ctx, sources)
     except Exception as e:                                # belt and braces: the chart is served whatever happens here
         feats, report = [], [{"id": "speed_zones", "name": "speed zones", "ok": False, "count": 0, "error": str(e)[:200]}]
+    try:
+        sw, srep = state_waters_for_bbox(bbox, cache_dir, ssl_ctx) if sources is None else ([], None)
+    except Exception as e:
+        sw, srep = [], {"id": "tiger_states", "name": "US Census state boundaries (NH, ME)", "ok": False, "count": 0, "error": str(e)[:200]}
+    if srep:
+        report = list(report) + [srep]
     if isinstance(data, dict):
-        data["features"] = list(data.get("features") or []) + feats
+        data["features"] = list(data.get("features") or []) + feats + sw
         data["speed_sources"] = report
     return data

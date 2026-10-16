@@ -14,6 +14,10 @@ day: New Hampshire, Maine and Massachusetts publish no speed-zone layer (their r
     3-3c  THE CACHE AND FAILURE: a tile asked once a week; a service down said in the report, not asked again for a
           while, and its last good answer served, said stale; the chart served whatever happens
     4     THE WIRING: /api/enc merges them (asv_console.py _serve_enc)
+    5-5e  WHOSE WATER, for New Hampshire's and Maine's shore rules (2026-10-16), against a stub boundary service: the
+          clip to the chart's box; each state's water as a feature, clipped; cached a month, the last copy served when
+          the service is down; a state never read NAMED unread (the page applies the stricter rule there); a box away
+          from them asks nothing; merged into the chart
 
     python tests/speed_zone_sources.py      # exit 0 = pass   (stdlib only)
 """
@@ -31,10 +35,12 @@ sys.path.insert(0, APP)
 
 
 CACHE = tempfile.mkdtemp(prefix="asv_speed_")       # the zone cache the fetch checks write, removed whatever happens
+CACHE2 = tempfile.mkdtemp(prefix="asv_states_")     # and the state boundaries' (section 5)
 
 
 def _crash_report(_t, e, _tb):
     shutil.rmtree(CACHE, ignore_errors=True)
+    shutil.rmtree(CACHE2, ignore_errors=True)
     print("  FAIL 0. the suite itself CRASHED before finishing - %r" % (e,))
     print("\n1 CHECK(S) FAILED (crashed before finishing)")
     sys.stdout.flush()
@@ -218,6 +224,120 @@ try:
 finally:
     srv.shutdown()
     shutil.rmtree(CACHE, ignore_errors=True)
+
+# ── 5. whose water: New Hampshire's and Maine's, for their shore rules (state_waters_for_bbox), against a stub TIGERweb ─
+TIGER_HITS = []
+TIGER = {"down": set(), "rings": {
+    "NH": [[[-71.0, 42.9], [-70.73, 42.9], [-70.73, 43.2], [-71.0, 43.2], [-71.0, 42.9]]],
+    "ME": [[[-70.73, 42.9], [-70.4, 42.9], [-70.4, 43.3], [-70.73, 43.3], [-70.73, 42.9]]]}}
+
+
+class TigerStub(BaseHTTPRequestHandler):
+    def do_GET(self):
+        q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        st = q["where"][0].split("'")[1]
+        TIGER_HITS.append(st)
+        if st in TIGER["down"]:
+            body = json.dumps({"error": {"code": 500, "message": "stub down"}}).encode()
+        else:
+            body = json.dumps({"features": [{"attributes": {"STUSAB": st}, "geometry": {"rings": TIGER["rings"][st]}}]}).encode()
+        self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(body)
+
+    def log_message(self, *a):
+        pass
+
+
+def pip(p, ring):                                        # ray casting, for the clip's point test
+    inside, j = False, len(ring) - 1
+    for i in range(len(ring)):
+        (xi, yi), (xj, yj) = ring[i], ring[j]
+        if (yi > p[1]) != (yj > p[1]) and p[0] < (xj - xi) * (p[1] - yi) / (yj - yi) + xi:
+            inside = not inside
+        j = i
+    return inside
+
+
+tsrv = HTTPServer(("127.0.0.1", 0), TigerStub)
+threading.Thread(target=tsrv.serve_forever, daemon=True).start()
+real_url = SZ.TIGER_STATES_URL
+SZ.TIGER_STATES_URL = "http://127.0.0.1:%d/TIGERweb/State_County/MapServer/0/query" % tsrv.server_port
+try:
+    # the clip: a ring wholly in the box is itself; one wholly out is nothing; a ring across the box is cut to it - and
+    # inside the box its point test is the ring's own (an L-shaped ring, 400 points)
+    import random
+    rnd = random.Random(5)
+    L = [[0, 0], [4, 0], [4, 1], [1, 1], [1, 4], [0, 4], [0, 0]]
+    box = (0.5, 0.5, 3.0, 3.0)
+    cut = SZ.clip_ring(L, box)
+    same = all(pip(p, cut) == pip(p, L) for p in ([rnd.uniform(0.5, 3.0), rnd.uniform(0.5, 3.0)] for _ in range(400)))
+    D = [[1.75, -1], [4.5, 1.75], [1.75, 4.5], [-1, 1.75], [1.75, -1]]      # a diamond: every cut across a slanted edge
+    dcut = SZ.clip_ring(D, box)
+    dsame = all(pip(p, dcut) == pip(p, D) for p in ([rnd.uniform(0.5, 3.0), rnd.uniform(0.5, 3.0)] for _ in range(400)))
+    check("5. THE CLIP: a ring inside the box is itself, closed; one outside is nothing; an L across the box is cut to it, "
+          "every vertex in the box, and inside the box a point is in the cut ring exactly when it is in the L - and in a diamond "
+          "cut across its slanted edges (400 points each)",
+          lambda: SZ.clip_ring([[1, 1], [2, 1], [2, 2], [1, 1]], (0, 0, 3, 3)) == [[1, 1], [2, 1], [2, 2], [1, 1]]
+          and SZ.clip_ring([[5, 5], [6, 5], [6, 6], [5, 5]], (0, 0, 3, 3)) == []
+          and cut[0] == cut[-1] and all(0.5 - 1e-9 <= x <= 3.0 + 1e-9 and 0.5 - 1e-9 <= y <= 3.0 + 1e-9 for x, y in cut) and same and dsame,
+          json.dumps(cut))
+    BOXS = (-70.8, 43.0, -70.7, 43.1)                   # New Castle: across the state line at -70.73
+    sw, srep = SZ.state_waters_for_bbox(BOXS, CACHE2, now=1000.0)
+    by = {f["props"]["state"]: f for f in sw}
+    xs = lambda f: [c[0] for r in f["geometry"]["coordinates"] for c in r]
+    check("5b. NEW HAMPSHIRE'S AND MAINE'S WATER over the box, from the boundary service: one feature each, role state_water, "
+          "named by its state; each ring CLIPPED to the box and 0.02 deg round it (New Hampshire -70.82 to the line at "
+          "-70.73, Maine the line to -70.68); none unread; the report says it answered",
+          lambda: sorted(by) == ["ME", "NH"] and all(f["role"] == "state_water" for f in sw)
+          and abs(min(xs(by["NH"])) + 70.82) < 1e-9 and abs(max(xs(by["NH"])) + 70.73) < 1e-9
+          and abs(min(xs(by["ME"])) + 70.73) < 1e-9 and abs(max(xs(by["ME"])) + 70.68) < 1e-9
+          and by["NH"]["props"]["unread"] == [] and srep["ok"] and srep["count"] == 2 and srep["id"] == "tiger_states"
+          and sorted(TIGER_HITS) == ["ME", "NH"],
+          json.dumps(srep))
+    n0 = len(TIGER_HITS)
+    sw2, srep2 = SZ.state_waters_for_bbox(BOXS, CACHE2, now=1000.0 + 86400)
+    TIGER["down"] = {"NH", "ME"}
+    sw3, srep3 = SZ.state_waters_for_bbox(BOXS, CACHE2, now=1000.0 + SZ.STATE_TTL_S + 60)
+    n3 = len(TIGER_HITS)
+    sw4, srep4 = SZ.state_waters_for_bbox(BOXS, CACHE2, now=1000.0 + SZ.STATE_TTL_S + 90)
+    check("5c. CACHED A MONTH: a day later the service is not asked and the same water is served; past the month with the "
+          "service down, the last copy is served and the failure said - and the service not asked again a moment later",
+          lambda: len(TIGER_HITS) - n0 == 2 and len(sw2) == 2 and srep2["cached"] == 2 and len(sw3) == 2 and not srep3["ok"]
+          and "stub down" in (srep3["error"] or "") and len(TIGER_HITS) == n3 and len(sw4) == 2,
+          json.dumps({"hits": TIGER_HITS[n0:], "rep3": srep3}))
+    # a cold cache: Maine's boundary down, New Hampshire's read - Maine named UNREAD on the water that was read
+    SZ._failed.clear()
+    TIGER["down"] = {"ME"}
+    cold = os.path.join(CACHE2, "cold")                 # a cache never written (inside CACHE2, removed with it)
+    sw5, srep5 = SZ.state_waters_for_bbox(BOXS, cold, now=5000.0)
+    TIGER["down"] = {"NH", "ME"}
+    SZ._failed.clear()
+    cold2 = os.path.join(CACHE2, "cold2")
+    sw6, srep6 = SZ.state_waters_for_bbox(BOXS, cold2, now=5000.0)
+    check("5d. A STATE NEVER READ IS NAMED: Maine's boundary down with nothing cached - New Hampshire's water served with "
+          "Maine named unread (the page applies the stricter rule there), the failure in the report; both down - no water, "
+          "said",
+          lambda: [f["props"]["state"] for f in sw5] == ["NH"] and sw5[0]["props"]["unread"] == ["ME"] and not srep5["ok"]
+          and "ME" in srep5["error"] and sw6 == [] and not srep6["ok"],
+          json.dumps({"rep5": srep5, "rep6": srep6}))
+    n7 = len(TIGER_HITS)
+    far7, rep7 = SZ.state_waters_for_bbox((-80.3, 25.7, -80.1, 25.9), CACHE2, now=9000.0)
+    n7b = len(TIGER_HITS)
+    TIGER["down"] = set()
+    SZ._failed.clear()
+    m8 = SZ.merge_into_chart({"features": [{"role": "land"}]}, BOXS, CACHE2)
+    m9 = SZ.merge_into_chart({"features": [{"role": "land"}]}, BOXS, CACHE2, None, [])
+    check("5e. A BOX OUTSIDE THEIR WATER asks nothing and says nothing (Miami); MERGED INTO THE CHART with the state zones "
+          "- the water features after the chart's and the boundary service in `speed_sources`; not asked when the caller "
+          "names its own sources",
+          lambda: far7 == [] and rep7 is None and n7b == n7
+          and [f["role"] for f in m8["features"]] == ["land", "state_water", "state_water"]
+          and any(r["id"] == "tiger_states" for r in m8["speed_sources"])
+          and [f["role"] for f in m9["features"]] == ["land"] and not any(r["id"] == "tiger_states" for r in m9["speed_sources"]),
+          json.dumps({"m8": [f["role"] for f in m8["features"]], "m9": [f["role"] for f in m9["features"]], "far": [far7, rep7], "hits": n7b - n7}))
+finally:
+    SZ.TIGER_STATES_URL = real_url
+    tsrv.shutdown()
+    shutil.rmtree(CACHE2, ignore_errors=True)
 
 # ── 4. the wiring ─────────────────────────────────────────────────────────────────────────────────────────────────────
 SRC_PY = open(os.path.join(APP, "asv_console.py"), encoding="utf-8").read()

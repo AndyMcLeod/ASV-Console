@@ -16,6 +16,12 @@
 //   5-5d  THE GOVERNOR (the page's own speedGovernor and zone functions): the job's speed lowered to the zone's before it
 //         and in it, said once; the job's speed back when she is clear, said; never RAISED by a zone; the guard's
 //         slow-down left alone; a page that cannot say her leg still caps her and puts her speed back.
+//   6-6j  NEW HAMPSHIRE'S AND MAINE'S SHORE RULES (lawZones, 2026-10-16: "model the NH and ME shore distance rules"):
+//         150 ft of New Hampshire's shore and docks, not in the Piscataqua's federal channel between R2 and R12; 200 ft
+//         of Maine's shoreline, island or mainland, not its docks; each in its own state's water; New Hampshire's
+//         bridges; the edge and her release; the stricter rule where no state line was read; the shore index against
+//         brute force; a zone she is slowing for kept ahead (live: "Clear of speed zone" of water not reached); the
+//         governor end to end.
 //
 //   node tests/speed_zones.js   # exit 0 = pass
 
@@ -191,7 +197,7 @@ const gov = (o) => {
     "const logClient = (k, d) => w.logs.push([k, d]);",
     "const spdTxt = (k) => (/^\\d+$/.test(String(k)) ? V.SPEED_KN[k] + ' kn' : String(k)), fmtDist = (m) => Math.round(m) + ' m';",
     "const slowLaw = () => null, slowLeadM = () => 0, SPEED_CMD_LATENCY_S = 1;",
-    "const {zoneDecision, zoneLeadM, zoneRuleTxt, zoneId, zoneApplies, noaaZones, inZone} = Z;",
+    "const {zoneDecision, zoneLeadM, zoneRuleTxt, zoneId, zoneApplies, noaaZones, inZone, lawZones} = Z;",
     "let commandedSpeed = null, zoneHeld = null, zoneRestore = null, zonesFor = null, zonesList = []; const zoneSaid = new Set();",
     ["speedZonesNow", "zoneCap", "zoneSpd", "zoneName", "zoneTrack", "zoneOnlyGovern", "speedGovernor"].map(grab).join("\n"),
     "return {tick: () => { asv = w.pos; return speedGovernor(); }, held: () => zoneHeld};",
@@ -266,6 +272,182 @@ const gov = (o) => {
   check("5d. A ZONE THAT DOES NOT BIND HER (a 65 ft rule, the DriX 7.7 m) is said ONCE and her speed left as the job has it",
         () => s1 === "7" && SK.notes.filter((n) => /not for this hull: it binds vessels 19\.8 m/.test(n)).length === 1 && SK.banners.length === 0,
         () => JSON.stringify({ s1, notes: SK.notes }));
+}
+
+// ── 6. New Hampshire's and Maine's shore-distance rules (lawZones) ───────────────────────────────────────────────────
+// A chart of its own just inside the Piscataqua (between buoys R2 and R12, where New Hampshire's exemption lives), in
+// meters east / north of 43.08 N, 70.74 W: an island and its pier in New Hampshire's water; the federal channel past the
+// island's north-east corner, a deep dredged reach off its south shore and a shallow side channel off its west; a bridge
+// each side of the line; an island, its pier and an islet in Maine's water east of e = 1000, where the state line runs.
+const GM = require(path.join(APP, "static", "js", "geometry.js"));
+const FL = GD.planeFrame({ lat: 43.08, lon: -70.74 });
+const PL = (e, n) => { const p = FL.fromEN(e, n); return [p.lon, p.lat]; };
+const rectL = (e0, n0, e1, n1, P = PL) => ({ type: "Polygon", coordinates: [[P(e0, n0), P(e1, n0), P(e1, n1), P(e0, n1), P(e0, n0)]] });
+const lineL = (pts, P = PL) => ({ type: "LineString", coordinates: pts.map(([e, n]) => P(e, n)) });
+const NHW = { role: "state_water", geometry: rectL(-5000, -8000, 1000, 8000), props: { state: "NH", source: "TEST", unread: [] } };
+const MEW = { role: "state_water", geometry: rectL(1000, -8000, 6000, 8000), props: { state: "ME", source: "TEST", unread: [] } };
+const CHART = [
+  { role: "land", geometry: rectL(0, 0, 400, 400) },                                                   // New Hampshire's island
+  { role: "dock_line", geometry: lineL([[400, 100], [470, 100]]) },                                     // its pier, 70 m east
+  { role: "fairway", geometry: rectL(430, 300, 800, 1000), props: { OBJNAM: "Piscataqua River Channel" } },
+  { role: "dredged", geometry: rectL(0, -300, 400, -10), props: { OBJNAM: "Test Reach", DRVAL1: 10 } },
+  { role: "dredged", geometry: rectL(-300, 0, -10, 400), props: { OBJNAM: "Back Channel", DRVAL1: 1.8 } },
+  { role: "bridge_span", geometry: rectL(-200, 600, -150, 700), props: { OBJNAM: "Test Bridge" } },
+  { role: "bridge_span", geometry: rectL(2500, 600, 2550, 700), props: { OBJNAM: "Maine Bridge" } },
+  { role: "land", geometry: rectL(1600, 0, 2000, 400) },                                               // Maine's island
+  { role: "dock_line", geometry: lineL([[1600, 100], [1530, 100]]) },                                   // its pier, 70 m west
+  { role: "land_point", geometry: { type: "Point", coordinates: PL(3000, 0) } },                        // an islet
+];
+const LZ = Z.lawZones([NHW, MEW, ...CHART]);
+const lz = (id) => LZ.find((z) => z.props.zone_id === id);
+const NHZ = lz("law|NH|shore"), MEZ = lz("law|ME|shore");
+const inL = (z, e, n) => !!z && Z.inZone(FL.fromEN(e, n), z);
+const w6 = { east30: inL(NHZ, 430, 250), east50: inL(NHZ, 450, 250), pier30: inL(NHZ, 500, 100), pier50: inL(NHZ, 520, 100),
+  channel40: inL(NHZ, 440, 350), reach30: inL(NHZ, 200, -30), back40: inL(NHZ, -40, 200), maine: inL(NHZ, 1550, 250) };
+check("6. NEW HAMPSHIRE, 150 FT (45.72 m) OF SHORE AND DOCKS: 30 m off the island in, 50 m out; 30 m off the pier's end in, "
+      + "50 m out; NOT in the federal channel 40 m off, nor in the deep reach 30 m off (RSA 270-D:2 VI(b)(2)); in the shallow "
+      + "side channel 40 m off (not the federal channel); not in Maine's water; headway, cited",
+      () => NHZ && w6.east30 && !w6.east50 && w6.pier30 && !w6.pier50 && !w6.channel40 && !w6.reach30 && w6.back40 && !w6.maine
+            && NHZ.props.rule === "headway" && NHZ.props.source === "NH RSA 270-D:2 VI" && Math.abs(Z.NH_SHORE_M - 45.72) < 1e-9,
+      () => JSON.stringify(w6));
+const w6b = { west50: inL(MEZ, 1550, 250), west70: inL(MEZ, 1530, 250), pier50: inL(MEZ, 1480, 100), islet50: inL(MEZ, 3000, 50),
+  islet70: inL(MEZ, 3000, 70), nh: inL(MEZ, 430, 250) };
+check("6b. MAINE, 200 FT (60.96 m) OF SHORELINE, mainland or island: 50 m off the island in, 70 m out; 50 m off an islet in, "
+      + "70 m out; 50 m off the pier's end (120 m off the island) NOT in - a dock is not shoreline in Maine's law; not in New "
+      + "Hampshire's water; headway, cited",
+      () => MEZ && w6b.west50 && !w6b.west70 && !w6b.pier50 && w6b.islet50 && !w6b.islet70 && !w6b.nh
+            && MEZ.props.rule === "headway" && MEZ.props.source === "ME 12 MRSA 13068-A(13)" && Math.abs(Z.ME_SHORE_M - 60.96) < 1e-9,
+      () => JSON.stringify(w6b));
+const e6c = { at30: Z.zoneEdgeM(FL.fromEN(430, 250), NHZ), at80: Z.zoneEdgeM(FL.fromEN(480, 250), NHZ), far: Z.zoneEdgeM(FL.fromEN(600, 250), NHZ),
+  channel: Z.zoneEdgeM(FL.fromEN(440, 350), NHZ) };
+const decL = (e, n, held) => Z.zoneDecision({ pos: FL.fromEN(e, n), ahead: [], zones: LZ, loaM: 7.71, speedsKn: DRIX, leadM: 50, held });
+const heldIn = { id: "law|NH|shore", where: "in" };
+const d6c = { leaving: decL(453, 250, heldIn), clear: decL(460, 250, heldIn), inKey: decL(430, 250, null) };
+check("6c. ITS EDGE AND HER RELEASE: 30 m off is 15.7 m inside the line, 80 m off 34.3 m outside it, 200 m off measured as "
+      + "far, and in the channel no edge at all; leaving it she is held to headway (the DriX's 4) until clear of the line by "
+      + "her length - 53 m off still 'leaving', 60 m off clear",
+      () => Math.abs(e6c.at30 - 15.72) < 0.01 && Math.abs(e6c.at80 - 34.28) < 0.01 && e6c.far === Infinity && e6c.channel === Infinity
+            && d6c.leaving && d6c.leaving.where === "leaving" && d6c.leaving.key === "4" && d6c.clear === null
+            && d6c.inKey && d6c.inKey.where === "in" && d6c.inKey.kn === 4,
+      () => JSON.stringify({ e6c, leaving: d6c.leaving && d6c.leaving.where, clear: d6c.clear }));
+const BR = lz("law|NH|bridge|Test Bridge");
+check("6d. NEW HAMPSHIRE'S BRIDGES, headway passing under (RSA 270-D:2 I): the bridge in its water is a zone, under it is in "
+      + "it; the bridge in Maine's water is not one",
+      () => BR && BR.geometry && Z.inZone(FL.fromEN(-175, 650), BR) && !Z.inZone(FL.fromEN(-175, 750), BR) && BR.props.source === "NH RSA 270-D:2 I"
+            && !LZ.some((z) => /Maine Bridge/.test(z.props.zone_id)),
+      () => JSON.stringify(LZ.map((z) => z.props.zone_id)));
+// the exemption is the federal channel BETWEEN R2 and R12: the same fairway 5 km off their line is not it; dredged at 8 m
+// and deeper is, at 7.9 m it is not; a side channel's fairway by another name is not
+const shift = (dn) => (e, n) => PL(e, n + dn);
+const R2E = FL.toEN(Z.PISCATAQUA_R2), R12E = FL.toEN(Z.PISCATAQUA_R12);
+// on their line 1 km past R12 - inside the corridor's 1.5 km of their line, so only 'between' keeps it out
+const PAST = 1000 / Math.hypot(R12E.e - R2E.e, R12E.n - R2E.n);
+const BEYOND = { e: R12E.e + PAST * (R12E.e - R2E.e), n: R12E.n + PAST * (R12E.n - R2E.n) };
+const EX = Z.piscataquaExempt([
+  { role: "fairway", geometry: rectL(0, 0, 100, 100), props: { OBJNAM: "Piscataqua River Channel" } },
+  { role: "fairway", geometry: rectL(0, 0, 100, 100, shift(-5000)), props: { OBJNAM: "Piscataqua River Channel" } },
+  { role: "dredged", geometry: rectL(200, 0, 300, 100), props: { DRVAL1: 8 } },
+  { role: "dredged", geometry: rectL(400, 0, 500, 100), props: { DRVAL1: 7.9 } },
+  { role: "fairway", geometry: rectL(600, 0, 700, 100), props: { OBJNAM: "Sagamore Creek Channel" } },
+  { role: "fairway", geometry: rectL(BEYOND.e - 50, BEYOND.n - 50, BEYOND.e + 50, BEYOND.n + 50), props: { OBJNAM: "Piscataqua River Channel" } },
+], FL);
+check("6e. THE EXEMPTION IS THE FEDERAL CHANNEL BETWEEN R2 AND R12: the Piscataqua River Channel fairway on their line and a "
+      + "reach dredged to 8 m are it; the same fairway 5 km off their line, or on it 1 km past R12, a reach dredged to 7.9 m and "
+      + "a side channel are not",
+      () => EX.length === 2 && EX.some((r) => r.bb.x0 < 50) && EX.some((r) => r.bb.x0 > 150 && r.bb.x0 < 250),
+      () => JSON.stringify(EX.map((r) => [Math.round(r.bb.x0), Math.round(r.bb.y0)])));
+const MA = (e, n) => PL(e, n - 45000);                        // 45 km south: Massachusetts, out of their region
+const LF = Z.lawZones([...CHART, { role: "land", geometry: rectL(0, 0, 400, 400, MA) }]);   // no state line read at all
+const FB = LF.find((z) => z.props.zone_id === "law|NHME|unread");
+const NHonly = Z.lawZones([Object.assign({}, NHW, { props: { state: "NH", unread: ["ME"] } }), ...CHART]);
+const FB1 = NHonly.find((z) => z.props.zone_id === "law|NHME|unread");
+const AWAY = Z.lawZones(CHART.map((f) => Object.assign({}, f, { geometry: JSON.parse(JSON.stringify(f.geometry, (k, v) =>
+  Array.isArray(v) && typeof v[0] === "number" ? [v[0] - 10, v[1] - 17] : v)) })));
+const w6f = { n: LF.filter((z) => z.law && z.law.within).length, pier: FB && Z.inZone(FL.fromEN(500, 100), FB), channel: FB && Z.inZone(FL.fromEN(440, 350), FB),
+  mePier: FB && Z.inZone(FL.fromEN(1480, 100), FB), at55: FB && Z.inZone(FL.fromEN(455, 250), FB),
+  ma30: FB && Z.inZone(FL.fromEN(430, 250 - 45000), FB),
+  one: { meWest: FB1 && Z.inZone(FL.fromEN(1550, 250), FB1), mePier: FB1 && Z.inZone(FL.fromEN(1480, 100), FB1),
+         nhChannel: NHonly.some((z) => Z.inZone(FL.fromEN(440, 350), z)), nhEast: FB1 && Z.inZone(FL.fromEN(430, 250), FB1) },
+  away: AWAY.length, noShore: Z.lawZones([NHW, MEW]).length };
+check("6f. NO STATE LINE READ, THE STRICTER RULE (safety before efficiency): with no boundary, one zone - 200 ft of shore AND "
+      + "docks, no exemption: off a pier, in the channel and off Maine's pier all in, 55 m off in; with Maine's unread, its "
+      + "water takes that rule (off its island and its pier) while New Hampshire's keeps its own, channel exemption and all; "
+      + "and a shore on the same chart in Massachusetts is not bound by it; the same chart off Florida, and a chart with no "
+      + "shore, make none",
+      () => w6f.n === 1 && FB && !w6f.ma30 && w6f.pier && w6f.channel && w6f.mePier && w6f.at55 && w6f.one.meWest && w6f.one.mePier
+            && !w6f.one.nhChannel && !w6f.one.nhEast && w6f.away === 0 && w6f.noShore === 0,
+      () => JSON.stringify(w6f));
+// the shore index against brute force: long diagonal edges (one each way across many cells), short ones, points
+{
+  const segs = [], feats = [];
+  let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  for (let i = 0; i < 40; i++) {
+    const a = [rnd() * 3000 - 1500, rnd() * 3000 - 1500], L = i < 10 ? 2000 : 30, t = rnd() * Math.PI * 2;
+    const b = [a[0] + L * Math.cos(t), a[1] + L * Math.sin(t)];
+    feats.push({ role: "shore_line", geometry: lineL([a, b]) }); segs.push([FL.toEN(FL.fromEN(...a)), FL.toEN(FL.fromEN(...b))]);
+  }
+  for (let i = 0; i < 10; i++) { const p = [rnd() * 3000 - 1500, rnd() * 3000 - 1500]; feats.push({ role: "land_point", geometry: { type: "Point", coordinates: PL(...p) } });
+    const q = FL.toEN(FL.fromEN(...p)); segs.push([q, q]); }
+  const M = Z.shoreModel(feats, ["shore_line", "land_point"], FL);
+  let worst = 0, n = 0, near = 0;
+  for (let i = 0; i < 600; i++) {
+    const q = { e: rnd() * 3400 - 1700, n: rnd() * 3400 - 1700 };
+    let b = Infinity; for (const s of segs) b = Math.min(b, GM.dSeg(q, s[0], s[1]));
+    const want = b <= 120 ? b : Infinity, got = Z.shoreDistM(M, q, 120);
+    n++; if (want < Infinity) near++;
+    worst = Math.max(worst, want === got ? 0 : Math.abs(want - got));
+  }
+  check("6g. THE SHORE INDEX AGAINST BRUTE FORCE: 600 points round 40 edges (ten of them 2 km across the grid) and 10 "
+        + "points - the nearest within 120 m found exactly every time, Infinity beyond",
+        () => worst < 1e-6 && near > 40, () => JSON.stringify({ n, near, worst }));
+}
+// THE ZONE SHE IS SLOWING FOR stays AHEAD however short her slowing makes the lead (live 2026-10-16)
+{
+  const heldA = { id: Z.zoneId(Z5), where: "ahead", d: 30 };
+  const h = { kept: dec(at(-28, 200), { leadM: 10, held: heldA }), unheld: dec(at(-28, 200), { leadM: 10 }),
+              away: dec(at(-28, 200), { leadM: 10, held: heldA, ahead: [at(-28, -600)] }),
+              later: dec(at(-28, 200), { leadM: 10, held: heldA, ahead: [at(-28, -300), at(200, -300), at(200, 200)] }) };
+  check("6h. A ZONE SHE IS SLOWING FOR STAYS AHEAD: held ahead at 30 m, 28 m short with her lead down to 10 m it is still "
+        + "ahead (not let go and taken again); not held, it is not yet; held, with her route turned away, it is let go - and "
+        + "with her route meeting it again only ~800 m on",
+        () => h.kept && h.kept.where === "ahead" && h.kept.kn === 5 && h.unheld === null && h.away === null && h.later === null,
+        () => JSON.stringify(Object.fromEntries(Object.entries(h).map(([k, v]) => [k, v && [v.where, Math.round(v.d)]]))));
+}
+// THE GOVERNOR over a chart of its own: the island north of her line (the line 30 m off its south shore), in New Hampshire
+{
+  const PG = (e, n) => { const p = at(e, n); return [p.lon, p.lat]; };
+  const LAWG = [{ role: "state_water", geometry: rectL(-5000, -5000, 5000, 5000, PG), props: { state: "NH", unread: [] } },
+                { role: "land", geometry: rectL(100, 230, 500, 600, PG) }];
+  const L = gov({ zones: LAWG });
+  const g0 = L.api.tick();                                     // 600 m short
+  L.pos = at(30, 200); const g1 = L.api.tick();                // the band ~35 m on, past her 23.6 m lead at 7 kn
+  L.pos = at(50, 200); const g2 = L.api.tick();                // ~15 m on: inside the lead - headway now
+  L.pos = at(300, 200); const g3 = L.api.tick();               // in it, 30 m off the shore
+  L.pos = at(545, 200); const g4 = L.api.tick();               // 54 m off the corner: out, not yet clear by her length
+  L.pos = at(560, 200); const g5 = L.api.tick();               // 67 m off: clear
+  check("6i. THE GOVERNOR AND NEW HAMPSHIRE'S SHORE: the job's 7 kn until the band is inside her lead; then headway (the "
+        + "DriX's 4) before it, said with the law it is; held in it; held leaving it; the job's 7 back when clear, said",
+        () => g0 === "7" && g1 === "7" && g2 === "4" && g3 === "4" && g4 === "4" && g5 === "7"
+              && /^SPEED ZONE AHEAD - New Hampshire, within 150 ft of shore or a dock \(NH RSA 270-D:2 VI\): headway speed\. Slowing to 4 kn now/.test(L.banners[0] || "")
+              && /^CLEAR OF SPEED ZONE New Hampshire, within 150 ft of shore or a dock \(NH RSA 270-D:2 VI\): back to 7 kn, her commanded speed\.$/.test(L.banners[1] || "")
+              && L.banners.length === 2,
+        () => JSON.stringify({ g: [g0, g1, g2, g3, g4, g5], banners: L.banners }));
+  // slowing for it, her lead shrinks past what is left - the zone held, nothing said; then her way turned from it - said so
+  const K = gov({ zones: LAWG, sog: 12 });
+  K.pos = at(42, 200); const k1 = K.api.tick();                // the band 25 m on, her lead 26 m at 12 kn: headway now
+  K.sog = 1; K.pos = at(44, 200); const k2 = K.api.tick();     // slowed: her lead 20.5 m, the band 25 m on - still held
+  const nb = K.banners.length, nn = K.notes.length;
+  K.route = [at(-600, 200), at(44, -600)]; const k3 = K.api.tick();   // a new way, south, away from it
+  const Q = gov({ zones: LAWG, sog: 12, job: "4" });
+  Q.pos = at(42, 200); Q.api.tick(); const qb = Q.banners.length;
+  Q.route = [at(-600, 200), at(42, -600)]; Q.api.tick();
+  check("6j. A BAND SHE IS SLOWING FOR IS NOT LET GO AS SHE SLOWS (her lead under what is left: still 4, nothing said - live, "
+        + "the page said 'Clear of speed zone' there); her way turned from it, the job's 7 back and said as what happened - "
+        + "'no longer on her way', not 'clear'; one she came to at a speed within it, her way turned from it - nothing said",
+        () => k1 === "4" && k2 === "4" && nb === 1 && nn === 0 && k3 === "7" && qb === 1 && Q.banners.length === 1 && Q.notes.length === 0
+              && /^SPEED ZONE New Hampshire, within 150 ft of shore or a dock \(NH RSA 270-D:2 VI\) is no longer on her way: back to 7 kn, her commanded speed\.$/.test(K.banners[1] || "")
+              && !K.notes.some((t) => /Clear of speed zone/.test(t)),
+        () => JSON.stringify({ k: [k1, k2, k3], banners: K.banners, notes: K.notes, q: [Q.banners, Q.notes] }));
 }
 
 console.log("\n" + (fails ? fails + " CHECK(S) FAILED" : "all checks passed") + " (" + ran + ")");
