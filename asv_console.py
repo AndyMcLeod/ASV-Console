@@ -8986,6 +8986,17 @@ class Handler(BaseHTTPRequestHandler):
         # but beyond the range come back in `beyond`, apart from `vessels`, so the card can delete her. Nothing else
         # reads `beyond`: the guard's model stays the in-range contacts.
         held = set(x for x in (params.get("held") or [""])[0].split(",")[:400] if x)
+        # THE PASSAGE'S RANGE (Andy, 2026-10-16: "widen the AIS range to 15 nm during a passage"). Offshore on his night
+        # passage the card's 5 nm showed nothing for 64% of the night - the nearest ship 10-40 km off - so while the page
+        # sails a passage it asks for at least `floor_km`. The operator's setting (AIS_SHOW_RADIUS_KM) is NOT touched: a
+        # wider one stands, and it is back in force on the first poll that does not ask. Clamped to what is collected, as
+        # the setting is. The area reports both (`show_km` in force, `set_km` the setting) so the card can say why.
+        try:
+            floor_km = float((params.get("floor_km") or ["0"])[0])
+        except ValueError:
+            floor_km = 0.0
+        show_km = (max(AIS_SHOW_RADIUS_KM, min(AIS_COLLECT_RADIUS_KM, floor_km)) if floor_km > 0
+                   else AIS_SHOW_RADIUS_KM)
         if lat is None:
             return self._send(200, json.dumps({"ok": False, "vessels": [], "count": 0,
                               "area": {"mode": "none"}, "note": "no position for the AIS area"}))
@@ -8998,8 +9009,8 @@ class Handler(BaseHTTPRequestHandler):
             # client cannot derive; this one used to be "%g km", which put the CLIENT's
             # choice of unit in the server and made one field mean two different things.
             # The client formats its own label from show_km (it reads in nautical miles).
-            area = {"mode": "sea",
-                    "show_km": AIS_SHOW_RADIUS_KM, "collect_km": AIS_COLLECT_RADIUS_KM}
+            area = {"mode": "sea", "show_km": show_km, "set_km": AIS_SHOW_RADIUS_KM,
+                    "collect_km": AIS_COLLECT_RADIUS_KM}
         url = "%s/vessels?bbox=%.4f,%.4f,%.4f,%.4f&max=2000" % (
             AIS_BASE.rstrip("/"), bbox[0], bbox[1], bbox[2], bbox[3])
         try:
@@ -9014,7 +9025,7 @@ class Handler(BaseHTTPRequestHandler):
             # On a lake there is no filter: the area IS the lake and every contact stands.
             vs = data.get("vessels") or []
             area["collected"] = len(vs)
-            if area.get("mode") == "sea" and AIS_SHOW_RADIUS_KM > 0:
+            if area.get("mode") == "sea" and show_km > 0:
                 kept = []
                 beyond = []                       # the held contacts collected beyond the range (above)
                 nearest = None
@@ -9030,7 +9041,7 @@ class Handler(BaseHTTPRequestHandler):
                     # healthy and the card still looked broken.
                     if nearest is None or d_km < nearest:
                         nearest = d_km
-                    if d_km <= AIS_SHOW_RADIUS_KM:
+                    if d_km <= show_km:
                         v["range_m"] = round(d_km * 1000.0)
                         kept.append(v)
                     elif str(v.get("mmsi")) in held:

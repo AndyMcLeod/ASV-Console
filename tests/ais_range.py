@@ -35,7 +35,9 @@ commit set on a misread of "5km" - and 11 and 8c fail; author the field at anyth
 and 8h fails. For the card's `held`/`beyond` (2026-10-10), three mutations RUN on scratch copies:
 stop reporting the held contacts beyond the range and 12 fails; put them in `vessels` (the
 guard's model) and 12 fails; report every contact beyond the range, named or not, and 12 and
-12b fail.
+12b fail. For a passage's floor (2026-10-16), six RUN on a sidecar app: ignore the floor, let it
+replace a wider setting, leave it unclamped, filter at the setting, drop `set_km`, or let it
+move the setting - and 13 fails each time.
 """
 
 import io
@@ -341,6 +343,31 @@ try:
     d_nh = api(port, sea)
     check("12b. ... and nothing is reported beyond the range unless the card names it",
           d_nh.get("beyond") == [], json.dumps({"beyond": d_nh.get("beyond")}))
+
+    # 13. THE PASSAGE'S RANGE (Andy, 2026-10-16: "widen the AIS range to 15 nm during a passage"). The page sailing a
+    # passage asks for at least 15 nm (27.78 km) - `floor_km` - and the operator's setting is not touched: at a 5 km
+    # setting the poll that asks shows SEA5 and SEA20, the next one that does not is back to SEA5 with no POST between;
+    # a setting wider than the floor stands; a floor past what is collected is clamped to it; one that is not a number
+    # asks for nothing. The area says both: the range in force (show_km) and the setting (set_km).
+    FLOOR = 15 * 1.852
+    api(port, "/api/ais/radius", {"km": 5})
+    df = api(port, sea + "&floor_km=%.3f" % FLOOR)
+    dn = api(port, sea)
+    api(port, "/api/ais/radius", {"km": 50})
+    dw = api(port, sea + "&floor_km=%.3f" % FLOOR)
+    dc = api(port, sea + "&floor_km=900")
+    dj = api(port, sea + "&floor_km=x")
+    nm = lambda d: sorted(v["name"] for v in d["vessels"])
+    check("13. A PASSAGE'S FLOOR: at a 5 km setting a poll asking for 15 nm shows SEA5 and SEA20 (show_km 27.78, set_km 5), "
+          "the next poll not asking is back to SEA5 with the setting untouched; a 50 km setting stands over it; 900 is "
+          "clamped to the 150 collected; a floor that is not a number asks for nothing",
+          nm(df) == ["SEA20", "SEA5"] and abs(df["area"]["show_km"] - FLOOR) < 0.01 and df["area"].get("set_km") == 5
+          and nm(dn) == ["SEA5"] and dn["area"]["show_km"] == 5 and dn["area"].get("set_km") == 5
+          and nm(dw) == ["SEA20", "SEA49", "SEA5"] and dw["area"]["show_km"] == 50
+          and dc["area"]["show_km"] == 150 and "CORNER" not in nm(dc) and len(nm(dc)) == len(SEA_RANGES)
+          and dj["area"]["show_km"] == 50 and nm(dj) == ["SEA20", "SEA49", "SEA5"],
+          json.dumps({"floor": [nm(df), df["area"].get("show_km"), df["area"].get("set_km")], "after": [nm(dn), dn["area"].get("show_km")],
+                      "wider": dw["area"].get("show_km"), "clamp": dc["area"].get("show_km"), "junk": dj["area"].get("show_km")}))
 
 finally:
     try:

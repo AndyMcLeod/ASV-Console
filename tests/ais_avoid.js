@@ -482,6 +482,8 @@ function setAisTable() {}
 // card's business alone, driven in tests/ais_table.js 6l-6m; this world's card holds nothing
 var aisBeyondRpts = [];
 function aisHeldQuery() { return ""; }
+// the passage's 15 nm (2026-10-16): the poll asks for it while a passage is in hand - tests/ais_table.js 6n; none here
+function aisFloorQuery() { return ""; }
 function lsSet() {}
 var planGen = 0;
 function setPlanIntent(kind, _, route) { planIntent = { kind, why: [], route: route ? route.length : 0 }; }

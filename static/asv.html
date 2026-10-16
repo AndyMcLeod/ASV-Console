@@ -449,7 +449,7 @@
     <div id="aisTablePanelHead" title="Drag to move" style="cursor:move;display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:linear-gradient(180deg,#182636,#101c28);border-bottom:1px solid #24506a;border-radius:6px 6px 0 0;font-size:9px;letter-spacing:.08em;color:var(--ink-dim);text-transform:uppercase;user-select:none;"><span>&#10287; AIS traffic</span><span id="aisTableClose" title="Close (reopen from the AIS chip)" style="cursor:pointer;padding:0 3px;color:var(--ink-faint);">&times;</span></div>
     <div id="aisRangeRow" style="display:flex;align-items:center;gap:6px;padding:5px 10px;border-bottom:1px solid #24506a;">
       <span style="font-size:9px;letter-spacing:.06em;color:var(--ink-faint);text-transform:uppercase;">Range</span>
-      <input type="number" id="aisRange" min="1" step="1" value="5" title="How far out to SHOW traffic, in NAUTICAL MILES — the same unit the contact list reports range in, and like the list to a tenth of a mile below 10 nm. The service collects a wider area than this, so widening is instant: it is a filter, not a new subscription. Ignored on a Great Lake, where the whole lake is shown."
+      <input type="number" id="aisRange" min="1" step="1" value="5" title="How far out to SHOW traffic, in NAUTICAL MILES — the same unit the contact list reports range in, and like the list to a tenth of a mile below 10 nm. The service collects a wider area than this, so widening is instant: it is a filter, not a new subscription. Ignored on a Great Lake, where the whole lake is shown. While a passage is being sailed the card shows at least 15 nm (the note beside this says so); this setting is kept, and is back when the passage ends."
         style="width:58px;background:var(--abyss);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:11px;padding:3px 4px;border-radius:2px;"/>
       <span style="font-size:10px;color:var(--ink-faint);">nm</span>
       <span id="aisRangeNote" style="margin-left:auto;font-size:9px;color:var(--ink-faint);text-align:right;"></span>
@@ -12749,12 +12749,22 @@ function aisWanted(){ return aisShow || aisGuardWanted(); }
 // position: aisCenter() gave it the literal `center`, New Castle, and its own poll every 5 s showed the contacts within
 // range of New Castle and ranged the rest from there - a test contact under a mile from the boat read 26 nm and never
 // changed as she closed it, and the traffic round her was missing. Its card is the chart's, mirrored (UI_BRIDGED).
+// THE PASSAGE'S RANGE (Andy, 2026-10-16: "widen the AIS range to 15 nm during a passage"). On his night passage the card's
+// 5 nm showed nothing for 64% of the night - every poll answered, the nearest ship 10-40 km off. While a passage is in hand
+// the poll asks for at least PASSAGE_AIS_NM (asv_console.py _serve_ais `floor_km`); the card's own range is left as set, a
+// wider one stands, and it is back in force on the first poll after the passage ends or is dropped. The guard's model is
+// the contacts the poll returns, so it sees the same 15 nm the card does - as it would with the range set there by hand.
+const PASSAGE_AIS_NM = 15;
+function aisFloorQuery(){
+  const P = mission && mission.passage;
+  return P && PASSAGE_ONGOING.includes(P.state) ? "&floor_km=" + kmFromNm(PASSAGE_AIS_NM).toFixed(3) : "";
+}
 async function pollAIS(){ if(UIROLE === "controls" || !aisWanted() || aisBusy) return; aisBusy=true;
   aisPollBegun = Date.now();
   const ac = typeof AbortController === "function" ? new AbortController() : null;
   aisPollCtl = ac;
   try{ const c=aisCenter();
-    const r=await fetch(`/api/ais?center=${c.lat.toFixed(5)},${c.lon.toFixed(5)}${aisHeldQuery()}`, ac ? {signal: ac.signal} : undefined);
+    const r=await fetch(`/api/ais?center=${c.lat.toFixed(5)},${c.lon.toFixed(5)}${aisFloorQuery()}${aisHeldQuery()}`, ac ? {signal: ac.signal} : undefined);
     const d=await r.json();
     aisVessels = (d && Array.isArray(d.vessels)) ? d.vessels : [];
     aisBeyondRpts = (d && Array.isArray(d.beyond)) ? d.beyond : [];
@@ -12860,8 +12870,12 @@ function updateAisRangeRow(){
   const col = aisArea && aisArea.collect_km, got = aisArea && aisArea.collected,
         shown = aisArea && aisArea.shown;
   const colNm = col!=null ? nmRound(col) : null;          // the collected area, in nm too
-  note.textContent = (got!=null && shown!=null && colNm!=null)
-    ? shown + " of " + got + " in " + colNm + " nm" : (colNm!=null ? "collected " + colNm + " nm" : "");
+  // (a passage's wider range, 2026-10-16: the field keeps the operator's own and the headline the range in force - this
+  //  says why they differ)
+  const sk = aisArea && aisArea.show_km, own = aisArea && aisArea.set_km;
+  const why = sk != null && own != null && sk > own + 0.001 ? nmRound(sk) + " nm on passage · " : "";
+  note.textContent = why + ((got!=null && shown!=null && colNm!=null)
+    ? shown + " of " + got + " in " + colNm + " nm" : (colNm!=null ? "collected " + colNm + " nm" : ""));
 }
 // ── SORTING THE TRAFFIC LIST ────────────────────────────────────────────────────────
 //

@@ -985,7 +985,13 @@ card scrolls, and the order and the removals survive a reload. The table always 
 the live feed and its coverage** — e.g. *connected · aisstream (global) · no vessels in
 5 nm yet*, or *connected · digitraffic (Finland/Baltic only)* — so an empty list tells
 you whether the service is down, still warming up, genuinely quiet, or simply on a feed
-that cannot cover where you are. It is **situational awareness only** — subject to
+that cannot cover where you are. **While a passage is being sailed the card shows at least
+15 nm** (Andy, 2026-10-16: "widen the AIS range to 15 nm during a passage"; offshore on a
+night passage, 5 nm showed nothing for most of the night). Each poll asks the console for it
+(`floor_km` on `/api/ais`). The range field keeps your own setting, the note beside it reads
+*15 nm on passage*, a wider setting of yours stands, and your setting is back on the first
+poll after the passage is done or dropped. The guard's AIS keep-outs are built from the same
+contacts, as they are at any range you set. It is **situational awareness only** — subject to
 feed coverage, latency and gaps — not a navigation or collision-avoidance system.
 
 The data comes from a **separate service, `ais_service.py`**, which the console
@@ -3928,7 +3934,8 @@ python tests/ais_range.py
 **never applied on a lake**, where every contact stands. Runs against a stub provider at
 known ranges, so it tests the console rather than today's real traffic. And that a console
 started with no radius flag opens at the shipped 5 nm (9.26 km), which the card's field
-shows as 5, and that a blank field goes back to that default.
+shows as 5, and that a blank field goes back to that default. And that a passage's floor
+(`floor_km`) widens the range for the poll that asks, never moving the setting.
 
 ```
 node tests/ui_split.js

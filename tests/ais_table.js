@@ -457,6 +457,41 @@ const states = (rows) => rows.map((x) => x.k + ":" + x.state).join(" ");
         "pollAIS: " + POLL.slice(POLL.indexOf("const r=await fetch"), POLL.indexOf("const r=await fetch") + 110));
 }
 {
+  // 6n. THE PASSAGE'S RANGE (Andy, 2026-10-16: "widen the AIS range to 15 nm during a passage"). While a passage is in hand
+  // the poll asks the console for at least 15 nm (`floor_km`, tests/ais_range.py 13 serves it); otherwise it asks nothing,
+  // so the card's own range is back in force the moment the passage is done or dropped. The range row says why the
+  // headline's range and the field differ - and says nothing when they do not.
+  const ONGOING = /const PASSAGE_ONGOING = [^;]+;/.exec(H), NM = /const PASSAGE_AIS_NM = [^;]+;/.exec(H);
+  const floorOf = new Function("mission", [ONGOING ? ONGOING[0] : "", NM ? NM[0] : "",
+    "const kmFromNm = (nm) => nm * 1852 / 1000;", grab("aisFloorQuery"), "return aisFloorQuery();"].join("\n"));
+  const ask = {};
+  for (const st of ["running", "holding", "at_port", "diverting", "diverted", "stopped", "done", "ready"])
+    ask[st] = floorOf({ passage: { state: st } });
+  ask.none = floorOf({ passage: null });
+  const rowOf = (area) => {
+    const note = { textContent: "" }, el = { style: {} };
+    new Function("aisArea", "note", "el", ["const $ = (s) => (s === '#aisRangeNote' ? note : s === '#aisRange' ? el : null);",
+      "const nmRound = (km) => { const n = km / 1.852; return n < 10 ? Math.round(n * 10) / 10 : Math.round(n); };",
+      grab("updateAisRangeRow"), "updateAisRangeRow();"].join("\n"))(area, note, el);
+    return note.textContent;
+  };
+  const row = {
+    passage: rowOf({ mode: "sea", show_km: 27.78, set_km: 9.26, collect_km: 150, collected: 120, shown: 7 }),
+    own: rowOf({ mode: "sea", show_km: 9.26, set_km: 9.26, collect_km: 150, collected: 120, shown: 1 }),
+    wider: rowOf({ mode: "sea", show_km: 50, set_km: 50, collect_km: 150, collected: 120, shown: 30 }),
+  };
+  const POLL6n = grab("pollAIS");
+  check("6n. A PASSAGE'S RANGE: while a passage is in hand - sailing, holding, at a fuel stop, diverting, diverted, left for "
+        + "a command - the poll asks for at least 15 nm (27.780 km); arrived, not yet sailed, or none, it asks nothing; the "
+        + "range row says '15 nm on passage' while that is in force over the setting, and nothing otherwise",
+        () => ["running", "holding", "at_port", "diverting", "diverted", "stopped"].every((st) => ask[st] === "&floor_km=27.780")
+              && ask.done === "" && ask.ready === "" && ask.none === ""
+              && /\/api\/ais\?center=[^`]*\$\{aisFloorQuery\(\)\}[^`]*`/.test(POLL6n)
+              && row.passage === "15 nm on passage · 7 of 120 in 81 nm" && row.own === "1 of 120 in 81 nm"
+              && row.wider === "30 of 120 in 81 nm",
+        () => JSON.stringify({ ask, row }));
+}
+{
   // THE OPERATOR'S ORDER: dragged to the top, and once by a header click - and kept across a reload
   const store = {}, L = listSandbox(store);
   L.feed([ship(1, 1), ship(2, 2), ship(3, 3)]);
