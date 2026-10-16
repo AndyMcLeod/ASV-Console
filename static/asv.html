@@ -11670,8 +11670,26 @@ async function planPassageNow(){
       fuel: fuel.map((x, k) => ({from: passageName(fuelLegs[k].from), to: passageName(fuelLegs[k].to),
         nm: +(fuelLegs[k].lengthM / 1852).toFixed(1), arrive: x ? +x.arrive.toFixed(1) : null, ok: x ? x.ok : null})),
       narrow: res.legs.reduce((s, x) => s + (x.narrow ? x.narrow.length : 0), 0), tiles: plan.tiles, ms: res.ms});
+    if(!endsBad) passagePreRead = preReadFirstSection(plan);
   }catch(e){ showBanner("Passage NOT planned: " + ((e && e.message) || e) + "."); }
   finally{ passageBusy = false; passageStatus = ""; updateTransitPanel(); render(); }
+}
+// ⚠ SECTION 1'S CHART IMAGE IS READ WHEN THE PASSAGE IS PLANNED (Andy, 2026-10-15: "On goto transition to passage ... there
+// should be no pause"; asked, he chose to read it when planned). Sail used to read it - 204 tiles at z17 off his New Castle
+// wharf, 98 s of the 107 between his Sail and the boat moving - and the read adds what the ENC does not carry (piers,
+// floats), so it is not skipped: it is begun as soon as the plan is in, while the operator arms her and looks it over, over
+// the water sailSend will read (her position, the section's points), and Sail waits for it only if it is still running.
+// A Go-To past 50 km that sails itself waits the same read as before, now during the planning. Nothing is commanded here.
+let passagePreRead = null;                      // {plan, done, over}: section 1's read, begun at planning
+function preReadFirstSection(plan){
+  const c = plan.sections && plan.sections[0];
+  if(!c || !asv) return null;
+  const t0 = Date.now(), r = {plan, over: false, done: null};
+  r.done = ensureNogoCovers([{lat: asv.lat, lon: asv.lon}, ...c.via, c.to], null, {route: true})
+    .then(() => logClient("passage_preread", {ms: Date.now() - t0, ok: true}),
+          (e) => logClient("passage_preread", {ms: Date.now() - t0, ok: false, why: String((e && e.message) || e)}))
+    .finally(() => { r.over = true; });
+  return r;
 }
 // ── ENDS FIRST (Andy, 2026-10-14: "do it in segments starting with beginning and end and then working inward") ─────────
 // The coarse plan's FIRST and LAST sections planned in detail as soon as the passage is planned - the harbor she leaves and
@@ -11821,9 +11839,17 @@ function drawPassage(toScreen){
 // a Transit is: lanes, the chart image, moored AIS, against the guard's own chart) and sent to her as a Transit of
 // what she has left plus the section - the page's resume pattern - so its hold disc and its arrival coast are the new
 // end's (an amend would keep the old end's disc and kill the coast for good, asv_console.py amend_plan).
-//   AHEAD OF HER: in the supervising window, when she has PASSAGE_AHEAD_M of route left, the next section is planned
+//   AHEAD OF HER: in the supervising window, as soon as she is sailing the last section sent, the next one is planned
 //   and sent - only to the route it was planned after, only while the guard is quiet, never to a boat already holding.
 //   A section that cannot be planned is said and tried again every PASSAGE_RETRY_MS.
+//   ⚠ ONE WHOLE SECTION AHEAD (Andy, 2026-10-15: "between passage segments there should be no pause. Consider generating
+//   the next segment during the previous segments run"; asked, he chose a whole section ahead). It was planned with 10 km
+//   of route left, and his boat HELD 25 minutes at the end of section 1 of his New Castle -> Portland passage: the chart
+//   tab - where the next section is planned - had been asleep 70 minutes (page_asleep 4,175 s, began hidden), and a page
+//   the browser has frozen plans nothing at any distance. Now section 2 goes out right after section 1, and each next as
+//   she enters the one before it: she always has the rest of her section and one more, about an hour at 10 kn, so a tab
+//   that sleeps that long no longer stops her. Each is planned up to an hour before she reaches it (its water read over
+//   the hours she will sail it, sectionWater); the guard watches it live as she goes.
 //   SHE HOLDS at the end of the last section sent (the route's completion is a loiter): no window to plan the next,
 //   or it could not be. Nothing moves her on from a hold but CONTINUE PASSAGE, beside Start.
 //   A PORT ends a section (a fuel stop, the arrival): she waits there for Continue; the arrival ends the passage.
@@ -11832,7 +11858,6 @@ function drawPassage(toScreen){
 //   back. DIVERT THE PASSAGE TO HERE (the chart's menu) is a Go-To with the leaving recorded: a port to refuel in.
 //   CONTINUE AFTER A PORT is refused until what is aboard reaches the next port with 20% of the tank (the passage's own
 //   fuel rule, fuel.js passageFuel) - where she reports a level.
-const PASSAGE_AHEAD_M = 10000;                 // the next section is planned and sent with this much route left
 const PASSAGE_RETRY_MS = 60000;                // a section that could not be planned is tried again after this
 const PASSAGE_END_M = 1;                       // the route she flies is the passage's when it ends within this of its end
 const PASSAGE_ONGOING = ["running", "holding", "at_port", "diverting", "diverted", "stopped"];
@@ -11989,6 +12014,12 @@ async function sailPassage(){
   const P = sailRecord(passage);
   sailBusy = true; updateTransitPanel(); applyCmdState(S);
   try{
+    // (section 1's chart image, begun when the passage was planned: waited for if it is still being read - a read in hand
+    //  returns at once from the second asker, chartInk.busy, and section 1 would be planned without it)
+    if(passagePreRead && passagePreRead.plan === passage && !passagePreRead.over){
+      flashNote("Passage: section 1's chart image is still being read - sailing as soon as it is in.");
+      await passagePreRead.done;
+    }
     const r = await sailSend(P, 0, {lat: asv.lat, lon: asv.lon}, null, false);
     if(r.error || r.soft){
       showBanner("Passage NOT sailed: its first section could not be sent - " + (r.error || "try again") + ".");
@@ -12001,7 +12032,7 @@ async function sailPassage(){
     passage = null;                              // the plan is the passage now: drawn and said from it
     showBanner("PASSAGE UNDER WAY: section 1 of " + P.sections.length + " sent (" + r.route.length + " waypoints, planned at "
       + r.water.say + "). Each next "
-      + "section is planned by the console against its own chart and sent as she nears the end of the last; at a fuel stop "
+      + "section is planned by the console against its own chart and sent a whole section ahead of her; at a fuel stop "
       + "or wherever the next could not be sent, she HOLDS and waits for Continue passage.");
     logClient("passage_sail", {id: P.id, ok: true, sections: P.sections.length, wpts: r.route.length});
   }catch(e){ showBanner("Passage NOT sailed: " + ((e && e.message) || e) + "."); }
@@ -12074,7 +12105,9 @@ function passageTick(s){
   P.sec = (window._wpIndex || 0) >= P.base ? P.sent : Math.max(0, P.sent - 1);
   const c = P.sections[P.sent];
   if(P.sent + 1 >= P.sections.length || c.end === "port") return;   // she stops at the end of this one
-  if(sailLeftM() > PASSAGE_AHEAD_M || Date.now() - sailTriedAt < PASSAGE_RETRY_MS || !sailGuardQuiet()) return;
+  // (she is on the last section sent once her waypoint passes where it begins in the route she flies, P.base: before
+  //  that a whole section is still queued beyond hers - ONE WHOLE SECTION AHEAD, above)
+  if((window._wpIndex || 0) < P.base || Date.now() - sailTriedAt < PASSAGE_RETRY_MS || !sailGuardQuiet()) return;
   sailTriedAt = Date.now();
   sailAppend(P, P.sent + 1).catch(() => {});
 }

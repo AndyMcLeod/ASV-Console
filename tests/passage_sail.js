@@ -10,8 +10,9 @@
 //   4-4b  SAIL PASSAGE: section 1 planned from her position through its turning points to its held end, sent as a
 //         Transit with its hold disc and coast, the record kept on the plan; a section that cannot be planned - nothing
 //         sent, nothing kept;
-//   5-5c  AHEAD OF HER (passageTick): with PASSAGE_AHEAD_M left, the next section planned and sent AFTER what she has
-//         left - read when it is sent, not when it was planned; not sooner, not while the guard has something in hand,
+//   5-5d  AHEAD OF HER (passageTick): ONE WHOLE SECTION AHEAD (2026-10-15) - the next section planned and sent as soon as
+//         she is on the last one sent (right after Sail; as she enters each), AFTER what she has left - read when it is
+//         sent, not when it was planned; not while a whole section is still queued, not while the guard has something in hand,
 //         not past a port, not twice inside a minute, not from a window that does not supervise; a route changed while
 //         it planned, or a boat that reached her hold meanwhile - nothing sent;
 //   6     SHE HOLDS at the end of the last section sent: the hold said - a fuel stop, the arrival, the end she waits at;
@@ -194,6 +195,7 @@ console.log("The passage, sailed:");
       // section's model at its water handed to it (koAtLevel) and the search run here, in atWaterLevel, as it was
       "const koAtLevel = (m) => ({atLevel: m}), planOffThread = async (job, here) => here();",
       "let rthChainFailed = false; const NOGO_RADIUS_M = 5000, homeSections = w.C.homeSections;",
+      "let passagePreRead = w.preRead || null;",   // section 1's chart read, begun at planning (4c)
       "const surveyBreakNow = () => w.brk || null, bankBreak = (b) => w.banked.push(b);",
       decl("RTH_MAX_M"),
       "const ctx = new Proxy({}, {get: (t, k) => (k in t ? t[k] : (...a) => { w.ops.push([k, ...a]); }), set: (t, k, v) => { t[k] = v; return true; }});",
@@ -204,7 +206,7 @@ console.log("The passage, sailed:");
       // (the join point: the page's model when it is ready, passage.js passageJoinVia - here what the world says, 8e)
       "const nogo = w.nogo || {ready: false};",
       "const passageJoinVia = (line, ends, frame, ko, std) => { w.joins = (w.joins || []).concat([{line, ends, frame, ko, std}]); return w.joinVia === undefined ? null : w.joinVia; };",
-      decl("PASSAGE_AHEAD_M"), decl("PASSAGE_RETRY_MS"), decl("PASSAGE_END_M"), decl("PASSAGE_ONGOING"),
+      decl("PASSAGE_RETRY_MS"), decl("PASSAGE_END_M"), decl("PASSAGE_ONGOING"),
       "let sailBusy = false, sailTriedAt = 0, sailSaid = null;",
       ["passageEndsSay", "sailRecord", "sailPortName", "sailRefusal", "sailSegM", "sectionRest", "sailOwns", "sailGuardQuiet", "sailLeftM", "sailSend",
        "sailPassage", "sailAppend", "sailAtEnd", "sailBreakOff", "passageTick", "sailRestM", "sailFuelShort", "continueRefusal",
@@ -275,6 +277,25 @@ console.log("The passage, sailed:");
               && W4b.missions.length === 0,
         () => JSON.stringify(W4b.banners));
 
+  // ── 4c. SAIL WAITS FOR SECTION 1'S CHART IMAGE IF IT IS STILL BEING READ (2026-10-15) ────────────────────────────
+  // The read begun when the passage was planned (passage_plan 16h): a second asker's read returns at once while one is in
+  // hand (chartInk.busy), so Sail pressed during it would plan section 1 without the chart image - it waits. A read that
+  // is over, or one begun for another plan, is not waited on.
+  let release4c = null;
+  const PL4c = PLAN(), W4c = world({ passage: PL4c, preRead: { plan: PL4c, over: false, done: new Promise((r) => { release4c = r; }) } });
+  const sail4c = W4c.api.sailPassage();
+  await settle(); await settle();
+  const waited = W4c.planned.length === 0 && W4c.cmds.length === 0 && W4c.notes.some((n) => /still being read - sailing as soon as it is in/.test(n));
+  release4c(); await sail4c;
+  const PL4d = PLAN(), W4d = world({ passage: PL4d, preRead: { plan: PL4d, over: true, done: new Promise(() => {}) } });
+  W4d.api.sailPassage(); await settle(); await settle();   // (not awaited: a wrong wait would hang, not fail)
+  const W4e = world({ preRead: { plan: PLAN(), over: false, done: new Promise(() => {}) } });   // another plan's read
+  W4e.api.sailPassage(); await settle(); await settle();
+  check("4c. SAIL WAITS FOR SECTION 1'S CHART IMAGE while it is still being read (said), then sails; a read that is over, or "
+        + "one begun for another plan, is not waited on",
+        () => waited && W4c.cmds.length === 1 && W4c.planned.length === 1 && W4d.cmds.length === 1 && W4e.cmds.length === 1,
+        () => JSON.stringify({ waited, after: W4c.cmds.length, over: W4d.cmds.length, other: W4e.cmds.length }));
+
   // ── 5. ahead of her ─────────────────────────────────────────────────────────────────────────────────────────────
   const running = (o) => {
     const route = [east(HERE, 5000), east(HERE, 10000), east(HERE, 15000), { ...P1 }];
@@ -287,7 +308,7 @@ console.log("The passage, sailed:");
   W5.api.passageTick(W5.S);
   await settle(); await settle();
   const c5 = W5.cmds[0], P5 = W5.api.st().mission.passage;
-  check("5. AHEAD OF HER: with " + (8000 / 1000) + " km of route left (under PASSAGE_AHEAD_M), section 2 planned FROM the "
+  check("5. AHEAD OF HER: on the last section sent, section 2 planned FROM the "
         + "end of the route she flies and sent after what she has LEFT of it - read when sent - its end the section's port "
         + "(a port's section: to its end as a Go-To is)",
         () => W5.planned.length === 1 && distTo(W5.planned[0].from, P1) < 1 && c5 && c5[1].route.length === 1 + 1
@@ -297,14 +318,19 @@ console.log("The passage, sailed:");
               && W5.notes.some((n) => /^Passage: section 2 of 3 planned at \+0\.35 m, .*and sent ahead of her\.$/.test(n)),
         () => JSON.stringify({ planned: W5.planned.length, route: c5 && c5[1].route.map((p) => Math.round(distTo(HERE, p) / 1000)), P: [P5.sent, P5.base] }));
   const quietOf = (o, pre) => { const w = running(o); if (pre) pre(w); w.api.passageTick(w.S); return w; };
-  const far = quietOf({ asv: east(HERE, 2000), wpIndex: 0 });
+  // a whole section still queued beyond hers: section 1 with section 2 behind it in the route she flies (sent 1, its
+  // waypoints from 4 on), and she on section 1's third waypoint
+  const QROUTE = [east(HERE, 5000), east(HERE, 10000), east(HERE, 15000), { ...P1 }, east(HERE, 30000), { ...P2 }];
+  const queuedOf = (wp) => quietOf({ runRoute: QROUTE, wpIndex: wp, S: { armed: true, estop: false, run: "running", status: { holding: false, fuel_l: 200 }, wp_total: 6 } },
+    (w) => { const P = w.mission.passage; P.sent = 1; P.base = 4; P.end = { ...P2 }; P.route = QROUTE; P.sections[1].end = "hold"; });
+  const far = queuedOf(2);
   const guard = quietOf({ quiet: false });
   const port = quietOf({}, (w) => { w.mission.passage.sections[0].end = "port"; });
   const notSup = quietOf({ sup: false });
   // a section that could not be planned, ticked again at once: not planned again inside PASSAGE_RETRY_MS
   const W5c = running({ unroutable: 1 }); W5c.api.passageTick(W5c.S); await settle(); await settle();
   W5c.api.passageTick(W5c.S); await settle(); await settle();
-  check("5b. NOT YET, OR NOT AT ALL: far from the end; the guard with something in hand; past a port (she stops there); "
+  check("5b. NOT YET, OR NOT AT ALL: a whole section still queued beyond hers; the guard with something in hand; past a port (she stops there); "
         + "a window that does not supervise; and a section that could not be planned is not tried again inside "
         + "PASSAGE_RETRY_MS (said once)",
         () => [far, guard, port, notSup].every((w) => w.cmds.length === 0 && w.planned.length === 0)
@@ -321,6 +347,25 @@ console.log("The passage, sailed:");
         + "the end and holds - nothing sent (she waits for Continue)",
         () => W5d.planned.length === 1 && W5d.cmds.length === 0 && W5e.planned.length === 1 && W5e.cmds.length === 0,
         () => JSON.stringify([W5d.cmds.length, W5e.cmds.length]));
+
+  // ── 5d. ONE WHOLE SECTION AHEAD (2026-10-15) ──────────────────────────────────────────────────────────────────────
+  // Andy: "between passage segments there should be no pause"; his boat HELD 25 minutes at the end of section 1 - the chart
+  // tab, where the next section is planned, asleep 70 minutes - and the next section went out only with 10 km left. Now it
+  // goes out as soon as she is on the last one sent: right after Sail (section 1 just sent, she at its start, 20 km of it
+  // ahead - the 10 km rule planned nothing here), and as she enters each; never while a whole section is still queued.
+  const W5f = running({ asv: { ...HERE }, wpIndex: 0 });           // Sail has just sent section 1: she is at its start
+  W5f.api.passageTick(W5f.S); await settle(); await settle();
+  const W5g = queuedOf(4);                                          // she has entered section 2 (its first waypoint is 4)
+  await settle(); await settle();
+  const P5g = W5g.api.st().mission.passage, c5g = W5g.cmds[0];
+  check("5d. ONE WHOLE SECTION AHEAD: right after Sail - she at the start of section 1, all 20 km of it ahead - section 2 is "
+        + "planned and sent at once; with section 2 queued nothing is (5b); as she enters section 2, section 3 goes out after "
+        + "what she has left of it",
+        () => W5f.planned.length === 1 && distTo(W5f.planned[0].from, P1) < 1 && W5f.cmds.length === 1 && W5f.api.st().mission.passage.sent === 1
+              && far.planned.length === 0
+              && W5g.planned.length === 1 && distTo(W5g.planned[0].from, P2) < 1 && c5g && P5g.sent === 2 && distTo(P5g.end, P3) < 1,
+        () => JSON.stringify({ atSail: [W5f.planned.length, W5f.cmds.length], queued: far.planned.length,
+                               entered: [W5g.planned.length, W5g.cmds.length, P5g.sent] }));
 
   // ── 6. she holds at the end ─────────────────────────────────────────────────────────────────────────────────────
   const atEnd = (k, end) => { const w = running(); w.mission.passage.sent = k; if (end) w.mission.passage.sections[k].end = end;

@@ -2596,8 +2596,15 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    danger or inside a port's 4 km circle. Each section is planned in detail by the console's own
    planner as a Transit is (lanes, the chart image, moored AIS, against the guard's own chart), and
    sent as a Transit of what she has left plus the section, so the new end carries its own hold disc
-   and arrival coast. In the supervising window, when she has **10 km** of route left, the next
-   section is planned and sent ahead of her. It is never sent while the guard has something of its
+   and arrival coast. In the supervising window the next section is planned and sent **a whole
+   section ahead of her** (2026-10-15, Andy: "between passage segments there should be no pause"):
+   right after Sail, and as she enters each section, so she always has the rest of hers and one
+   more, about an hour at 10 kn. It used to go out with 10 km left, and his boat held 25 minutes at
+   the end of section 1 because the chart tab, where the next section is planned, had been asleep
+   for 70 minutes; a tab the browser freezes plans nothing. **Section 1's chart image is read when
+   the passage is planned** (the same day: "On goto transition to passage ... there should be no
+   pause"), not at Sail, so Sail sends at once; Sail waits for it only while it is still being read.
+   It is never sent while the guard has something of its
    own in hand, never to a route that changed while it was being planned, and never to a boat
    already holding. A section that cannot be planned is said, and tried again every minute.
    **At the end of the last section sent, she holds** (Andy, 2026-10-12: "she should hold"). That

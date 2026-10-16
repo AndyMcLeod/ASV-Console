@@ -343,7 +343,7 @@ const FLOOR = 30;
     const w = Object.assign({ posts: [], gets: [], fetches: [], banners: [], notes: [], logs: [], renders: 0, workerMsgs: [],
                               asv: { lat: 43.07, lon: -70.71 }, transit: [], seq: [], model, kn: 7, status: { fuel_l: 200 },
                               ends: { dep: { ok: true, km: 2.5, wpts: 40 }, arr: { ok: true, km: 3.1, wpts: 55 } },
-                              grid404: [], worker: null, ops: [] }, o || {});
+                              grid404: [], worker: null, ops: [], preReads: [] }, o || {});
     const src = "let passage = null, passageBusy = false, passageStatus = \"\", passageGen = 0, corridorRead = null;\n"
       + "const PASSAGE_HALF_KM = 5, PASSAGE_HALF_MAX_KM = 25, PASSAGE_GRID_FETCHES = 6, CORRIDOR_POLL_MS = 0;\n"
       + "const PASSAGE_LEG_WHY = " + /const PASSAGE_LEG_WHY = (\{[\s\S]*?\});/.exec(H)[1] + ";\n"
@@ -351,15 +351,17 @@ const FLOOR = 30;
       + /const PASSAGE_CASING = [^;]*;/.exec(H)[0] + "\n"
       + ["strokeCased", "fillHaloed", "passageEdited", "passagePointAt", "toggleFuelStop", "passageRefusal", "passagePoints", "passageName", "passageFuelLegs",
          "passageAlong", "passageSummary", "passageLine", "passageGrids", "passageHalfKm", "passageEndsSay", "planPassageNow",
-         "drawPassage"].map(grab).join("\n")
+         "drawPassage", "preReadFirstSection"].map(grab).join("\n")
+      + "\nlet passagePreRead = null;"
       + "\nreturn {passageEdited, passagePointAt, toggleFuelStop, passageRefusal, passagePoints, passageFuelLegs, passageAlong,"
       + " passageSummary, passageLine, passageHalfKm, passageEndsSay, planPassageNow, drawPassage,"
-      + " state: () => ({passage, passageBusy, passageGen}), setPassage: (p) => { passage = p; }, bump: () => { passageGen++; }};";
+      + " state: () => ({passage, passageBusy, passageGen}), setPassage: (p) => { passage = p; }, bump: () => { passageGen++; },"
+      + " preRead: () => passagePreRead};";
     const ctx = new Proxy({}, { get: (t, k) => (k in t ? t[k] : (...a) => { w.ops.push([k, ...a]); }), set: (t, k, v) => { t[k] = v; return true; } });
     w.api = new Function("asv", "passageWps", "planPassageEnds", "fuelModel", "V", "roleSpeed", "S", "energyLevel", "passageFuel", "FUEL_RESERVE_FRAC",
       "fmtDist", "fmtDur", "fmtMS", "distTo", "PASSAGE_PORT_R_M", "M_PER_DEG_LAT", "nogoDR", "postCorridor", "getCorridor",
       "corridorSummary", "toCorridor", "fetch", "passageInWorker", "showBanner", "flashNote", "logClient", "updateTransitPanel",
-      "render", "worldPx", "zoom", "ctx", "airNeedM", src)(
+      "render", "worldPx", "zoom", "ctx", "airNeedM", "ensureNogoCovers", src)(
       w.asv, w.transit, async () => { w.endsAsked = (w.endsAsked || 0) + 1; return w.ends; }, () => w.model, { SPEED_KN: { transit: w.kn } }, () => "transit", { status: w.status }, F.energyLevel,
       F.passageFuel, F.FUEL_RESERVE_FRAC, fmtDist, fmtDur, (s) => s + "s", flat, C.PORT_R_M, 111320, () => ({ min: 3.15 }),
       async (b) => { w.posts.push(b); return w.seq.length ? w.seq.shift() : { id: "j", state: "done", total: 0, done: 0, tiles: [] }; },
@@ -367,7 +369,8 @@ const FLOOR = 30;
       async (url) => { w.fetches.push(url); const bad = w.grid404.some((t) => url.endsWith(t)); return { ok: !bad, arrayBuffer: async () => new ArrayBuffer(8) }; },
       async (msg) => { w.workerMsgs.push(msg); if (w.duringWorker) w.duringWorker(w); return w.worker; },
       (t) => w.banners.push(t), (t) => w.notes.push(t), (k, d) => w.logs.push([k, d]), () => {}, () => { w.renders++; },
-      (lat, lon) => ({ x: lon * 1000, y: -lat * 1000 }), 9, ctx, () => 3.85);
+      (lat, lon) => ({ x: lon * 1000, y: -lat * 1000 }), 9, ctx, () => 3.85,
+      async (pts, pad, opts) => { w.preReads.push({ pts, pad, opts }); return true; });
     return w;
   };
 
@@ -471,6 +474,25 @@ const FLOOR = 30;
               && W16g.endsAsked === 1 && pl16g && pl16g.ends && pl16g.ends.arr.ok === false
               && /⚠ NOT SAILABLE - its ends could not be planned in detail: arriving: its end is not clear water to hold at\.$/.test(b16g),
         () => JSON.stringify({ asked: [W16.endsAsked, W16g.endsAsked], b16: banner16.slice(-90), b16g: b16g.slice(-120) }));
+  // 16h. SECTION 1'S CHART IMAGE, READ WHEN THE PASSAGE IS PLANNED (2026-10-15: "On goto transition to passage ... there
+  // should be no pause"): over the water Sail will read - her position and section 1's points, as a route - once the plan
+  // is in and its ends could be planned; kept beside the plan for Sail to wait on. NOT for a plan whose ends could not be.
+  const SEC1 = { from: P16[0], via: [P16[1]], to: P16[2], end: "hold", port: null, lengthM: 90000 };
+  const W16h = world({ transit: T3.map((p) => ({ ...p })) });
+  W16h.seq = [{ id: "h1", state: "done", total: 3, done: 3, tiles: tiles16, failed: [] }];
+  W16h.worker = { ...W16.worker, sections: [SEC1] };
+  await W16h.api.planPassageNow();
+  const W16i = world({ transit: T3.map((p) => ({ ...p })), ends: { dep: { ok: false, why: "no plan" }, arr: { ok: true, km: 3, wpts: 9 } } });
+  W16i.seq = [{ id: "i1", state: "done", total: 3, done: 3, tiles: tiles16, failed: [] }];
+  W16i.worker = { ...W16.worker, sections: [SEC1] };
+  await W16i.api.planPassageNow();
+  const pr16 = W16h.preReads[0], kept16 = W16h.api.preRead();
+  check("16h. SECTION 1'S CHART IMAGE READ WHEN THE PASSAGE IS PLANNED: once, as a route, over her position and section 1's "
+        + "points - kept with the plan for Sail; none for a plan whose ends could not be planned",
+        () => W16h.preReads.length === 1 && pr16.opts && pr16.opts.route === true
+              && JSON.stringify(pr16.pts) === JSON.stringify([{ lat: W16h.asv.lat, lon: W16h.asv.lon }, P16[1], P16[2]])
+              && kept16 && kept16.plan === W16h.api.state().passage && W16i.preReads.length === 0 && W16i.api.preRead() === null,
+        () => JSON.stringify({ reads: W16h.preReads.length, pts: pr16 && pr16.pts, kept: !!kept16, notSailable: W16i.preReads.length }));
   const W16b = world({ transit: T3.map((p) => ({ ...p })) });
   W16b.seq = [{ id: "g", state: "done", total: 1, done: 1, tiles: [tiles16[0]], failed: [] }];
   W16b.worker = W16.worker;
