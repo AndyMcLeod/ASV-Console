@@ -131,6 +131,8 @@ const makePage = (W) => new Function("W", "banners", "distTo", "azTo", "\"use st
   "const mission = W.mission, runRoute = W.runRoute, patClip = W.patClip, patRed = W.patRed || [], boundary = W.boundary," +
   "      boundaryClosed = W.boundaryClosed, measures = W.measures, measPend = W.measPend, track = W.track," +
   "      nogo = W.nogo, zoom = 15;" +
+  // the Survey tab's switch (2026-10-16): BOUNDED unless a world says Pattern - 3c
+  "const surveyBounded = W.surveyBounded !== false;" +
   // the page's projection, replaced by a flat one so a pixel distance in the checks is a stated number
   "const originPx = () => ({ x: 0, y: 0 });" +
   // the map centre and the model's own bounding-box test: identifyAt skips a keep-out whose box is out of
@@ -179,6 +181,13 @@ const got = cases.map(([dLat, layer, re]) => {
 });
 check("3. the route, the boundary, a measurement, the trail and a keep-out each answer as themselves",
       () => got.every((g) => g.ok), () => got.map((g) => g.want + (g.ok ? " ok" : " -> " + g.got)).join(", "));
+
+// 3c. PATTERN (2026-10-16): an area kept while the Survey tab is on Pattern is neither applied nor drawn - so a click
+//     where it lies does not name it (the next nearest thing, or nothing)
+const patPage = makePage(Object.assign({}, world, { surveyBounded: false }));
+const onArea = patPage.identifyAt(P(0.004, 0.005));
+check("3c. on PATTERN the kept area is not drawn, so a click on it does not name it",
+      () => !onArea || onArea.layer !== "boundary", () => onArea ? onArea.layer : "nothing there");
 
 // 3b. ⚠ NEAR a keep-out, not ON it. The model's boxes are what keep a thousand-feature model off the main thread
 //     (measured live at New Castle: 210-320 ms a click without the skip, 1-36 ms with it), and a keep-out line's own

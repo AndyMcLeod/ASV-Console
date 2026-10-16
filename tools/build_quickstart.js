@@ -57,6 +57,7 @@ c.push(B("The START CORNER of the area you want covered."));
 c.push(B("The OPPOSITE (diagonal) corner."));
 c.push(B("A third point — its DISTANCE from the start sets the line spacing, its BEARING sets the line direction."));
 c.push(P("Parallel lines fill the box immediately. Drag any of the three points to adjust; drag the CROSSHAIR GRIP at the center to move the whole pattern without changing its shape. (Ops manual 9.1)"));
+c.push(P("That is the Survey switch on PATTERN, the default. When the survey has to stay inside a set area, choose BOUNDED instead: draw the area on the chart, or press Import and pick a GeoJSON, KML or CSV file of it. The lines fill the area. (Ops manual 9.3)"));
 c.push(H2("4.2  Punch it out"));
 c.push(P("Press `Punch Out`. The console fetches the chart for the survey area and trims every line out of land, structures, hazards and water outside your depth limits. THIS IS THE STEP THAT MAKES THE PLAN TRUSTWORTHY — read what it reports."));
 c.push(NOTE("IF IT SAYS “UNTRACKABLE”", "Your line spacing is tighter than the vessel can turn in at the plan speed. Widen the spacing or drop the speed and punch out again. (Ops manual 9.5.1)"));

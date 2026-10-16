@@ -560,6 +560,15 @@
       <div id="sv_head" style="display:none;font-family:var(--mono);font-size:9px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;"><span>Surveys, in run order</span><button class="ctl small" id="sv_punchall">Punch all</button></div>
       <div id="sv_table" style="display:none"></div>
       <div class="phint" id="sv_note" style="display:none"></div>
+      <!-- PATTERN OR BOUNDED (Andy, 2026-10-16: "For some surveys the boundary box is critical and should have a draw mode
+           or an input mode for pre-drawn surveys. Otherwise, allow the unbounded survey pattern 3 point draw
+           functionality"; asked, he chose this switch and importing a file). PATTERN is the three-click box, no area
+           applied - the Area row hidden, an area already drawn kept for Bounded. BOUNDED fills an area - drawn here, or
+           imported - and A, B and C set only the lines' start, spacing and direction (surveySetBounded). -->
+      <div class="prow" id="sv_moderow"><label>Survey</label><span class="ppbtns">
+        <button class="ctl small" id="sv_mode_pattern" title="PATTERN: the three-click survey. Draw (top of the card), then click A the start corner, B the opposite corner, C the line spacing and direction. Nothing bounds the lines.">Pattern</button>
+        <button class="ctl small" id="sv_mode_bounded" title="BOUNDED: the lines fill a survey area - draw it on the chart, or import one drawn elsewhere (GeoJSON, KML or CSV). A, B and C then set only the lines' start, spacing and direction.">Bounded</button></span></div>
+      <div class="phint" id="sv_mode_hint"></div>
       <div class="prow"><label>Align</label>
         <select id="sp_align" title="Where the leftover margin goes across the survey width">
           <option value="0" selected>Start</option><option value="1">Center</option><option value="2">Finish</option>
@@ -575,6 +584,7 @@
       <div class="pparea" id="boundPanel">
         <div class="prow"><label>Area</label><span class="ppbtns">
           <button class="ctl small" id="bnd_draw" title="Draw the survey area: each chart click drops a boundary point, a click on the first point closes it. Press again (or Esc) to stop.">Draw</button>
+          <button class="ctl small" id="bnd_import" title="IMPORT a survey area drawn elsewhere: a GeoJSON, KML or CSV file (a CSV: one corner a line, latitude then longitude, or a header naming the columns). The first area in the file is used and replaces the one here; the banner says what was read and where it is.">Import</button>
           <button class="ctl small" id="bnd_close" title="Close the polygon (needs ≥3 points)">Close</button>
           <button class="ctl small" id="bnd_clr" title="Delete the boundary polygon">Clear</button>
           <button class="ctl small on" id="areaBtn" title="Show / hide the survey-area boundary overlay (persisted). It still clips the lines while hidden; drawing the area always shows it.">Show</button></span></div>
@@ -1057,6 +1067,9 @@
     </div>
   </div>
 
+  <!-- the survey area's file picker (bnd_import): OUTSIDE every bridged card on purpose - the controls window's sync never
+       replaces it, so the handler set on it at load stands in both windows (openBoundaryFile) -->
+  <input type="file" id="bndFile" accept=".geojson,.json,.kml,.kmz,.csv,.txt" style="display:none"/>
   <div class="qsback" id="qsBack" style="display:none"></div>
   <div class="qs" id="quickstart" style="display:none">
     <div class="qh"><b>Quick Start &mdash; Survey Planning</b><span class="qx" id="qsClose" title="Close">&times;</span></div>
@@ -1070,7 +1083,7 @@
             <li><b>Spacing &amp; direction</b> (C) &mdash; distance from A sets the line spacing; its bearing sets the line orientation</li>
           </ol>
           Parallel survey lines fill the box automatically (boustrophedon). <b>Drag A / B / C</b> to adjust &mdash; spacing, line count and dimensions update live, or <b>type a Spacing</b> to force it. Click <span class="tag">Add&nbsp;to&nbsp;plan</span> to commit.</li>
-        <li><b>Survey area (optional).</b> On the Survey tab press <span class="tag">Draw</span> beside <b>Area</b> and drop points to draw <i>any</i> survey-area polygon (click the first point to close; drag vertices to adjust). The pattern's lines are clipped to that area &mdash; concave shapes split legs correctly.</li>
+        <li><b>Survey area (optional).</b> The Survey tab's switch is on <span class="tag">Pattern</span> for the three-click survey above. When the survey must stay inside a set area, choose <span class="tag">Bounded</span>, then press <span class="tag">Draw</span> beside <b>Area</b> and drop points to draw <i>any</i> survey-area polygon (click the first point to close; drag vertices to adjust), or press <span class="tag">Import</span> and pick a <b>GeoJSON</b>, <b>KML</b> or <b>CSV</b> file of an area drawn elsewhere. The lines fill that area &mdash; concave shapes split legs correctly.</li>
         <li><b>Punch Out (optional).</b> Click <span class="tag">Punch&nbsp;Out</span> to trim the survey lines to the <b>same nogo zones every behavior avoids</b> (off land / docks, aids &amp; hazards, water below the 1&nbsp;m floor) &mdash; segments clip cyan, transits auto-route amber, unroutable flag red. The survey <b>Min / Max depth</b> is an extra <i>coverage</i> window on top of the nogo (survey only 3&ndash;10&nbsp;m, say). <b>Buffer</b> and the <b>enforce toggles</b> are <i>shared</i> &mdash; changing them re-routes Go-To / RTH / search too. Composes with the survey-area boundary. <span class="tag">CHRT</span> / <span class="tag">NOGO</span> show the chart / nogo overlays. Planning aid only &mdash; verify the plan.</li>
         <li><b>Search pattern (alternative to a survey).</b> On the <span class="tag">Search</span> tab, pick a pattern (<b>Expanding box</b> / <b>Sector</b> / <b>Parallel</b>), click the chart to set the <b>datum</b> (drag the D handle to move it), tune the params, then <span class="tag">Add&nbsp;to&nbsp;plan</span>. Legs clip to the nogo zones (cyan kept / amber routed-around / red blocked). The ASV runs it via the same Arm / Upload / Start flow.</li>
         <li><b>NOGO zones (automatic).</b> On startup the console extracts ENC nogo boundaries for the operating area &mdash; shoreline, manmade features, and water shallower than <b>1&nbsp;m corrected</b> (charted depth + live water level). <span class="tag">NOGO</span> shows / hides the red overlay. <b>Every</b> behavior avoids them: <span class="tag">Go-To</span> and <span class="tag">RTH</span> route around them (or refuse an unreachable target), and search / survey legs clip to clear water. If there's no ENC coverage the console warns and routes direct &mdash; verify the plan.</li>
@@ -1163,6 +1176,7 @@ import { CHART_EDGE_M, LANE_FRAC, SEG_LEN_M, beyondChart, beyondChartSay, buoyCh
 import { koCount as routeKoCount, packKo as routePackKo } from "/static/js/route_job.js";
 // OPEN WATER FIRST (2026-10-14): its words, for the banners and the Intent card (the planner itself is passage.js's).
 import { openWaterBox, openWaterNote, openWaterWhy } from "/static/js/openwater.js";
+import { parseBoundaryFile, ringAreaM2, ringMiddle, BOUNDARY_FILE_MAX_BYTES } from "/static/js/boundary_file.js";
 import { HAZ_UNKNOWN_EXTENT, MARK_TAIL, WATER_FAR_KM, WATER_REMOTE_KM, WATER_STALE_S,
          WRECK_CLEAR_MARGIN_M, airNeedM, blocked, blockedInfo, bufferFloor, buildKeepouts, buildMargin, clearanceM,
          channelPolys, depthExcluded, effectiveWaterOffset, firstBlockAlong, hazExtent, overheadBlocks,
@@ -5758,6 +5772,9 @@ let passageWps = [];                           // the Passage tab's line (2026-1
 let boundary = [];                             // [{lat,lon}] vertices
 let boundaryClosed = false, boundDrag = null;  // closed ring? / vertex being dragged
 let boundaryShow = true;                       // overlay visibility (a selective layer toggle)
+// THE SURVEY TAB'S SWITCH (2026-10-16): false = PATTERN, the three-click box - the area, if any, kept but NOT applied
+// (boundaryActive) and not drawn; true = BOUNDED, the lines fill the area. Saved with the plan (`survey_bounded`).
+let surveyBounded = false;
 // ENC chart features (fetched by Punch Out) + overlay state
 
 let encShow = true, punchBusy = false;
@@ -5948,7 +5965,7 @@ async function flushMission(){
   missionSaving = true;
   try{
     // fold the survey-area boundary into the persisted plan so it survives a reload
-    const body = {...mission, boundary, boundary_closed: boundaryClosed};
+    const body = {...mission, boundary, boundary_closed: boundaryClosed, survey_bounded: surveyBounded};
     if(missionRev != null) body.rev = missionRev;
     let r = null, j = {};
     try{
@@ -6015,6 +6032,8 @@ async function loadMission(){
       if(svFix.note) showBanner("⚠ PLAN LOADED AS ONE SURVEY — " + svFix.note + ".");
       boundary = Array.isArray(m.boundary) ? m.boundary : [];
       boundaryClosed = !!m.boundary_closed;
+      // the Survey tab's switch - and a plan saved before it (none) is BOUNDED exactly when its area applied then
+      surveyBounded = typeof m.survey_bounded === "boolean" ? m.survey_bounded : (boundaryClosed && boundary.length >= 3);
       // The revision the next save is made against (review #10) - null from a console that keeps none.
       missionRev = Number.isInteger(m.rev) ? m.rev : null;
       // Loaded - set here, before the controls are refreshed, so a control that fails to refresh below
@@ -8663,7 +8682,8 @@ function patHandleAt(cx, cy){
 }
 // With a closed boundary the lines are laid across IT (areaPattern, 2026-10-11), not across the A-B box it clips.
 function currentPattern(){ return surveyPattern(pat.A, pat.B, pat.C, pat.align, boundaryActive() ? boundary : null); }
-function boundaryActive(){ return boundaryClosed && boundary.length >= 3; }
+// (an area applies only in BOUNDED - surveyBounded, 2026-10-16: in PATTERN the three clicks' box stands, whatever area is kept)
+function boundaryActive(){ return surveyBounded && boundaryClosed && boundary.length >= 3; }
 // ref for local ENU planning maths: centroid of the pattern's bounding box
 function planRef(){
   const sp = currentPattern();
@@ -9115,6 +9135,7 @@ function clipToPoly(a,b,ring,ref){
 }
 function drawBoundary(toScreen){
   if(!boundary.length || (!boundaryShow && mode!=="bound")) return;  // hidden, unless editing
+  if(!surveyBounded) return;                       // PATTERN (2026-10-16): an area kept for Bounded is not shown, as it is not applied
   ctx.save();
   const pts = boundary.map(p=>toScreen(p.lat,p.lon));
   ctx.beginPath(); pts.forEach((s,i)=> i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y));
@@ -9609,6 +9630,7 @@ function applySurveySettings(st){
   if(!st || typeof st !== "object") return false;
   const pts = Array.isArray(st.boundary) ? st.boundary.filter(p => p && isFinite(p.lat) && isFinite(p.lon)) : [];
   boundary = pts.map(p => ({lat: +p.lat, lon: +p.lon})); boundaryClosed = boundary.length >= 3; boundDrag = null;
+  surveyBounded = boundaryClosed;                  // a survey drawn in an area comes back BOUNDED, one without it PATTERN
   $("#sp_maxdepth").value = (+st.max_depth_m > 0) ? String(+st.max_depth_m) : "";
   mission.lead_mode = st.lead_mode === "s" ? "s" : "m";
   mission.lead_in  = Math.max(0, Math.min(LEAD_MAX_M, +st.lead_in  || 0));
@@ -10054,12 +10076,69 @@ function closeBoundary(){
   if(boundary.length < 3){ $("#bnd_hint").textContent="Need at least 3 points to close the area."; return; }
   boundaryClosed = true; boundDrag = null; patClip = null; seedPatternFromBoundary();
   $("#bnd_hint").textContent = "Area set. Draw / adjust the survey pattern; lines clip to this area.";
-  updatePatReadout(); saveMission(); render();
+  updatePatReadout(); saveMission(); pathRender(); render();
 }
 function clearBoundary(){
   boundary = []; boundaryClosed = false; boundDrag = null; patClip = null;
   $("#bnd_hint").textContent = "Press Draw, then click the chart to drop boundary points; click the first point to close.";
-  updatePatReadout(); saveMission(); render();
+  updatePatReadout(); saveMission(); pathRender(); render();
+}
+// ── IMPORTING A SURVEY AREA (Andy, 2026-10-16: "should have a draw mode or an input mode for pre-drawn surveys"; asked,
+// he chose importing a file) ───────────────────────────────────────────────────────────────────────────────────────
+// static/js/boundary_file.js reads the file (GeoJSON, KML, CSV); this puts its area on the card, BOUNDED, in place of the
+// one there. THE PICKER OPENS IN THE WINDOW IT WAS PRESSED IN: the controls window relays clicks BY ID, and a click
+// relayed to the chart window is no user gesture there - no browser opens a file picker for it. So there it reads the
+// file itself and sends the chart its TEXT (setupUISplit, kind "file"); the chart, as for every relayed control, does
+// the rest. Nothing changes on a file it cannot read: the banner says why, and the area is as it was.
+function openBoundaryFile(){ const f = $("#bndFile"); if(!f) return; f.value = ""; f.click(); }
+async function boundaryFilePicked(file){
+  if(!file) return;
+  const nope = (why) => showBanner("SURVEY AREA NOT IMPORTED from " + file.name + ": " + why + ". The survey area is as it was.");
+  if(file.size > BOUNDARY_FILE_MAX_BYTES){ nope("the file is larger than " + (BOUNDARY_FILE_MAX_BYTES >> 20) + " MB"); return; }
+  let text;
+  try{ text = await file.text(); }catch(e){ nope("the file could not be read"); return; }
+  if(UIROLE === "controls"){
+    if(uiBus) uiBus.postMessage({t: "ev", kind: "file", id: "bnd_import", name: file.name, text});
+    return;
+  }
+  importBoundaryText(file.name, text);
+}
+/** A survey area's file, read onto the card: true when it was. */
+function importBoundaryText(name, text){
+  const r = parseBoundaryFile(name, text);
+  if(r.error){
+    showBanner("SURVEY AREA NOT IMPORTED from " + name + ": " + r.error + ". The survey area is as it was.");
+    logClient("boundary_import", {name: String(name).slice(0, 120), ok: false, why: r.error});
+    return false;
+  }
+  const had = boundary.length;
+  if(mode === "bound") setMode("pan");             // an area being drawn by hand is replaced, not added to
+  boundary = r.pts.map(p => ({lat: p.lat, lon: p.lon})); boundaryClosed = true; boundDrag = null; patClip = null;
+  surveyBounded = true;
+  seedPatternFromBoundary();                       // the lines appear at once - unless a pattern is drawn, which then sets them
+  $("#bnd_hint").textContent = "Area imported from " + name + ". Draw / adjust the survey pattern; lines clip to this area.";
+  updatePatReadout(); saveMission(); viewBoundary(); pathRender(); render();
+  const mid = ringMiddle(boundary), a = ringAreaM2(boundary);
+  showBanner("SURVEY AREA IMPORTED from " + name + " (" + r.kind + (r.name ? ", \"" + r.name + "\"" : "") + "): "
+    + boundary.length + " corners, " + (a / 1e6).toFixed(a < 1e5 ? 3 : 2) + " km²"
+    + (asv ? ", its middle " + fmtBrgRange({lat: asv.lat, lon: asv.lon}, mid) + " from her" : "")
+    + (had ? "; it replaced the area that was here" : "") + (r.notes.length ? ". NOTE: " + r.notes.join("; ") : "")
+    + ". The lines fill it: check the pattern, Punch Out, then Add to plan.");
+  logClient("boundary_import", {name: String(name).slice(0, 120), ok: true, kind: r.kind, corners: boundary.length,
+                                area_m2: Math.round(a), notes: r.notes});
+  return true;
+}
+/** The chart taken to the survey area, all of it in view (follow let go, or it would be taken straight back to her). */
+function viewBoundary(){
+  if(boundary.length < 3) return;
+  let S = 90, N = -90, W = 180, E = -180;
+  boundary.forEach(p => { S = Math.min(S, p.lat); N = Math.max(N, p.lat); W = Math.min(W, p.lon); E = Math.max(E, p.lon); });
+  const {w, h} = viewSize();
+  let z = MAXZ;
+  for(; z > MINZ; z--){ const a = worldPx(N, W, z), b = worldPx(S, E, z); if(b.x - a.x <= w * 0.7 && b.y - a.y <= h * 0.7) break; }
+  if(slew) endSlew(true);
+  if(follow){ follow = false; setFollow(); }
+  center = {lat: (S + N) / 2, lon: (W + E) / 2}; zoom = z;
 }
 // boundary overlay visibility toggle (persisted per browser)
 const BND_VIS_KEY = "asv_bnd_show_v1";
@@ -15701,7 +15780,7 @@ function identifyAt(ll){
       + "clear the anchors and the preview with them.");
   }
   // 4. the survey-area boundary the pattern is clipped to (the LIVE one the page holds, not the saved copy)
-  if((boundary || []).length > 1)
+  if(surveyBounded && (boundary || []).length > 1)   // (not in PATTERN: it is not drawn there - 2026-10-16)
     scan(boundary.map(at), !!boundaryClosed, "boundary",
       "the SURVEY AREA boundary — the polygon the pattern is clipped to, not a line the vessel runs. Clear on the Survey tab's Area row clears it.");
   // 5. a measurement the operator drew - MAGENTA, the mariner's own ink, never uploaded
@@ -15926,7 +16005,7 @@ window.addEventListener("keydown", e=>{
 //  * Esc, Add to plan, Follow, Sail passage and Go end the drawing, and the chart says while it is drawing (#r_draw).
 function pathDrawing(){ return !!PATH_TAB_OF[mode]; }
 function pathEmpty(tab){
-  return tab === "survey" ? !pat.A
+  return tab === "survey" ? (surveyBounded ? !boundary.length : !pat.A)   // BOUNDED: nothing drawn is no area yet
        : tab === "search" ? !search.datum
        : tab === "transit" ? !transit.length
        : tab === "passage" ? !passageWps.length
@@ -15937,7 +16016,7 @@ function pathSelect(tab){
   if(!PATH_TABS.includes(tab)) return;
   if(tab === pathTab){ pathRender(); return; }      // the tab already showing: nothing changes
   pathTab = tab; lsSet(PATH_TAB_KEY, tab);
-  const want = PATH_DRAW[tab];
+  const want = pathDrawMode(tab);
   if(pathEmpty(tab)){ if(mode !== want) setMode(want); else pathRender(); }
   else if(pathDrawing()) setMode("pan");            // drawing for another tab: stop, rather than draw for this one
   else pathRender();
@@ -15945,7 +16024,40 @@ function pathSelect(tab){
   else if(tab === "transit") updateTransitPanel();
   render();
 }
-function pathDraw(){ if(pathDrawing()) setMode("pan"); else setMode(PATH_DRAW[pathTab]); }
+function pathDraw(){ if(pathDrawing()) setMode("pan"); else setMode(pathDrawMode(pathTab)); }
+/** What the card's Draw arms for a tab: its own mode - but the Survey tab in BOUNDED with no area closed yet draws the
+ *  AREA first ("bound"), the pattern's three clicks only once there is an area for its lines to fill. */
+function pathDrawMode(tab){ return tab === "survey" && surveyBounded && !boundaryActive() ? "bound" : PATH_DRAW[tab]; }
+/** PATTERN OR BOUNDED (Andy, 2026-10-16 - the markup's note has his words). The lines change only when an area is
+ *  closed, so only then is a punch thrown away. Pattern stops an area being drawn; Bounded with nothing drawn arms the
+ *  chart for the area (a tab with nothing drawn arms itself), and with an area closed seeds the pattern from it if none. */
+function surveySetBounded(on){
+  on = !!on;
+  if(on !== surveyBounded){
+    const was = boundaryActive();
+    surveyBounded = on;
+    if(boundaryActive() !== was) patClip = null;
+    if(!on && mode === "bound") setMode("pan");
+    if(on && boundaryActive()) seedPatternFromBoundary();
+    else if(on && !boundary.length && pathTab === "survey" && mode !== "bound") setMode("bound");
+    updatePatReadout(); saveMission();
+  }
+  pathRender(); render();
+}
+/** The Survey tab's switch and its words: written only when they change (the card is mirrored on every change). */
+function renderSurveyMode(){
+  const pb = $("#sv_mode_pattern"), bb = $("#sv_mode_bounded"), panel = $("#boundPanel"), hint = $("#sv_mode_hint");
+  if(pb && pb.classList.contains("on") === surveyBounded) pb.classList.toggle("on", !surveyBounded);
+  if(bb && bb.classList.contains("on") !== surveyBounded) bb.classList.toggle("on", surveyBounded);
+  const disp = surveyBounded ? "" : "none";
+  if(panel && panel.style.display !== disp) panel.style.display = disp;
+  const t = !surveyBounded
+      ? "Draw (top of the card), then click A the start corner, B the opposite corner, C the line spacing and direction. Nothing bounds the lines."
+    : !boundaryActive()
+      ? "Draw the area below, or Import one (GeoJSON, KML, CSV). The lines fill it; A, B and C then set their start, spacing and direction."
+      : "The lines fill the area. Draw (top of the card) moves A, B and C - the lines' start, spacing and direction.";
+  if(hint && hint.textContent !== t) hint.textContent = t;
+}
 function pathStopDrawing(){ if(pathDrawing()) setMode("pan"); }
 function pathEscape(){ if(!pathDrawing()) return false; setMode("pan"); return true; }
 // The search pattern is a PREVIEW: drawn (and routed clear of the chart) while its tab shows, drawing or not.
@@ -15992,6 +16104,7 @@ function pathRender(){
   }
   const ba = $("#bnd_draw");
   if(ba){ ba.classList.toggle("on", mode === "bound"); const t = mode === "bound" ? "Drawing" : "Draw"; if(ba.textContent !== t) ba.textContent = t; }
+  renderSurveyMode();
   const tag = $("#r_draw");                         // the chart's own word: the card may be on another monitor
   if(tag){
     const t = drawing ? (mode === "wpt" ? "EDITING " : "DRAWING ") + PATH_TAG[mode] + " · ESC TO STOP" : "";
@@ -16072,6 +16185,10 @@ $("#tr_plan").onclick = () => planPassageNow();
 $("#areaBtn").onclick = ()=>setBoundaryShow(!boundaryShow);
 $("#bnd_close").onclick = closeBoundary;
 $("#bnd_clr").onclick = clearBoundary;
+$("#bnd_import").onclick = openBoundaryFile;      // (in the controls window setupUISplit opens it there - see openBoundaryFile)
+$("#bndFile").onchange = (e) => boundaryFilePicked(e.target.files && e.target.files[0]);
+$("#sv_mode_pattern").onclick = () => surveySetBounded(false);
+$("#sv_mode_bounded").onclick = () => surveySetBounded(true);
 $("#sp_add").onclick = async ()=>{ await commitPattern(); if(!pat.A) pathStopDrawing(); };   // added (the pattern resets): stop drawing
 $("#sp_reset").onclick = ()=>{ resetPattern(); render(); };
 $("#sp_align").onchange = ()=>{ pat.align = parseInt($("#sp_align").value)||0; patClip=null; updatePatReadout(); render(); };
@@ -16733,6 +16850,9 @@ function setupUISplit(){
       if(!el || !el.closest(sel)) return;
       if(UI_BRIDGED.includes("#"+el.id) || el.classList.contains("controls")) return;  // a container, not a control
       if(/^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName)) return;                          // handled via change/input
+      // A FILE PICKER OPENS HERE (2026-10-16): relayed, the click is no user gesture in the chart window and no picker
+      // opens - so the survey area's file is picked and read in this window, and its TEXT sent (kind "file", below)
+      if(el.id === "bnd_import"){ openBoundaryFile(); e.stopImmediatePropagation(); return; }
       uiBus.postMessage({t:"ev", kind:"click", id:el.id});
       e.stopImmediatePropagation(); }, true);
     wrapUICards();                                   // panels -> draggable/resizable cards (restores saved layout)
@@ -16785,6 +16905,7 @@ function setupUISplit(){
       if(m.t!=="ev" || !supervising()) return;
       const el = document.getElementById(m.id); if(!el) return;
       if(m.kind==="click"){ el.click(); }
+      else if(m.kind==="file" && m.id==="bnd_import"){ importBoundaryText(String(m.name || "a file"), String(m.text || "")); }
       else if(m.kind==="val"){
         if(el.type==="checkbox"||el.type==="radio") el.checked = !!m.checked; else el.value = m.value;
         el.dispatchEvent(new Event("input",{bubbles:true}));
@@ -20036,7 +20157,7 @@ async function resetMission(){
   flashNote("Resetting — reloading fresh…");
   clearTimeout(saveTimer);                        // cancel the throttled save; persist now instead
   try{ await fetch("/api/mission", {method:"POST", headers:{"Content-Type":"application/json"},
-       body: JSON.stringify({...mission, boundary, boundary_closed: boundaryClosed})}); }catch(e){}
+       body: JSON.stringify({...mission, boundary, boundary_closed: boundaryClosed, survey_bounded: surveyBounded})}); }catch(e){}
   await cmd("/api/cmd/reset");                     // power-cycle the sim boat server-side
   // cache-busting reload: a unique URL can't be served from any browser cache, and the
   // server sends no-store, so the page (all inline JS/CSS) always comes back fresh.

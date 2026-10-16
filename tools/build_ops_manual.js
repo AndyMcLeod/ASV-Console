@@ -296,6 +296,7 @@ c.push(TBL(["Control", "Does"], [
 // 9 ---------------------------------------------------------------------------
 c.push(H1("9  Planning a survey"));
 c.push(H2("9.1  The three-click pattern"));
+c.push(P("PATTERN OR BOUNDED. The Survey tab's SURVEY switch chooses how the lines are laid. PATTERN, the default, is the three-click survey below: nothing bounds the lines, and the Area row is hidden. BOUNDED fills a survey area with the lines; draw it or import it (9.3). An area drawn earlier is kept while you are on Pattern, but it is not shown and not used. The switch is saved with the plan, and a survey you bring back with its edit button brings its own switch back with it."));
 c.push(P("On the card's Survey tab (Draw arms it; a tab with no pattern arms itself), click three times:"));
 c.push(B("The START CORNER of the area — the corner the lines are laid out from. Where the vessel actually starts the survey is decided at Punch Out (9.9)."));
 c.push(B("The OPPOSITE (diagonal) corner."));
@@ -312,6 +313,8 @@ c.push(TBL(["Control", "Effect"], [
   ["Line len / Width / Lines", "Derived readouts — what the current pattern actually is"],
 ], [2400, 6960]));
 c.push(H2("9.3  Constraining the area"));
+c.push(P("With the Survey switch on BOUNDED and no area yet, the card's Draw (and choosing the tab) arms the chart to draw the area. Once it is closed, Draw moves A, B and C instead, which then set only where the lines start and their spacing and direction."));
+c.push(P("IMPORT brings in an area drawn somewhere else: a GeoJSON, KML or CSV file. From GeoJSON and KML the first polygon in the file is used (a line that closes on itself counts). A CSV holds one corner a line, latitude then longitude, or a header that names the columns (lat or latitude, lon or longitude, or Y and X). The banner says what was read: the corners, the area, where it is from her, and anything not used, such as other areas in the file, holes, or a CSV read longitude first. The chart is taken to the area. A file that cannot be used changes nothing, and the banner says why. A KMZ is a zipped KML: unzip it and import the .kml inside. A file in projected coordinates must be exported in WGS 84 (latitude and longitude). In the controls window the file picker opens there, and the area appears on the chart."));
 c.push(P("The Survey tab's AREA row draws an arbitrary boundary polygon: press its Draw, click to drop points, click the first point to close it (Close does the same). Survey lines clip to that polygon rather than the rectangle. Show hides or shows it — it still clips while hidden; Clear deletes it."));
 c.push(P("WITH A BOUNDARY CLOSED, THE LINES FILL THE BOUNDARY. They are laid across the whole of it at the survey's Direction and Spacing, so turning the lines or changing the spacing keeps the boundary full of lines, edge to edge - none drop out at its corners. A, B and C still set the direction and spacing, which side the survey starts from, and where the leftover margin goes (Align); Line len, Width and Lines then describe the boundary. Along an edge the lines are not parallel to, the gap between the edge and the nearest line can be up to one line spacing."));
 c.push(H2("9.4  Depth limits for coverage"));

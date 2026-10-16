@@ -146,13 +146,16 @@ const SRC = [decl("^const PATH_TABS = .*$"), decl("^const PATH_TAB_OF = .*$"), d
   decl("^const PATH_TAG = \\{[^}]*\\};"), decl("^const PATH_TAB_KEY = .*$"),
   grab("setMode"), grab("pathDrawing"), grab("pathEmpty"), grab("pathSelect"), grab("pathDraw"), grab("pathStopDrawing"),
   grab("pathEscape"), grab("searchShown"), grab("setGotoTarget"), grab("gotoFromInputs"), grab("pathLen"), grab("pathTimeTxt"),
-  grab("pathRender"), grab("pathReadings")].join("\n");
+  grab("pathRender"), grab("pathReadings"),
+  // the Survey tab's Pattern / Bounded switch (2026-10-16, 2e-2g)
+  grab("pathDrawMode"), grab("surveySetBounded"), grab("renderSurveyMode"), grab("boundaryActive")].join("\n");
 function world() {
   const ids = ["#pathPanel", "#pp_draw", "#pp_fold", "#pp_rules", "#bnd_draw", "#r_draw", "#gt_lat", "#gt_lon", "#gt_range",
     "#gt_time", "#gt_go", "#gt_hint", "#tr_len", "#tr_time", "#sr_len", "#wp_n", "#wp_lines", "#wp_len", "#pp_plan .ppsum",
     "#pp_rules .pprsum", "#sp_mindepth", "#sp_buffer", "#sp_water",
     "#pp_follow", "#pp_follow .pprsum", "#c_arrival", "#c_approach", "#c_completion",
-    "#pp_tab_survey", "#pp_tab_search", "#pp_tab_transit", "#pp_tab_passage", "#pp_tab_goto", "#pp_tab_wpt"];
+    "#pp_tab_survey", "#pp_tab_search", "#pp_tab_transit", "#pp_tab_passage", "#pp_tab_goto", "#pp_tab_wpt",
+    "#sv_mode_pattern", "#sv_mode_bounded", "#boundPanel", "#sv_mode_hint"];
   const D = {};
   for (const i of ids) D[i] = mkEl(i);
   D["#sp_mindepth"].value = "2"; D["#sp_buffer"].value = "5"; D["#sp_water"].value = "";
@@ -161,8 +164,9 @@ function world() {
   D["#c_completion"].selectedIndex = 0;
   const bodies = ["survey", "search", "transit", "passage", "goto", "wpt"].map(t => mkEl("body-" + t, { dataset: { tab: t } }));
   D["#pathPanel"].querySelectorAll = () => bodies;
-  const log = { renders: 0, readings: 0, ls: {} };
+  const log = { renders: 0, readings: 0, ls: {}, seeds: 0, saves: 0 };
   const env = { D, bodies, log, mapEl: { style: {} },
+    seedPatternFromBoundary() { log.seeds++; }, saveMission() { log.saves++; },
     lsGet: (k, d) => (k in log.ls ? log.ls[k] : d), lsSet: (k, v) => { log.ls[k] = v; },
     updatePatReadout() {}, updateSearchPanel() {}, updateTransitPanel() {}, render() { log.renders++; },
     distTo: (a, b) => Math.hypot((b.lat - a.lat) * 111320, (b.lon - a.lon) * 111320 * Math.cos(a.lat * Math.PI / 180)),
@@ -175,8 +179,9 @@ function world() {
   const api = new Function("env", `"use strict";
     const $ = (s) => env.D[s] || null;
     const {mapEl, lsGet, lsSet, updatePatReadout, updateSearchPanel, updateTransitPanel, distTo, fmtDist, fmtDur, fmtBrgRange,
-           roleSpeed, roleSpeedMS, spdTxt, searchRoute} = env;
+           roleSpeed, roleSpeedMS, spdTxt, searchRoute, seedPatternFromBoundary, saveMission} = env;
     const render = () => env.render();
+    let surveyBounded = false, boundary = [], boundaryClosed = false, patClip = null;
     let mode = "pan", rocPlaceKind = null, measPend = null, center = {lat: 43, lon: -70.7};
     let pathTab = "survey", pathFold = false, pathRulesFold = false, pathFollowFold = false, gotoTarget = null, searchRouted = env.searchRouted;
     let pat = {A: null, B: null, C: null}, search = {type: "expbox", datum: null}, transit = [], asv = {lat: 43.07, lon: -70.71};
@@ -184,8 +189,11 @@ function world() {
     const canCommand = () => armed;
     ${SRC}
     return { setMode, pathSelect, pathDraw, pathEscape, pathStopDrawing, searchShown, setGotoTarget, gotoFromInputs, pathRender,
-             pathReadings, get mode(){ return mode; }, get tab(){ return pathTab; }, get target(){ return gotoTarget; },
+             pathReadings, surveySetBounded, pathDrawMode, boundaryActive,
+             get mode(){ return mode; }, get tab(){ return pathTab; }, get target(){ return gotoTarget; },
+             get bounded(){ return surveyBounded; }, get patClip(){ return patClip; },
              set: (k, v) => { if(k === "pat") pat = v; else if(k === "transit") transit = v; else if(k === "search") search = v;
+                              else if(k === "boundary"){ boundary = v; boundaryClosed = v.length >= 3; } else if(k === "patClip") patClip = v;
                               else if(k === "mission") mission = v; else if(k === "armed") armed = v; else if(k === "tab") pathTab = v;
                               else if(k === "rulesFold") pathRulesFold = v; else if(k === "followFold") pathFollowFold = v; } };`)(env);
   return { api, D, bodies, log };
@@ -233,6 +241,63 @@ const tabOn = (w) => ["survey", "search", "transit", "passage", "goto", "wpt"].f
         () => wp.join("|") === "pan|wpt|Edit" && wpOn.join("|") === "wpt|Editing|EDITING WAYPOINTS · ESC TO STOP"
               && wpOff.join("|") === "pan|Edit" && same.join("|") === "goto|goto|survey|survey",
         () => JSON.stringify({ wp, wpOn, wpOff, same }));
+}
+
+// ── 2e-2g. PATTERN OR BOUNDED (Andy, 2026-10-16: "For some surveys the boundary box is critical and should have a draw
+// mode or an input mode for pre-drawn surveys. Otherwise, allow the unbounded survey pattern 3 point draw functionality";
+// asked, he chose a Pattern / Bounded switch and importing a file). ─────────────────────────────────────────────────────
+{
+  const w = world(), a = w.api;
+  a.set("tab", "transit"); a.pathRender();
+  a.pathSelect("survey");                                    // a plan from scratch: PATTERN, nothing drawn - the three clicks
+  const pat0 = [a.mode, a.bounded, w.D["#sv_mode_pattern"].classList.contains("on"), w.D["#sv_mode_bounded"].classList.contains("on"),
+                w.D["#boundPanel"].style.display, w.D["#sv_mode_hint"].textContent];
+  a.surveySetBounded(true);                                  // BOUNDED with no area: the chart armed to draw the AREA
+  const b0 = [a.mode, a.bounded, w.D["#sv_mode_bounded"].classList.contains("on"), w.D["#boundPanel"].style.display,
+              w.D["#sv_mode_hint"].textContent, w.D["#pp_draw"].textContent, w.log.saves];
+  a.pathDraw(); const bOff = a.mode; a.pathDraw(); const bOn = a.mode;   // the card's Draw: off, then the area again
+  check("2e. PATTERN IS THE PLAIN THREE-CLICK SURVEY: a Survey tab with nothing drawn arms the pattern's clicks, the switch "
+        + "reads Pattern, the Area row is hidden and the tab says how to draw A, B and C; BOUNDED with no area arms the AREA "
+        + "(the card's Draw too), shows the Area row, says Draw or Import, and is saved with the plan",
+        () => pat0.slice(0, 5).join("|") === "survey|false|true|false|none" && /click A the start corner, B the opposite corner, C the line spacing/.test(pat0[5])
+              && b0.slice(0, 4).join("|") === "bound|true|true|" && /Draw the area below, or Import one \(GeoJSON, KML, CSV\)/.test(b0[4])
+              && b0[5] === "Drawing area" && b0[6] === 1 && bOff === "pan" && bOn === "bound",
+        () => JSON.stringify({ pat0, b0, bOff, bOn }));
+  const AREA = [{ lat: 43, lon: -70.7 }, { lat: 43, lon: -70.69 }, { lat: 43.005, lon: -70.69 }];
+  a.set("boundary", AREA); a.set("patClip", ["a punch"]); a.setMode("pan"); a.pathRender();
+  const bDraw = a.pathDrawMode("survey"), bHint = w.D["#sv_mode_hint"].textContent, bActive = a.boundaryActive();
+  a.setMode("bound");                                        // drawing the area when Pattern is chosen: it stops
+  a.surveySetBounded(false);
+  const p1 = [a.mode, a.bounded, a.boundaryActive(), a.patClip, w.D["#boundPanel"].style.display, a.pathDrawMode("survey"), w.log.saves];
+  a.set("patClip", ["a punch"]);
+  a.surveySetBounded(true);                                  // back to Bounded with the area closed: the area's lines
+  const b1 = [a.mode, a.boundaryActive(), a.patClip, w.log.seeds];
+  check("2f. WITH AN AREA CLOSED, Bounded fills it - the card's Draw moves A, B and C ('survey') and says so; PATTERN then "
+        + "stops the area being drawn, hides the Area row and no longer applies it (the punch, cut to it, thrown away) - the "
+        + "area KEPT; Bounded again applies it, seeds the pattern from it if there is none, and throws the punch away",
+        () => bDraw === "survey" && /The lines fill the area/.test(bHint) && bActive === true
+              && p1.join("|") === "pan|false|false||none|survey|2" && b1.join("|") === "pan|true||1",
+        () => JSON.stringify({ bDraw, bHint, bActive, p1, b1 }));
+  const w2 = world(), c = w2.api;
+  c.set("patClip", ["kept"]); c.surveySetBounded(true);     // no area: the lines are the same either way - the punch stands
+  const keep = [c.patClip && c.patClip[0], c.mode];
+  c.surveySetBounded(true); const again = w2.log.saves;      // the same choice again: nothing changes, nothing saved twice
+  c.set("tab", "transit"); c.setMode("pan"); c.pathSelect("survey");   // Bounded, nothing drawn: choosing the tab arms the area
+  const arm = c.mode;
+  // EMPTY ON BOUNDED IS "NO AREA", NOT "NO PATTERN": a pattern drawn on Pattern and no area yet - the tab still arms the
+  // area; an area and no pattern - the tab has something drawn, and stays panning
+  c.set("pat", { A: { lat: 43, lon: -70.7 }, B: null, C: null });
+  c.set("tab", "transit"); c.setMode("pan"); c.pathSelect("survey");
+  const armPat = c.mode;
+  const w3 = world(), d = w3.api;
+  d.set("boundary", [{ lat: 43, lon: -70.7 }, { lat: 43, lon: -70.69 }, { lat: 43.005, lon: -70.69 }]); d.surveySetBounded(true);
+  d.set("tab", "transit"); d.setMode("pan"); d.pathSelect("survey");
+  const panArea = d.mode;
+  check("2g. a switch that does not change the lines (no area closed) keeps the punch; choosing the same mode again saves "
+        + "nothing; on Bounded the Survey tab is EMPTY when it has no AREA - choosing it arms the area, with a pattern drawn "
+        + "or not - and not empty with an area and no pattern (it stays panning)",
+        () => keep.join("|") === "kept|bound" && again === 1 && arm === "bound" && armPat === "bound" && panArea === "pan",
+        () => JSON.stringify({ keep, again, arm, armPat, panArea }));
 }
 
 // ── 3. a drawing mode brings its tab ───────────────────────────────────────────────────────────────────────────────────

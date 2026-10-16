@@ -200,6 +200,7 @@ function makeWorld(opts) {
     + "let turnSlowAt = {};\n"
     + "let patStruck = [], patStruckKey = null, patSel = null, patClipMemo = null, patRepunchT = null;\n"
     + "let punchInFlight = null, punchBusy = false, encShow = false, boundary = [], boundaryClosed = false;\n"
+    + "let surveyBounded = false;\n"            // the Survey tab's switch (2026-10-16): no area here either way
     + "let planKind = null, asv = null;\n"
     + "const mission = {lines: [], waypoints: [], approach_radius_m: 1, speeds: {}, speed: 'survey'};\n"
     + "const applyNogoControls = () => {}; const ensureNogoArea = async () => true; const render = () => {};\n"

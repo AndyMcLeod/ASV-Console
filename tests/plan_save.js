@@ -90,6 +90,7 @@ console.log("Saving the plan - against a revision, one at a time, and said when 
   // ---- the page's world, as the save path reads it --------------------------------------- //
   let mission = { waypoints: [{ lat: 44.9, lon: -67.0 }], lines: [] };
   let boundary = [], boundaryClosed = false, saveTimer = null;
+  let surveyBounded = false;          // the Survey tab's switch (2026-10-16): saved and loaded with the plan - 5b
   const banners = [];
   const showBanner = (t) => banners.push(t);
   const calls = [];
@@ -116,7 +117,7 @@ console.log("Saving the plan - against a revision, one at a time, and said when 
   const page = eval("(function(){ " + DECL + "\n" + grab("saveMission") + "\n" + grab("flushMission") + "\n"
     + grab("loadMission") + "\n"
     + "return { saveMission, flushMission, loadMission, get: () => ({ missionRev, missionSaving, "
-    + "missionSaveAgain, missionConflict, missionLoaded }), setRev: (v) => { missionRev = v; }, "
+    + "missionSaveAgain, missionConflict, missionLoaded, surveyBounded }), setRev: (v) => { missionRev = v; }, "
     + "setLoaded: (v) => { missionLoaded = v; } }; })()");
 
   // 1. The revision goes out with the save, and the answer's revision is the next one. (Checks 1-6 are
@@ -214,6 +215,26 @@ console.log("Saving the plan - against a revision, one at a time, and said when 
         () => withRev === 33 && withoutRev === null,
         () => "after rev 33: " + withRev + "; after a plan with no rev: " + withoutRev);
 
+  // 5b. THE SURVEY TAB'S SWITCH RIDES THE PLAN (2026-10-16, Andy: a bounded survey "should have a draw mode or an input
+  // mode for pre-drawn surveys. Otherwise, allow the unbounded survey pattern 3 point draw"): the save carries
+  // `survey_bounded` as the page holds it, a load takes it as saved - and a plan saved BEFORE the switch (none) loads
+  // Bounded exactly when its area was closed, which is when an area applied then.
+  const AREA = [{ lat: 43, lon: -70.7 }, { lat: 43, lon: -70.69 }, { lat: 43.005, lon: -70.69 }];
+  const sent5b = calls[0] && calls[0].body ? calls[0].body.survey_bounded : "(no save)";
+  const boundedOf = async (plan) => { await load(plan); return page.get().surveyBounded; };
+  const b5 = {
+    savedTrue: await boundedOf({ waypoints: [], lines: [], survey_bounded: true }),
+    savedFalseWithArea: await boundedOf({ waypoints: [], lines: [], survey_bounded: false, boundary: AREA, boundary_closed: true }),
+    oldClosed: await boundedOf({ waypoints: [], lines: [], boundary: AREA, boundary_closed: true }),
+    oldOpen: await boundedOf({ waypoints: [], lines: [], boundary: AREA, boundary_closed: false }),
+    oldNone: await boundedOf({ waypoints: [], lines: [] }),
+  };
+  check("5b. the Survey tab's switch is SAVED with the plan (survey_bounded) and LOADED as saved - Pattern kept even with an "
+        + "area closed; a plan from before the switch loads Bounded only when its area was closed",
+        () => sent5b === false && b5.savedTrue === true && b5.savedFalseWithArea === false && b5.oldClosed === true
+              && b5.oldOpen === false && b5.oldNone === false,
+        () => JSON.stringify({ sent5b, b5 }));
+
   // 6. The debounce is kept: a burst of edits is ONE save, 400 ms after the last.
   const n3 = calls.length;
   const page3 = eval("(function(){ " + DECL + "\n" + grab("saveMission") + "\n" + grab("flushMission") + "\n"
@@ -301,7 +322,7 @@ console.log("Saving the plan - against a revision, one at a time, and said when 
   const guiConfirm = (title, msg, opts) => { asked.push({ title, opts: opts || {} }); return Promise.resolve(answerYes); };
   const posted = [], commanded = [], replaced = [];
   const resetPage = eval("(function(){ let mission = { waypoints: [{ lat: 1, lon: 2 }], lines: [] }, boundary = [], "
-    + "boundaryClosed = false, saveTimer = null; const clearTrack = () => {}, flashNote = () => {}, clearTimeout = () => {};"
+    + "boundaryClosed = false, surveyBounded = false, saveTimer = null; const clearTrack = () => {}, flashNote = () => {}, clearTimeout = () => {};"
     + " const fetch = (u, o) => { posted.push(JSON.parse(o.body)); return Promise.resolve({ ok: true }); };"
     + " const cmd = (p) => { commanded.push(p); return Promise.resolve({ ok: true }); };"
     + " const location = { pathname: '/', replace: (u) => replaced.push(u) };\n"

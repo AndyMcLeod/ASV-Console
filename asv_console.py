@@ -1703,6 +1703,11 @@ def load_mission():
             # plan drawn at the dock survives a reload / a session at sea.
             "boundary": m.get("boundary") or [],
             "boundary_closed": bool(m.get("boundary_closed")),
+            # THE SURVEY TAB'S SWITCH (2026-10-16, Andy: a bounded survey "should have a draw mode or an input mode for
+            # pre-drawn surveys. Otherwise, allow the unbounded survey pattern 3 point draw"): True = Bounded (the lines
+            # fill the area), False = Pattern (the 3-click box; the area kept but not applied). None = a plan saved before
+            # the switch - the page then reads a closed area as Bounded, as it always applied. Carried in both dicts.
+            "survey_bounded": m.get("survey_bounded") if isinstance(m.get("survey_bounded"), bool) else None,
             # THE SURVEYS, in run order (sequenced surveys, phase 1, 2026-10-02) - carried here AND in save_mission,
             # because each builds its dict from a list of names and a field missing from either is dropped on the
             # next save (the `speeds` lesson). The page judges them (normalizeSurveys); this only carries them.
@@ -1720,7 +1725,8 @@ def load_mission():
             "speeds": _norm_speeds(None), "completion": "rth",
             "buffer_m": NOGO_BUFFER_DEFAULT_M, "min_depth_m": 2.0,
             "lead_mode": "m", "lead_in": 0, "lead_out": 0, "turn_ease": "arc",
-            "boundary": [], "boundary_closed": False, "surveys": [], "breaks": [], "passage": None, "rev": 0}
+            "boundary": [], "boundary_closed": False, "survey_bounded": None, "surveys": [], "breaks": [], "passage": None,
+            "rev": 0}
     return dict(_MISSION_CACHE)
 
 
@@ -1765,6 +1771,7 @@ def save_mission(m):
         "turn_ease": ("eased" if m.get("turn_ease") == "eased" else "arc"),
         "boundary": m.get("boundary") or [],
         "boundary_closed": bool(m.get("boundary_closed")),
+        "survey_bounded": m.get("survey_bounded") if isinstance(m.get("survey_bounded"), bool) else None,   # see load_mission
         "surveys": m.get("surveys") or [],          # checked by check_plan_body above; see load_mission
         "breaks": m.get("breaks") or [],            # the survey break-offs (2026-10-11); checked above, see load_mission
         "passage": m.get("passage") if isinstance(m.get("passage"), dict) else None,   # the passage sailed (2026-10-12)

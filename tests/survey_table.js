@@ -328,6 +328,17 @@ function commit(w, lines, anchors) {
     check("9c. a survey from before phase 2 (no settings recorded) loads its drawing and leaves the card's settings as "
           + "they were",
           () => w3.editingSv === "S1" && w3.mission.lead_in === 7 && w3.pat.A !== null);
+    // 9e. THE SWITCH COMES BACK WITH THE SURVEY (2026-10-16): one recorded with its area comes back BOUNDED (9), one
+    // recorded without an area comes back PATTERN - with the card on Bounded, and an area on it, when the edit was pressed
+    const w4 = pageWorld();
+    await commit(w4, pattern(2, 100, 10, 0, 0), ANCH(0));
+    w4.mission.surveys[0].settings = { boundary: [], max_depth_m: null, lead_mode: "m", lead_in: 0, lead_out: 0, turn_ease: "arc" };
+    w4.setBoundary([P(-5, -5), P(50, -5), P(50, 120)]); w4.surveyBounded = true;
+    await w4.editSurvey("S1");
+    check("9e. EDITING BRINGS THE SURVEY'S OWN SWITCH BACK: S1 recorded in an area comes back Bounded (9); one recorded with "
+          + "no area comes back PATTERN, though the card was on Bounded with an area when its edit was pressed",
+          () => w.surveyBounded === true && w4.editingSv === "S1" && w4.surveyBounded === false && !w4.boundaryClosed,
+          () => JSON.stringify({ s1: w.surveyBounded, s4: w4.surveyBounded, closed4: w4.boundaryClosed }));
   }
   {
     // the notes and the question - the env is reachable through a world built with its log kept
@@ -830,6 +841,7 @@ function buildWorld(env) {
     + "let patClip = null, patTransits = [], patLead = [], patRepunchT = null, punchInFlight = null, drawn = [];\n"
     + "let patRed = [], patJoined = true, patDropped = null, patFunnel = null; let turnSlowAt = {}; let ANCHORS = null;\n"
     + "let pat = {A: null, B: null, C: null, align: 0}, mode = 'pan', boundary = [], boundaryClosed = false, boundDrag = null;\n"
+    + "let surveyBounded = true;\n"   // the Survey tab's switch (2026-10-16): BOUNDED, as these checks assumed; 9e drives it
     + decl(/^let editingSv = [^;]*;/m) + "\n" + decl(/^let cardSv = [^;]*;/m) + "\n"
     + decl(/^const LEAD_MAX_M = [^;]*;/m) + "\n" + decl(/^const LINE_PART_OFFSET_M = [^;]*;/m) + "\n"
     + decl(/^let _drawnLines = [^;]*;/m) + "\n" + decl(/^let _svTableKey = [^;]*;/m) + "\n"
@@ -859,6 +871,7 @@ function buildWorld(env) {
     + " get editingSv(){ return editingSv; }, set editingSv(v){ editingSv = v; }, get cardSv(){ return cardSv; },"
     + " set cardSv(v){ cardSv = v; }, get pat(){ return pat; }, get boundary(){ return boundary; },"
     + " get boundaryClosed(){ return boundaryClosed; }, setBoundary: (b) => { boundary = b; boundaryClosed = b.length >= 3; },"
+    + " get surveyBounded(){ return surveyBounded; }, set surveyBounded(v){ surveyBounded = v; },"
     + " commitPattern, editSurvey, deleteSurvey, moveSurveyRow, renameSurvey, renderSurveyTable, cardSurveyId,"
     + " committedPatternInfo, surveySettingsNow, applySurveySettings,"
     + " trackLineCoverage, saveLineCov, lineDoneFrac, surveyProgress, surveyTideMoved, goToSurvey, uploadFromSurvey,"

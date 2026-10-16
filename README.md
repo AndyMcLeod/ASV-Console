@@ -1235,7 +1235,8 @@ lost. The plan as a whole (waypoints, length, CLR PLAN) is the card's foot. The 
 SRCH / TRAN buttons are gone. `tests/path_card.js`.
 
 1. **Plan** — on the **Path planning card**: the **Waypoints** tab to drop/remove
-   waypoints, or the **Survey** tab for a **CAMP-style 3-click survey pattern**: press
+   waypoints, or the **Survey** tab for a **CAMP-style 3-click survey pattern** (its switch on
+   **Pattern**, the default; **Bounded** fills an area instead, below): press
    **Draw**, then click the start corner, the opposite (diagonal)
    corner, then a third point that sets the **line spacing** (distance from the
    start) and **orientation** (its bearing). Parallel lines fill the box
@@ -2312,7 +2313,31 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    Needs a connection the first time an area is fetched; features cache to
    `charts/enc/` for offline reuse.
 
-   **Arbitrary survey-area boundary.** The Survey tab's **Area** row draws a **CAMP-style
+   **Pattern or Bounded** (Andy, 2026-10-16: "For some surveys the boundary box is critical and
+   should have a draw mode or an input mode for pre-drawn surveys. Otherwise, allow the unbounded
+   survey pattern 3 point draw functionality"). The Survey tab's **Survey** switch chooses.
+   **Pattern** (the default for a new plan) is the three-click survey above. No area applies and
+   the Area row is hidden; an area already drawn is kept for Bounded but neither drawn nor used.
+   **Bounded** fills an area with the lines: draw it on the chart, or **Import** one drawn
+   elsewhere. With no area yet, the card's Draw (and choosing the tab) arms the chart for the area.
+   Once it is closed, Draw moves A, B and C, which then set only the lines' start, spacing and
+   direction. The switch is saved with the plan (`survey_bounded`); a plan saved before it loads
+   Bounded only when its area was closed, which is when an area applied then. A survey brought back
+   with its edit (✎) brings its own switch back: Bounded if it was drawn in an area, Pattern if not.
+
+   **Import a survey area** (Bounded): a **GeoJSON** (`.geojson`, `.json`), **KML** (`.kml`) or
+   **CSV** (`.csv`, `.txt`) file, read by `static/js/boundary_file.js`. GeoJSON and KML give their
+   first Polygon's outer ring (a closed line counts as an area). A CSV has one corner a line,
+   latitude then longitude, or a header naming the columns (lat/latitude/y, lon/long/lng/longitude/x).
+   With no header, a first column past 90 can only be longitude and is read so, and said. What it
+   does not use is said in the banner: the other areas in the file, an area's holes, a column order
+   it swapped. The banner also gives the corners, the area in km² and where its middle is from her,
+   and the chart is taken to it. A file it cannot read changes nothing and says why. Refused files:
+   a KMZ (unzip it), a projected file (not degrees), a line that does not close, under 3 or over 2,000
+   corners, corners on one line, and anything over 5 MB. In the controls window the picker opens
+   there; the file is read there and its text sent to the chart, which imports it.
+
+   **Arbitrary survey-area boundary.** The Survey tab's **Area** row (Bounded) draws a **CAMP-style
    survey-area polygon** — press its **Draw**, click the chart to drop points, click the first point to close
    (vertices are draggable). The survey lines are clipped exactly to that polygon,
    including concave shapes (legs crossing a notch split into two). **With a boundary

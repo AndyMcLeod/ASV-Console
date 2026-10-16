@@ -79,10 +79,13 @@ const decl = (name) => { const m = new RegExp("const " + name + " = [^;]+;").exe
 const world = () => new Function("GD", "GM", [
   "const {distTo, azTo, atDA, planeFrame, llEN} = GD, {segInt, pinp, lerpLL} = GM;",
   "let pat = {A: null, B: null, C: null, align: 0}, boundary = [], boundaryClosed = false, center = {lat: 43, lon: -70.7};",
+  // BOUNDED, as every check before the switch (2026-10-16) assumed - 8 drives PATTERN
+  "let surveyBounded = true;",
   decl("MAX_SURVEY_LINES"), decl("AREA_EDGE_M"), decl("AREA_SLIVER_M"),
   grab("surveyPattern"), grab("areaPattern"), grab("clipToPoly"), grab("boundaryActive"), grab("currentPattern"),
   grab("planRef"), grab("patSourceLines"),
-  "return {surveyPattern, set: (o) => { if (o.pat) pat = o.pat; if (o.boundary) { boundary = o.boundary; boundaryClosed = o.boundary.length >= 3; } },",
+  "return {surveyPattern, set: (o) => { if (o.pat) pat = o.pat; if (o.boundary) { boundary = o.boundary; boundaryClosed = o.boundary.length >= 3; }",
+  "                                   if (o.bounded !== undefined) surveyBounded = o.bounded; },",
   "        lines: () => patSourceLines(), sp: () => currentPattern()};",
 ].join("\n"))(GD, GM);
 
@@ -279,6 +282,24 @@ function World0() {
         () => !open.area && closed.area === true && /surveyPattern\(pat\.A, pat\.B, pat\.C, pat\.align, boundaryActive\(\) \? boundary : null\)/.test(grab("currentPattern"))
               && Math.abs(closed.width - (1000 + 600) * Math.SQRT1_2) < 1 && Math.abs(closed.legLength - (1000 + 600) * Math.SQRT1_2) < 1,
         () => "open: " + open.count + " lines; closed: " + closed.count + " lines, " + closed.legLength.toFixed(0) + " x " + closed.width.toFixed(0) + " m");
+}
+
+// ── 8. PATTERN (Andy, 2026-10-16: "Otherwise, allow the unbounded survey pattern 3 point draw functionality") ────────
+// The Survey tab's switch: in PATTERN a closed area is kept but not applied - the three clicks' box, unclipped, exactly
+// what no area gives - and BOUNDED applies it again.
+{
+  const W = world(), N = world();
+  W.set({ pat: patAt(45, 50, 1), boundary: RECT, bounded: false });
+  N.set({ pat: patAt(45, 50, 1) });                          // no area at all
+  const kept = W.sp(), none = N.sp(), kl = W.lines(), nl = N.lines();
+  W.set({ bounded: true });
+  const back = W.sp();
+  const sameLines = kl.length === nl.length && kl.every((l, i) => GD.distTo(l[0], nl[i][0]) < 1e-6 && GD.distTo(l[1], nl[i][1]) < 1e-6);
+  check("8. PATTERN: with an area closed but the switch on Pattern, the pattern is the three clicks' box - the same lines, "
+        + "unclipped, as with no area at all; Bounded lays them across the area again",
+        () => !kept.area && kept.count === none.count && sameLines && back.area === true
+              && /return surveyBounded && boundaryClosed && boundary\.length >= 3;/.test(grab("boundaryActive")),
+        () => "pattern: " + kept.count + " lines (no area: " + none.count + "), same " + sameLines + "; bounded: area " + back.area);
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");

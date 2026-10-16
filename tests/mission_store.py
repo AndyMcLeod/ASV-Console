@@ -690,6 +690,21 @@ check("17d. a passage that is not what it claims is REFUSED in words and nothing
       all(p_said.values()) and open(_C.MISSION_PATH, "rb").read() == p_before,
       "; ".join("%s: %s" % (k, (v or "NOT REFUSED")[:36]) for k, v in p_said.items()))
 
+# 17g. THE SURVEY TAB'S SWITCH (2026-10-16, Andy: a bounded survey "should have a draw mode or an input mode for
+# pre-drawn surveys. Otherwise, allow the unbounded survey pattern 3 point draw functionality"): `survey_bounded` rides
+# BOTH dicts - Bounded and Pattern each saved and loaded as they were, and a plan with none (or not a yes/no) loads None,
+# which the page reads from the area as it always applied (tests/plan_save.js 5b).
+sb = {}
+for v in (True, False, None, "yes"):
+    _, e = attempt(_C.save_mission, sv_plan(survey_bounded=v))
+    on_disk = json.loads(open(_C.MISSION_PATH, "rb").read().decode("utf-8")).get("survey_bounded", "MISSING")
+    sb[repr(v)] = (e, _C.load_mission().get("survey_bounded", "MISSING"), on_disk)
+check("17g. the Survey tab's switch (survey_bounded) is saved and loaded as it was - True, False - and none, or one that "
+      "is not a yes/no, is WRITTEN as none and loads None",
+      sb["True"] == (None, True, True) and sb["False"] == (None, False, False) and sb["None"] == (None, None, None)
+      and sb["'yes'"] == (None, None, None),
+      json.dumps({k: list(v) for k, v in sb.items()}))
+
 # 17e-17f. THE WAY HOME ALONG A PASSAGE (2026-10-12, step 6): a passage record of kind "rth" - its sections home, the
 # last ending at "home", the passage it runs along (`path`), home, which end home is at, where it left it - and each
 # section's water level, kept on the plan the same way.
