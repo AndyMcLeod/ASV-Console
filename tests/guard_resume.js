@@ -420,6 +420,7 @@ eval([
   grab("speedRole"), grab("speedGovernor"),
   // THE LEAD (2026-10-03): speedGovernor asks leadSpeedKey every frame; with no slowdown block on V.VESSEL it answers null at once
   "let govLead = null;", grab("leadSpeedKey"), grab("leadFor"),
+  "let zoneHeld = null, zoneRestore = null; const zoneCap = () => null, zoneTrack = () => {}, zoneOnlyGovern = () => null;",   // speed zones (2026-10-16): none in this world - tests/speed_zones.js drives them
   // The one door the escape gives its claim back through (2026-09-22), carried across
   // verbatim so a change to that rule is a change HERE and not in a copy that drifts.
   grab("releaseEscapeClaim"),

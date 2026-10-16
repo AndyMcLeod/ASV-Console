@@ -252,6 +252,7 @@ eval([
   grab("took"), grab("speedRole"), grab("speedGovernor"), grab("resumeRun"),
   // THE LEAD (2026-10-03): speedGovernor asks leadSpeedKey every frame; with no slowdown block on V.VESSEL it answers null at once
   "let govLead = null;", grab("leadSpeedKey"), grab("leadFor"),
+  "let zoneHeld = null, zoneRestore = null; const zoneCap = () => null, zoneTrack = () => {}, zoneOnlyGovern = () => null;",   // speed zones (2026-10-16): none in this world - tests/speed_zones.js drives them
   "function __backLengths(){ return RESUME_BACK_LENGTHS; }",
   "function __setPauseMark(m){ pauseMark = m; }",
   "function __resumeSlow(){ return resumeSlow; }",

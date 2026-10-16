@@ -198,6 +198,7 @@ eval("let grant = null;" + grabDecl("SPEED_ROLES") + "\n" + grab("alongLineM") +
      grabDecl("commandedSpeed") + "\n" + grab("speedGovernor") + "\n" +
      // THE LEAD (2026-10-03): speedGovernor asks leadSpeedKey every frame; null at once with no slowdown block
      "let govLead = null;\n" + grab("leadSpeedKey") + "\n" + grab("leadFor") + "\n" +
+     "let zoneHeld = null, zoneRestore = null; const zoneCap = () => null, zoneTrack = () => {}, zoneOnlyGovern = () => null;\n" +   // speed zones (2026-10-16): none in this world - tests/speed_zones.js drives them
      "function __setCommanded(v){ commandedSpeed = v; }\n" +
      "function __commanded(){ return commandedSpeed; }\n" +
      // A `const` declared inside a direct eval stays in the EVAL's scope - only the

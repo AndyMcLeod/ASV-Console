@@ -570,6 +570,7 @@ check("20. the unrouted upload path clears the set rather than leaving a stale o
     grabFn("slowestMakingWayKey"), grabFn("setMsNow"), grabFn("makesWayKey"),   // the floor under every command (2026-09-26)
     grabFn("speedGovernor"),
     grabLet("govLead"), grabFn("leadSpeedKey"),   // the lead (2026-10-03): null at once with no slowdown block
+    "let zoneHeld = null, zoneRestore = null; const zoneCap = () => null, zoneTrack = () => {}, zoneOnlyGovern = () => null;",   // speed zones (2026-10-16): none in this world - tests/speed_zones.js drives them
     grabFn("legIsLine"), grabFn("routeSpeedKeys"), grabFn("runLegKeys"),   // ... and what it reads with one (19g-19i)
     grabFn("leadFor"), grabLet("viewLead"), grabLet("_legKeys"), grabFn("onLineM"), grabFn("twNowMs"),
     grabLet("guardEdgeAt"), grabLet("EDGE_REASSESS_MS"),    // the governor's raise rule: undeclared, a raise was a crash

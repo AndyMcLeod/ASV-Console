@@ -76,6 +76,7 @@ import currents                            # NOAA OFS surface currents (vendored
 import stream_fusion                       # NOAA tidal current predictions + PacIOOS models, fused with the OFS
 import ofs_s3                              # the same OFS files from NOAA's S3 bucket, when its model server is down
 import stofs                               # NOAA STOFS-3D's surge forecast at the gauges (a passage's planning water)
+import speed_zones                         # the states' no-wake / speed polygons, merged into the chart (/api/enc)
 import roc_tracks                          # Remote Operations Center tracking + moving HOME
 
 # --------------------------------------------------------------------------- #
@@ -84,6 +85,7 @@ import roc_tracks                          # Remote Operations Center tracking +
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(APP_DIR, "static")
 CHART_DIR = os.path.join(APP_DIR, "charts")
+SPEED_ZONE_DIR = os.path.join(CHART_DIR, "speed")   # the states' speed zones, a tile per source (speed_zones.py)
 MISSION_PATH = os.path.join(APP_DIR, "mission.json")
 COMMS_CONFIG_PATH = os.path.join(APP_DIR, "comms_config.json")
 # Session recordings: every command / setting / action + a telemetry trace, one
@@ -127,7 +129,7 @@ BOOT_ID = "%d-%d" % (os.getpid(), int(time.time() * 1000))
 # of the program (tests/state_dir.py, tests/build_id.py) copy THIS list - so a new module is added here or a copied
 # console dies at import (stream_fusion.py, 2026-10-07: both suites hung on a console that never came up).
 BUILD_PY = ("asv_console.py", "currents.py", "stream_fusion.py", "ofs_s3.py", "stofs.py", "roc_tracks.py", "ais_service.py",
-            "gps_sim.py")
+            "gps_sim.py", "speed_zones.py")
 BUILD_RECHECK_S = 5.0                   # how often the files are looked at again (a stat of each, not a read)
 PAGE_BUILD_TOKEN = "__ASV_PAGE_BUILD__"  # replaced in asv.html with the fingerprint it was served at
 
@@ -9127,6 +9129,10 @@ class Handler(BaseHTTPRequestHandler):
             data = fetch_enc_layered(bbox, min_depth)
         except Exception as e:  # never take the server down on a chart fetch
             return self._send(502, json.dumps({"error": str(e)}))
+        # THE STATES' SPEED ZONES, MERGED INTO THE CHART (2026-10-16, Andy: "Try ingesting local data from state GIS portals
+        # and merge into the NOAA environment"): their no-wake / speed polygons for this box, as features of role
+        # "speed_zone", and `speed_sources` saying which state services answered (speed_zones.py). It never fails the chart.
+        data = speed_zones.merge_into_chart(data, bbox, SPEED_ZONE_DIR, _enc_ssl())
         self._send(200, _json_body_yielding(data))
 
     def _serve_corridor(self):

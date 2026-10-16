@@ -1177,6 +1177,7 @@ import { koCount as routeKoCount, packKo as routePackKo } from "/static/js/route
 // OPEN WATER FIRST (2026-10-14): its words, for the banners and the Intent card (the planner itself is passage.js's).
 import { openWaterBox, openWaterNote, openWaterWhy } from "/static/js/openwater.js";
 import { parseBoundaryFile, ringAreaM2, ringMiddle, BOUNDARY_FILE_MAX_BYTES } from "/static/js/boundary_file.js";
+import { zoneDecision, zoneLeadM, zoneRuleTxt, zoneId, zoneApplies, noaaZones, inZone } from "/static/js/speedzones.js";
 import { HAZ_UNKNOWN_EXTENT, MARK_TAIL, WATER_FAR_KM, WATER_REMOTE_KM, WATER_STALE_S,
          WRECK_CLEAR_MARGIN_M, airNeedM, blocked, blockedInfo, bufferFloor, buildKeepouts, buildMargin, clearanceM,
          channelPolys, depthExcluded, effectiveWaterOffset, firstBlockAlong, hazExtent, overheadBlocks,
@@ -5161,6 +5162,107 @@ function speedReconcile(s, st){
   return "resent";
 }
 let commandedSpeed = null;
+// ── SPEED ZONES IN THE GOVERNOR (Andy, 2026-10-16: "Build a bounded area that overrides commanded speed and lowers to
+// legal speed. this releases once the ASV is clear of the area and it returns to commanded speed") ─────────────────────
+// The water's own limit (static/js/speedzones.js zoneDecision) is a CEILING on what the job wants: the governor commands
+// the slower of the two from the lead before a zone - so she is AT the zone's speed on its edge, not reaching for it
+// inside - until she is clear of it by her own length; the job's speed, her commanded speed, then comes back by the
+// governor's own rule on the next frame. It only ever LOWERS. The guard's slow-down and hold, an escape and a drift-in
+// keep the throttle they hold: an escape's HIGH is the one place she runs faster than a zone allows, because avoiding a
+// collision comes before a speed limit (COLREGS rule 8). A page that cannot say which leg she is on (indexedRoute null)
+// still caps her - it knows where she is - and puts back the speed she had when the zone took it (zoneRestore).
+// The zones are the chart's: a state's served with it (role "speed_zone", asv_console.py speed_zones) and the chart's own
+// restricted areas whose text gives a speed (noaaZones) - read again whenever the chart is (speedZonesNow).
+let zoneHeld = null, zoneRestore = null, zonesFor = null, zonesList = [];
+const zoneSaid = new Set();
+function speedZonesNow(){
+  if(zonesFor !== sea.enc){
+    zonesFor = sea.enc;
+    const f = (sea.enc && sea.enc.features) || [];
+    zonesList = [...f.filter(x => x.role === "speed_zone"), ...noaaZones(f)];
+  }
+  return zonesList;
+}
+/** What the zones allow her now (zoneDecision), `route` the one she flies when this page holds it. */
+function zoneCap(route){
+  const zs = speedZonesNow();
+  if(!zs.length || !asv || !V.SPEED_KN) return null;
+  const st = (S && S.status) || {}, wi = (S && S.wp_index) || 0;
+  const ahead = route && wi >= 0 && wi < route.length ? route.slice(wi) : [];
+  // the lead to the SLOWEST speed she has - the longest any zone can ask - so a zone ahead is never met at speed
+  const v = Math.max(0, +st.sog_kn || 0) * 0.514444;
+  const sd = V.VESSEL && V.VESSEL.maneuvering && V.VESSEL.maneuvering.slowdown, law = sd ? slowLaw(sd) : null;
+  const kns = Object.values(V.SPEED_KN).filter(Number.isFinite), slowMs = (kns.length ? Math.min(...kns) : 0) * 0.514444;
+  const leadM = zoneLeadM(v, law ? slowLeadM(v, slowMs, law, 0, 0) : 0, SPEED_CMD_LATENCY_S);
+  return zoneDecision({pos: {lat: asv.lat, lon: asv.lon}, ahead, zones: zs, speedsKn: V.SPEED_KN, leadM, held: zoneHeld,
+                       loaM: (V.VESSEL && V.VESSEL.hull && V.VESSEL.hull.loa_m) || 0});
+}
+/** A speed in a zone's sentence: "4 kn", and a named key with its knots - "low (4 kn)", never a bare "low". */
+function zoneSpd(k){ return isStepKey(k) || !V.SPEED_KN || V.SPEED_KN[k] == null ? spdTxt(k) : k + " (" + V.SPEED_KN[k] + " kn)"; }
+/** A zone's name for a sentence. */
+function zoneName(z){ const p = (z && z.props) || {}; return (p.name ? p.name : "a speed zone") + (p.source ? " (" + p.source + ")" : ""); }
+/** What the governor did with a zone answer, SAID once per change and logged: the zone taking her speed, ahead or in it;
+ *  her speed already within it; a zone that does not bind this hull; and the release, with the speed that comes back. */
+function zoneTrack(zc, jobKey, toldKey){
+  for(const z of (zc && zc.skipped) || []){
+    const k = "skip|" + zoneId(z);
+    if(zoneSaid.has(k)) continue;
+    zoneSaid.add(k);
+    flashNote("Speed zone " + zoneName(z) + ": " + zoneRuleTxt(z) + " - not for this hull: "
+      + zoneApplies(z, (V.VESSEL && V.VESSEL.hull && V.VESSEL.hull.loa_m) || 0).why + ". Her speed is unchanged.");
+  }
+  if(zc && zc.key && zc.zone){
+    const id = zoneId(zc.zone), capping = toldKey === zc.key && jobKey !== zc.key
+                                         && (V.SPEED_KN[jobKey] || 0) > (V.SPEED_KN[zc.key] || 0);
+    const was = zoneHeld;
+    zoneHeld = {id, key: zc.key, where: zc.where, d: zc.d, zone: zc.zone, capping, below: !!zc.below, jobKey};
+    // the same zone and speed: nothing to SAY - where she is in it (ahead, in, leaving) is logged as it changes - and
+    // nothing either when the job's own speed comes down to it mid-zone (measured live: the arrival's slow-down took over
+    // inside the zone and a second banner said "her low is within it"); only a zone that STARTS taking her speed is said
+    if(was && was.id === id && was.key === zc.key && (was.capping === capping || !capping)){
+      if(was.where !== zc.where || was.capping !== capping)
+        logClient("speed_zone", {state: zc.where, zone: zoneName(zc.zone), key: zc.key, job: jobKey, capping});
+      return;
+    }
+    const below = zc.below ? " - the rule asks for less than her slowest speed that steers, so she runs at " + zoneSpd(zc.key)
+                             + "; check the local rule" : "";
+    showBanner(!capping
+      ? "SPEED ZONE " + (zc.where === "ahead" ? "AHEAD - " : "- ") + zoneName(zc.zone) + ": " + zoneRuleTxt(zc.zone)
+        + ". Her " + zoneSpd(jobKey) + " is within it" + below + "."
+      : "SPEED ZONE " + (zc.where === "ahead" ? "AHEAD - " : "- ") + zoneName(zc.zone) + ": " + zoneRuleTxt(zc.zone) + ". "
+        + (zc.where === "ahead" ? "Slowing to " + zoneSpd(zc.key) + " now, " + fmtDist(zc.d) + " before it, so she is at it on its edge"
+                                : "Held at " + zoneSpd(zc.key)) + below
+        + "; " + zoneSpd(jobKey) + " comes back when she is clear of it.");
+    logClient("speed_zone", {state: zc.where, zone: zoneName(zc.zone), rule: zoneRuleTxt(zc.zone), key: zc.key, job: jobKey,
+                             capping, below: !!zc.below, d: Math.round(zc.d || 0)});
+    return;
+  }
+  if(zoneHeld){
+    const was = zoneHeld; zoneHeld = null;
+    if(was.capping) showBanner("CLEAR OF SPEED ZONE " + zoneName(was.zone) + ": back to " + zoneSpd(jobKey) + ", her commanded speed.");
+    else flashNote("Clear of speed zone " + zoneName(was.zone) + ".");
+    logClient("speed_zone", {state: "clear", zone: zoneName(was.zone), job: jobKey});
+  }
+}
+/** THE ZONES WHEN THE GOVERNOR CANNOT SAY WHICH LEG SHE IS ON (indexedRoute null): her position alone decides. A zone
+ *  slower than the speed she runs takes it, and the speed she had is put back when she is clear. */
+function zoneOnlyGovern(st){
+  const zc = zoneCap(null), cur = st.speed_key;
+  if(zc && zc.key){
+    if(zoneRestore == null && cur && (V.SPEED_KN[cur] || 0) > (V.SPEED_KN[zc.key] || 0)) zoneRestore = cur;
+    zoneTrack(zc, zoneRestore || cur, zoneRestore != null ? zc.key : cur);
+    if(zoneRestore != null && commandedSpeed !== zc.key){ commandedSpeed = zc.key; commandSpeed(zc.key); }
+    return zoneRestore != null ? zc.key : null;
+  }
+  if(zoneRestore != null){
+    const k = zoneRestore; zoneRestore = null;
+    zoneTrack(null, k, k);
+    commandedSpeed = k; commandSpeed(k);
+    return k;
+  }
+  zoneTrack(null, cur, cur);
+  return null;
+}
 function speedGovernor(){
   const st = (S && S.status) || {};
   // ⚠⚠ A STATION-KEEPING BOAT IS GOVERNED TOO (2026-09-29). This stood down on `st.holding` from its first line,
@@ -5174,7 +5276,7 @@ function speedGovernor(){
   // The lead is re-asked every frame and stands only while it is being commanded: any stand-down below
   // drops it, so no readout says "slowing ahead" for a speed something else now owns.
   const prevLead = govLead; govLead = null;
-  if(!act){ commandedSpeed = null; return null; }     // a stopped boat - or a view-only tab - governs nothing
+  if(!act){ commandedSpeed = null; zoneHeld = null; zoneRestore = null; return null; }   // a stopped boat - or a view-only tab - governs nothing
   if(clearance.slowed) return null;                   // safety owns the throttle
   // ⚠ AND THE OPERATOR OWNS IT AFTER A PAUSE. A resumed run is held at low until they say
   // otherwise, so the governor must not re-assert the role's speed the moment the boat
@@ -5205,7 +5307,9 @@ function speedGovernor(){
   // the same answer the four stand-downs above give and the only honest one here: "cannot
   // say" must never resolve as the fastest speed. Found by an adversarial re-read of the
   // indexedRoute fix, after it was committed.
-  if(!indexedRoute()) return null;
+  // (A SPEED ZONE STILL CAPS HER HERE, 2026-10-16: it needs her position, not her leg - zoneOnlyGovern.)
+  if(!indexedRoute()) return zoneOnlyGovern(st);
+  zoneRestore = null;
   // A TURN THE PLANNER COULD ONLY FIT AT THE SLOW RADIUS IS FLOWN AT THE SLOW SPEED. The
   // radius that made it fit is the radius the hull holds at that speed, so running it any
   // faster flies a turn the boat cannot track - which is the whole failure this and the
@@ -5230,7 +5334,11 @@ function speedGovernor(){
   // begin, not on the frame she reaches it - see leadSpeedKey. Null for every other hull. It only ever lowers,
   // so the deviation-settling rule below (raise nothing, lower anything) holds for it unchanged.
   const lead = leadSpeedKey(planned, prevLead);
-  const want = lead || planned;
+  // ⚠⚠ AND THE WATER'S LIMIT (2026-10-16): a speed zone she is in, still clearing, or coming to within her slow-down is a
+  // ceiling on all of it - the slower of the two is commanded (zoneTrack says which, and when it lets go)
+  const job = lead || planned, zc = zoneCap(indexedRoute());
+  const want = zc && zc.key && (V.SPEED_KN[zc.key] || 0) < (V.SPEED_KN[job] || 0) ? zc.key : job;
+  zoneTrack(zc, job, want);
   // ⚠⚠ AND THE GOVERNOR MAY NOT RAISE THE SPEED WHILE A DEVIATION IS SETTLING. Rungs 2 and
   // 3 both begin `if(settling) return c;` - the deviation is supposed to answer the hazard, so
   // for EDGE_REASSESS_MS the slow and hold rungs are deliberately quiet. Nothing stood the
@@ -5449,6 +5557,11 @@ function renderIntent(){
     html += row("for", "SAFETY OVERRIDE — inside the keep-out buffer, held at low", "#d9958f");
   else if(resumeSlow)
     html += row("for", "HELD AT LOW ON YOUR INSTRUCTION — RELEASE LOW on the guard bar, or change a speed selector", "#e8b46a");
+  else if(zoneHeld && zoneHeld.capping)
+    // A SPEED ZONE HAS HER SPEED (2026-10-16): which, its rule, and until when - not the role, which is not why she is slow
+    html += row("for", "SPEED ZONE: " + zoneName(zoneHeld.zone) + ": " + zoneRuleTxt(zoneHeld.zone) + " · held at "
+                + spdTxt(zoneHeld.key) + (zoneHeld.where === "ahead" ? ", " + fmtDist(zoneHeld.d) + " before it"
+                                          : " until she is clear of it") + " · then " + spdTxt(zoneHeld.jobKey), "#e8b46a");
   else if(lsh && lsh.key)
     // THE LEAD, SAID (2026-10-03): the speed told is not this leg's role speed, and the reason is ahead of her
     html += row("for", spRole.toUpperCase() + " — " + act.detail + " · SLOWING to " + spdTxt(lsh.key) + " "
@@ -6788,6 +6901,7 @@ function render(){
     ctx.fillStyle = act ? "#ffd76a" : "rgba(255,215,106,0.75)"; ctx.fillText("L"+lineNo(i), a.x+5, a.y-5);
   });
   drawSurveyLabels(toScreen);
+  drawSpeedZones(toScreen);
   drawBoundary(toScreen);
   drawPattern(toScreen);
   drawSearch(toScreen);
@@ -9132,6 +9246,34 @@ function clipToPoly(a,b,ring,ref){
     const tm=(t0+t1)/2, mid={e:ae.e+(be.e-ae.e)*tm, n:ae.n+(be.n-ae.n)*tm};
     if(pinp(mid,ring)) out.push([lerpLL(a,b,t0), lerpLL(a,b,t1)]); }
   return out;
+}
+// THE SPEED ZONES ON THE CHART (2026-10-16): each zone's edge in amber, dashed, faintly filled, and its rule at its middle
+// - "5 kn", "no wake" - so the operator sees the water that will take her speed before she gets there. One that does not
+// bind this hull (NOAA's right whale areas bind 65 ft and over) is drawn gray, its rule said with who it binds.
+function drawSpeedZones(toScreen){
+  const zs = speedZonesNow(); if(!zs.length) return;
+  const loa = (V.VESSEL && V.VESSEL.hull && V.VESSEL.hull.loa_m) || 0;
+  ctx.save(); ctx.font = "10px Consolas,monospace";
+  for(const z of zs){
+    const binds = zoneApplies(z, loa).applies, active = zoneHeld && zoneHeld.zone && zoneId(zoneHeld.zone) === zoneId(z);
+    let sx = 0, sy = 0, n = 0, minX = 1e9, maxX = -1e9;
+    eachRing(z.geometry, (rg) => {
+      ctx.beginPath();
+      rg.forEach((c, i) => { const s = toScreen(c[1], c[0]); i ? ctx.lineTo(s.x, s.y) : ctx.moveTo(s.x, s.y);
+                             sx += s.x; sy += s.y; n++; minX = Math.min(minX, s.x); maxX = Math.max(maxX, s.x); });
+      ctx.closePath();
+      ctx.fillStyle = binds ? (active ? "rgba(232,180,106,0.16)" : "rgba(232,180,106,0.07)") : "rgba(160,170,180,0.05)";
+      ctx.fill();
+      ctx.setLineDash([6, 4]); ctx.lineWidth = active ? 2 : 1.3;
+      ctx.strokeStyle = binds ? "rgba(232,180,106,0.9)" : "rgba(160,170,180,0.6)"; ctx.stroke(); ctx.setLineDash([]);
+    });
+    if(n && maxX - minX > 40){                     // a label only where the zone is big enough on screen to carry one
+      const t = zoneRuleTxt(z) + (binds ? "" : " (" + (z.props.min_length_m ? Math.round(z.props.min_length_m / 0.3048) + " ft+" : "not this hull") + ")");
+      ctx.fillStyle = binds ? "#e8b46a" : "rgba(160,170,180,0.8)";
+      fillHaloed(t, sx / n - ctx.measureText(t).width / 2, sy / n);
+    }
+  }
+  ctx.restore();
 }
 function drawBoundary(toScreen){
   if(!boundary.length || (!boundaryShow && mode!=="bound")) return;  // hidden, unless editing

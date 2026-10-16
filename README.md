@@ -2367,6 +2367,35 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    drawn green from the boat, shrinking as it goes). If there's no ENC coverage the
    console warns and routes direct — verify the plan.
 
+   **Speed zones: the law's limit holds her speed** (Andy, 2026-10-16: "Build a bounded area that
+   overrides commanded speed and lowers to legal speed. this releases once the ASV is clear of the
+   area and it returns to commanded speed"). A speed zone is water where a rule sets her speed. The
+   console reads them from two places:
+   - **The chart's own.** A restricted area whose text gives a speed, for example the right whale
+     Seasonal Management Areas (10 kn, binding only vessels 65 ft / 19.8 m and over, so not these
+     hulls) or "5 knot speed limit". A regulated area the chart names only by its citation is read
+     from the regulation: **33 CFR 165.101, Kittery, Maine**, by the Naval Shipyard beside New
+     Castle, is 5 mph (4.3 kn). NOAA's chart has a no-wake category but uses it nowhere in the US.
+   - **The states' GIS**, merged into the chart the console serves (`speed_zones.py`, cached under
+     `charts/speed/` for a week): Florida FWC boating restricted areas and manatee zones, North
+     Carolina WRC no-wake zones, Maryland DNR speed zones and DC no-wake zones. A seasonal or
+     conditional rule is applied at all times, the most restrictive of its regimes, with its
+     condition kept in the zone's text. A record that is not a speed rule (no entry, no anchoring) is
+     skipped and counted. **New Hampshire, Maine and Massachusetts publish none**; their rules are
+     distances (headway within 150 ft of shore, docks and moorings in NH; within 200 ft of any
+     shoreline in ME) and are not modeled yet.
+
+   The **speed governor** commands the slower of the job's speed and the zone's. It starts before
+   the zone, by her slow-down distance plus a margin, so she is at the zone's speed on its edge. It
+   holds that speed until she is clear of the zone by her own length (10 m at least), then her
+   commanded speed comes back. A numeric limit takes her fastest speed at or under it. "No wake",
+   "headway", "idle", "slow" and "speed restricted" take her slowest. A zone never raises her speed.
+   It stands aside for the guard's slow-down and hold, a drift-in, and an escape (collision avoidance
+   comes first). A page that cannot say which leg she is on still caps her by position and puts her
+   speed back when she is clear. The zone taking her speed and letting it go are each said in a
+   banner and logged (`speed_zone`). The Mission Status card's "for" row says which zone and until
+   when. Zones are drawn in amber with their rule; one that does not bind this hull is drawn gray.
+
    **Entering a new area downloads *every* published layer.** The extract used to fetch
    only the ~45 classes the keep-out roles named, and that was the wrong trade: a cache
    cannot know what it doesn't contain, so a role added later was invisible to every area
@@ -3961,6 +3990,20 @@ known ranges, so it tests the console rather than today's real traffic. And that
 started with no radius flag opens at the shipped 5 nm (9.26 km), which the card's field
 shows as 5, and that a blank field goes back to that default. And that a passage's floor
 (`floor_km`) widens the range for the poll that asks, never moving the setting.
+
+```
+node tests/speed_zones.js
+python tests/speed_zone_sources.py
+```
+
+**Speed zones**: that the chart's own speed text is read (the right whale areas' 10 kn for
+65 ft and over in each of NOAA's spellings, a "5 knot speed limit", the Kittery regulated area
+by its citation), that a zone binds a hull only by its length rule, that it allows the fastest
+speed at or under its limit and the slowest for a rule with no number, and that the real speed
+governor lowers to it before the zone, holds it until she is clear by her length, gives her
+commanded speed back, never raises her, and stands aside for the guard. And that each state's
+records are read as its law says (Florida, North Carolina, Maryland, DC), paged, cached, served
+stale when a service is down and merged into the chart without ever failing it.
 
 ```
 node tests/ui_split.js
