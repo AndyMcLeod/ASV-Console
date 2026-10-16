@@ -11856,6 +11856,12 @@ function drawPassage(toScreen){
 //   LEFT FOR ANOTHER COMMAND (a Go-To, an RTH, a Hold, a Stop): where she left it is recorded; Continue rejoins her there
 //   and sails the rest. A guard escape or hold is not a leaving - the passage waits until the guard gives the route
 //   back. DIVERT THE PASSAGE TO HERE (the chart's menu) is a Go-To with the leaving recorded: a port to refuel in.
+//   ⚠ A GO-TO GIVEN WHILE SHE SAILS ENDS BACK ON THE PASSAGE (Andy, 2026-10-16, asked whether the end-of-plan RTH should
+//   take her home from it: "Follow the plan without adding another layer of confirmation"). Seen live on 2026-10-15: at the
+//   end of a Go-To given mid-passage End of plan RTH chained her home, and Continue was refused while she went. Now the
+//   point the Go-To holds her at is kept with the leaving; there the chain stands down (sailOwnsHold) and she rejoins
+//   the passage where she left it - Continue's own send, with no confirmation (sailRejoinTick, continueSend). A newer
+//   Go-To before then is followed to its end; anything else commanded meanwhile leaves the passage for Continue.
 //   CONTINUE AFTER A PORT is refused until what is aboard reaches the next port with 20% of the tank (the passage's own
 //   fuel rule, fuel.js passageFuel) - where she reports a level.
 const PASSAGE_RETRY_MS = 60000;                // a section that could not be planned is tried again after this
@@ -12077,27 +12083,71 @@ function sailAtEnd(P){
       + (P.note ? " (" + P.note + ")" : "") + ". CONTINUE PASSAGE, beside Start, plans and sends it.");
   logClient("passage_" + P.state, {id: P.id, sec: P.sent, note: P.note || null});
 }
-/** She left the passage for another command: where, and in which section, is kept for Continue. */
-function sailBreakOff(P, why){
+/** She left the passage for another command: where, and in which section, is kept for Continue - and, left for a Go-To,
+ *  the point it holds her at (`to`): there she rejoins the passage on her own (sailRejoinTick). */
+function sailBreakOff(P, why, to){
   const at = asv ? {lat: asv.lat, lon: asv.lon} : P.sections[P.sec].from;
   P.breakoff = {sec: P.sec, at, t: Date.now(), why: String(why || "another command")};
+  if(to){ P.breakoff.rejoin = true; P.breakoff.to = {lat: to.lat, lon: to.lon}; }
   P.state = "stopped";
   saveMission();
   showBanner("PASSAGE LEFT in section " + (P.sec + 1) + " of " + P.sections.length + " for " + P.breakoff.why
-    + ". CONTINUE PASSAGE, beside Start, rejoins her where she left it.");
-  logClient("passage_breakoff", {id: P.id, sec: P.sec, at, why: P.breakoff.why});
+    + (to ? ". At the Go-To's end she rejoins the passage where she left it, and sails on."
+          : ". CONTINUE PASSAGE, beside Start, rejoins her where she left it."));
+  logClient("passage_breakoff", {id: P.id, sec: P.sec, at, why: P.breakoff.why, rejoin: !!to});
+}
+/** She holds at the end of the Go-To the passage was left for, and is to rejoin it there: the point she holds at - the
+ *  vessel's own word, else the end of the route she was sent (a link that does not say) - is the one kept. */
+function sailRejoinHere(P, s){
+  s = s || S;
+  const bo = P && P.breakoff, st = (s && s.status) || {};
+  if(!P || P.state !== "stopped" || !bo || !bo.rejoin || !bo.to || s.behavior !== "goto" || !st.holding) return false;
+  const at = st.hold || (runRoute && runRoute.length ? runRoute[runRoute.length - 1] : null);
+  return !!(at && distTo(at, bo.to) <= PASSAGE_END_M);
+}
+/** A GO-TO GIVEN WHILE SHE SAILS, to its end (Andy, 2026-10-16): there she rejoins the passage on her own. A newer Go-To
+ *  before then is followed to ITS end; anything else commanded meanwhile - an RTH, a Hold, a Stop, another plan - leaves
+ *  the passage for Continue, as any leaving does. The guard's own rungs are waited out. */
+function sailRejoinTick(P, s){
+  const bo = P.breakoff, st = s.status || {}, k = planIntent && planIntent.kind;
+  const what = k || s.behavior;                  // the page's own plan; the vessel's word where it has none (a Hold drops it, a reload)
+  const off = s.run === "stopped" ? "a Stop" : s.run === "idle" || s.run === "complete" ? "her run ending (" + s.run + ")"
+            : guardActedAt || !what || what === "goto" || what === "escape" ? null
+            : what === "rth" ? "a Return-to-Home" : what === "hold" ? "a Hold" : "another plan";
+  if(off){
+    bo.rejoin = false; bo.why += ", then " + off;
+    saveMission();
+    showBanner("PASSAGE: she will not rejoin it on her own now - " + off + " came after the Go-To. CONTINUE PASSAGE, "
+      + "beside Start, rejoins her where she left it (section " + (bo.sec + 1) + ").");
+    logClient("passage_rejoin", {id: P.id, sec: bo.sec, ok: false, why: off});
+    return;
+  }
+  if(s.run !== "running") return;                // paused: it waits
+  if(!st.holding){                               // under way: a newer Go-To is followed to its own end
+    if(k === "goto" && !guardActedAt && runRoute && runRoute.length && s.wp_total === runRoute.length){
+      const end = runRoute[runRoute.length - 1];
+      if(distTo(end, bo.to) > PASSAGE_END_M){ bo.to = {lat: end.lat, lon: end.lon}; saveMission(); }
+    }
+    return;
+  }
+  if(!sailRejoinHere(P, s) || Date.now() - sailTriedAt < PASSAGE_RETRY_MS || !sailGuardQuiet()) return;
+  sailTriedAt = Date.now();
+  continueSend(P, true).catch(() => {});
 }
 /** THE PASSAGE ON EVERY FRAME (the supervising window): the next section sent ahead of her; her hold at an end said; a
  *  passage left for another command recorded. */
 function passageTick(s){
   const P = mission && mission.passage;
-  if(!P || P.state !== "running" || sailBusy || !supervising()) return;
+  if(!P || sailBusy || !supervising()) return;
+  if(P.state === "stopped" && P.breakoff && P.breakoff.rejoin){ sailRejoinTick(P, s); return; }   // left for a Go-To
+  if(P.state !== "running") return;
   if(!(runRoute && runRoute.length) && P.route && P.route.length === s.wp_total) runRoute = P.route.slice();   // a reload
   if(!sailOwns(P, s)){
     const k = planIntent && planIntent.kind;
     if(s.run === "stopped" || s.run === "idle" || s.run === "complete" || ((k === "goto" || k === "rth" || k === "hold") && !guardActedAt))
       sailBreakOff(P, s.run === "running" ? "a " + (k === "goto" ? "Go-To" : k === "rth" ? "Return-to-Home" : "Hold")
-                      : s.run === "stopped" ? "a Stop" : "her run ending (" + s.run + ")");
+                      : s.run === "stopped" ? "a Stop" : "her run ending (" + s.run + ")",
+                   s.run === "running" && k === "goto" && runRoute && runRoute.length ? runRoute[runRoute.length - 1] : null);
     return;                                      // otherwise the guard has it: the passage waits for its route back
   }
   if(s.run !== "running") return;                // paused: it waits
@@ -12135,7 +12185,9 @@ function continueRefusal(P){
   if(!P || !["holding", "at_port", "diverted", "stopped"].includes(P.state)) return "there is no passage waiting";
   if(sailBusy) return "the passage is busy";
   if(!canCommand()) return S.estop ? "clear E-STOP first" : !S.armed ? "arm her first" : "this window is not supervising";
-  if(S.run === "running" && !(S.status || {}).holding) return "she is under way - let her reach her hold, or stop her";
+  if(S.run === "running" && !(S.status || {}).holding)
+    return P.breakoff && P.breakoff.rejoin ? "she rejoins it on her own at the end of the Go-To"
+                                           : "she is under way - let her reach her hold, or stop her";
   if(!asv) return "she has no position fix";
   const bo = P.breakoff, k = bo ? bo.sec : P.sent + 1;
   if(k >= P.sections.length) return "the passage has arrived";
@@ -12150,19 +12202,30 @@ async function continuePassage(){
   const bo = P.breakoff, k = bo ? bo.sec : P.sent + 1;
   if(!await guiConfirm("Continue the passage", bo ? "Route her back to where she left the passage (section " + (k + 1)
       + "), and sail on from there?" : "Plan section " + (k + 1) + " of " + P.sections.length + " from where she is, and sail it?")) return;
+  await continueSend(P, false);
+}
+/** Continue passage's send: the section she goes on with, from where she is. `auto`: at the end of a Go-To given while she
+ *  sailed, with no confirmation (sailRejoinTick) - refused or not sent, said once, and tried again each PASSAGE_RETRY_MS
+ *  while she holds there; Continue passage still works. */
+async function continueSend(P, auto){
+  const bo = P.breakoff, k = bo ? bo.sec : P.sent + 1;
+  const sayFail = (why) => {
+    const say = auto ? "PASSAGE NOT REJOINED at the end of the Go-To: " + why + ". She holds there; it is tried again every "
+                     + "minute, or CONTINUE PASSAGE, beside Start." : "Passage NOT continued: " + why + ". She stays where she is.";
+    if(!auto || sailSaid !== say){ sailSaid = say; showBanner(say); }
+    logClient(auto ? "passage_rejoin" : "passage_continue", {id: P.id, k, ok: false, why});
+  };
+  if(auto){ const why = continueRefusal(P); if(why){ sayFail(why); return; } }
   sailBusy = true; applyCmdState(S); updateTransitPanel();
   try{
     const r = await sailSend(P, k, {lat: asv.lat, lon: asv.lon}, bo, false);
-    if(r.error || r.soft){
-      showBanner("Passage NOT continued: section " + (k + 1) + " could not be sent - " + (r.error || "try again") + ". She stays where she is.");
-      logClient("passage_continue", {id: P.id, k, ok: false, why: r.error || "soft"});
-      return;
-    }
+    if(r.error || r.soft){ sayFail("section " + (k + 1) + " could not be sent - " + (r.error || "try again")); return; }
     P.state = "running"; P.breakoff = null; saveMission();
-    showBanner((P.kind === "rth" ? "HOME ALONG THE PASSAGE" : "PASSAGE") + " CONTINUED: section " + (k + 1) + " of " + P.sections.length
-      + " sent" + (bo ? ", rejoining where she left it" : "") + ", planned at " + r.water.say + ".");
-    logClient("passage_continue", {id: P.id, k, ok: true, rejoin: !!bo, wpts: r.route.length});
-  }catch(e){ showBanner("Passage NOT continued: " + ((e && e.message) || e) + "."); }
+    showBanner((P.kind === "rth" ? "HOME ALONG THE PASSAGE" : "PASSAGE") + (auto ? " REJOINED at the end of the Go-To" : " CONTINUED")
+      + ": section " + (k + 1) + " of " + P.sections.length + " sent" + (bo ? ", rejoining where she left it" : "")
+      + ", planned at " + r.water.say + ".");
+    logClient(auto ? "passage_rejoin" : "passage_continue", {id: P.id, k, ok: true, rejoin: !!bo, wpts: r.route.length});
+  }catch(e){ sayFail((e && e.message) || String(e)); }
   finally{ sailBusy = false; applyCmdState(S); updateTransitPanel(); render(); }
 }
 /** DIVERT THE PASSAGE TO HERE (the chart's menu): a Go-To to a port, and where she left the passage kept for Continue. */
@@ -12219,7 +12282,8 @@ function sailLine(P){
     : P.state === "holding" ? "holding at the end of section " + (P.sent + 1) + " of " + n
     : P.state === "at_port" ? "at fuel stop " + sailPortName(P, P.sections[P.sent].port) + " - refuel, then Continue"
     : P.state === "diverted" ? "diverted from section " + (P.breakoff.sec + 1) + " - Continue rejoins it there"
-    : P.state === "stopped" ? "left in section " + (P.breakoff.sec + 1) + " for " + P.breakoff.why + " - Continue rejoins it there"
+    : P.state === "stopped" ? "left in section " + (P.breakoff.sec + 1) + " for " + P.breakoff.why
+      + (P.breakoff.rejoin ? " - she rejoins it at the Go-To's end" : " - Continue rejoins it there")
     : P.state === "done" ? (P.kind === "rth" ? "she is home, all " : "arrived: all ") + n + " sections sailed" : P.state);
 }
 /** The passage being sailed on the chart: its sections (sent solid, to come dashed), their ends, where she left it. */
@@ -12246,6 +12310,8 @@ function drawSail(toScreen){
 /** Does the passage own the hold she is at (an end of a section): the end-of-plan RTH chain stands down there. */
 function sailOwnsHold(){
   const P = mission && mission.passage;
+  // (AND THE END OF A GO-TO GIVEN WHILE SHE SAILED, 2026-10-16: there she rejoins the passage - sailRejoinTick)
+  if(sailRejoinHere(P)) return true;
   if(!P || !runRoute || !runRoute.length) return false;
   const end = runRoute[runRoute.length - 1];
   if(P.end && distTo(end, P.end) <= PASSAGE_END_M) return true;

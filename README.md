@@ -2613,7 +2613,13 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    beside Start. At a port, Continue passage is refused until the fuel aboard reaches the next port
    with 20% of the tank, and the refusal says so with the numbers. A Go-To, an RTH, a Hold or a Stop
    while she sails records where she left the passage, and Continue passage brings her back to that
-   point and sails the rest of the section. A guard escape is not a leaving: the passage waits for
+   point and sails the rest of the section. **A Go-To given while she sails ends back on the
+   passage** (Andy, 2026-10-16: "Follow the plan without adding another layer of confirmation"): at
+   the Go-To's end the end-of-plan RTH chain stands down, and she rejoins the passage where she left
+   it on her own, as Continue passage would, without asking. A newer Go-To before then is followed
+   to its end. An RTH, a Hold or a Stop given after the Go-To leaves the passage for Continue
+   passage, as before. If the rejoin cannot be sent, she holds at the Go-To's end, the banner says
+   why, and it is tried again every minute. A guard escape is not a leaving: the passage waits for
    the guard to give the route back. **Divert the passage to here** (the chart's right-click menu) is
    a Go-To to a port with the leaving recorded. The passage is kept on the plan (`passage` in
    `mission.json`), so a reload or a console restart mid-passage keeps the section she is on and

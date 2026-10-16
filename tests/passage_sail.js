@@ -179,7 +179,8 @@ console.log("The passage, sailed:");
       // a new mission's history (2026-10-14, newMission): Sail passage starts one (4, 4b)
       "const newMission = (t0, what) => w.missions.push({t0, what});",
       "const showBanner = (t) => w.banners.push(t), flashNote = (t) => w.notes.push(t), render = () => {}, applyCmdState = () => {}, updateTransitPanel = () => {}, updateMissionCard = () => {};",
-      "const guiConfirm = async () => true, ensureNogoCovers = async () => true, holdOpts = () => ({}), transitStandoffM = () => 20;",
+      // (asked counted, and refused when the world says so: the rejoin at a Go-To's end asks nothing, 7d)
+      "const guiConfirm = async () => { w.confirms = (w.confirms || 0) + 1; return w.confirm !== false; }, ensureNogoCovers = async () => true, holdOpts = () => ({}), transitStandoffM = () => 20;",
       "const planInsideChart = async (pts, opts, plan) => { if (w.duringPlan) w.duringPlan(w, api); return plan(); };",
       "const holdTarget = (to) => ({to, heldOff: null, holdClear: 40});",
       "const holdClearWithContacts = (p, m) => m, routeTooLong = () => false, solveCoastFor = () => ({groundM: 55});",
@@ -209,8 +210,8 @@ console.log("The passage, sailed:");
       decl("PASSAGE_RETRY_MS"), decl("PASSAGE_END_M"), decl("PASSAGE_ONGOING"),
       "let sailBusy = false, sailTriedAt = 0, sailSaid = null;",
       ["passageEndsSay", "sailRecord", "sailPortName", "sailRefusal", "sailSegM", "sectionRest", "sailOwns", "sailGuardQuiet", "sailLeftM", "sailSend",
-       "sailPassage", "sailAppend", "sailAtEnd", "sailBreakOff", "passageTick", "sailRestM", "sailFuelShort", "continueRefusal",
-       "continuePassage", "divertPassage", "dropPassage", "renderPassageControls", "sailLine", "sailOwnsHold", "drawSail",
+       "sailPassage", "sailAppend", "sailAtEnd", "sailBreakOff", "sailRejoinHere", "sailRejoinTick", "passageTick", "sailRestM",
+       "sailFuelShort", "continueRefusal", "continuePassage", "continueSend", "divertPassage", "dropPassage", "renderPassageControls", "sailLine", "sailOwnsHold", "drawSail",
        "rthTooFar", "doRTH", "passageHome", "homeRecord", "sailHome"].map(grab).join("\n"),
       "const api = {sailRecord, sailRefusal, sectionRest, sailPassage, passageTick, sailAtEnd, continuePassage, continueRefusal, divertPassage,",
       "  dropPassage, renderPassageControls, sailOwnsHold, sailLine, drawSail, doRTH, homeRecord,",
@@ -392,6 +393,122 @@ console.log("The passage, sailed:");
               && e7.mission.passage.state === "running" && !e7.mission.passage.breakoff
               && /PASSAGE LEFT in section 1 of 3/.test(g7.banners[0] || ""),
         () => JSON.stringify([g7, r7, s7, e7].map((w) => [w.mission.passage.state, w.mission.passage.breakoff && w.mission.passage.breakoff.why])));
+
+  // ── 7b-7g. A GO-TO GIVEN WHILE SHE SAILS ENDS BACK ON THE PASSAGE (2026-10-16) ─────────────────────────────────────
+  // Andy, asked whether End of plan RTH should take her home at the end of a Go-To given mid-passage (seen live on
+  // 2026-10-15: it did, and Continue was refused while she went): "Follow the plan without adding another layer of
+  // confirmation". The point the Go-To holds her at is kept with the leaving; there the chain stands down and she rejoins
+  // the passage where she left it, as Continue does - asking nothing.
+  const GT = { lat: HERE.lat + 0.01, lon: east(HERE, 12000).lon }, GT2 = { lat: HERE.lat + 0.02, lon: east(HERE, 12000).lon };
+  const away = (o) => { const w = running(Object.assign({ planIntent: { kind: "goto" } }, o || {}));
+    w.api.set("runRoute", [{ ...GT }]); Object.assign(w.S, { behavior: "goto", wp_total: 1 }); w.api.passageTick(w.S); return w; };
+  const atGoToEnd = (w, at) => { Object.assign(w.S.status, { holding: true, hold: at === undefined ? { ...GT } : at }); w.asv.lat = GT.lat; w.asv.lon = GT.lon; return w; };
+  const g7b = away(), bo7b = g7b.mission.passage.breakoff;
+  const was7b = [r7, s7].map((w) => [w.banners.length, w.mission.passage.breakoff.why]);
+  r7.api.passageTick(r7.S); s7.api.passageTick(s7.S);                              // ticked on: still waiting for Continue, nothing said
+  check("7b. LEFT FOR A GO-TO: the leaving kept as for any command, and with it the point the Go-To holds her at, to rejoin "
+        + "there - said; an RTH or a Stop keeps no such point, and ticked on is left alone",
+        () => g7b.mission.passage.state === "stopped" && bo7b.rejoin === true && distTo(bo7b.to, GT) < 1 && /a Go-To/.test(bo7b.why)
+              && /At the Go-To's end she rejoins the passage where she left it, and sails on\./.test(g7b.banners[0] || "")
+              && !r7.mission.passage.breakoff.rejoin && !s7.mission.passage.breakoff.rejoin && !g7.banners.some((b) => /CONTINUE PASSAGE/.test(b))
+              && JSON.stringify([r7, s7].map((w) => [w.banners.length, w.mission.passage.breakoff.why])) === JSON.stringify(was7b),
+        () => JSON.stringify({ bo: bo7b, banner: g7b.banners[0], was7b, now: [r7, s7].map((w) => [w.banners.length, w.mission.passage.breakoff.why]) }));
+
+  const W7c = away(); W7c.api.passageTick(W7c.S); await settle(); await settle();
+  const ref7c = W7c.api.continueRefusal(W7c.mission.passage), line7c = W7c.api.sailLine(W7c.mission.passage);
+  check("7c. UNDER WAY ON THE GO-TO: nothing sent; Continue passage says she rejoins it on her own at the Go-To's end, and so "
+        + "does the passage's line",
+        () => W7c.cmds.length === 0 && W7c.planned.length === 0 && ref7c === "she rejoins it on her own at the end of the Go-To"
+              && /left in section 1 for a Go-To - she rejoins it at the Go-To's end/.test(line7c),
+        () => JSON.stringify({ cmds: W7c.cmds.length, ref7c, line7c }));
+
+  const W7d = atGoToEnd(away({ confirm: false }));
+  const owns7d = W7d.api.sailOwnsHold();
+  W7d.api.passageTick(W7d.S); await settle(); await settle();
+  const P7d = W7d.mission.passage, c7d = W7d.cmds[0];
+  const W7m = running({ asv: east(HERE, 3000), confirm: false });                 // a Continue passage pressed, and refused
+  Object.assign(W7m.mission.passage, { state: "stopped", breakoff: { sec: 0, at: east(HERE, 7000), why: "a Go-To" } }); W7m.S.status.holding = true;
+  await W7m.api.continuePassage();
+  check("7d. AT THE GO-TO'S END SHE REJOINS THE PASSAGE, ASKING NOTHING: the end-of-plan RTH chain stands down there "
+        + "(sailOwnsHold); section 1 planned from where she holds back to where she left it and on to its end, sent; running "
+        + "again, the leaving spent; said and logged - with every confirmation refused, which Continue passage still asks",
+        () => owns7d === true && W7d.confirms === undefined && W7d.planned.length === 1 && distTo(W7d.planned[0].from, GT) < 1
+              && W7d.planned[0].line.length === 2 && distTo(W7d.planned[0].line[0], east(HERE, 12000)) < 1 && distTo(W7d.planned[0].line[1], P1) < 1
+              && c7d && c7d[0] === "/api/cmd/transit" && P7d.state === "running" && P7d.breakoff === null && P7d.sent === 0
+              && /^PASSAGE REJOINED at the end of the Go-To: section 1 of 3 sent, rejoining where she left it, planned at \+0\.35 m/.test(W7d.banners.pop() || "")
+              && W7d.logs.some((l) => l[0] === "passage_rejoin" && l[1].ok && l[1].rejoin)
+              && W7m.confirms === 1 && W7m.cmds.length === 0 && W7m.mission.passage.state === "stopped",
+        () => JSON.stringify({ owns7d, confirms: W7d.confirms, planned: W7d.planned.map((p) => p.line.length), state: P7d.state, manual: [W7m.confirms, W7m.cmds.length] }));
+
+  // where the chain stands down: the point she holds at is the vessel's word, else the end of the route she was sent
+  const own = (fn) => { const w = away(); fn(w); return w.api.sailOwnsHold(); };
+  const o7e = {
+    here: own((w) => atGoToEnd(w)),
+    noWord: own((w) => atGoToEnd(w, null)),                                          // a link that does not say: the route's end
+    reload: own((w) => { atGoToEnd(w); w.api.set("runRoute", null); }),             // a reload: the vessel's word alone
+    elsewhere: own((w) => { atGoToEnd(w, { ...GT2 }); w.api.set("runRoute", [{ ...GT2 }]); }),
+    guardHold: own((w) => { atGoToEnd(w); w.S.behavior = "hold"; }),                // the guard's hold rung: not the Go-To's end
+    underWay: own(() => {}),
+    left: own((w) => { atGoToEnd(w); w.mission.passage.breakoff.rejoin = false; }),
+  };
+  check("7e. THE CHAIN STANDS DOWN AT THE GO-TO'S END ONLY: holding on the Go-To at the point kept - the vessel's word, or "
+        + "the end of the route she was sent when it does not say, or after a reload the vessel's word alone - and not "
+        + "holding anywhere else, not in the guard's hold, not under way, not once the rejoin is given up",
+        () => o7e.here && o7e.noWord && o7e.reload && !o7e.elsewhere && !o7e.guardHold && !o7e.underWay && !o7e.left,
+        () => JSON.stringify(o7e));
+
+  // a newer Go-To before she gets there: followed to ITS end
+  const W7f = away();
+  W7f.api.set("runRoute", [{ ...GT2 }]); W7f.api.set("planIntent", { kind: "goto" }); W7f.api.passageTick(W7f.S);
+  const to7f = W7f.mission.passage.breakoff.to;
+  const old7f = atGoToEnd(W7f).api.sailOwnsHold();                                   // holding at the FIRST Go-To's point: not it
+  W7f.api.passageTick(W7f.S); await settle(); await settle();
+  const sentOld = W7f.cmds.length;
+  W7f.S.status.hold = { ...GT2 }; W7f.api.passageTick(W7f.S); await settle(); await settle();
+  // anything else commanded meanwhile: the passage left for Continue, said
+  const offBy = (fn) => { const w = away(); fn(w); w.api.passageTick(w.S); return w; };
+  const rth7f = offBy((w) => w.api.set("planIntent", { kind: "rth" }));
+  const stop7f = offBy((w) => { w.S.run = "stopped"; });
+  const hold7f = offBy((w) => { w.api.set("planIntent", null); w.api.set("runRoute", null); w.S.behavior = "hold"; });   // the Hold button drops the plan
+  const esc7f = offBy((w) => { w.api.set("planIntent", { kind: "escape" }); w.S.behavior = "escape"; });
+  // (the guard's hold rung on a page with no plan of its own - after a reload: the vessel says hold, the guard acted)
+  const grd7f = offBy((w) => { w.api.set("planIntent", null); w.api.set("guardActedAt", 1); w.S.behavior = "hold"; w.S.status.holding = true; });
+  const reload7f = offBy((w) => { w.api.set("planIntent", null); w.api.set("runRoute", null); });   // a reload: the vessel still on the Go-To
+  const mute7f = offBy((w) => { w.api.set("planIntent", null); delete w.S.behavior; });           // ... on a link that names none
+  atGoToEnd(rth7f); rth7f.api.passageTick(rth7f.S); await settle(); await settle();
+  const bo7f = (w) => w.mission.passage.breakoff;
+  check("7f. A NEWER GO-TO before she gets there is followed to ITS end (not rejoined at the first one's point); an RTH, a "
+        + "Stop or a Hold commanded meanwhile leaves the passage for Continue, said - and then nothing is rejoined at the "
+        + "Go-To's end; the guard's escape or hold, or a reload, leaves the rejoin as it was",
+        () => distTo(to7f, GT2) < 1 && !old7f && sentOld === 0 && W7f.cmds.length === 1 && W7f.mission.passage.state === "running"
+              && [rth7f, stop7f, hold7f].every((w) => bo7f(w).rejoin === false && w.mission.passage.state === "stopped"
+                   && w.banners.some((b) => /will not rejoin it on her own now/.test(b) && /CONTINUE PASSAGE/.test(b)))
+              && /a Go-To, then a Return-to-Home/.test(bo7f(rth7f).why) && /then a Stop/.test(bo7f(stop7f).why) && /then a Hold/.test(bo7f(hold7f).why)
+              && rth7f.cmds.length === 0 && !rth7f.api.sailOwnsHold()
+              && [esc7f, grd7f, reload7f, mute7f].every((w) => bo7f(w).rejoin === true && w.mission.passage.state === "stopped"),
+        () => JSON.stringify({ to: Math.round(distTo(to7f, GT2)), old7f, sentOld, sent: W7f.cmds.length,
+                               off: [rth7f, stop7f, hold7f, esc7f, grd7f, reload7f, mute7f].map((w) => bo7f(w).rejoin + " " + bo7f(w).why) }));
+
+  // not sent: said once, she holds there (the chain still down), tried again each minute; refused (Continue's own reasons): the same
+  const W7g = atGoToEnd(away({ unroutable: 1 }));
+  W7g.api.passageTick(W7g.S); await settle(); await settle();
+  const said7g = W7g.banners.filter((b) => /PASSAGE NOT REJOINED at the end of the Go-To: section 1 could not be sent - no route clear/.test(b)).length;
+  W7g.api.passageTick(W7g.S); await settle(); await settle();
+  const again7g = W7g.planned.length;
+  W7g.api.set("sailTriedAt", 0); W7g.api.passageTick(W7g.S); await settle(); await settle();
+  const W7h = atGoToEnd(away({ canCommand: false }));
+  W7h.api.passageTick(W7h.S); await settle(); await settle();
+  const W7q = atGoToEnd(away({ quiet: false }));                                    // the guard has something in hand
+  W7q.api.passageTick(W7q.S); await settle(); await settle();
+  check("7g. NOT REJOINED: a section that cannot be planned - said once, nothing sent, she holds where the Go-To left her with "
+        + "the chain still down, not tried again inside PASSAGE_RETRY_MS, tried again after it; refused for Continue's own "
+        + "reasons (this window cannot command) - said, nothing planned; not while the guard has something in hand",
+        () => said7g === 1 && again7g === 1 && W7g.planned.length === 2 && W7g.cmds.length === 0
+              && W7g.banners.filter((b) => /NOT REJOINED/.test(b)).length === 1 && W7g.mission.passage.state === "stopped"
+              && W7g.mission.passage.breakoff.rejoin === true && W7g.api.sailOwnsHold()
+              && W7h.planned.length === 0 && W7h.cmds.length === 0 && /NOT REJOINED at the end of the Go-To: this window is not supervising/.test(W7h.banners.join(" "))
+              && W7q.planned.length === 0 && W7q.cmds.length === 0 && W7q.api.sailOwnsHold(),
+        () => JSON.stringify({ said7g, again7g, planned: W7g.planned.length, h: W7h.banners.slice(-1), guard: W7q.planned.length }));
 
   // ── 8. Continue passage ─────────────────────────────────────────────────────────────────────────────────────────
   const waiting = (state, o) => { const w = running(Object.assign({ asv: { ...P1 } }, o || {})); const P = w.mission.passage;
