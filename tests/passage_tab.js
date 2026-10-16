@@ -194,14 +194,16 @@ function gotoWorld(o) {
 
   // ── 4. ENDS FIRST ────────────────────────────────────────────────────────────────────────────────────────────────────
   const endWorld = (o) => {
-    const w = Object.assign({ worlds: [], jobs: [], world: { ko: "KO", frame: "F", bbox: "B", unread: [], buffer: 3 }, reply: null }, o || {});
+    const w = Object.assign({ joins: [], worlds: [], jobs: [], world: { ko: "KO", frame: "F", bbox: "B", unread: [], buffer: 3 }, reply: null }, o || {});
     // eslint-disable-next-line no-new-func
     w.api = new Function("w", `"use strict";
       const passageEndWorld = async (pts) => { w.worlds.push(pts); return w.world; };
       const planOffThread = async (job, here, adopt) => { w.jobs.push(job); return w.reply === undefined ? here() : adopt(w.reply); };
       const holdOpts = () => ({o: 1}), transitStandoffM = () => 20, routeLenM = (from, route) => route.length * 1000;
       const PASSAGE_PORT_R_M = 4000, distTo = (a, b) => Math.hypot((a.lat - b.lat) * 111320, (a.lon - b.lon) * 111320 * Math.cos(a.lat * Math.PI / 180));
-      ${grab("sectionAtPort")}
+      ${grab("sectionPorts")} ${grab("sectionAtPort")} ${grab("portSectionLine")}
+      const passageJoinVia = (line, ends, frame, ko, std) => { w.joins.push({ends, frame, ko, std}); return w.joinVia === undefined ? null : w.joinVia; };
+      const sectionRest = () => [];
       ${grab("planPassageEnd")}
       ${grab("planPassageEnds")}
       ${grab("passageEndsSay")}
@@ -231,7 +233,19 @@ function gotoWorld(o) {
   await midW.api.planPassageEnd(S3, { points: [{ lat: 9, lon: 9, port: true }] });
   const midJob = midW.jobs[0] || {};
   check("4a. ... a section with no port within its circle (PASSAGE_PORT_R_M) of either end keeps its turning points",
-        () => midJob.args && midJob.args.via === S3.via, () => JSON.stringify(midJob.args && midJob.args.via));
+        () => midJob.args && JSON.stringify(midJob.args.via) === JSON.stringify(S3.via) && midJob.args.ropts.openWater === "all" && midW.joins.length === 0,
+        () => JSON.stringify(midJob.args && midJob.args.via));
+  // ... and an end at a port that has a JOIN POINT (2026-10-15): the harbor as a Go-To is, the passage line from the join on,
+  // judged on the world's own chart, open water only round what blocks it
+  const J1 = { lat: 1.15, lon: 1.15 };
+  const joinW = endWorld({ joinVia: [J1], reply: { ht: { to: S1.to }, plan: { route: [1, 2] } } });
+  await joinW.api.planPassageEnd(S1, { points: [{ ...S1.from, port: true }] });
+  const jJob = joinW.jobs[0] || {}, jAsk = joinW.joins[0] || {};
+  check("4b2. ... an end at a port with a JOIN POINT: planned through the passage line from it (passageJoinVia, on the world's "
+        + "own chart and at the transit standoff), open water only round what blocks it",
+        () => jJob.args && JSON.stringify(jJob.args.via) === JSON.stringify([J1]) && jJob.args.ropts.openWater === "detours"
+              && jAsk.ko === joinW.world.ko && jAsk.frame === joinW.world.frame && jAsk.std === 20 && jAsk.ends.from && !jAsk.ends.to,
+        () => JSON.stringify({ via: jJob.args && jJob.args.via, ow: jJob.args && jJob.args.ropts.openWater, ask: { ...jAsk, ko: String(jAsk.ko) } }));
   const one = endWorld({ reply: { ht: {}, plan: { route: [1] } } });
   const e1 = await one.api.planPassageEnds({ sections: [S1] });
   check("4b. ... a passage of ONE section: its one end, planned once",

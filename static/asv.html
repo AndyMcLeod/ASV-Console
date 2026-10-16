@@ -110,6 +110,10 @@
   .cbtn.estop:hover{border-color:var(--bad);color:#fff;}
   .cbtn.reset{border-style:dashed;} .cbtn.reset:hover:not(:disabled){border-color:var(--bronze);color:var(--bronze);}
   .cdiv{width:1px;align-self:stretch;background:var(--line);margin:0 2px;}
+  /* the chart's own buttons on the bar (2026-10-15): the height of its one-line buttons (.cbtn, 30 px - not stretched to
+     the two-line E-STOP's), their own look - bronze when on */
+  .cmdbar .ctl{width:auto;min-width:34px;height:30px;padding:0 8px;}
+  .cmdbar .ctl:not(.small){font-size:16px;}
 
   .panel{position:absolute;left:14px;top:96px;z-index:6;width:158px;background:rgba(10,17,25,.92);
     border:1px solid var(--line);border-radius:3px;padding:8px;display:flex;flex-direction:column;gap:6px;}
@@ -497,11 +501,7 @@
   </div>
 
   <div class="controls">
-    <button class="ctl" id="zin" title="Zoom in">+</button>
-    <button class="ctl" id="zout" title="Zoom out">&minus;</button>
-    <button class="ctl small on" id="follow" title="Keep the boat centerd">BOAT</button>
-    <button class="ctl small on" id="chrtBtn" title="Show / hide ENC chart features (shoreline, docks, depths, hazards) fetched by Punch Out">CHRT</button>
-    <button class="ctl small" id="nogoBtn" title="Show / hide the ENC NOGO zones (shoreline, manmade features, water shallower than 1 m corrected). Every behavior routes clear of these. Click to toggle; established automatically at startup.">NOGO</button>
+    <!-- + / - / BOAT / CHRT / NOGO LEFT THIS COLUMN on 2026-10-15: they are the chart's own, on its command bar (below). -->
     <button class="ctl small" id="aisBtn" title="AIS: show nearby vessels (name, position, course, speed) from the AIS service (ais_service.py, proxied at /api/ais). Colored by ship type, drawn to scale when the chart can show her, each ship points the way her BOW does: her true heading; her course over the ground only while she is under way, because a stopped ship's course is noise. A dashed circle: stopped with no heading reported — she can lie any way round. The red outline round a contact near your boat is the clearance guard's KEEP-OUT: the same hull, pointed by the same rule, dashed ahead where she will be within the look-ahead. Hover a ship for details. Needs the AIS service running.">AIS</button>
     <button class="ctl small" id="rocBtn" title="Remote Operations Centers + HOME: track each ROC (shore or ship/Mothership) from its position data stream, set the launch/recovery offset, and pick one as HOME. A ship HOME moves and Return-to-Home chases it live.">ROC</button>
     <button class="ctl small" id="clear" title="Clear the displayed track">CLR</button>
@@ -908,6 +908,17 @@
          and end of plan to the Path Planning card"). They are the card's "Waypoints and end of plan" section, under every
          tab beside Route rules, with the same ids - so the mission load, the console's echo of the end of plan and the
          controls window's relay (by id) all find them where they are now. -->
+    <!-- THE CHART'S OWN BUTTONS (Andy, 2026-10-15: "Move the following chips from the controls window to the lower
+         toolbar left of the ARM/DISARM button: +,-,BOAT,CHRT,NOGO. They are used for the chart so they should live
+         there"). They zoom, center and draw the CHART, which only this window shows, so they sit on its bar - not in the
+         control column, which goes to the controls window. Ids kept: their handlers find them by id. They command nothing,
+         so a VIEW ONLY tab keeps them live. -->
+    <button class="ctl" id="zin" title="Zoom in">+</button>
+    <button class="ctl" id="zout" title="Zoom out">&minus;</button>
+    <button class="ctl small on" id="follow" title="Keep the boat centered">BOAT</button>
+    <button class="ctl small on" id="chrtBtn" title="Show / hide ENC chart features (shoreline, docks, depths, hazards) fetched by Punch Out">CHRT</button>
+    <button class="ctl small" id="nogoBtn" title="Show / hide the ENC NOGO zones (shoreline, manmade features, water shallower than 1 m corrected). Every behavior routes clear of these. Click to toggle; established automatically at startup.">NOGO</button>
+    <span class="cdiv"></span>
     <button class="cbtn arm" id="b_arm">Arm</button>
     <button class="cbtn" id="b_upload" disabled>Upload</button>
     <button class="cbtn go" id="b_start" disabled>Start</button>
@@ -1144,7 +1155,7 @@ import { MAX_HALF_M, SKEW_LIMIT_DEG, arcPts, cornerSlowPlan, minTurnRadiusM, sho
          teardropTurn, turnWithRetry, joinBreaches, SPEED_CMD_LATENCY_S } from "/static/js/turns.js";
 import { CHART_EDGE_M, LANE_FRAC, SEG_LEN_M, beyondChart, beyondChartSay, buoyChannelLane, buoyageNote, channelLaneRoute,
          channelSpanKeepouts, channelTurnKeepouts, deepNote, deepWhy, dilateGrid, gateLegClear, marginRunsAfter, offshoreNote,
-         holdTarget, junctionKnot, legPath, narrowChannelLane, planNogoRoute, pruneJunctionKnots,
+         holdTarget, junctionKnot, legPath, narrowChannelLane, passageJoinVia, planNogoRoute, pruneJunctionKnots,
          pruneStitch, rasterKeepouts, regionOrder,
          routeAround, routeAroundSeg, routePlan, smoothTrack, stampSeg } from "/static/js/passage.js";
 // THE ROUTE SEARCH OFF THIS PAGE'S THREAD (2026-10-12): the model's feature count, which the worker checks the model it
@@ -11705,20 +11716,42 @@ async function passageEndWorld(pts){
 // PASSAGE_PORT_R_M of a port - or of home, on the way home - is planned to its end with none of them; the chart is still
 // read, and the water judged, along all of them. The middle sections, hold to hold, keep the coarse route's points: a
 // hold is never within a port's circle (coarse.js holdSafe), and out there the coarse route is the open-water choice.
-function sectionAtPort(P, c){
+// ⚠ AND THE GO-TO IS THE HARBOR'S ONLY (Andy, 2026-10-15: "The GOTO should not need to parallel the passage line for such
+// a great distance ... should meld into the passage path just outside the harbor marker buoy 2KR and meld into the
+// passage line at the near bend to the long straight passage northeast ... generalize this"). One Go-To to the section's
+// end kept up to 1.4 km off the passage line the whole way (his New Castle departure: 15.2 km of 22 more than 300 m off
+// it). Now she joins the line at its JOIN POINT just outside the harbor (passage.js passageJoinVia: the first point of the
+// simplified line 3 km or more from the port, 200 m clear, starting the long straight run) and follows it from there:
+// portSectionLine. Planned with open water only ROUND what blocks the line (`openWater: "detours"`, as a drawn transit):
+// with it on every leg the long stretch after the join bulged off the line again (9.6 km of it). No join point - the
+// whole section as one Go-To, as before.
+function sectionPorts(P, c){
   const ports = (P.points || []).filter(p => p.port);
   if(P.home) ports.push(P.home);
-  return ports.some(p => distTo(p, c.from) <= PASSAGE_PORT_R_M || distTo(p, c.to) <= PASSAGE_PORT_R_M);
+  const at = (q) => ports.find(p => distTo(p, q) <= PASSAGE_PORT_R_M) || null;
+  return {from: at(c.from), to: at(c.to)};
+}
+function sectionAtPort(P, c){ const e = sectionPorts(P, c); return !!(e.from || e.to); }
+/** A section's line to plan through, and how ({line, ow}): at a port, the passage line from its join point (left where she
+ *  rejoins it, `bo`, when she left it part way) or, with none, the section's end alone; elsewhere `pts` (the coarse points,
+ *  open water on every leg). `model` {frame, ko} judges the join (the page's, or the world it is planned on). */
+function portSectionLine(P, c, bo, pts, model){
+  if(!sectionAtPort(P, c)) return {line: pts, ow: "all"};
+  const via = model ? passageJoinVia([c.from, ...c.via, c.to], sectionPorts(P, c), model.frame, model.ko, transitStandoffM()) : null;
+  if(!via) return {line: bo ? [bo.at, c.to] : [c.to], ow: "all"};
+  const rest = bo ? new Set(sectionRest(c, bo.at).map(p => p.lat + "," + p.lon)) : null;
+  const v = rest ? via.filter(p => rest.has(p.lat + "," + p.lon)) : via;
+  return {line: bo ? [bo.at, ...v, c.to] : [...v, c.to], ow: "detours"};
 }
 /** One section planned in detail on its own chart read: {ok: true, km, wpts} or {ok: false, why}. (Its ends are a
- *  port's: planned as a Go-To is - sectionAtPort.) */
+ *  port's: the harbor as a Go-To is, the passage line from its join point - portSectionLine.) */
 async function planPassageEnd(c, plan){
   const world = await passageEndWorld([c.from, ...c.via, c.to]);
   if(world.error) return {ok: false, why: world.error};
-  const via = sectionAtPort(plan, c) ? [] : c.via;
+  const ps = portSectionLine(plan, c, null, [...c.via, c.to], world), via = ps.line.slice(0, -1);
   const r = await planOffThread({op: "holdRoute", world, args: {target: c.to, holdOpts: holdOpts(), start: c.from, via,
                                                                   keepRightAll: true, standoffM: transitStandoffM(),
-                                                                  ropts: {openWater: "all"}}},
+                                                                  ropts: {openWater: ps.ow}}},
                                 () => null, (x) => x);
   if(!r) return {ok: false, why: "it could not be planned in the route worker"};
   if(r.ht && r.ht.error) return {ok: false, why: "its end is not clear water to hold at"};
@@ -11885,9 +11918,6 @@ function sailLeftM(){
 async function sailSend(P, k, from, bo, append){
   const c = P.sections[k], home = P.kind === "rth";
   const pts = bo ? [bo.at, ...sectionRest(c, bo.at), c.to] : [...c.via, c.to];
-  // (a section at a port is planned as a Go-To is - to its end, or to where she left it and then its end - with none of
-  // the coarse route's points: sectionAtPort. `pts` stays the line the chart is read along and its water judged on.)
-  const line = sectionAtPort(P, c) ? (bo ? [bo.at, c.to] : [c.to]) : pts;
   const wasGen = planGen, rrWas = runRoute;
   // ITS CHART IMAGE READ ALONG IT, where the read can find something (`route`: readRouteInk) - its one box is past the
   // read's budget, and the console, not the operator, sends it - and so is any wider read the planning makes.
@@ -11895,16 +11925,19 @@ async function sailSend(P, k, from, bo, append){
   // AT THE WATER IT WILL HAVE (step 6): the lowest predicted along it while she sails it - not the boat's level now,
   // which the guard's own chart keeps (sectionWater, atWaterLevel).
   const lv = await sectionWater(P, from, pts, append);
+  // (a section at a port: the harbor as a Go-To is, the passage line from its join point - portSectionLine, on the chart
+  // just read. `pts` stays the line the chart is read along and its water judged on.)
+  const {line, ow} = portSectionLine(P, c, bo, pts, nogo.ready ? nogo : null);
   let ht = null;
   // In the route worker (planOffThread), on the chart at that water (koAtLevel); on this thread as before if it cannot.
   const plan = await planInsideChart([from, ...pts], {route: true}, () => {
     const o = holdOpts(), via = line.slice(0, -1), std = transitStandoffM(), koLv = koAtLevel(lv.m);
     return planOffThread({op: "holdRoute", ko: koLv, args: {target: c.to, holdOpts: o, start: from, via, keepRightAll: true, standoffM: std,
-                                                            ropts: {openWater: "all"}}},   // a passage: open water on every leg
+                                                            ropts: {openWater: ow}}},   // a passage: open water on every leg (a port's joined line: round what blocks it)
       () => atWaterLevel(lv.m, () => {
         ht = holdTarget(c.to, o);
         if(ht.error) return null;
-        return routePlan(from, [...via, ht.to], true, std, undefined, {openWater: "all"});
+        return routePlan(from, [...via, ht.to], true, std, undefined, {openWater: ow});
       }, koLv),
       (r) => { ht = r.ht; return r.plan; });
   }, (home ? "Home along the passage, section " : "Passage section ") + (k + 1));

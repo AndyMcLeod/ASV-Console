@@ -117,6 +117,23 @@ check("1d. WAYPOINTS AND END OF PLAN IS ON THE CARD: Arrival m, Approach m and E
                 && /#pp_follow input, #pp_follow select/.test(H); },
       () => "section at " + CARD.indexOf('id="pp_follow"') + " (Route rules at " + CARD.indexOf('id="pp_rules"') + "); on the bar: "
             + (["c_arrival", "c_approach", "c_completion"].filter(id => WHOLE_BAR.includes('id="' + id + '"')).join(",") || "none"));
+// 1e. THE CHART'S OWN BUTTONS ON ITS BAR (Andy, 2026-10-15: "Move the following chips from the controls window to the lower
+// toolbar left of the ARM/DISARM button: +,-,BOAT,CHRT,NOGO. They are used for the chart so they should live there").
+// The command bar stays on the chart window (not bridged; the controls window hides it), so they are where the chart is
+// in either layout - and the control column, which goes to the controls window, carries none of them.
+{
+  const CHART_IDS = ["zin", "zout", "follow", "chrtBtn", "nogoBtn"];
+  const at = CHART_IDS.map(id => CMDBAR.indexOf('id="' + id + '"'));
+  const tail = CMDBAR.slice(CMDBAR.indexOf('id="nogoBtn"'));
+  check("1e. THE CHART'S BUTTONS ARE ON ITS BAR: + - BOAT CHRT NOGO, in that order, left of ARM past a divider, one of each in "
+        + "the page and none in the control column; the bar not mirrored and hidden in the controls window; their height the "
+        + "bar's one-line buttons'",
+        () => at.every(i => i > 0) && at.every((i, k) => !k || i > at[k - 1]) && /^id="nogoBtn"[^<]*<\/button>\s*<span class="cdiv"><\/span>\s*<button class="cbtn arm" $/.test(tail)
+              && CHART_IDS.every(id => !CONTROLS.includes('id="' + id + '"') && H.split('id="' + id + '"').length === 2)
+              && !/"\.cmdbar"/.test(decl("^const UI_BRIDGED = \\[[^\\]]*\\]")) && /body\.ui-controls \.cmdbar/.test(H)
+              && /\.cmdbar \.ctl\{[^}]*height:30px/.test(H),
+        () => "on the bar at " + at.join(",") + "; in the column: " + (CHART_IDS.filter(id => CONTROLS.includes('id="' + id + '"')).join(",") || "none"));
+}
 
 // ── the sandbox: the page's own functions over a small DOM ─────────────────────────────────────────────────────────────
 function mkEl(id, extra) {

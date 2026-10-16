@@ -182,7 +182,7 @@ console.log("The passage, sailed:");
       "const planInsideChart = async (pts, opts, plan) => { if (w.duringPlan) w.duringPlan(w, api); return plan(); };",
       "const holdTarget = (to) => ({to, heldOff: null, holdClear: 40});",
       "const holdClearWithContacts = (p, m) => m, routeTooLong = () => false, solveCoastFor = () => ({groundM: 55});",
-      "const routePlan = (from, line) => { w.planned.push({from, line}); return {route: line.map((p) => ({lat: p.lat, lon: p.lon})), unroutable: Array(w.unroutable).fill(0)}; };",
+      "const routePlan = (from, line, kr, std, ta, ro) => { w.planned.push({from, line, ow: ro && ro.openWater}); return {route: line.map((p) => ({lat: p.lat, lon: p.lon})), unroutable: Array(w.unroutable).fill(0)}; };",
       "const routeCmd = async (p, b) => { w.cmds.push([p, b]); return w.refusePost ? {ok: false, error: 'refused'} : {ok: true, state: {status: {}}}; };",
       "const took = (r) => !!(r && r.ok), notTookSay = (r) => 'REFUSED: ' + r.error, releaseEscapeClaim = () => {};",
       "const setPlanIntent = (k, p, r) => { planGen++; planIntent = {kind: k, why: [], route: r.length}; };",
@@ -200,7 +200,10 @@ console.log("The passage, sailed:");
       "const doGoTo = async (ll) => { w.cmds.push(['goto', ll]); if (w.gotoTakes) { planGen++; planIntent = {kind: 'goto', why: []}; if (w.gotoRoute) runRoute = w.gotoRoute; } };",
       "const $ = (id) => w.dom[id] || (w.dom[id] = {style: {}, classList: {toggle(c, on){ this[c] = on; }}, disabled: false});",
       decl("PASSAGE_CASING"), grab("strokeCased"), grab("fillHaloed"),
-      "const PASSAGE_PORT_R_M = w.C.PORT_R_M;", grab("sectionAtPort"),      // a section at a port: planned as a Go-To is
+      "const PASSAGE_PORT_R_M = w.C.PORT_R_M;", grab("sectionPorts"), grab("sectionAtPort"), grab("portSectionLine"),
+      // (the join point: the page's model when it is ready, passage.js passageJoinVia - here what the world says, 8e)
+      "const nogo = w.nogo || {ready: false};",
+      "const passageJoinVia = (line, ends, frame, ko, std) => { w.joins = (w.joins || []).concat([{line, ends, frame, ko, std}]); return w.joinVia === undefined ? null : w.joinVia; };",
       decl("PASSAGE_AHEAD_M"), decl("PASSAGE_RETRY_MS"), decl("PASSAGE_END_M"), decl("PASSAGE_ONGOING"),
       "let sailBusy = false, sailTriedAt = 0, sailSaid = null;",
       ["passageEndsSay", "sailRecord", "sailPortName", "sailRefusal", "sailSegM", "sectionRest", "sailOwns", "sailGuardQuiet", "sailLeftM", "sailSend",
@@ -396,7 +399,7 @@ console.log("The passage, sailed:");
         () => JSON.stringify({ middle: kmL(W8c), rest: kmL(W8d), port: kmL(W8e), portWater: W8e.waterAsked.map((x) => x.pts.length) }));
   // ── 8d. WHICH SECTIONS ARE A PORT'S (sectionAtPort): an end within the port's circle of a port - or of home, on the way
   // home, home being where it left from or arrives but not itself one of its points - and only those
-  const SAP = new Function("distTo", "PASSAGE_PORT_R_M", grab("sectionAtPort") + "; return sectionAtPort;")(distTo, C.PORT_R_M);
+  const SAP = new Function("distTo", "PASSAGE_PORT_R_M", grab("sectionPorts") + grab("sectionAtPort") + "; return sectionAtPort;")(distTo, C.PORT_R_M);
   const portAt = { points: [{ ...HERE, port: true }, { ...P4x, port: false }] };
   const sap = {
     inCircle: SAP(portAt, sec(east(HERE, 3500), east(HERE, 20000))),
@@ -411,6 +414,113 @@ console.log("The passage, sailed:");
         + "is not a port",
         () => sap.inCircle && !sap.outside && sap.arrives && !sap.notPort && sap.home && !sap.homeFar,
         () => JSON.stringify(sap));
+  // ── 8e. A PORT'S SECTION JOINS THE PASSAGE LINE AT ITS JOIN POINT (2026-10-15) ───────────────────────────────────────
+  // Andy: "The GOTO should not need to parallel the passage line for such a great distance ... should meld into the passage
+  // path just outside the harbor marker buoy 2KR and meld into the passage line at the near bend to the long straight
+  // passage northeast ... generalize this". One Go-To to the section's end ran 15.2 km of his 22 km New Castle departure
+  // more than 300 m off the passage line. The page asks passage.js passageJoinVia (8f-8i drive it) on the chart just read,
+  // and plans the line from the join - open water only ROUND what blocks it (with it on every leg, the stretch after the
+  // join bulged off the line again, 9.6 km). No join point, or no chart yet: the section's end alone, as before.
+  const MODEL = { ready: true, frame: "FRAME", ko: "KO" };
+  const atHoldW = (sent, at, bo, extra) => {
+    const route = [{ ...at }];
+    const P = { ...world().api.sailRecord(PLAN_M()), state: bo ? "stopped" : "holding", sent, base: 0, end: { ...at }, route, breakoff: bo || null };
+    return world(Object.assign({ mission: { passage: P }, runRoute: route, asv: { ...at }, wpIndex: 1,
+                                 S: { armed: true, estop: false, run: "running", status: { holding: true, fuel_l: 200 }, wp_total: 1 } }, extra || {}));
+  };
+  const W8j = atHoldW(2, P3, null, { nogo: MODEL, joinVia: [east(HERE, 70000)] });     // the last section, making the port
+  await W8j.api.continuePassage();
+  const W8k = atHoldW(2, P3, null, { nogo: MODEL, joinVia: null });                     // ... no join point
+  await W8k.api.continuePassage();
+  const W8l = atHoldW(2, P3, null, { nogo: { ready: false }, joinVia: [east(HERE, 70000)] });   // ... no chart yet
+  await W8l.api.continuePassage();
+  const W8m = atHoldW(0, P1, null, { nogo: MODEL, joinVia: [east(HERE, 99000)] });     // a middle section: not asked
+  await W8m.api.continuePassage();
+  const BOa = { lat: HERE.lat + 0.0005, lon: east(HERE, 7000).lon }, BOb = { lat: HERE.lat + 0.0005, lon: east(HERE, 12000).lon };
+  const W8n = atHoldW(0, east(HERE, 3000), { sec: 0, at: BOa, why: "a Go-To" }, { nogo: MODEL, joinVia: [east(HERE, 10000)] });
+  await W8n.api.continuePassage();
+  const W8o = atHoldW(0, east(HERE, 3000), { sec: 0, at: BOb, why: "a Go-To" }, { nogo: MODEL, joinVia: [east(HERE, 10000)] });
+  await W8o.api.continuePassage();
+  const ow = (w) => (w.planned[0] ? w.planned[0].ow : null), ask = W8j.joins && W8j.joins[0];
+  check("8e. A PORT'S SECTION JOINS THE PASSAGE LINE: through the join point's line (asked on the chart just read, at the "
+        + "transit standoff, for the end that is a port) with open water only round what blocks it; no join point or no chart "
+        + "- its end alone, open water on it; a middle section not asked; left part way, from where she left it through the "
+        + "join's points still ahead of her",
+        () => JSON.stringify(kmL(W8j)) === "[70,80]" && ow(W8j) === "detours"
+              && ask && ask.frame === "FRAME" && ask.ko === "KO" && ask.std === 20 && !ask.ends.from && ask.ends.to && distTo(ask.ends.to, P4x) < 1
+              && JSON.stringify(kmL(W8k)) === "[80]" && ow(W8k) === "all"
+              && JSON.stringify(kmL(W8l)) === "[80]" && ow(W8l) === "all" && !W8l.joins
+              && JSON.stringify(kmL(W8m)) === "[25,30,35,40]" && ow(W8m) === "all" && !W8m.joins
+              && JSON.stringify(kmL(W8n)) === "[7,10,20]" && ow(W8n) === "detours" && JSON.stringify(kmL(W8o)) === "[12,20]",
+        () => JSON.stringify({ join: [kmL(W8j), ow(W8j)], none: [kmL(W8k), ow(W8k)], noChart: [kmL(W8l), ow(W8l)], middle: [kmL(W8m), ow(W8m)],
+                               left7: kmL(W8n), left12: kmL(W8o) }));
+
+  // ── 8f-8i. THE JOIN POINT ITSELF (passage.js passageJoinVia), DRIVEN on a harbor of its own ──────────────────────────
+  // A channel 600 m wide running 3 km south from the port to its mouth, land both sides; the coarse line down it in cell
+  // steps (60 m apart, under the simplification's 150 m), out of the mouth, a short leg east-southeast, a shorter one east,
+  // then the long straight northeast - 13 km. The join is THE BEND ONTO THE LONG STRAIGHT: the mouth (3.2 km out) begins a
+  // 1.2 km run, the next point a 1.5 km run - neither the long straight.
+  {
+    const PS = require(path.join(APP, "static", "js", "passage.js"));
+    const { planeFrame } = require(path.join(APP, "static", "js", "geodesy.js"));
+    const { buildKeepouts } = require(path.join(APP, "static", "js", "chart.js"));
+    const ST = require(path.join(APP, "static", "js", "state.js"));
+    const GF = planeFrame({ lat: 43.0, lon: -70.6 });
+    const LLc = (e, n) => { const q = GF.fromEN(e, n); return [q.lon, q.lat]; };
+    const gll = (e, n) => { const q = GF.fromEN(e, n); return { lat: q.lat, lon: q.lon }; };
+    const rect = (e0, n0, e1, n1) => [[LLc(e0, n0), LLc(e1, n0), LLc(e1, n1), LLc(e0, n1), LLc(e0, n0)]];
+    const depth = (d1, d2, e0, n0, e1, n1) => ({ role: "depth_area", cls: "Depth_Area", props: { DRVAL1: d1, DRVAL2: d2 }, geometry: { type: "Polygon", coordinates: rect(e0, n0, e1, n1) } });
+    const land = (e0, n0, e1, n1) => ({ role: "land", cls: "Land_Area", props: {}, geometry: { type: "Polygon", coordinates: rect(e0, n0, e1, n1) } });
+    const ENF = { land: true, depth: true, haz: true, area: false, wreck: true, chan: true };
+    const harbor = (extra) => {
+      const was = { off: ST.sea.waterOffset, v: { ...ST.V } };
+      ST.sea.waterOffset = 0; Object.assign(ST.V, { NOGO_MIN_DEPTH_M: 3.15, OPER_MIN_DEPTH_M: 4.0, NOGO_BUFFER_M: 5, AIR_DRAFT_M: 2.85, OVERHEAD_CLEARANCE_M: 1.0 });
+      try { return buildKeepouts(GF, ENF, { min: 4.0, max: 0 }, [depth(10, 30, -20000, -20000, 20000, 20000), land(-3000, -2600, -300, 2000), land(300, -2600, 1500, 2000), ...(extra || [])]); }
+      finally { ST.sea.waterOffset = was.off; Object.assign(ST.V, was.v); }
+    };
+    const KO = harbor();
+    const PORT = gll(0, 500), MOUTH = gll(0, -2700), ESE = gll(1000, -3300), BEND = gll(2500, -3400), FAR = gll(12000, 6000);
+    const STAIR = []; for (let n = -500, k = 0; n > -2650; n -= 130, k++) STAIR.push(gll(k % 2 ? 60 : 0, n));
+    const LINE = [PORT, ...STAIR, MOUTH, ESE, BEND, FAR];
+    const near = (a, b) => a && b && distTo(a, b) < 1;
+    const simp = PS.simplifyLine(LINE, PS.JOIN_SIMPLIFY_M);
+    const out = PS.passageJoinVia(LINE, { from: PORT, to: null }, GF, KO, 20);
+    check("8f. DRIVEN: leaving a port, the join is THE BEND ONTO THE LONG STRAIGHT - not the mouth (3.2 km out, a 1.2 km run "
+          + "from it) nor the point after it (a 1.5 km run) - and the section's points are the passage line from there; the "
+          + "coarse line's cell steps folded away",
+          () => simp.length === 5 && near(simp[1], MOUTH) && near(simp[2], ESE) && near(simp[3], BEND)
+                && out && out.length === 1 && near(out[0], BEND),
+          () => "simplified " + LINE.length + " -> " + simp.length + "; points " + JSON.stringify(out && out.map((p) => [Math.round(GF.toEN(p).e), Math.round(GF.toEN(p).n)])));
+    // the three tests a join point must pass, each failed alone: a port 2.1 km from the bend (the harbor), an islet 170 m
+    // from it (clear water), and its pair 500 m off (kept)
+    const tooNear = PS.passageJoinVia(LINE, { from: gll(1800, -1400), to: null }, GF, KO, 20);
+    const islet = PS.passageJoinVia(LINE, { from: PORT, to: null }, GF, harbor([land(2300, -3580, 2370, -3510)]), 20);
+    const isletOff = PS.passageJoinVia(LINE, { from: PORT, to: null }, GF, harbor([land(2050, -3800, 2120, -3730)]), 20);
+    // ... and the stretch beyond it CLEAR: an islet ON the long straight 900 m past the bend (the bend itself 900 m clear of it)
+    const onLine = PS.passageJoinVia(LINE, { from: PORT, to: null }, GF, harbor([land(3150, -2780, 3300, -2620)]), 20);
+    // ... and a BUOY is not a danger here (open water's rule: passed close by design) - one 150 m off the bend leaves it
+    const buoyNear = PS.passageJoinVia(LINE, { from: PORT, to: null }, GF, harbor([{ role: "chan_mark", cls: "Buoy_Lateral_point",
+      props: { CATLAM: 2, OBJNAM: "Test Ledge Buoy 2" }, geometry: { type: "Point", coordinates: LLc(2600, -3510) } }]), 20);
+    check("8g. DRIVEN: a join point is OUTSIDE THE HARBOR (" + PS.JOIN_HARBOR_M / 1000 + " km from the port) and IN CLEAR WATER ("
+          + PS.JOIN_CLEAR_M + " m from every danger) with the stretch beyond it clear - with none, the whole section is one "
+          + "Go-To (null); an islet 500 m off leaves the join where it was",
+          () => tooNear === null && islet === null && onLine === null && isletOff && isletOff.length === 1 && near(isletOff[0], BEND)
+                && buoyNear && buoyNear.length === 1 && near(buoyNear[0], BEND),
+          () => JSON.stringify({ tooNear, islet, onLine, isletOff: isletOff && isletOff.length, buoyNear: buoyNear && buoyNear.length }));
+    // making a port: the same line sailed the other way - she follows it IN to the join, the harbor the Go-To's
+    const back = LINE.slice().reverse();
+    const inward = PS.passageJoinVia(back, { from: null, to: PORT }, GF, KO, 20);
+    const inwardNone = PS.passageJoinVia(back, { from: null, to: PORT }, GF, harbor([land(2300, -3580, 2370, -3510)]), 20);   // (8g's islet)
+    check("8h. DRIVEN: making a port, the line is followed in TO the join point (the bend off the long straight), the harbor "
+          + "the Go-To's; with no join point there, one Go-To",
+          () => inward && inward.length === 1 && near(inward[0], BEND) && inwardNone === null,
+          () => JSON.stringify(inward && inward.map((p) => [Math.round(GF.toEN(p).e), Math.round(GF.toEN(p).n)])));
+    // a section from one port to another whose joins CROSS: leaving, the bend (4.6 km along); arriving at FAR, the mouth
+    // (the 3.2 km run in to PORT is the long straight from that end) - nothing of the line between them: one Go-To
+    const crossed = PS.passageJoinVia(LINE, { from: PORT, to: FAR }, GF, KO, 20);
+    check("8i. DRIVEN: a section between two ports whose join points cross is ONE Go-To (null)",
+          () => crossed === null, () => JSON.stringify(crossed));
+  }
   const lowFuel = waiting("at_port", { asv: { ...P2 }, S: { armed: true, estop: false, run: "running", status: { holding: true, fuel_l: 55 }, wp_total: 4 } });
   lowFuel.mission.passage.sent = 1;
   const why8 = lowFuel.api.continueRefusal(lowFuel.mission.passage);
@@ -742,7 +852,7 @@ console.log("The passage, sailed:");
     // at it, if the worker cannot answer: tests/route_worker.js 6)
     wrapped: /const o = holdOpts\(\), via = line\.slice\(0, -1\), std = transitStandoffM\(\), koLv = koAtLevel\(lv\.m\);/.test(grab("sailSend"))
              // (and open water first on every leg of it, 2026-10-14 - tests/open_water.js)
-             && /planOffThread\(\{op: "holdRoute", ko: koLv, args: \{target: c\.to, holdOpts: o, start: from, via, keepRightAll: true, standoffM: std,\s*\n\s*ropts: \{openWater: "all"\}\}\},[^\n]*\n\s*\(\) => atWaterLevel\(lv\.m, \(\) => \{\s*\n\s*ht = holdTarget\(c\.to, o\);/.test(grab("sailSend")),
+             && /planOffThread\(\{op: "holdRoute", ko: koLv, args: \{target: c\.to, holdOpts: o, start: from, via, keepRightAll: true, standoffM: std,\s*\n\s*ropts: \{openWater: ow\}\}\},[^\n]*\n\s*\(\) => atWaterLevel\(lv\.m, \(\) => \{\s*\n\s*ht = holdTarget\(c\.to, o\);/.test(grab("sailSend")),
     // its chart read along it as a ROUTE, where the read can find something - and any wider read the planning makes
     routeInk: /await ensureNogoCovers\(\[from, \.\.\.pts\], null, \{route: true\}\);/.test(grab("sailSend")),
     oneWriter: (H.match(/sea\.waterOffset\s*=(?!=)/g) || []).length === 1,

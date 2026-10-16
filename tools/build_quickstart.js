@@ -39,7 +39,7 @@ c.push(TBL(["Where", "What it is"], [
   ["Bottom bar", "Run parameters and the commands"],
   ["`?` bottom-left", "The built-in quick start card"],
 ], [1800, 7560]));
-c.push(P("Zoom with `+` / `−`, drag to pan, `BOAT` re-centers on the vessel. Turn on `NOGO` to see the keep-out zones the vessel will refuse to cross — that overlay is the single most useful thing on screen while you are learning. (Ops manual 4)"));
+c.push(P("Zoom with `+` / `−` (on the command bar, left of ARM), drag to pan, `BOAT` re-centers on the vessel. Turn on `NOGO` to see the keep-out zones the vessel will refuse to cross — that overlay is the single most useful thing on screen while you are learning. (Ops manual 4)"));
 
 // ------------------------------------------------------------------
 c.push(H1("3  Your first command — a Go-To"));

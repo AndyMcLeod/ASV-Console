@@ -1223,3 +1223,97 @@ export function routePlan(start, wps, keepRightAll, standoffM, transitAt, ropts)
           moored: mooredPassed([{lat: start.lat, lon: start.lon}, ...out], ref, koT.moored),
           deep: dfs.length ? deepSaid(dfs, runs) : null};
 }
+
+// ── A PORT'S SECTION JOINS THE PASSAGE LINE JUST OUTSIDE THE HARBOR (Andy, 2026-10-15) ─────────────────────────────────
+// "The passage planning works pretty well, but it's a bit messy. The GOTO should not need to parallel the passage line for
+// such a great distance. Generally speaking the goto should meld into the passage path just outside the harbor marker buoy
+// 2KR and meld into the passage line at the near bend to the long straight passage northeast. Again, generalize this for
+// future reference in other harbors." A section that leaves or makes a port was planned as one Go-To to its end (8df6ab6:
+// the coarse route's harbor points made her weave), and its open-water search kept up to 1.4 km off the passage line the
+// whole way: replayed on his New Castle -> Portland section 1, 15.2 km of 22 more than 300 m off it.
+//   NOW the harbor alone is the Go-To's: she joins the passage line at its JOIN POINT - walking the line out from the
+// port, the first of its points that is
+//   * outside the harbor: at least JOIN_HARBOR_M from the port (the port's circle is the coarse search's guess, and
+//     Portland's line has a blocked stretch 3.6 km out);
+//   * in clear water: at least JOIN_CLEAR_M from every danger, its buoys aside (open water's own rule: a buoy is passed
+//     close by design, openwater.js);
+//   * the start of the long run: no turn of JOIN_TURN_DEG or more for JOIN_RUN_M (or the rest of the line) - "the near
+//     bend to the long straight passage";
+//   * with the stretch beyond it clear at the transit standoff;
+// and from there she follows the line as drawn, turning only where it turns. The line is first SIMPLIFIED: the coarse
+// route steps cell to cell, and a staircase of 130 m steps is not a turn (JOIN_SIMPLIFY_M; every point kept is one of
+// its own). Picked by his words, not a buoy: 2KR's line passes 760 m north of it, and the buoy nearest the line past it is
+// West Sister Buoy 2, a ledge mark beyond the bend. Measured (scratchpad harbor/join_rule.cjs) on six port sections of his
+// three passages: New Castle's bend picked (3.5 km out), the line followed (at most 425 m of each more than 300 m off it),
+// within 250 m of a danger about the same or less at four of them, more at New Castle's two exits, where the line runs
+// nearer the ledges than the Go-To did.
+export const JOIN_SIMPLIFY_M = 150;
+export const JOIN_HARBOR_M = 3000;
+export const JOIN_CLEAR_M = 200;
+export const JOIN_RUN_M = 3000;
+export const JOIN_TURN_DEG = 20;
+
+/** A polyline simplified (Douglas-Peucker in a local plane): every point kept is one of `pts`, no dropped point
+ *  farther than `tolM` from the line kept, its two ends always kept. */
+export function simplifyLine(pts, tolM){
+  if(!pts || pts.length < 3) return (pts || []).slice();
+  const o = pts[0], kx = M_PER_DEG_LAT * Math.cos(o.lat * Math.PI / 180);
+  const P = pts.map((p) => ({x: (p.lon - o.lon) * kx, y: (p.lat - o.lat) * M_PER_DEG_LAT}));
+  const keep = new Array(pts.length).fill(false);
+  keep[0] = keep[pts.length - 1] = true;
+  const stack = [[0, pts.length - 1]];
+  while(stack.length){
+    const [i, j] = stack.pop();
+    const ax = P[i].x, ay = P[i].y, dx = P[j].x - ax, dy = P[j].y - ay, L2 = dx * dx + dy * dy;
+    let best = -1, bi = -1;
+    for(let m = i + 1; m < j; m++){
+      const t = L2 ? Math.max(0, Math.min(1, ((P[m].x - ax) * dx + (P[m].y - ay) * dy) / L2)) : 0;
+      const d = Math.hypot(P[m].x - ax - dx * t, P[m].y - ay - dy * t);
+      if(d > best){ best = d; bi = m; }
+    }
+    if(best > tolM){ keep[bi] = true; stack.push([i, bi], [bi, j]); }
+  }
+  return pts.filter((_, i) => keep[i]);
+}
+
+/** The index in `line` (sailed OUT from `port`, line[0] its port end) of its join point, or -1: see above. */
+export function joinIndex(line, port, frame, ko, standoffM){
+  const isBuoy = (q) => q.kind === "a channel buoy" || /^Buoy_/.test(q.cls || "");
+  const dangers = {...ko, points: (ko.points || []).filter((q) => !isBuoy(q))};
+  const turn = (i) => Math.abs(((azTo(line[i], line[i + 1]) - azTo(line[i - 1], line[i]) + 540) % 360) - 180);
+  const total = [0];
+  for(let i = 1; i < line.length; i++) total.push(total[i - 1] + distTo(line[i - 1], line[i]));
+  for(let i = 1; i < line.length - 1; i++){
+    if(distTo(port, line[i]) < JOIN_HARBOR_M) continue;
+    if(clearanceM(frame.toEN(line[i]), dangers, JOIN_CLEAR_M + 1) < JOIN_CLEAR_M) continue;
+    let run = 0;
+    for(let j = i + 1; j < line.length; j++){
+      run += total[j] - total[j - 1];
+      if(j < line.length - 1 && turn(j) >= JOIN_TURN_DEG) break;
+    }
+    if(run < Math.min(JOIN_RUN_M, total[line.length - 1] - total[i])) continue;
+    if(!legClear(line[i], line[i + 1], frame, ko, standoffM)) continue;
+    return i;
+  }
+  return -1;
+}
+
+/**
+ * A PORT'S SECTION'S POINTS: `line` is the section as the coarse plan drew it ([from, ...via, to]), `ends` {from, to} the
+ * port at each end (or null). The simplified line between the join points - from the start's port's join (or its start)
+ * to the end's port's join (or its end) - its own two ends left out: the turning points the section is planned through,
+ * in the order she sails them. null when an end at a port has no join point, or the two joins cross: the section is
+ * then planned as ONE Go-To to its end.
+ */
+export function passageJoinVia(line, ends, frame, ko, standoffM){
+  const simp = simplifyLine(line, JOIN_SIMPLIFY_M);
+  let a = 0, b = simp.length - 1;
+  if(ends && ends.from){ a = joinIndex(simp, ends.from, frame, ko, standoffM); if(a < 0) return null; }
+  if(ends && ends.to){
+    const j = joinIndex(simp.slice().reverse(), ends.to, frame, ko, standoffM);
+    if(j < 0) return null;
+    b = simp.length - 1 - j;
+  }
+  if(a > b) return null;
+  return simp.slice(Math.max(a, 1), Math.min(b, simp.length - 2) + 1).map((p) => ({lat: p.lat, lon: p.lon}));
+}

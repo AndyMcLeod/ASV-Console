@@ -415,6 +415,9 @@ window runs all the logic and owns the chart, the controls window mirrors its co
 and forwards your clicks and edits back. You still draw on the main window's chart. In
 the controls window the buttons become a vertical column on the left and each panel or
 table becomes a **draggable, resizable card**; the layout is saved to `localStorage`
+(the chart's own buttons - `+`, `−`, `BOAT`, `CHRT`, `NOGO` - are on the command bar, left of
+ARM, since 2026-10-15, Andy: "They are used for the chart so they should live there"; they stay
+with the chart in either layout, and the column carries the rest)
 and restored next session. **The ALERTS card lives in the controls window** (2026-09-28, Andy:
 "the pop-up alert messages are blocking each other or covering standing messages at the bottom
 center of the chart screen"): the guard's bar with its buttons (PROCEED, CONTINUE AT LOW, RESUME,
@@ -2561,7 +2564,18 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    with none of the coarse route's turning points, which cross a port's water on ~100 m cells and
    blocked ones too; its chart is still read, and its water judged, along them. The sections out at
    sea, hold to hold, still run through them. His Portland departure, flown from his wharf on a
-   scratch console: 15 coarse points and five turns past 45 degrees before, none of either after. A
+   scratch console: 15 coarse points and five turns past 45 degrees before, none of either after.
+   **And the Go-To is the harbor's only** (2026-10-15, Andy: "The GOTO should not need to parallel
+   the passage line for such a great distance ... should meld into the passage path just outside
+   the harbor marker buoy 2KR and meld into the passage line at the near bend to the long straight
+   passage northeast ... generalize this"): she joins the passage line at its **join point** - the
+   first point of the line (its cell steps folded, 150 m) at least 3 km from the port, 200 m from
+   every danger (buoys aside), with the stretch beyond it clear, that begins a run of 3 km with no
+   turn of 20 degrees - and follows the line from there, open water only round what blocks it. No
+   such point: the whole section one Go-To, as before. Flown from New Castle: 15.1 km of the 8df6ab6
+   route ran more than 300 m off the line, none of the new one; it joins at the bend 3.5 km out,
+   past 2KR. The line runs nearer the coast than the Go-To did there: more of it within 500 m of a
+   danger (4.1 km against 2.9). A
    battery hull is refused ("long passages are for the diesel hulls"). Nothing moves the boat.
    Measured: a 287 nm passage, Portsmouth to the New York approaches (39 tiles), read from NOAA in
    8.6 minutes the first time and planned in 0.8 s; with open water first, New Castle to Castine

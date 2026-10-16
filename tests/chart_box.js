@@ -532,7 +532,7 @@ const fresh = () => { banners = []; downs = []; covers = []; aisTaken = 0; cover
               && /const o = holdOpts\(\), via = line\.slice\(0, -1\), std = transitStandoffM\(\), koLv = koAtLevel\(lv\.m\);/.test(ss)
               // (a port's section planned as a Go-To is: `line` drops the coarse points there, 2026-10-14 - tests/passage_sail.js 8c)
               // (open water first on every leg of a section, 2026-10-14 - tests/open_water.js)
-              && /return routePlan\(from, \[\.\.\.via, ht\.to\], true, std, undefined, \{openWater: "all"\}\);/.test(ss),
+              && /return routePlan\(from, \[\.\.\.via, ht\.to\], true, std, undefined, \{openWater: ow\}\);/.test(ss),
         "planInsideChart " + iSsPlan + ", holdTarget " + iSsHt + ", uncharted refusal " + iSsUn + ", post " + iSsPost + ", draw " + iSsDraw);
   const pv = fs.readFileSync(path.join(__dirname, "..", "static", "js", "passage.js"), "utf8").split("\r\n").join("\n");
   // (with the water no chart covers, nogo.unread, since 2026-10-11 - the layered chart; tests/unread_water.js)
