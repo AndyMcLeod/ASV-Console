@@ -2250,9 +2250,13 @@ ENC_ROLES = {
 #   QUASOU  quality of the sounding - a doubtful, unreliable or only reported VALSOU passes nothing (hazPassable);
 #   EXPSOU, CATWRK, CATOBS, CATCAM, CONDTN, TRAFIC - what the object is, carried for the operator and later rules;
 #   VERCLR VERCCL VERCOP HORCLR CATBRG - a bridge's and an overhead line's clearances (the `bridge_span` note above).
+#   CATSLC CATSCF CATHAF (2026-10-16, Massachusetts' 150 ft of "a marina, boat launching facility, raft or float",
+#           static/js/speedzones.js): what a shoreline construction is (a "ramp" from a "pier"), a small-craft facility
+#           and a harbor facility ("yacht harbor" from "ferry terminal") - text, as ENCDirect publishes them. A tile read
+#           before carries none of the three; it is read again within ENC_TILE_FRESH_S.
 ENC_KEEP_PROPS = ("DRVAL1", "DRVAL2", "VALSOU", "VALDCO", "OBJNAM", "CATLAM", "COLOUR",
                   "CATREA", "INFORM", "RESTRN", "WATLEV", "QUASOU", "EXPSOU", "CATWRK", "CATOBS", "CATCAM",
-                  "CONDTN", "TRAFIC", "VERCLR", "VERCCL", "VERCOP", "HORCLR", "CATBRG")
+                  "CONDTN", "TRAFIC", "VERCLR", "VERCCL", "VERCOP", "HORCLR", "CATBRG", "CATSLC", "CATSCF", "CATHAF")
 # ...and the ones the nogo model does ARITHMETIC or comparison on, which have to be NUMBERS.
 ENC_NUMERIC_PROPS = frozenset(("DRVAL1", "DRVAL2", "VALSOU", "VALDCO", "WATLEV",
                                "VERCLR", "VERCCL", "VERCOP", "HORCLR"))

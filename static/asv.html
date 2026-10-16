@@ -9281,8 +9281,9 @@ function drawSpeedZones(toScreen){
   }
   ctx.restore();
 }
-// THE STATES' SHORE-DISTANCE RULES ON THE CHART (2026-10-16): the water within 150 ft of New Hampshire's shore and docks
-// and 200 ft of Maine's shore, tinted amber in each state's own water with a solid amber line AT the rule's distance, the
+// THE STATES' SHORE-DISTANCE RULES ON THE CHART (2026-10-16): the water within 150 ft of New Hampshire's shore and docks,
+// 200 ft of Maine's shore and 150 ft of Massachusetts' marinas, launch ramps and floats (a marina's own area tinted too),
+// tinted amber in each state's own water with a solid amber line AT the rule's distance, the
 // Piscataqua channel New Hampshire exempts left clear and the land left as the chart draws it - the band a shore rule will
 // take her speed in. The chart's own shore features stroked twice the rule's distance wide, as the chart layer draws them:
 // a feature off the canvas not traced (layerSees), a vertex within a sixteenth of the band of the last not traced.
@@ -9293,7 +9294,7 @@ const lawLayer = makeLayer(), LAW_BAND_MIN_PX = 3;
 let lawScratch = null;
 function drawLawBandsCached(toScreen, w, h, o){
   if(!(w > 0 && h > 0)) return;                    // a view with no size: nothing to draw into (drawENCCached)
-  const zs = speedZonesNow().filter(z => z.law && z.law.within > 0 && z.law.roles);
+  const zs = speedZonesNow().filter(z => z.law && z.law.within > 0 && z.law.pick);
   if(!zs.length) return;
   drawLayer(lawLayer, String(zoom), [zonesList], (ts, lctx) => drawLawBands(zs, ts, lctx), toScreen, w, h, o);
 }
@@ -9321,8 +9322,11 @@ function drawLawBands(zs, toScreen, lctx){
         sx.lineTo(q.x, q.y); lx = q.x; ly = q.y;
       }
     };
+    const takes = typeof z.law.pick === "function" ? z.law.pick : (x) => z.law.pick.includes(x.role);   // its roles, or its test
+    const areas = [];
     for(const f of feats){
-      if(!z.law.roles.includes(f.role) || !sees(f, band, true)) continue;
+      if(!takes(f) || !sees(f, band, true)) continue;
+      if(z.law.areas && /Polygon/.test(f.geometry.type)) areas.push(f);   // a marina's own water (Massachusetts): in it is in the rule
       eachRing(f.geometry, trace); eachPath(f.geometry, trace);
       eachPoint(f.geometry, (c) => { const q = toScreen(c[1], c[0]); sx.moveTo(q.x, q.y); sx.lineTo(q.x + 0.01, q.y); });
     }
@@ -9332,6 +9336,11 @@ function drawLawBands(zs, toScreen, lctx){
     sx.lineWidth = band + 3; sx.stroke();
     sx.globalCompositeOperation = "destination-out";
     sx.globalAlpha = 0.55; sx.lineWidth = band; sx.stroke(); sx.globalAlpha = 1;
+    if(areas.length){                               // the areas themselves at the band's tint
+      sx.globalCompositeOperation = "source-over"; sx.globalAlpha = 0.45; sx.fillStyle = "#e8b46a";
+      for(const f of areas){ sx.beginPath(); eachRing(f.geometry, (rg) => tracePx(sx, toScreen, rg)); sx.fill("evenodd"); }
+      sx.globalAlpha = 1; sx.globalCompositeOperation = "destination-out";
+    }
     if(z.law.exempt && z.law.exempt.length){ rings(z.law.exempt); sx.fill(); }
     for(const f of land){                           // each its own fill, so a lake in it stays and two that overlap still cut
       if(!sees(f, 2, true)) continue;

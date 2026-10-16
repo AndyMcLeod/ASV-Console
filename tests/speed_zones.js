@@ -22,6 +22,9 @@
 //         bridges; the edge and her release; the stricter rule where no state line was read; the shore index against
 //         brute force; a zone she is slowing for kept ahead (live: "Clear of speed zone" of water not reached); the
 //         governor end to end.
+//   7-7e  MASSACHUSETTS (2026-10-16: "model the MA shore distance rules"; asked, "Headway in every MA channel"): 150 ft of
+//         a marina, launch or float as the chart publishes them; headway in every channel not named an anchorage, in
+//         its own water; under a bridge; six miles per hour at most; its line unread; the governor through a channel.
 //
 //   node tests/speed_zones.js   # exit 0 = pass
 
@@ -356,26 +359,31 @@ check("6e. THE EXEMPTION IS THE FEDERAL CHANNEL BETWEEN R2 AND R12: the Piscataq
       + "a side channel are not",
       () => EX.length === 2 && EX.some((r) => r.bb.x0 < 50) && EX.some((r) => r.bb.x0 > 150 && r.bb.x0 < 250),
       () => JSON.stringify(EX.map((r) => [Math.round(r.bb.x0), Math.round(r.bb.y0)])));
-const MA = (e, n) => PL(e, n - 45000);                        // 45 km south: Massachusetts, out of their region
-const LF = Z.lawZones([...CHART, { role: "land", geometry: rectL(0, 0, 400, 400, MA) }]);   // no state line read at all
-const FB = LF.find((z) => z.props.zone_id === "law|NHME|unread");
-const NHonly = Z.lawZones([Object.assign({}, NHW, { props: { state: "NH", unread: ["ME"] } }), ...CHART]);
-const FB1 = NHonly.find((z) => z.props.zone_id === "law|NHME|unread");
+const FAR = (e, n) => PL(e, n - 300000);                      // 300 km south, off New Jersey: no state's box
+const LF = Z.lawZones([...CHART, { role: "land", geometry: rectL(0, 0, 400, 400, FAR) }]);   // no state line read at all
+const NHonly = Z.lawZones([Object.assign({}, NHW, { props: { state: "NH", unread: ["ME"] } }), ...CHART]);   // Maine's unread
 const AWAY = Z.lawZones(CHART.map((f) => Object.assign({}, f, { geometry: JSON.parse(JSON.stringify(f.geometry, (k, v) =>
   Array.isArray(v) && typeof v[0] === "number" ? [v[0] - 10, v[1] - 17] : v)) })));
-const w6f = { n: LF.filter((z) => z.law && z.law.within).length, pier: FB && Z.inZone(FL.fromEN(500, 100), FB), channel: FB && Z.inZone(FL.fromEN(440, 350), FB),
-  mePier: FB && Z.inZone(FL.fromEN(1480, 100), FB), at55: FB && Z.inZone(FL.fromEN(455, 250), FB),
-  ma30: FB && Z.inZone(FL.fromEN(430, 250 - 45000), FB),
-  one: { meWest: FB1 && Z.inZone(FL.fromEN(1550, 250), FB1), mePier: FB1 && Z.inZone(FL.fromEN(1480, 100), FB1),
-         nhChannel: NHonly.some((z) => Z.inZone(FL.fromEN(440, 350), z)), nhEast: FB1 && Z.inZone(FL.fromEN(430, 250), FB1) },
+const anyIn = (zs, e, n) => zs.some((z) => Z.inZone(FL.fromEN(e, n), z));
+const zIn = (zs, id, e, n) => { const z = zs.find((x) => x.props.zone_id === id); return !!z && Z.inZone(FL.fromEN(e, n), z); };
+const w6f = { named: LF.filter((z) => /^law\|(NH|ME)\|shore$/.test(z.props.zone_id)).map((z) => z.props.name),
+  pier: zIn(LF, "law|NH|shore", 500, 100), channel: zIn(LF, "law|ME|shore", 440, 350), channelNH: zIn(LF, "law|NH|shore", 440, 350),
+  mePier: anyIn(LF, 1480, 100), at55: zIn(LF, "law|ME|shore", 455, 250), far30: anyIn(LF, 430, 250 - 300000),
+  one: { meWest: zIn(NHonly, "law|ME|shore", 1550, 250), mePier: anyIn(NHonly, 1480, 100), nhChannel: anyIn(NHonly, 440, 350),
+         nhEast: zIn(NHonly, "law|NH|shore", 430, 250), meAtNh: zIn(NHonly, "law|ME|shore", 430, 250),
+         nhName: (NHonly.find((z) => z.props.zone_id === "law|NH|shore") || { props: {} }).props.name },
   away: AWAY.length, noShore: Z.lawZones([NHW, MEW]).length };
-check("6f. NO STATE LINE READ, THE STRICTER RULE (safety before efficiency): with no boundary, one zone - 200 ft of shore AND "
-      + "docks, no exemption: off a pier, in the channel and off Maine's pier all in, 55 m off in; with Maine's unread, its "
-      + "water takes that rule (off its island and its pier) while New Hampshire's keeps its own, channel exemption and all; "
-      + "and a shore on the same chart in Massachusetts is not bound by it; the same chart off Florida, and a chart with no "
-      + "shore, make none",
-      () => w6f.n === 1 && FB && !w6f.ma30 && w6f.pier && w6f.channel && w6f.mePier && w6f.at55 && w6f.one.meWest && w6f.one.mePier
-            && !w6f.one.nhChannel && !w6f.one.nhEast && w6f.away === 0 && w6f.noShore === 0,
+check("6f. A STATE LINE NOT READ, THAT STATE'S RULES IN ITS BOX (safety before efficiency): with no line read, New "
+      + "Hampshire's AND Maine's rules both hold where the water could be either's, each named for the unread line - off "
+      + "New Hampshire's pier (its docks rule) in, in the channel 40 m off the island in by Maine's 200 ft (New Hampshire's "
+      + "exemption still its own), 55 m off in by Maine's, off Maine's pier in by neither (Maine counts no docks, New "
+      + "Hampshire's 150 ft is short of it); a shore off New Jersey is in no state's box; with Maine's line unread, its rule "
+      + "holds off its island but not in New Hampshire's read water, whose own rule and exemption stand; the same chart off "
+      + "Florida, and a chart with no shore, make none",
+      () => w6f.named.length === 2 && w6f.named.every((n) => /\(the state line could not be read\)$/.test(n))
+            && w6f.pier && w6f.channel && !w6f.channelNH && !w6f.mePier && w6f.at55 && !w6f.far30
+            && w6f.one.meWest && !w6f.one.mePier && !w6f.one.nhChannel && w6f.one.nhEast && !w6f.one.meAtNh
+            && !/could not be read/.test(w6f.one.nhName) && w6f.away === 0 && w6f.noShore === 0,
       () => JSON.stringify(w6f));
 // the shore index against brute force: long diagonal edges (one each way across many cells), short ones, points
 {
@@ -448,6 +456,108 @@ check("6f. NO STATE LINE READ, THE STRICTER RULE (safety before efficiency): wit
               && /^SPEED ZONE New Hampshire, within 150 ft of shore or a dock \(NH RSA 270-D:2 VI\) is no longer on her way: back to 7 kn, her commanded speed\.$/.test(K.banners[1] || "")
               && !K.notes.some((t) => /Clear of speed zone/.test(t)),
         () => JSON.stringify({ k: [k1, k2, k3], banners: K.banners, notes: K.notes, q: [Q.banners, Q.notes] }));
+}
+
+// ── 7. Massachusetts' rules (lawZones, 2026-10-16: "model the MA shore distance rules"; asked, "Headway in every MA
+// channel") ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+// A chart of its own off Gloucester, in meters east / north of 42.61 N, 70.66 W, all in Massachusetts' water: an island;
+// a row of facilities 300 m apart along n = 1000 (each as ENCDirect publishes it, measured at Gloucester, Boston,
+// Scituate and Hyannis); a row of channel pieces along n = -800; a bridge.
+const FMA = GD.planeFrame({ lat: 42.61, lon: -70.66 });
+const PM = (e, n) => { const p = FMA.fromEN(e, n); return [p.lon, p.lat]; };
+const ptM = (e, n) => ({ type: "Point", coordinates: PM(e, n) });
+const MAW = { role: "state_water", geometry: rectL(-5000, -5000, 5000, 5000, PM), props: { state: "MA", source: "TEST", unread: [], asked: ["MA"] } };
+const fac = (cls, role, geometry, props) => ({ role, cls, geometry, props: props || {} });
+const MA_CHART = [
+  { role: "land", geometry: rectL(0, 0, 400, 400, PM) },
+  fac("Small_Craft_Facility_point", "extra", ptM(0, 1000), { CATSCF: "sewerage pump-out station" }),
+  fac("Harbour_Facility_point", "extra", ptM(300, 1000), { CATHAF: "yacht harbor", OBJNAM: "Test Yacht Club" }),
+  fac("Harbour_Facility_point", "extra", ptM(600, 1000), { CATHAF: "ferry terminal" }),
+  fac("Harbour_Facility_point", "extra", ptM(900, 1000)),                                  // a tile read before: no category
+  fac("Shoreline_Construction_point", "hazard_point", ptM(1200, 1000), { CATSLC: "ramp" }),
+  fac("Shoreline_Construction_point", "hazard_point", ptM(1500, 1000), { CATSLC: "pier" }),
+  fac("Shoreline_Construction_point", "hazard_point", ptM(1800, 1000)),                    // no category: not known a ramp
+  fac("Shoreline_Construction_line", "dock_line", lineL([[2100, 1000], [2150, 1000]], PM), { CATSLC: "slipway" }),
+  fac("Floating_Dock_line", "dock_line", lineL([[2400, 1000], [2450, 1000]], PM)),
+  fac("Harbour_Facility_area", "extra", rectL(3000, 800, 3400, 1200, PM), { CATHAF: "yacht harbor" }),
+  { role: "fairway", geometry: rectL(0, -1000, 400, -600, PM), props: { OBJNAM: "Inner Harbor Channel" } },
+  { role: "dredged", geometry: rectL(100, -900, 300, -700, PM), props: { OBJNAM: "Overlap Reach", DRVAL1: 5 } },
+  { role: "dredged", geometry: rectL(600, -1000, 1000, -600, PM), props: { OBJNAM: "Smith Cove Channel", DRVAL1: 3.5 } },
+  { role: "dredged", geometry: rectL(1200, -1000, 1600, -600, PM), props: { OBJNAM: "Harbor Cove Anchorage", DRVAL1: 4.3 } },
+  { role: "fairway", geometry: rectL(1800, -1000, 2200, -600, PM), props: { OBJNAM: "Scituate Harbor Anchorage Area" } },
+  { role: "dredged", geometry: rectL(2400, -1000, 2800, -600, PM), props: { DRVAL1: 4.2 } },
+  { role: "fairway", geometry: { type: "Polygon", coordinates: [rectL(3000, -1000, 3600, -400, PM).coordinates[0],
+                                                                rectL(3200, -800, 3400, -600, PM).coordinates[0]] }, props: { OBJNAM: "Holed Channel" } },
+  { role: "bridge_span", geometry: rectL(-300, 600, -250, 700, PM), props: { OBJNAM: "Test MA Bridge" } },
+];
+const MZ = Z.lawZones([MAW, ...MA_CHART]);
+const mz = (id) => MZ.find((z) => z.props.zone_id === id);
+const FACZ = mz("law|MA|facility"), CHZ = mz("law|MA|channel"), BRZ = mz("law|MA|bridge|Test MA Bridge");
+const inM = (z, e, n) => !!z && Z.inZone(FMA.fromEN(e, n), z);
+const w7 = { pumpout30: inM(FACZ, 0, 1030), pumpout60: inM(FACZ, 0, 1060), yacht30: inM(FACZ, 300, 1030), ferry30: inM(FACZ, 600, 1030),
+  uncatHarbor30: inM(FACZ, 900, 1030), ramp30: inM(FACZ, 1200, 1030), pier30: inM(FACZ, 1500, 1030), uncatSlcons30: inM(FACZ, 1800, 1030),
+  slipway30: inM(FACZ, 2125, 1030), float30: inM(FACZ, 2425, 1030), inMarina: inM(FACZ, 3200, 1000), marina30: inM(FACZ, 3200, 1230),
+  shore30: MZ.some((z) => inM(z, 430, 200)), only: MZ.every((z) => /^law\|MA\|/.test(z.props.zone_id)) };
+check("7. MASSACHUSETTS, 150 FT OF A MARINA, BOAT LAUNCH OR FLOAT (323 CMR 2.07(3)(b)): 30 m off a small-craft facility in, "
+      + "60 m out; a yacht harbor in, a ferry terminal not; a harbor facility with no category in (a tile read before - the "
+      + "safe side); a ramp, a slipway and a floating dock in; a pier and an uncategorized shoreline construction not; inside "
+      + "a marina's own area, 200 m from its edge, in; and no rule off a plain shore in Massachusetts - nor any other state's",
+      () => FACZ && w7.pumpout30 && !w7.pumpout60 && w7.yacht30 && !w7.ferry30 && w7.uncatHarbor30 && w7.ramp30 && !w7.pier30
+            && !w7.uncatSlcons30 && w7.slipway30 && w7.float30 && w7.inMarina && w7.marina30 && !w7.shore30 && w7.only
+            && FACZ.props.source === "MA 323 CMR 2.07(3)(b)" && FACZ.props.rule === "headway",
+      () => JSON.stringify(w7));
+// the same channels with Massachusetts' line stopping at e = 500: Smith Cove beyond it is not Massachusetts' water
+const MZcut = Z.lawZones([Object.assign({}, MAW, { geometry: rectL(-5000, -5000, 500, 5000, PM) }), ...MA_CHART]);
+const CHcut = MZcut.find((z) => z.props.zone_id === "law|MA|channel");
+const w7b = { fairway: inM(CHZ, 50, -650), overlap: inM(CHZ, 200, -800), dredged: inM(CHZ, 800, -800), anchorageD: inM(CHZ, 1400, -800),
+  anchorageF: inM(CHZ, 2000, -800), unnamed: inM(CHZ, 2600, -800), hole: inM(CHZ, 3300, -700), ring: inM(CHZ, 3100, -900),
+  between: inM(CHZ, 500, -800), cutIn: inM(CHcut, 200, -800), cutOut: inM(CHcut, 800, -800),
+  drawn: CHZ && CHZ.geometry && CHZ.geometry.type === "MultiPolygon" && CHZ.geometry.coordinates.length === 5 };
+check("7b. MASSACHUSETTS, HEADWAY IN A CHANNEL (323 CMR 2.07(3)(d) - every one: a posted speed cannot be read): in a fairway, "
+      + "in a dredged channel, in two pieces that overlap, in an unnamed dredged area; not in a dredged area or a fairway named "
+      + "as an anchorage, not in a channel's hole, not between channels; not where the channel runs out of Massachusetts' "
+      + "water; drawn as the channels' own outlines",
+      () => CHZ && w7b.fairway && w7b.overlap && w7b.dredged && !w7b.anchorageD && !w7b.anchorageF && w7b.unnamed && !w7b.hole
+            && w7b.ring && !w7b.between && w7b.cutIn && !w7b.cutOut && w7b.drawn && CHZ.props.source === "MA 323 CMR 2.07(3)(d)",
+      () => JSON.stringify(w7b));
+const k7 = { drix: Z.zoneKey(CHZ, DRIX), six: Z.zoneKey(CHZ, { 6: 6, 8: 8 }), nhSix: Z.zoneKey(NHZ, { 6: 6, 8: 8 }) };
+const e7 = { between: Z.zoneEdgeM(FMA.fromEN(500, -800), CHZ), out30: Z.zoneEdgeM(FMA.fromEN(430, -800), CHZ),
+  marina: Z.zoneEdgeM(FMA.fromEN(3200, 1000), FACZ) };
+check("7c. UNDER A BRIDGE (2.07(3)(a)) a zone; MASSACHUSETTS' HEADWAY IS SIX MILES PER HOUR AT MOST (2.02): every one of its "
+      + "zones says 5.2 kn, the DriX's 4 is within it, a hull whose slowest is 6 kn is said over it (New Hampshire's headway "
+      + "has no number: not said over); a channel's edge measured from outside it (100 m between two, 30 m off one), and a "
+      + "marina's from inside its area (the rule's 45.7 m beyond its 200 m)",
+      () => BRZ && inM(BRZ, -275, 650) && !inM(BRZ, -275, 750) && BRZ.props.source === "MA 323 CMR 2.07(3)(a)"
+            && MZ.every((z) => z.props.max_kn === 5.2) && k7.drix.key === "4" && !k7.drix.below && k7.six.below && !k7.nhSix.below
+            && Math.abs(e7.between - 100) < 0.5 && Math.abs(e7.out30 - 30) < 0.5 && Math.abs(e7.marina - 245.72) < 0.5,
+      () => JSON.stringify({ k7, e7, ids: MZ.map((z) => z.props.zone_id) }));
+// MASSACHUSETTS' LINE UNREAD: no line at all, the chart in its box - its rules in its box, said; and named unread by the
+// server beside a line read elsewhere - its rules there, not in the water read
+const MU = Z.lawZones(MA_CHART);
+const MU2 = Z.lawZones([{ role: "state_water", geometry: rectL(-5000, -5000, 500, 5000, PM), props: { state: "NH", unread: ["MA"] } }, ...MA_CHART]);
+const w7d = { n: MU.length, named: MU.every((z) => /\(the state line could not be read\)$/.test(z.props.name)), chan: MU.some((z) => inM(z, 800, -800)),
+  ramp: MU.some((z) => inM(z, 1200, 1030)), u2out: MU2.some((z) => /^law\|MA/.test(z.props.zone_id) && inM(z, 200, -800)),
+  u2in: MU2.some((z) => /^law\|MA/.test(z.props.zone_id) && inM(z, 800, -800)) };
+check("7d. MASSACHUSETTS' LINE UNREAD: with no line read and the chart in its box, its rules hold there - a channel, a ramp - "
+      + "each said for the unread line; named unread beside another state's line, its rules hold beyond that line, not in it",
+      () => w7d.n === MZ.length && w7d.named && w7d.chan && w7d.ramp && !w7d.u2out && w7d.u2in,
+      () => JSON.stringify(w7d));
+// THE GOVERNOR through a Massachusetts channel: her route east along n = -800 into the Inner Harbor Channel at e = 0
+{
+  const MG = gov({ zones: [MAW, ...MA_CHART], route: [FMA.fromEN(-600, -800), FMA.fromEN(1500, -800)] });
+  MG.pos = FMA.fromEN(-600, -800); const m0 = MG.api.tick();
+  MG.pos = FMA.fromEN(-30, -800); const m1 = MG.api.tick();       // 30 m short, past her 23.6 m lead at 7 kn
+  MG.pos = FMA.fromEN(-10, -800); const m2 = MG.api.tick();       // 10 m short: headway now
+  MG.pos = FMA.fromEN(200, -800); const m3 = MG.api.tick();       // in it
+  MG.pos = FMA.fromEN(405, -800); const m4 = MG.api.tick();       // 5 m past its end: not clear by her length
+  MG.pos = FMA.fromEN(450, -800); const m5 = MG.api.tick();       // 50 m past, 150 m short of the next: clear
+  check("7e. THE GOVERNOR AND A MASSACHUSETTS CHANNEL: the job's 7 until it is inside her lead, then headway (the DriX's 4) "
+        + "before it, said with the rule it is; held in it and while she clears it; the job's 7 back when clear, said",
+        () => m0 === "7" && m1 === "7" && m2 === "4" && m3 === "4" && m4 === "4" && m5 === "7"
+              && /^SPEED ZONE AHEAD - Massachusetts, in a channel \(MA 323 CMR 2\.07\(3\)\(d\)\): headway speed\. Slowing to 4 kn now/.test(MG.banners[0] || "")
+              && /^CLEAR OF SPEED ZONE Massachusetts, in a channel \(MA 323 CMR 2\.07\(3\)\(d\)\): back to 7 kn, her commanded speed\.$/.test(MG.banners[1] || "")
+              && MG.banners.length === 2,
+        () => JSON.stringify({ m: [m0, m1, m2, m3, m4, m5], banners: MG.banners }));
 }
 
 console.log("\n" + (fails ? fails + " CHECK(S) FAILED" : "all checks passed") + " (" + ran + ")");

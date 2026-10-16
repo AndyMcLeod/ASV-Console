@@ -299,8 +299,8 @@ def zones_for_bbox(bbox, cache_dir, ssl_ctx=None, sources=None, timeout=SPEED_TI
     return feats, report
 
 
-# ── WHOSE WATER: New Hampshire's and Maine's, for their shore-distance rules (Andy, 2026-10-16: "model the NH and ME shore
-# distance rules") ─────────────────────────────────────────────────────────────────────────────────────────────────────
+# ── WHOSE WATER: New Hampshire's, Maine's and Massachusetts', for their shore-distance rules (Andy, 2026-10-16: "model the
+# NH and ME shore distance rules", then "model the MA shore distance rules") ────────────────────────────────────────────
 # Their law is a distance, not a polygon (NH RSA 270-D:2 VI: headway within 150 ft of shore and docks; ME 12 MRSA
 # 13068-A(13): within 200 ft of any shoreline) - the page measures it from the chart's own shore (static/js/speedzones.js
 # lawZones). What the page cannot know from the chart is WHICH STATE's water she is in: the two meet down the Piscataqua.
@@ -308,8 +308,14 @@ def zones_for_bbox(bbox, cache_dir, ssl_ctx=None, sources=None, timeout=SPEED_TI
 # 2026-10-16: mid-Piscataqua off New Castle reads ME, 6 km off Rye NH, the Isles of Shoals' east side ME) - one ring a
 # state at 0.0001 deg (~10 m), ~5,000 points: fetched once a month and CLIPPED here to the box the chart is read over.
 TIGER_STATES_URL = "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/State_County/MapServer/0/query"
-LAW_STATES = ("NH", "ME")
-LAW_REGION = (-71.6, 42.69, -66.9, 47.5)     # New Hampshire's and Maine's water, roughly: where the boundaries are asked for
+# Each state's coastal water, roughly (W, S, E, N): a chart reaching into a state's box asks for that state's line, and only
+# that state's - a Maine chart never reads Massachusetts' (a ring of some tens of thousands of points). The page keeps the
+# same boxes (static/js/speedzones.js LAW_STATE_BOXES): where a line could not be read, a box is where that state's rules
+# are applied without one. Massachusetts' west edge stops at Westport, short of Rhode Island's water.
+LAW_STATE_BOXES = {"NH": (-71.6, 42.69, -70.5, 43.4), "ME": (-71.1, 42.9, -66.9, 47.5), "MA": (-71.15, 41.2, -69.85, 42.9)}
+LAW_STATES = tuple(LAW_STATE_BOXES)
+LAW_REGION = (min(b[0] for b in LAW_STATE_BOXES.values()), min(b[1] for b in LAW_STATE_BOXES.values()),
+              max(b[2] for b in LAW_STATE_BOXES.values()), max(b[3] for b in LAW_STATE_BOXES.values()))
 STATE_TTL_S = 30 * 86400
 STATE_SIMPLIFY_DEG = 0.0001
 STATE_PAD_DEG = 0.02                         # the clip box: the chart's box and ~2 km round it
@@ -390,18 +396,20 @@ def _state_rings(st, cache_dir, ssl_ctx, timeout, now):
 
 
 def state_waters_for_bbox(bbox, cache_dir, ssl_ctx=None, timeout=SPEED_TIMEOUT_S, now=None):
-    """NEW HAMPSHIRE'S AND MAINE'S WATER over a box, as features of role "state_water" ({state}): each state's boundary
-    clipped to the box and STATE_PAD_DEG round it. (features, report) - none, and no report, for a box outside the region.
-    A state whose boundary could not be read at all (no answer and no old copy) is named in every feature's `unread`, so
-    the page applies the stricter rule in the water no boundary says is the other's."""
+    """NEW HAMPSHIRE'S, MAINE'S AND MASSACHUSETTS' WATER over a box, as features of role "state_water" ({state}): the line
+    of each state whose box (LAW_STATE_BOXES) the box reaches, clipped to the box and STATE_PAD_DEG round it. (features,
+    report) - none, and no report, for a box outside them all. A state asked whose line could not be read at all (no answer
+    and no old copy) is named in every feature's `unread` - and `asked` names every state asked - so the page applies that
+    state's rules in its box, wherever no line read says the water is another's."""
     now = time.time() if now is None else now
-    r = LAW_REGION
-    if bbox[2] < r[0] or bbox[0] > r[2] or bbox[3] < r[1] or bbox[1] > r[3]:
+    asked = [st for st, r in LAW_STATE_BOXES.items()
+             if not (bbox[2] < r[0] or bbox[0] > r[2] or bbox[3] < r[1] or bbox[1] > r[3])]
+    if not asked:
         return [], None
     os.makedirs(cache_dir, exist_ok=True)
     box = (bbox[0] - STATE_PAD_DEG, bbox[1] - STATE_PAD_DEG, bbox[2] + STATE_PAD_DEG, bbox[3] + STATE_PAD_DEG)
     feats, errs, cached, unread = [], [], 0, []
-    for st in LAW_STATES:
+    for st in asked:
         rings, hit, err = _state_rings(st, cache_dir, ssl_ctx, timeout, now)
         cached += 1 if hit else 0
         if err:
@@ -414,13 +422,14 @@ def state_waters_for_bbox(bbox, cache_dir, ssl_ctx=None, timeout=SPEED_TIMEOUT_S
                           "props": {"state": st, "source": "US Census TIGERweb"}})
     for f in feats:
         f["props"]["unread"] = list(unread)
-    rep = {"id": "tiger_states", "name": "US Census state boundaries (NH, ME)", "ok": not errs, "count": len(feats),
+        f["props"]["asked"] = list(asked)
+    rep = {"id": "tiger_states", "name": "US Census state boundaries (%s)" % ", ".join(asked), "ok": not errs, "count": len(feats),
            "unread": 0, "cached": cached, "stale": 0, "error": "; ".join(errs) or None}
     return feats, rep
 
 
 def merge_into_chart(data, bbox, cache_dir, ssl_ctx=None, sources=None):
-    """The chart's answer with the state zones in it - and New Hampshire's and Maine's water, for their shore rules: their
+    """The chart's answer with the state zones in it - and NH's, ME's and MA's water, for their shore rules: their
     features appended and `speed_sources` saying what was asked. Never raises - a failure is one line in the report and
     the chart goes out as it was."""
     try:
@@ -430,7 +439,7 @@ def merge_into_chart(data, bbox, cache_dir, ssl_ctx=None, sources=None):
     try:
         sw, srep = state_waters_for_bbox(bbox, cache_dir, ssl_ctx) if sources is None else ([], None)
     except Exception as e:
-        sw, srep = [], {"id": "tiger_states", "name": "US Census state boundaries (NH, ME)", "ok": False, "count": 0, "error": str(e)[:200]}
+        sw, srep = [], {"id": "tiger_states", "name": "US Census state boundaries", "ok": False, "count": 0, "error": str(e)[:200]}
     if srep:
         report = list(report) + [srep]
     if isinstance(data, dict):

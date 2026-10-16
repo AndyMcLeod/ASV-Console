@@ -51,7 +51,10 @@ export function zoneKey(z, speedsKn){
                                           .sort((a, b) => (speedsKn[a] - speedsKn[b]) || (step(b) - step(a)));
   if(!keys.length) return null;
   const p = (z && z.props) || {}, slowest = keys[0];
-  if(!(p.rule === "limit" && p.limit_kn > 0)) return { key: slowest, kn: speedsKn[slowest], below: false };
+  // a rule with no number takes her slowest - and where the law caps even that (Massachusetts' headway: six miles per
+  // hour at most, max_kn), says so when her slowest is over it
+  if(!(p.rule === "limit" && p.limit_kn > 0))
+    return { key: slowest, kn: speedsKn[slowest], below: p.max_kn > 0 && speedsKn[slowest] > p.max_kn + 1e-9 };
   let best = null;
   for(const k of keys) if(speedsKn[k] <= p.limit_kn + 1e-9 && (best == null || speedsKn[k] > speedsKn[best])) best = k;
   return best ? { key: best, kn: speedsKn[best], below: false } : { key: slowest, kn: speedsKn[slowest], below: true };
@@ -62,7 +65,8 @@ export function inZone(pt, z){
   if(z.law){                                     // a state's law (lawZones): its water, its exemption, then its distance or area
     const q = z.law.frame.toEN(pt);
     if(!lawGate(z.law, q)) return false;
-    if(z.law.within > 0) return shoreDistM(z.law.shore, q, z.law.within) < z.law.within;
+    if(z.law.within > 0) return !!(z.law.areas && inPolys(z.law.areas, q)) || shoreDistM(z.law.shore, q, z.law.within) < z.law.within;
+    if(z.law.polys) return inPolys(z.law.polys, q);
   }
   return !!(z.geometry && ptInGeom(pt.lat, pt.lon, z.geometry));
 }
@@ -75,7 +79,11 @@ export function zoneEdgeM(pt, z){
   if(z.law){
     const q = z.law.frame.toEN(pt);
     if(!lawGate(z.law, q)) return Infinity;
-    if(z.law.within > 0) return Math.abs(shoreDistM(z.law.shore, q, z.law.within + LAW_EDGE_REACH_M) - z.law.within);
+    if(z.law.within > 0){
+      if(z.law.areas && inPolys(z.law.areas, q)) return z.law.within + polysEdgeM(z.law.areas, q);   // inside a marina's area
+      return Math.abs(shoreDistM(z.law.shore, q, z.law.within + LAW_EDGE_REACH_M) - z.law.within);
+    }
+    if(z.law.polys) return polysEdgeM(z.law.polys, q);
   }
   if(!z.geometry) return Infinity;
   const fr = planeFrame(pt), p = { e: 0, n: 0 };
@@ -224,8 +232,9 @@ export function noaaZones(features){
   }
   return out;
 }
-// ── THE STATES' SHORE-DISTANCE RULES (Andy, 2026-10-16: "model the NH and ME shore distance rules") ─────────────────────
-// Neither state publishes its speed rules as GIS; the law is a distance, read here from the chart's OWN shore:
+// ── THE STATES' SHORE-DISTANCE RULES (Andy, 2026-10-16: "model the NH and ME shore distance rules", then "model the MA
+// shore distance rules" and, asked, "Headway in every MA channel") ──────────────────────────────────────────────────────
+// None of the three publishes its speed rules as GIS; the law is a distance, read here from the chart's OWN features:
 //   NEW HAMPSHIRE, RSA 270-D:2 VI(a): "all vessels shall maintain headway speed when within 150 feet from ... (3) Shore.
 //     (4) Docks." VI(b)(2): not "in the federal deepwater shipping channel of the Piscataqua River between navigation
 //     buoys R2, Wood Island at the mouth of the river and R12, opposite the Sprague Terminal". And I: "headway speed only,
@@ -234,18 +243,34 @@ export function noaaZones(features){
 //     makesWayKey).
 //   MAINE, 12 MRSA 13068-A(13)(A): no "greater than headway speed while within the water safety zone"; 13001(29): "the
 //     area of water within 200 feet of shoreline, whether the shoreline of the mainland or of an island".
+//   MASSACHUSETTS, 323 CMR 2.07(3) (read via Cornell LII's copy of the regulation): "A motorboat shall not be operated at
+//     more than headway speed: (a) When the operator's vision is obscured under a bridge ...; (b) When the motorboat is
+//     operated within 150 feet of a marina, boat launching facility, raft or float; ... (d) When the motorboat is in a
+//     channel, unless a duly authorized local, state or federal marine enforcement agency has (1) permitted otherwise; and
+//     (2) placed markers in the channel indicating the permitted speed." 2.02: headway speed is "the minimum speed at
+//     which a vessel may be operated and maintain steerage way, but not to exceed six miles per hour" (MA_HEADWAY_MAX_KN).
+//     The chart's marinas are its harbor facilities ("yacht harbor", or none said) and small-craft facilities (pump-outs,
+//     "landing/launching place for boats"); its launches are shoreline constructions of category "ramp" or "slipway"; its
+//     floats are floating docks (measured 2026-10-16 over ENCDirect at Gloucester, Boston, Scituate, Hyannis - rafts are
+//     not charted). Its channels are the fairways and dredged areas - not those named as anchorages - and EVERY one is
+//     held to headway: the posted exceptions cannot be read from the chart (Andy chose this over leaving channels out).
 // Which state's water she is in is the Census boundary served with the chart (role "state_water", asv_console.py /
 // speed_zones.py state_waters_for_bbox). THE SHORE is the chart's land, islets and coastline (and, in New Hampshire, its
-// shoreline constructions - docks, piers, wharves). THE EXEMPTION is the channel the chart draws between the two buoys: the
-// fairway named "Piscataqua River Channel" and the deep dredged reaches (8 m and more) - not the shallow side channels;
-// where the chart draws no channel, the 150 ft rule stands (the safe side).
+// shoreline constructions - docks, piers, wharves). NEW HAMPSHIRE'S EXEMPTION is the channel the chart draws between the
+// two buoys: the fairway named "Piscataqua River Channel" and the deep dredged reaches (8 m and more) - not the shallow
+// side channels; where the chart draws no channel, the 150 ft rule stands (the safe side).
 // NOT MODELED, and said where it is read: NH's rafts, swimmers, swimming areas, mooring fields and other vessels; ME's
-// marinas and approved anchorages - the chart does not say where they are.
-// ⚠ IN THEIR WATER THAT NO BOUNDARY READ CLAIMS (the Census service down and no old copy, for one state or both) the
-// STRICTER rule - 200 ft of any shore, docks included, no exemption - and the bridges: safety before efficiency.
+// marinas and approved anchorages; MA's rafts, swimmers, shorelines used as swimming areas, bends and blind turns - the
+// chart does not say where they are.
+// ⚠ A STATE WHOSE LINE COULD NOT BE READ (the Census service down and no old copy) has ITS rules applied in its box
+// (LAW_STATE_BOXES), wherever no line read says the water is another's - so water that could be either of two states
+// gets both states' rules: safety before efficiency.
 export const NH_SHORE_M = 150 * 0.3048;           // 45.72 m
 export const ME_SHORE_M = 200 * 0.3048;           // 60.96 m
-export const LAW_REGION = [-71.6, 42.69, -66.9, 47.5];   // New Hampshire's and Maine's water, roughly (speed_zones.py too)
+export const MA_FACILITY_M = 150 * 0.3048;        // 45.72 m
+export const MA_HEADWAY_MAX_KN = Math.round(6 / 1.15078 * 10) / 10;   // 5.2 kn: "not to exceed six miles per hour"
+// each state's coastal water, roughly [W, S, E, N] - the same boxes speed_zones.py asks the state lines for
+export const LAW_STATE_BOXES = { NH: [-71.6, 42.69, -70.5, 43.4], ME: [-71.1, 42.9, -66.9, 47.5], MA: [-71.15, 41.2, -69.85, 42.9] };
 export const PISCATAQUA_R2 = { lat: 43.06106, lon: -70.70118 };   // Wood Island Lighted Buoy 2 (the chart, 2026-10-16)
 export const PISCATAQUA_R12 = { lat: 43.11986, lon: -70.81059 };  // Piscataqua River Buoy 12, opposite Sprague Terminal
 const SHORE_ROLES = ["land", "land_point", "land_line", "shore_line"];
@@ -256,14 +281,29 @@ const LAW_EDGE_REACH_M = 40;                       // how far past a rule's line
 const EXEMPT_CORRIDOR_M = 1500;                    // a channel piece counts as between R2 and R12 within this of their line
 const cellKey = (cx, cy) => (cx + 32768) * 65536 + (cy + 32768);   // a number, not a string: 1,600 km each way of the middle
 
+/** Massachusetts' "marina, boat launching facility, raft or float" on the chart (see above). */
+export function maFacility(f){
+  const cls = String((f && f.cls) || ""), p = (f && f.props) || {};
+  if(/^Small_Craft_Facility/.test(cls) || /^Floating_Dock|^Pontoon/.test(cls)) return true;
+  if(/^Harbour_Facility/.test(cls)) return !p.CATHAF || /yacht|marina/i.test(String(p.CATHAF));
+  if(/^Shoreline_Construction/.test(cls)) return /ramp|slipway/i.test(String(p.CATSLC || ""));
+  return false;
+}
+/** A channel in Massachusetts' sense: a fairway or dredged area the chart does not name as an anchorage. */
+export function maChannel(f){
+  return !!f && (f.role === "fairway" || f.role === "dredged") && !/anchorage/i.test(String((f.props && f.props.OBJNAM) || ""));
+}
+const picker = (pick) => typeof pick === "function" ? pick : (f) => pick.includes(f.role);
+
 /**
- * THE SHORE, for distance: every edge of the features with `roles` in the frame's plane (a point as an edge of no
- * length) - {xy, grid, n}: edge i is xy[4i..4i+3] (east, north of each end), and the grid lists it in SHORE_CELL_M cells.
- * An edge is walked every SHORE_STEP_M and listed in the cell of each step - its own band of cells, not its box - so the
- * build is one pass. Measured 2026-10-16: the New Castle chart ~98,000 edges, a 0.7 x 0.45 deg read ~181,000.
+ * THE SHORE, for distance: every edge of the features `pick` takes (a list of roles, or a test) in the frame's plane (a
+ * point as an edge of no length) - {xy, grid, n}: edge i is xy[4i..4i+3] (east, north of each end), and the grid lists it
+ * in SHORE_CELL_M cells. An edge is walked every SHORE_STEP_M and listed in the cell of each step - its own band of cells,
+ * not its box - so the build is one pass. Measured 2026-10-16: the New Castle chart ~98,000 edges, a 0.7 x 0.45 deg read
+ * ~181,000.
  */
-export function shoreModel(features, roles, frame){
-  const xy = [], grid = new Map();
+export function shoreModel(features, pick, frame){
+  const takes = picker(pick), xy = [], grid = new Map();
   const put = (e, n, idx) => {
     const k = cellKey(Math.floor(e / SHORE_CELL_M), Math.floor(n / SHORE_CELL_M));
     const l = grid.get(k);
@@ -280,7 +320,7 @@ export function shoreModel(features, roles, frame){
     for(const c of cs){ const b = frame.toEN({ lat: c[1], lon: c[0] }); if(a) add(a.e, a.n, b.e, b.n); a = b; }
   };
   for(const f of features || []){
-    if(!roles.includes(f.role) || !f.geometry) continue;
+    if(!f.geometry || !takes(f)) continue;
     eachRing(f.geometry, addLine);
     eachPath(f.geometry, addLine);
     eachPoint(f.geometry, (c) => { const p = frame.toEN({ lat: c[1], lon: c[0] }); add(p.e, p.n, p.e, p.n); });
@@ -327,6 +367,17 @@ const ringsEN = (geom, frame) => {
   eachRing(geom, (rg) => { const ring = rg.map((c) => frame.toEN({ lat: c[1], lon: c[0] })); if(ring.length > 2) out.push({ ring, bb: bbOf(ring) }); });
   return out;
 };
+/** In any of `polys` (each a feature's rings in the plane - its holes read even-odd, two features overlapping still in)? */
+const inPolys = (polys, q) => polys.some((rs) => rs.reduce((n, r) => n + (inBB(q, r.bb, 0) && pinp(q, r.ring) ? 1 : 0), 0) % 2 === 1);
+/** Meters from `q` to the nearest edge of `polys`. */
+const polysEdgeM = (polys, q) => {
+  let best = Infinity;
+  for(const rs of polys) for(const r of rs){
+    if(Number.isFinite(best) && !inBB(q, r.bb, best)) continue;
+    for(let i = 1; i < r.ring.length; i++){ const d = dSeg(q, r.ring[i - 1], r.ring[i]); if(d < best) best = d; }
+  }
+  return best;
+};
 /** The channel pieces New Hampshire exempts: the charted federal channel between R2 and R12 (see above). */
 export function piscataquaExempt(features, frame){
   const a = frame.toEN(PISCATAQUA_R2), b = frame.toEN(PISCATAQUA_R12);
@@ -348,12 +399,12 @@ export function piscataquaExempt(features, frame){
   return out;
 }
 /**
- * THE ZONES NEW HAMPSHIRE'S AND MAINE'S LAW MAKES OF THE CHART: each state's shore-distance rule in its own water and New
- * Hampshire's bridges - and, in their water that no boundary read says is one state's or the other's (the Census service
- * down and no old copy: speed_zones.py names the state `unread`), the STRICTER rule and the bridges. [] for a chart
- * nowhere near them. Zones as the rest are ({role, props}), with `law` for inZone / zoneEdgeM and the page's drawing:
- * {frame, within (m, a distance rule), shore (its models), roles (its features' roles), state / notIn (the water it
- * holds in / not in, rings in the plane), exempt (rings), region (a plane box)}.
+ * THE ZONES NEW HAMPSHIRE'S, MAINE'S AND MASSACHUSETTS' LAW MAKES OF THE CHART: each state's rules in its own water - and
+ * a state whose line could not be read (speed_zones.py names it `unread`; or no line came at all) has its rules in its
+ * box wherever no line read says the water is another's. [] for a chart nowhere near them. Zones as the rest are ({role,
+ * props}), with `law` for inZone / zoneEdgeM and the page's drawing: {frame, within (m, a distance rule) with shore (its
+ * models), areas (polys she is in the rule inside) and pick (the features it measures from); or polys (an area rule);
+ * state / notIn (rings in the plane: the water it holds in / not in), region (a plane box), exempt (rings)}.
  */
 export function lawZones(features){
   const f = features || [];
@@ -364,46 +415,75 @@ export function lawZones(features){
     const scan = (c) => { if(c[1] < s0) s0 = c[1]; if(c[1] > n0) n0 = c[1]; if(c[0] < w0) w0 = c[0]; if(c[0] > e0) e0 = c[0]; };
     eachRing(x.geometry, (r) => r.forEach(scan)); eachPath(x.geometry, (r) => r.forEach(scan)); eachPoint(x.geometry, scan); }
   if(s0 > n0) return [];                            // no shore on the chart: no shore rule
-  const mid = { lat: (s0 + n0) / 2, lon: (w0 + e0) / 2 };
-  const touches = e0 >= LAW_REGION[0] && w0 <= LAW_REGION[2] && n0 >= LAW_REGION[1] && s0 <= LAW_REGION[3];
-  if(!states.length && !touches) return [];
-  const frame = planeFrame(mid);
-  const shore = shoreModel(f, SHORE_ROLES, frame), docks = shoreModel(f, DOCK_ROLES, frame);   // shared by every rule
-  const zone = (id, name, source, text, law, geometry) => ({ role: "speed_zone", geometry: geometry || null, law,
-    props: { rule: "headway", limit_kn: null, name, source, text, zone_id: "law|" + id } });
+  const touches = (b) => e0 >= b[0] && w0 <= b[2] && n0 >= b[1] && s0 <= b[3];
+  const near = Object.keys(LAW_STATE_BOXES).filter((st) => touches(LAW_STATE_BOXES[st]));
+  if(!states.length && !near.length) return [];
+  const frame = planeFrame({ lat: (s0 + n0) / 2, lon: (w0 + e0) / 2 });
   const stateRings = (st) => states.filter((x) => x.props.state === st).flatMap((x) => ringsEN(x.geometry, frame));
-  const nh = stateRings("NH"), me = stateRings("ME"), out = [];
-  const unread = !states.length || states.some((x) => (x.props.unread || []).length);
-  // New Hampshire's bridges under `law`'s gate: the chart's bridge areas with any of their span in that water (a bridge
-  // drawn only as a line has no water under it to test) - not exempted in the channel: the exemption is VI's, bridges I
-  const bridges = (law, tag, why) => {
+  const read = {}, unreadNamed = new Set(states.flatMap((x) => x.props.unread || []));
+  for(const st of Object.keys(LAW_STATE_BOXES)) read[st] = stateRings(st);
+  const readRings = Object.values(read).flat();
+  // the water a state's rules hold in: its line - or, unread, its box less every line read
+  const gateOf = (st) => {
+    if(read[st].length) return { gate: { state: read[st] }, why: "" };
+    const unread = states.length ? unreadNamed.has(st) : near.includes(st);
+    if(!unread || !near.includes(st)) return null;
+    const b = LAW_STATE_BOXES[st];
+    return { gate: { region: bbOf([frame.toEN({ lat: b[1], lon: b[0] }), frame.toEN({ lat: b[3], lon: b[2] })]), notIn: readRings },
+             why: " (the state line could not be read)" };
+  };
+  const shore = shoreModel(f, SHORE_ROLES, frame), docks = shoreModel(f, DOCK_ROLES, frame);   // shared by the rules
+  const zone = (id, name, source, text, law, geometry, extra) => ({ role: "speed_zone", geometry: geometry || null, law,
+    props: Object.assign({ rule: "headway", limit_kn: null, name, source, text, zone_id: "law|" + id }, extra || {}) });
+  const out = [];
+  // a state's bridges under `law`'s gate: the chart's bridge areas with any of their span in that water (a bridge drawn
+  // only as a line has no water under it to test) - New Hampshire's not exempted in the channel: the exemption is VI's
+  const bridges = (law, tag, name, why, source, text, extra) => {
     for(const b of f){
       if(b.role !== "bridge_span" || !b.geometry || (b.geometry.type !== "Polygon" && b.geometry.type !== "MultiPolygon")) continue;
       const rings = ringsEN(b.geometry, frame);
       if(!rings.some((r) => r.ring.some((q) => lawGate(law, q)))) continue;
       const nm = (b.props && b.props.OBJNAM) || "", bb = rings[0].bb, c = frame.fromEN((bb.x0 + bb.x1) / 2, (bb.y0 + bb.y1) / 2);
-      out.push(zone(tag + "|bridge|" + (nm || c.lat.toFixed(5) + "," + c.lon.toFixed(5)), why + "under a bridge" + (nm ? " (" + nm + ")" : ""),
-        "NH RSA 270-D:2 I", "New Hampshire: headway speed only while passing under all bridges", law, b.geometry));
+      out.push(zone(tag + "|bridge|" + (nm || c.lat.toFixed(5) + "," + c.lon.toFixed(5)), name + (nm ? " (" + nm + ")" : "") + why,
+        source, text, Object.assign({ polys: [rings] }, law), b.geometry, extra));
     }
   };
-  if(nh.length){
-    out.push(zone("NH|shore", "New Hampshire, within 150 ft of shore or a dock", "NH RSA 270-D:2 VI",
+  const nh = gateOf("NH");
+  if(nh){
+    out.push(zone("NH|shore", "New Hampshire, within 150 ft of shore or a dock" + nh.why, "NH RSA 270-D:2 VI",
       "New Hampshire: headway speed within 150 feet of shore and docks - not in the federal deepwater channel of the "
       + "Piscataqua between R2 (Wood Island) and R12 (opposite Sprague Terminal)",
-      { frame, within: NH_SHORE_M, state: nh, exempt: piscataquaExempt(f, frame), shore: [shore, docks], roles: [...SHORE_ROLES, ...DOCK_ROLES] }));
-    bridges({ frame, state: nh }, "NH", "New Hampshire, ");
+      Object.assign({ frame, within: NH_SHORE_M, exempt: piscataquaExempt(f, frame), shore: [shore, docks],
+                      pick: [...SHORE_ROLES, ...DOCK_ROLES] }, nh.gate)));
+    bridges(Object.assign({ frame }, nh.gate), "NH", "New Hampshire, under a bridge", nh.why, "NH RSA 270-D:2 I",
+      "New Hampshire: headway speed only while passing under all bridges");
   }
-  if(me.length)
-    out.push(zone("ME|shore", "Maine's water safety zone, within 200 ft of shore", "ME 12 MRSA 13068-A(13)",
+  const me = gateOf("ME");
+  if(me)
+    out.push(zone("ME|shore", "Maine's water safety zone, within 200 ft of shore" + me.why, "ME 12 MRSA 13068-A(13)",
       "Maine: no greater than headway speed within 200 feet of the shoreline of the mainland or of an island",
-      { frame, within: ME_SHORE_M, state: me, shore: [shore], roles: SHORE_ROLES }));
-  if(unread){                                       // their water no boundary read claims: the stricter of the two rules
-    const region = bbOf([frame.toEN({ lat: LAW_REGION[1], lon: LAW_REGION[0] }), frame.toEN({ lat: LAW_REGION[3], lon: LAW_REGION[2] })]);
-    const notIn = [...nh, ...me], why = "the state line could not be read: ";
-    out.push(zone("NHME|unread", "within 200 ft of shore or a dock (" + why.replace(": ", "") + ")", "NH / ME law",
-      "Maine's 200 ft water safety zone, the stricter of the two states' shore rules, applied with docks and no exemption, "
-      + "because which state's water she is in could not be read", { frame, within: ME_SHORE_M, region, notIn, shore: [shore, docks], roles: [...SHORE_ROLES, ...DOCK_ROLES] }));
-    bridges({ frame, region, notIn }, "NHME", why);
+      Object.assign({ frame, within: ME_SHORE_M, shore: [shore], pick: SHORE_ROLES }, me.gate)));
+  const ma = gateOf("MA");
+  if(ma){
+    const capped = { max_kn: MA_HEADWAY_MAX_KN };
+    const fac = shoreModel(f, maFacility, frame);
+    const facAreas = f.filter((x) => maFacility(x) && x.geometry && /Polygon/.test(x.geometry.type)).map((x) => ringsEN(x.geometry, frame));
+    if(fac.n)
+      out.push(zone("MA|facility", "Massachusetts, within 150 ft of a marina, launch ramp or float" + ma.why, "MA 323 CMR 2.07(3)(b)",
+        "Massachusetts: headway speed (six miles per hour at most) within 150 feet of a marina, boat launching facility, "
+        + "raft or float - the chart's harbor and small-craft facilities, ramps and floating docks; rafts are not charted",
+        Object.assign({ frame, within: MA_FACILITY_M, shore: [fac], areas: facAreas, pick: maFacility }, ma.gate), null, capped));
+    const chans = f.filter((x) => maChannel(x) && x.geometry && /Polygon/.test(x.geometry.type));
+    if(chans.length)
+      out.push(zone("MA|channel", "Massachusetts, in a channel" + ma.why, "MA 323 CMR 2.07(3)(d)",
+        "Massachusetts: headway speed (six miles per hour at most) in a channel unless a marine enforcement agency has "
+        + "permitted otherwise and posted markers with the permitted speed - a posted speed cannot be read from the chart, "
+        + "so every charted channel is held to headway",
+        Object.assign({ frame, polys: chans.map((x) => ringsEN(x.geometry, frame)) }, ma.gate),
+        { type: "MultiPolygon", coordinates: chans.flatMap((x) => x.geometry.type === "Polygon" ? [x.geometry.coordinates] : x.geometry.coordinates) },
+        capped));
+    bridges(Object.assign({ frame }, ma.gate), "MA", "Massachusetts, under a bridge", ma.why, "MA 323 CMR 2.07(3)(a)",
+      "Massachusetts: headway speed (six miles per hour at most) when the operator's vision is obscured under a bridge", capped);
   }
   return out;
 }

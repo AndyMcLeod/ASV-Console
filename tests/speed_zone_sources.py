@@ -14,10 +14,10 @@ day: New Hampshire, Maine and Massachusetts publish no speed-zone layer (their r
     3-3c  THE CACHE AND FAILURE: a tile asked once a week; a service down said in the report, not asked again for a
           while, and its last good answer served, said stale; the chart served whatever happens
     4     THE WIRING: /api/enc merges them (asv_console.py _serve_enc)
-    5-5e  WHOSE WATER, for New Hampshire's and Maine's shore rules (2026-10-16), against a stub boundary service: the
-          clip to the chart's box; each state's water as a feature, clipped; cached a month, the last copy served when
-          the service is down; a state never read NAMED unread (the page applies the stricter rule there); a box away
-          from them asks nothing; merged into the chart
+    5-5f  WHOSE WATER, for New Hampshire's, Maine's and Massachusetts' rules (2026-10-16), against a stub boundary
+          service: the clip to the chart's box; each state's water as a feature, clipped; cached a month, the last copy
+          served when the service is down; a state never read NAMED unread (the page applies that state's rules in its
+          box there); a box away from them asks nothing; merged into the chart; each state asked only where its box reaches
 
     python tests/speed_zone_sources.py      # exit 0 = pass   (stdlib only)
 """
@@ -229,7 +229,8 @@ finally:
 TIGER_HITS = []
 TIGER = {"down": set(), "rings": {
     "NH": [[[-71.0, 42.9], [-70.73, 42.9], [-70.73, 43.2], [-71.0, 43.2], [-71.0, 42.9]]],
-    "ME": [[[-70.73, 42.9], [-70.4, 42.9], [-70.4, 43.3], [-70.73, 43.3], [-70.73, 42.9]]]}}
+    "ME": [[[-70.73, 42.9], [-70.4, 42.9], [-70.4, 43.3], [-70.73, 43.3], [-70.73, 42.9]]],
+    "MA": [[[-71.1, 41.2], [-69.9, 41.2], [-69.9, 42.87], [-71.1, 42.87], [-71.1, 41.2]]]}}
 
 
 class TigerStub(BaseHTTPRequestHandler):
@@ -334,6 +335,25 @@ try:
           and any(r["id"] == "tiger_states" for r in m8["speed_sources"])
           and [f["role"] for f in m9["features"]] == ["land"] and not any(r["id"] == "tiger_states" for r in m9["speed_sources"]),
           json.dumps({"m8": [f["role"] for f in m8["features"]], "m9": [f["role"] for f in m9["features"]], "far": [far7, rep7], "hits": n7b - n7}))
+    # each state asked only where its box reaches (LAW_STATE_BOXES): Gloucester asks Massachusetts alone; the Seabrook /
+    # Salisbury line asks all three; and Massachusetts unread is named there
+    del TIGER_HITS[:]
+    gl, glrep = SZ.state_waters_for_bbox((-70.70, 42.57, -70.62, 42.63), CACHE2, now=20000.0)
+    gl_hits = list(TIGER_HITS)
+    del TIGER_HITS[:]
+    SZ._failed.clear()
+    TIGER["down"] = {"MA"}
+    sb, sbrep = SZ.state_waters_for_bbox((-70.90, 42.80, -70.80, 42.95), os.path.join(CACHE2, "border"), now=20000.0)
+    sb_hits = sorted(TIGER_HITS)
+    TIGER["down"] = set()
+    check("5f. EACH STATE ASKED ONLY WHERE ITS BOX REACHES: a Gloucester chart asks Massachusetts' line alone (its feature names "
+          "what was asked; the report names the state); a chart on the New Hampshire / Massachusetts line asks all three - "
+          "and with Massachusetts' line down, the water read (New Hampshire's - the stub's Maine lies east of it) names it unread",
+          lambda: gl_hits == ["MA"] and [f["props"]["state"] for f in gl] == ["MA"] and gl[0]["props"]["asked"] == ["MA"]
+          and glrep["name"] == "US Census state boundaries (MA)" and sb_hits == ["MA", "ME", "NH"]
+          and [f["props"]["state"] for f in sb] == ["NH"] and all(f["props"]["unread"] == ["MA"] for f in sb)
+          and sorted(sb[0]["props"]["asked"]) == ["MA", "ME", "NH"],
+          json.dumps({"gl_hits": gl_hits, "gl": [f["props"] for f in gl], "sb_hits": sb_hits, "sb": [f["props"] for f in sb]}))
 finally:
     SZ.TIGER_STATES_URL = real_url
     tsrv.shutdown()
@@ -346,6 +366,11 @@ check("4. THE WIRING: the console imports the reader and /api/enc merges the zon
       lambda: "import speed_zones" in SRC_PY
       and "data = speed_zones.merge_into_chart(data, bbox, SPEED_ZONE_DIR, _enc_ssl())" in SRC_PY
       and 'SPEED_ZONE_DIR = os.path.join(CHART_DIR, "speed")' in SRC_PY)
+_keep = SRC_PY[SRC_PY.index("ENC_KEEP_PROPS = ("):SRC_PY.index(")", SRC_PY.index("ENC_KEEP_PROPS = ("))]
+check("4b. ... AND THE CHART KEEPS WHAT MASSACHUSETTS' RULE READS: a shoreline construction's category (a ramp from a pier), "
+      "a small-craft facility's and a harbor facility's (a yacht harbor from a ferry terminal) - dropped, every ramp is a "
+      "pier and the 150 ft of a launch never holds",
+      lambda: all('"%s"' % k in _keep for k in ("CATSLC", "CATSCF", "CATHAF")), _keep[-80:])
 
 print("\n" + ("%d CHECK(S) FAILED" % fails if fails else "all checks passed") + " (%d)" % ran)
 sys.exit(1 if fails else 0)

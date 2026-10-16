@@ -2382,22 +2382,36 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
      conditional rule is applied at all times, the most restrictive of its regimes, with its
      condition kept in the zone's text. A record that is not a speed rule (no entry, no anchoring) is
      skipped and counted. **New Hampshire, Maine and Massachusetts publish none**: their rules are
-     distances, and New Hampshire's and Maine's are modeled from the chart's own shore (next).
-   - **New Hampshire's and Maine's shore rules** (Andy, 2026-10-16: "model the NH and ME shore
-     distance rules"). **New Hampshire** (RSA 270-D:2 VI): headway speed within **150 ft** (45.7 m)
+     distances, and all three are modeled from the chart's own features (next).
+   - **New Hampshire's, Maine's and Massachusetts' rules** (Andy, 2026-10-16: "model the NH and ME
+     shore distance rules", then "model the MA shore distance rules").
+     **New Hampshire** (RSA 270-D:2 VI): headway speed within **150 ft** (45.7 m)
      of shore and docks, except in the federal channel of the Piscataqua between buoys R2 (Wood
      Island) and R12 (opposite Sprague Terminal). The channel is the chart's "Piscataqua River
      Channel" fairway and its reaches dredged to 8 m or deeper, not the shallow side channels. Also
      headway passing under every bridge (RSA 270-D:2 I). **Maine** (12 MRSA 13068-A(13)): headway
      within **200 ft** (61 m) of any shoreline, mainland or island. A dock is not shoreline there.
+     **Massachusetts** (323 CMR 2.07(3), headway capped at 6 mph by 2.02): headway within **150 ft**
+     of a marina, boat launching facility or float, and **in every channel**, and under bridges.
+     On the chart, marinas are its harbor facilities ("yacht harbor", or no category given) and
+     small-craft facilities. Launches are shoreline constructions of category "ramp" or
+     "slipway", and floats are floating docks. Channels are the fairways and dredged areas, except
+     those named as anchorages. The law lets a channel post a higher speed, but the chart can't
+     say which channels do, so every one is held to headway (his choice when asked).
      The shore is the chart's land, islets and coastline (and in New Hampshire its docks, piers and
      wharves). Which state's water she is in comes from the US Census state boundaries, served
-     with the chart (`speed_zones.py`, cached a month). The two states meet down the middle of the
-     Piscataqua. Where no boundary could be read, the stricter rule applies: 200 ft of any shore
-     or dock, with no exemption. Not modeled, because the chart does not say where they are: New
-     Hampshire's rafts, swimmers, swimming areas, mooring fields and other vessels, and Maine's
-     marinas and approved anchorages. On the chart each state's band is tinted amber in its own
+     with the chart (`speed_zones.py`, cached a month), each state asked only where its rough box
+     reaches the chart. New Hampshire and Maine meet down the middle of the Piscataqua. Where a
+     state's line could not be read, that state's rules apply in its box, wherever no line that
+     was read says the water is another's; water that could be either of two states gets both
+     states' rules. Not modeled, because the chart does not say where they are: rafts, swimmers,
+     swimming areas, mooring fields and other vessels in New Hampshire; marinas and approved
+     anchorages in Maine; rafts, swimmers, shorelines used for swimming, bends and blind turns in
+     Massachusetts. On the chart each shore or facility band is tinted amber in its state's own
      water, with a solid amber line at the rule's distance; the exempt channel is left clear.
+     Massachusetts' channels and bridges are drawn as amber dashed areas. The ramp and marina
+     categories are new to the chart reader, so a chart area cached before today gets them when
+     it is re-read, within a week.
 
    The **speed governor** commands the slower of the job's speed and the zone's. It starts before
    the zone, by her slow-down distance plus a margin, so she is at the zone's speed on its edge. It
@@ -4024,11 +4038,16 @@ stale when a service is down and merged into the chart without ever failing it. 
 Hampshire's and Maine's shore rules. Each holds at its own distance, in its own state's water
 only: New Hampshire's counts docks and Maine's does not. The Piscataqua's federal channel is
 exempt only between R2 and R12; shallow side channels, a channel 5 km off the buoys' line and one
-1 km past R12 are not. New Hampshire's bridges are zones. Where a state line is unread, the
-stricter rule applies, and only in their water. The shore index matches brute force. A zone she is
+1 km past R12 are not. New Hampshire's bridges are zones. Massachusetts': 150 ft of each kind of
+marina, launch and float as the chart publishes them, and not of a pier, a ferry terminal or an
+uncategorized shoreline construction; inside a marina's own area; headway in every channel in
+its water, not in one named as an anchorage, not in a channel's hole; its bridges; headway at
+6 mph at most. Where a state line is unread, that state's rules apply in its box, never in water
+another state's line was read for. The shore index matches brute force. A zone she is
 slowing for stays held as her slowing shortens the lead; that last one was found live, where the
-page said "Clear of speed zone" of water she had not reached. And the state boundaries are
-clipped to the chart, cached a month and named unread when never read.
+page said "Clear of speed zone" of water she had not reached. The governor is driven past an
+island and through a channel. And the state boundaries are clipped to the chart, cached a
+month, named unread when never read, and asked for only where each state's box reaches.
 
 ```
 node tests/ui_split.js
