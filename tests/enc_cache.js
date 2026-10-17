@@ -135,13 +135,18 @@ let AIR = 0;
 function airNeedM() { return AIR; }
 const { overheadBlocks } = require("../static/js/keepouts.js");
 
-// the margin a layer is drawn with, read from the page so a change to it moves these checks with it
-const PAD = +(H.match(/const LAYER_PAD_PX = (\d+);/) || [])[1];
+// THE DRAWING AND ITS HELPERS ARE chartlayers.js's since 2026-10-17 (the chart worker draws the layers off the page with the
+// same code): the real module, its margin read from it so a change moves these checks with it. The page's wrappers gather
+// each layer's state from the world above; drawLayerOff, with no extract in a worker (sea.enc has no workerId here), draws
+// it on the page exactly as before - which is what these checks hold.
+const CL = require("../static/js/chartlayers.js");
+const PAD = CL.LAYER_PAD_PX;
+const { featureBox, layerSees, tracePx } = CL, clDrawENC = CL.drawENC, clDrawNogo = CL.drawNogo;
 // eslint-disable-next-line no-eval
-eval("const LAYER_PAD_PX = " + PAD + ";\nconst featBox = new WeakMap();\n" + grab("featureBox") + "\n" + grab("layerSees")
-     + "\n" + grab("tracePx") + "\n" + grab("makeLayer") + "\n" + grab("layerHolds") + "\n" + grab("drawLayer")
-     + "\n" + grab("drawENC") + "\n" + grab("encLayerKeyNow") + "\n" + grab("drawENCCached")
-     + "\n" + grab("drawNogo") + "\n" + grab("nogoLayerKeyNow") + "\n" + grab("drawNogoCached"));
+eval("const LAYER_PAD_PX = " + PAD + ";\n" + grab("makeLayer") + "\n" + grab("layerHolds") + "\n" + grab("drawLayer")
+     + "\n" + grab("drawLayerOff") + "\n" + grab("encIdForWorker") + "\n" + grab("nogoIdForWorker")
+     + "\n" + grab("encDrawData") + "\n" + grab("drawENC") + "\n" + grab("encLayerKeyNow") + "\n" + grab("drawENCCached")
+     + "\n" + grab("nogoDrawData") + "\n" + grab("drawNogo") + "\n" + grab("nogoLayerKeyNow") + "\n" + grab("drawNogoCached"));
 encLayer = makeLayer(); nogoLayer = makeLayer();
 
 const feat = { role: "land", geometry: { type: "Polygon", coordinates: [[[0,0],[0,1],[1,1],[0,0]]] } };

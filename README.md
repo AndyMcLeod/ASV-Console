@@ -373,6 +373,15 @@ before whenever the worker cannot answer for that extract. A chart read lands up
 of a second later and the page no longer stops for it. The extract's parse and the model's build stay
 on the page: measured, receiving them from a worker cost as much as doing them.
 
+**The chart's layers off the page, and the route's grid faster (2026-10-17, items 4 and 5).** The ENC,
+keep-out and shore-band layers are drawn in the same worker, from its own copy of the extract, with the
+page's own drawing (`static/js/chartlayers.js`); the page shows the last picture, moved or scaled,
+until the new one arrives, and draws a layer itself as before whenever the worker cannot. At New
+Castle a zoom held the page for one frame of 96-197 ms; now the longest is about 10 ms, and the
+worker's picture is the page's to the byte. The route search's grid (`static/js/raster.js`) is built
+in about half the time and is the same grid, so the routes are the same. A GPU version of it was
+weighed and not built: it cannot draw the same cells, and the grid must never under-draw a keep-out.
+
 **Bug and reliability review (2026-10-16).** Six area reviews of the whole project, every finding
 re-verified, 28 findings repaired the same day, each with a check that failed on the code before it; the
 report, with file and line for each, is [docs/review-2026-10-16.md](docs/review-2026-10-16.md). What an

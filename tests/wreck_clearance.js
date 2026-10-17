@@ -561,7 +561,10 @@ console.log("Charted point-hazard extent — a wreck is a POSITION, not a 3 m do
   // 24g. THE PAGE OFFERS IT AND READS IT. On the card beside the four, checked - armed - on a fresh page; folded into
   // nogo.enf by applyNogoControls; a change rebuilds like the other four; a disregarded wreck AREA is not drawn as a
   // keep-out, and the layer's cache key names the toggle so the picture follows it.
-  const anc = grab("applyNogoControls"), dn = grab("drawNogo"), lk = grab("nogoLayerKeyNow");
+  // the drawing is chartlayers.js's since 2026-10-17 (the page gathers its state: nogoDrawData)
+  const CLS = fs.readFileSync(path.join(__dirname, "..", "static", "js", "chartlayers.js"), "utf8");
+  const anc = grab("applyNogoControls"), lk = grab("nogoLayerKeyNow"), nd = grab("nogoDrawData");
+  const dn = CLS.slice(CLS.indexOf("export function drawNogo("), CLS.indexOf("export function drawLawBands("));
   const ST = fs.readFileSync(path.join(__dirname, "..", "static", "js", "state.js"), "utf8");
   check("24g. the survey card offers Shipwrecks, armed by default on the card and in state.js, folded into nogo.enf, "
         + "rebuilding on change, and a disregarded wreck AREA is neither drawn as a keep-out nor cached past the toggle",
@@ -569,7 +572,7 @@ console.log("Charted point-hazard extent — a wreck is a POSITION, not a 3 m do
         && /NOGO_ENF = \{[^}]*wreck:true[^}]*\}/.test(ST)
         && /wreck:\$\("#enf_wreck"\)\.checked/.test(anc)
         && /\["#enf_land","#enf_depth","#enf_haz","#enf_area","#enf_wreck","#enf_chan"\]\.forEach/.test(H)
-        && /if\(f\.cls==="Wreck_area" && nogo\.enf\.wreck===false\) continue;/.test(dn)
+        && /if\(f\.cls==="Wreck_area" && enf\.wreck===false\) continue;/.test(dn) && /enf: \{\.\.\.\(nogo\.enf \|\| \{\}\)\}/.test(nd)
         && /enf\.wreck !== false/.test(lk),
         "the card's checkbox, state.js's NOGO_ENF, applyNogoControls, the change list, drawNogo and nogoLayerKeyNow");
   check("24h. ... and a punch made with it off SAYS how many charted wrecks it disregarded, because a plan run over a "

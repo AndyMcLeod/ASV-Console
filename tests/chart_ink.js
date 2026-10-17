@@ -491,8 +491,10 @@ check("15. what was read off a picture is DRAWN DIFFERENTLY from what the ENC pu
         // ⚠ SLICED TO EACH BLOCK. A file-wide search for the magenta passed with the LINE
         // colour mutated back to the ENC's red, because the FOOTPRINT fill still carried the
         // magenta a few lines above - one colour standing in for the other's check.
-        // "function drawNogo(" exactly: drawNogoCached (2026-09-29) sits above it and names chartInk.lines/areas too.
-        const dn = H.slice(H.indexOf("function drawNogo("), H.indexOf("function drawMarks"));
+        // THE DRAWING IS chartlayers.js's since 2026-10-17 (the page and the chart worker both draw with it): its drawNogo,
+        // up to the next layer's drawing.
+        const CLS = fs.readFileSync(path.join(__dirname, "..", "static", "js", "chartlayers.js"), "utf8");
+        const dn = CLS.slice(CLS.indexOf("export function drawNogo("), CLS.indexOf("export function drawLawBands("));
         const areaBlk = dn.slice(dn.indexOf("chartInk.areas"), dn.indexOf("chartInk.lines"));
         const lineBlk = dn.slice(dn.indexOf("chartInk.lines"));
         return areaBlk.length > 100 && lineBlk.length > 100

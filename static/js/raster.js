@@ -140,29 +140,44 @@ export function stampSeg(blk, W, H, x0, y0, cell, a, b, pad = 0) {
  * This is what turns the keep-out stamps into keep-out-plus-clearance, so the
  * search never has to test the buffer itself. Two 1-D passes rather than one
  * 2-D pass: same result, O(rad) instead of O(rad²) per cell.
+ *
+ * ⚠ BY THE NEAREST FILLED CELL, NOT A SCAN OF THE WINDOW (2026-10-17, Andy: "implement 4 and 5" of the performance
+ * review). A cell is set when a filled cell lies within `rad` of it along the pass - which is the window's own test,
+ * answered from the nearest filled cell before and after it (two sweeps), so each pass is O(W·H) whatever the buffer.
+ * The window scan was 793 ms of a 5.3 s route search on the real chart (profiled). BIT FOR BIT THE SAME GRID:
+ * tests/raster_exact.js holds the window scan as its reference and compares them over random and edge-case grids.
  */
 export function dilateGrid(blk, W, H, rad) {
   if (rad < 1) return;
   const tmp = new Uint8Array(W * H);
+  const FAR = 0x3fffffff;
+  for (let y = 0; y < H; y++) {
+    const row = y * W;
+    let last = -FAR;                                   // the nearest filled cell at or before x
+    for (let x = 0; x < W; x++) {
+      if (blk[row + x]) last = x;
+      if (x - last <= rad) tmp[row + x] = 1;
+    }
+    let next = FAR;                                    // ... and at or after it
+    for (let x = W - 1; x >= 0; x--) {
+      if (blk[row + x]) next = x;
+      if (next - x <= rad) tmp[row + x] = 1;
+    }
+  }
+  // the columns' pass walked ROW BY ROW, a nearest-filled row kept for every column: the same test, in memory order
+  const last = new Int32Array(W).fill(-FAR), next = new Int32Array(W).fill(FAR);
   for (let y = 0; y < H; y++) {
     const row = y * W;
     for (let x = 0; x < W; x++) {
-      let v = 0;
-      for (let dx = -rad; dx <= rad; dx++) {
-        const xx = x + dx;
-        if (xx >= 0 && xx < W && blk[row + xx]) { v = 1; break; }
-      }
-      tmp[row + x] = v;
+      if (tmp[row + x]) last[x] = y;
+      blk[row + x] = (y - last[x] <= rad) ? 1 : 0;
     }
   }
-  for (let x = 0; x < W; x++) {
-    for (let y = 0; y < H; y++) {
-      let v = 0;
-      for (let dy = -rad; dy <= rad; dy++) {
-        const yy = y + dy;
-        if (yy >= 0 && yy < H && tmp[yy * W + x]) { v = 1; break; }
-      }
-      blk[y * W + x] = v;
+  for (let y = H - 1; y >= 0; y--) {
+    const row = y * W;
+    for (let x = 0; x < W; x++) {
+      if (tmp[row + x]) next[x] = y;
+      if (next[x] - y <= rad) blk[row + x] = 1;
     }
   }
 }
@@ -197,18 +212,38 @@ export function rasterKeepouts(blk, W, H, x0, y0, cell, ko, buffer) {
     const rg = poly.ring;
     const gy0 = Math.max(0, Math.floor(gyOf(bb.y0)));
     const gy1 = Math.min(H - 1, Math.ceil(gyOf(bb.y1)));
-    for (let gy = gy0; gy <= gy1; gy++) {
-      const yc = y0 + (gy + 0.5) * cell;
-      const xs = [];
+    // ⚠ EACH EDGE TO THE ROWS IT CROSSES, NOT EVERY EDGE TO EVERY ROW (2026-10-17, the performance review: the fill tested
+    // every edge of a ring against every row of its box - a coastline of thousands of vertices over a thousand rows - and
+    // was the larger half of the 1.95 s the grids took in a 5.3 s route search on the real chart, profiled). An edge crosses the row
+    // at height yc exactly when (yi > yc) !== (yj > yc); that test, the row's own yc and the crossing's own arithmetic are
+    // the fill's as they were, asked of the rows the edge spans (and one beyond each end, for the rounding), so the
+    // crossings - sorted, paired, filled - are the same numbers and the grid the same, bit for bit (tests/raster_exact.js).
+    if (gy0 <= gy1) {
+      const rows = new Array(gy1 - gy0 + 1);
       for (let i = 0, j = rg.length - 1; i < rg.length; j = i++) {
         const yi = rg[i].n, yj = rg[j].n;
-        if ((yi > yc) !== (yj > yc)) xs.push(rg[j].e + (rg[i].e - rg[j].e) * (yc - yj) / (yi - yj));
+        if (yi === yj) continue;                       // a level edge crosses no row (the test is false for it)
+        const lo = yi < yj ? yi : yj, hi = yi < yj ? yj : yi;
+        const ga = Math.max(gy0, Math.floor((lo - y0) / cell - 0.5) - 1);
+        const gb = Math.min(gy1, Math.ceil((hi - y0) / cell - 0.5) + 1);
+        for (let gy = ga; gy <= gb; gy++) {
+          const yc = y0 + (gy + 0.5) * cell;
+          if ((yi > yc) !== (yj > yc)) {
+            const k = gy - gy0;
+            (rows[k] || (rows[k] = [])).push(rg[j].e + (rg[i].e - rg[j].e) * (yc - yj) / (yi - yj));
+          }
+        }
       }
-      xs.sort((p, q) => p - q);
-      for (let k = 0; k + 1 < xs.length; k += 2) {
-        const gxa = Math.max(0, Math.floor(gxOf(xs[k])));
-        const gxb = Math.min(W - 1, Math.ceil(gxOf(xs[k + 1])));
-        for (let gx = gxa; gx <= gxb; gx++) blk[gy * W + gx] = 1;
+      for (let k = 0; k < rows.length; k++) {
+        const xs = rows[k];
+        if (!xs) continue;
+        const gy = gy0 + k;
+        xs.sort((p, q) => p - q);
+        for (let m = 0; m + 1 < xs.length; m += 2) {
+          const gxa = Math.max(0, Math.floor(gxOf(xs[m])));
+          const gxb = Math.min(W - 1, Math.ceil(gxOf(xs[m + 1])));
+          for (let gx = gxa; gx <= gxb; gx++) blk[gy * W + gx] = 1;
+        }
       }
     }
     // The EDGES as well as the fill: a sliver narrower than a cell has no

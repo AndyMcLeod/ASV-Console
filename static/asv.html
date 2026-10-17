@@ -1122,6 +1122,9 @@ import { bbOf, inBB, bboxContains, bboxAround, lerpLL, dSeg, segInt, pinp,
          eachRing, eachPath, eachPoint,
          ptInGeom, segSamplesEN, acrossTrackM } from "/static/js/geometry.js";
 import { V, NOGO_ENF, nogo, sea } from "/static/js/state.js";
+// THE THREE CACHED LAYERS' DRAWING (2026-10-17): moved to chartlayers.js so the chart worker draws them off this thread
+import { LAYER_PAD_PX, LAW_BAND_MIN_PX, featureBox, layerSees, tracePx, drawENC as clDrawENC, drawNogo as clDrawNogo,
+         drawLawBands as clDrawLawBands } from "/static/js/chartlayers.js";
 // CPA / TCPA and the hull footprint an AIS contact broadcasts. Pure kinematics, so
 // the numbers follow a maneuver by either vessel the moment the next report lands -
 // see the module header for why nothing is cached.
@@ -9368,67 +9371,18 @@ function drawSpeedZones(toScreen){
 // ⚠ MEASURED: the first cut stroked the rule's model edge by edge (~98,000 edges in the New Castle chart, each its own
 // round-capped piece) - 1 to 1.7 s a stroke, and the page stopped 5 s at a zoom. Traced as the features' own lines, 50 to
 // 200 ms. A cached layer: redrawn at a zoom or chart change; not drawn where the band is under LAW_BAND_MIN_PX across.
-const lawLayer = makeLayer(), LAW_BAND_MIN_PX = 3;
+const lawLayer = makeLayer();     // LAW_BAND_MIN_PX: chartlayers.js
 let lawScratch = null;
 function drawLawBandsCached(toScreen, w, h, o){
   if(!(w > 0 && h > 0)) return;                    // a view with no size: nothing to draw into (drawENCCached)
   const zs = speedZonesNow().filter(z => z.law && z.law.within > 0 && z.law.pick);
   if(!zs.length) return;
-  drawLayer(lawLayer, String(zoom), [zonesList], (ts, lctx) => drawLawBands(zs, ts, lctx), toScreen, w, h, o);
+  drawLayerOff(lawLayer, "law", String(zoom), [zonesList], (ts, lctx) => drawLawBands(zs, ts, lctx), toScreen, w, h, o,
+               encIdForWorker(), null);
 }
 function drawLawBands(zs, toScreen, lctx){
-  const cw = lctx.canvas.width, ch = lctx.canvas.height;
   if(!lawScratch) lawScratch = document.createElement("canvas");
-  if(lawScratch.width !== cw || lawScratch.height !== ch){ lawScratch.width = cw; lawScratch.height = ch; }
-  const sx = lawScratch.getContext("2d"), sees = layerSees(lctx, toScreen);
-  const feats = (sea.enc && sea.enc.features) || [], land = feats.filter(f => f.role === "land");
-  for(const z of zs){
-    const fr = z.law.frame, scr = (p) => { const ll = fr.fromEN(p.e, p.n); return toScreen(ll.lat, ll.lon); };
-    const a = scr({e: 0, n: 0}), b = scr({e: 100, n: 0}), pxPerM = Math.hypot(b.x - a.x, b.y - a.y) / 100;
-    const band = 2 * z.law.within * pxPerM, tol = Math.max(0.7, band / 16);
-    if(band < LAW_BAND_MIN_PX) continue;
-    const rings = (rs) => { sx.beginPath(); for(const r of rs){ r.ring.forEach((p, i) => { const s = scr(p); i ? sx.lineTo(s.x, s.y) : sx.moveTo(s.x, s.y); }); sx.closePath(); } };
-    sx.globalCompositeOperation = "source-over"; sx.clearRect(0, 0, cw, ch);
-    if(z.law.state){ rings(z.law.state); sx.fillStyle = "#000"; sx.fill(); sx.globalCompositeOperation = "source-in"; }
-    sx.beginPath();
-    const trace = (pts) => {
-      let lx = 0, ly = 0;
-      for(let i = 0; i < pts.length; i++){
-        const q = toScreen(pts[i][1], pts[i][0]);
-        if(i === 0){ sx.moveTo(q.x, q.y); lx = q.x; ly = q.y; continue; }
-        if(i < pts.length - 1 && Math.abs(q.x - lx) < tol && Math.abs(q.y - ly) < tol) continue;
-        sx.lineTo(q.x, q.y); lx = q.x; ly = q.y;
-      }
-    };
-    const takes = typeof z.law.pick === "function" ? z.law.pick : (x) => z.law.pick.includes(x.role);   // its roles, or its test
-    const areas = [];
-    for(const f of feats){
-      if(!takes(f) || !sees(f, band, true)) continue;
-      if(z.law.areas && /Polygon/.test(f.geometry.type)) areas.push(f);   // a marina's own water (Massachusetts): in it is in the rule
-      eachRing(f.geometry, trace); eachPath(f.geometry, trace);
-      eachPoint(f.geometry, (c) => { const q = toScreen(c[1], c[0]); sx.moveTo(q.x, q.y); sx.lineTo(q.x + 0.01, q.y); });
-    }
-    // the band 3 px wider than the rule's, solid; then the rule's own width taken down to a tint - which leaves a solid
-    // edge line AT the rule's distance (measured live: a 20% tint alone did not show on the chart's white water)
-    sx.lineCap = "round"; sx.lineJoin = "round"; sx.strokeStyle = "#e8b46a";
-    sx.lineWidth = band + 3; sx.stroke();
-    sx.globalCompositeOperation = "destination-out";
-    sx.globalAlpha = 0.55; sx.lineWidth = band; sx.stroke(); sx.globalAlpha = 1;
-    if(areas.length){                               // the areas themselves at the band's tint
-      sx.globalCompositeOperation = "source-over"; sx.globalAlpha = 0.45; sx.fillStyle = "#e8b46a";
-      for(const f of areas){ sx.beginPath(); eachRing(f.geometry, (rg) => tracePx(sx, toScreen, rg)); sx.fill("evenodd"); }
-      sx.globalAlpha = 1; sx.globalCompositeOperation = "destination-out";
-    }
-    if(z.law.exempt && z.law.exempt.length){ rings(z.law.exempt); sx.fill(); }
-    for(const f of land){                           // each its own fill, so a lake in it stays and two that overlap still cut
-      if(!sees(f, 2, true)) continue;
-      sx.beginPath();
-      eachRing(f.geometry, (rg) => tracePx(sx, toScreen, rg));
-      sx.fill("evenodd");
-    }
-    sx.globalCompositeOperation = "source-over";
-    lctx.save(); lctx.globalAlpha = 0.8; lctx.drawImage(lawScratch, 0, 0); lctx.restore();
-  }
+  clDrawLawBands(zs, toScreen, lctx, {features: (sea.enc && sea.enc.features) || [], scratch: lawScratch});
 }
 function drawBoundary(toScreen){
   if(!boundary.length || (!boundaryShow && mode!=="bound")) return;  // hidden, unless editing
@@ -10656,75 +10610,100 @@ function depthRange(){
 // its sources changes: at z17 a boat at 6 kn crosses the margin in about 100 s. The blit offset is whole
 // pixels, so a cached layer can sit up to half a pixel off the live ones - which the view-keyed cache already
 // did, by rounding the origin into its key.
-const LAYER_PAD_PX = 256;
+// LAYER_PAD_PX - the margin a layer is drawn with round the view - is chartlayers.js's (imported above).
 function makeLayer(){ return {cv: null, key: "", srcs: [], ox: 0, oy: 0, w: 0, h: 0}; }
 /** Is what this layer holds still the picture for this view? Its key, its sources by identity, and the view inside it. */
 function layerHolds(L, key, srcs, w, h, o){
   return !!L.cv && L.key === key && L.srcs.length === srcs.length && L.srcs.every((s, i) => s === srcs[i])
          && o.x >= L.ox && o.y >= L.oy && o.x + w <= L.ox + L.w && o.y + h <= L.oy + L.h;
 }
-// ⚠ A LAYER DRAWS ONLY WHAT IT SHOWS, AND NO FINER THAN A PIXEL (2026-10-14, the zoom stalls). Andy: "increase that limit.
-// its causing problems. investigate ramifications". His session at 15:48 held 14,534 keep-out zones from a 1.34 x 0.47
-// degree read - 54,091 chart features and 3.36 million vertices in the box - and every zoom change redrew both layers
-// whole: every feature of the box projected and traced, on the page's only thread, whether it was on the canvas or not,
-// and whatever number of its vertices fell on one pixel. The page stopped for 1.6 to 12.9 s at each, the longest at
-// the widest zooms, and the guard was blind while it did (TELEMETRY STALE). A wider read cap makes the box, and so the
-// stall, bigger. So: a feature whose box is off the layer's canvas is not traced (layerSees), a vertex within 0.7 px of
-// the last one traced is not traced (tracePx: the ring's or path's last vertex always is), and a line or area smaller
-// than half a pixel both ways is not drawn. THE PICTURE ONLY: the keep-out model, the planners and the guard read the
-// features themselves, never this.
-const featBox = new WeakMap();
-/** A feature's lon/lat box {W, S, E, N}, walked once and kept (the features are replaced wholesale, never edited). */
-function featureBox(f){
-  let b = featBox.get(f);
-  if(b) return b;
-  let W = Infinity, S = Infinity, E = -Infinity, N = -Infinity;
-  const walk = (c) => { if(typeof c[0] === "number"){ if(c[0] < W) W = c[0]; if(c[0] > E) E = c[0]; if(c[1] < S) S = c[1]; if(c[1] > N) N = c[1]; return; }
-                        for(const x of c) walk(x); };
-  if(f.geometry && f.geometry.coordinates && f.geometry.coordinates.length) walk(f.geometry.coordinates);
-  b = {W, S, E, N};
-  featBox.set(f, b);
-  return b;
-}
-/** For a layer's draw: sees(f, margin, tiny) - is feature `f` on this context's canvas (within `margin` px), and, unless
- *  `tiny`, more than half a pixel across one way or the other. */
-function layerSees(ctx, toScreen){
-  const cw = ctx.canvas.width, ch = ctx.canvas.height;
-  return (f, margin = 2, tiny = false) => {
-    const b = featureBox(f);
-    if(!(b.W <= b.E && b.S <= b.N)) return false;
-    const a = toScreen(b.N, b.W), c = toScreen(b.S, b.E);
-    const x0 = Math.min(a.x, c.x), x1 = Math.max(a.x, c.x), y0 = Math.min(a.y, c.y), y1 = Math.max(a.y, c.y);
-    if(x1 < -margin || y1 < -margin || x0 > cw + margin || y0 > ch + margin) return false;
-    return tiny || x1 - x0 >= 0.5 || y1 - y0 >= 0.5;
-  };
-}
-/** Trace a ring or path ([[lon, lat], ...]) into the current path, a vertex within 0.7 px of the last traced dropped. */
-function tracePx(ctx, toScreen, pts){
-  const n = pts.length;
-  let lx = 0, ly = 0;
-  for(let i = 0; i < n; i++){
-    const c = pts[i], q = toScreen(c[1], c[0]);
-    if(i === 0){ ctx.moveTo(q.x, q.y); lx = q.x; ly = q.y; continue; }
-    if(i < n - 1 && Math.abs(q.x - lx) < 0.7 && Math.abs(q.y - ly) < 0.7) continue;
-    ctx.lineTo(q.x, q.y); lx = q.x; ly = q.y;
-  }
-}
+// A LAYER DRAWS ONLY WHAT IT SHOWS, AND NO FINER THAN A PIXEL (2026-10-14): featureBox, layerSees and tracePx are
+// chartlayers.js's since 2026-10-17, with the drawing they serve (its note says why).
 /** Blit a cached layer for this view, drawing it first - over the view and its margin - when it no longer holds. */
 function drawLayer(L, key, srcs, draw, toScreen, w, h, o){
   if(!layerHolds(L, key, srcs, w, h, o)){
     const W = w + 2 * LAYER_PAD_PX, Hh = h + 2 * LAYER_PAD_PX;
     const ox = Math.round(o.x) - LAYER_PAD_PX, oy = Math.round(o.y) - LAYER_PAD_PX;
-    if(!L.cv) L.cv = document.createElement("canvas");
+    // a layer the chart worker drew holds an ImageBitmap: drawn here, it gets a canvas again
+    if(!L.cv || typeof L.cv.getContext !== "function"){ if(L.cv && typeof L.cv.close === "function") L.cv.close(); L.cv = document.createElement("canvas"); }
     // Assigning width/height CLEARS the canvas and resets its context, which is what a miss
     // wants - and it is also why the same size has to be cleared by hand.
     if(L.cv.width !== W || L.cv.height !== Hh){ L.cv.width = W; L.cv.height = Hh; }
     else L.cv.getContext("2d").clearRect(0, 0, W, Hh);
     const dx = o.x - ox, dy = o.y - oy;            // the view's own toScreen, moved into the layer's frame
     draw((lat, lon) => { const s = toScreen(lat, lon); return {x: s.x + dx, y: s.y + dy}; }, L.cv.getContext("2d"));
-    L.key = key; L.srcs = srcs; L.ox = ox; L.oy = oy; L.w = W; L.h = Hh;
+    L.key = key; L.srcs = srcs; L.ox = ox; L.oy = oy; L.w = W; L.h = Hh; L.zoom = zoom;
   }
   ctx.drawImage(L.cv, Math.round(L.ox - o.x), Math.round(L.oy - o.y));
+}
+// ── THE LAYERS DRAWN OFF THIS THREAD (2026-10-17, Andy: "implement 4 and 5" of the performance review; for item 4 he chose
+// "Same drawing, off the page") ───────────────────────────────────────────────────────────────────────────────────────
+// A miss here redrew the layer on THIS thread (drawENC, drawNogo, drawLawBands), on every zoom and each time the view
+// following her left the drawn margin, with the clearance guard waiting behind it: measured at New Castle in an 1100 x
+// 800 view, 30-80 ms a layer and one frame of 96-197 ms a zoom (and after, over six zooms, no layer drawn here and no
+// frame over 10 ms). drawLayerOff asks the chart worker (skin_worker.js, which already holds the extract it parsed for
+// the seabed walk) to draw it - chartlayers.js's own drawing, over the same view and margin - and blits what the layer
+// holds meanwhile: the last picture, moved, and scaled across a zoom, as a map's tiles are. One request a layer at a time;
+// the newest view is asked for when it lands. THE PAGE DRAWS IT ITSELF, exactly as before, whenever the worker cannot: no
+// worker, an extract it does not hold (`encId` null - the extract came without its bytes, or its walk failed), an error,
+// or no answer within LAYER_WORKER_TIMEOUT_MS - and for that extract from then on.
+const LAYER_WORKER_TIMEOUT_MS = 15000;
+let layerSeq = 0;
+/** The worker id of the extract the ENC and shore layers draw (sea.enc), or null when the worker cannot draw it. */
+function encIdForWorker(){
+  const e = sea.enc;
+  return (e && e.workerId != null && e.workerState !== "failed") ? e.workerId : null;
+}
+/** The worker id of the extract the keep-out model's features came from, or null (refreshNogo sets nogo.featuresFrom). */
+function nogoIdForWorker(){ return nogo.featuresFrom != null ? nogo.featuresFrom : null; }
+/** What the layer holds, drawn for this view while a new one is drawn: moved, and scaled across a zoom. */
+function layerStale(L, o){
+  if(!L.cv || L.zoom == null || !(L.w > 0 && L.h > 0)) return;
+  if(L.zoom === zoom){ ctx.drawImage(L.cv, Math.round(L.ox - o.x), Math.round(L.oy - o.y)); return; }
+  const k = Math.pow(2, zoom - L.zoom);
+  ctx.drawImage(L.cv, L.ox * k - o.x, L.oy * k - o.y, L.w * k, L.h * k);
+}
+/** drawLayer, with the redraw asked of the chart worker (above). `name` the worker's name for the layer; `encId` the
+ *  extract it draws from (null: drawn here); `mkD` the layer's state for the worker, made only when it is asked. */
+function drawLayerOff(L, name, key, srcs, draw, toScreen, w, h, o, encId, mkD){
+  if(layerHolds(L, key, srcs, w, h, o)){ ctx.drawImage(L.cv, Math.round(L.ox - o.x), Math.round(L.oy - o.y)); return; }
+  if(encId == null || L.noWorkerFor === encId || !skinWorkerGet()){ drawLayer(L, key, srcs, draw, toScreen, w, h, o); return; }
+  const W = w + 2 * LAYER_PAD_PX, Hh = h + 2 * LAYER_PAD_PX;
+  const ox = Math.round(o.x) - LAYER_PAD_PX, oy = Math.round(o.y) - LAYER_PAD_PX;
+  const q = L.pend;
+  const covers = q && q.key === key && q.zoom === zoom && q.srcs.length === srcs.length && q.srcs.every((x, i) => x === srcs[i])
+                 && q.encId === encId && o.x >= q.ox && o.y >= q.oy && o.x + w <= q.ox + q.W && o.y + h <= q.oy + q.H;
+  if(q && !covers && Date.now() - q.at >= LAYER_WORKER_TIMEOUT_MS){       // no answer: this extract is drawn here
+    L.noWorkerFor = q.encId; L.pend = null;
+    logClient("layer_worker", {layer: name, fallback: true, why: "no answer in " + Math.round(LAYER_WORKER_TIMEOUT_MS / 1000) + " s"});
+    drawLayer(L, key, srcs, draw, toScreen, w, h, o); return;
+  }
+  if(!q){
+    const p = {seq: ++layerSeq, at: Date.now(), key, srcs, zoom, ox, oy, W, H: Hh, encId};
+    L.pend = p;
+    try{
+      skinWorker.postMessage({type: "draw", seq: p.seq, layer: name, encId, view: {zoom, ox, oy, W, H: Hh},
+                              D: mkD ? mkD() : {}, V: {...V}, waterOffset: sea.waterOffset || 0});
+    }catch(e){
+      L.pend = null; L.noWorkerFor = encId;
+      drawLayer(L, key, srcs, draw, toScreen, w, h, o); return;
+    }
+  }
+  layerStale(L, o);
+}
+/** The chart worker's answer to a layer it was asked to draw (skinWorkerGet's onmessage). */
+function layerAnswer(m){
+  const L = {enc: encLayer, nogo: nogoLayer, law: lawLayer}[m.layer], q = L && L.pend;
+  if(!q || q.seq !== m.seq){ if(m.bitmap && typeof m.bitmap.close === "function") m.bitmap.close(); return; }   // asked again since
+  L.pend = null;
+  if(!m.ok || !m.bitmap){
+    L.noWorkerFor = q.encId;
+    logClient("layer_worker", {layer: m.layer, fallback: true, why: String(m.error || "no picture")});
+  } else {
+    if(L.cv && typeof L.cv.close === "function") L.cv.close();
+    L.cv = m.bitmap; L.key = q.key; L.srcs = q.srcs; L.ox = q.ox; L.oy = q.oy; L.w = q.W; L.h = q.H; L.zoom = q.zoom;
+  }
+  render();
 }
 const encLayer = makeLayer();
 function encLayerKeyNow(){
@@ -10748,57 +10727,11 @@ function drawENCCached(toScreen, w, h, o){
   // ⚠ NOT CACHED EITHER. Returning before the key is computed means the next frame with a
   // real size is an honest miss rather than a hit on a layer that was never drawn.
   if(!(w > 0 && h > 0)) return;
-  drawLayer(encLayer, encLayerKeyNow(), [sea.enc], drawENC, toScreen, w, h, o);
+  drawLayerOff(encLayer, "enc", encLayerKeyNow(), [sea.enc], drawENC, toScreen, w, h, o, encIdForWorker(), encDrawData);
 }
-function drawENC(toScreen, ctx){
-  if(!sea.enc.features.length) return;
-  ctx.save();
-  const sees = layerSees(ctx, toScreen);            // only what this layer shows, no finer than a pixel (above)
-  const fillPoly=(g,fill,stroke)=>{ ctx.beginPath(); let any=false;
-    eachRing(g,r=>{ any=true; tracePx(ctx, toScreen, r); ctx.closePath(); });
-    if(!any) return; ctx.fillStyle=fill; ctx.fill("evenodd");
-    if(stroke){ ctx.strokeStyle=stroke; ctx.lineWidth=1; ctx.stroke(); } };
-  const strokePath=(g,stroke,w,dash)=>{ ctx.setLineDash(dash||[]); ctx.strokeStyle=stroke; ctx.lineWidth=w;
-    eachPath(g,p=>{ ctx.beginPath(); tracePx(ctx, toScreen, p); ctx.stroke(); });
-    ctx.setLineDash([]); };
-  // fills: land / docks / informational areas. Shallow-water (depth) shading is
-  // owned SOLELY by the NOGO layer (drawNogo) - the single depth-shading layer.
-  // A coarser chart's piece (`clip`, the layered extract) is filled with NO outline: its edge along the cut is not a
-  // coast, and the coast is drawn from the shoreline's own lines.
-  for(const f of sea.enc.features){ const g=f.geometry, r=f.role, cut=!!f.clip;
-    if((r==="land"||r==="dock"||r==="hazard_area"||r==="dredged"||r==="restricted") && !sees(f)) continue;
-    if(r==="land") fillPoly(g,"rgba(120,96,58,0.38)",cut?null:"rgba(150,120,70,0.7)");
-    else if(r==="dock"||r==="hazard_area") fillPoly(g,"rgba(200,120,40,0.30)",cut?null:"rgba(210,140,60,0.85)");
-    else if(r==="dredged"||r==="restricted") fillPoly(g,"rgba(90,140,190,0.10)",null); }
-  // lines
-  for(const f of sea.enc.features){ const g=f.geometry, r=f.role;
-    if((r==="shore_line"||r==="dock_line"||r==="depth_contour"||r==="dredged"||r==="restricted") && !sees(f)) continue;
-    if(r==="shore_line") strokePath(g,"rgba(185,150,90,0.95)",1.6,[]);
-    else if(r==="dock_line") strokePath(g,"rgba(210,140,60,0.95)",1.6,[]);
-    else if(r==="depth_contour") strokePath(g,"rgba(95,145,195,0.55)",1,[3,3]);
-    else if(r==="dredged"||r==="restricted") strokePath(g,"rgba(110,160,205,0.7)",1.2,[5,4]); }
-  // points
-  for(const f of sea.enc.features){ const g=f.geometry, r=f.role;
-    // a point: off the canvas by more than a sized hazard's circle could reach (LAYER_PAD_PX), or a sounding's dot
-    if(r==="sounding" ? !sees(f, 2, true) : (r==="hazard_point"||r==="land_point") && !sees(f, LAYER_PAD_PX, true)) continue;
-    if(r==="hazard_point"||r==="land_point") eachPoint(g,c=>{ const s=toScreen(c[1],c[0]);
-      // A sized hazard (wreck / obstruction of unknown extent) draws the circle the
-      // router actually keeps out of. Without it the operator sees a route swing wide
-      // for no visible reason - and, worse, would read a bare cross as the whole danger.
-      // A wreck the operator DISREGARDS (Shipwrecks unchecked) keeps its cross, which is the chart, and loses the
-      // circle, which is the keep-out: nothing keeps out of it any more, so drawing one would say the opposite.
-      const hr=(f.cls==="Wreck_point" && nogo.enf.wreck===false) ? 0 : hazExtent(f);
-      if(hr>0){ const s2=toScreen(c[1]+hr/M_PER_DEG_LAT, c[0]);
-        const rpx=Math.abs(s2.y-s.y);
-        if(rpx>2){ ctx.strokeStyle="rgba(217,83,79,0.55)"; ctx.lineWidth=1.2; ctx.setLineDash([4,3]);
-          ctx.beginPath(); ctx.arc(s.x,s.y,rpx,0,2*Math.PI); ctx.stroke(); ctx.setLineDash([]);
-          ctx.fillStyle="rgba(217,83,79,0.10)"; ctx.fill(); } }
-      ctx.strokeStyle="#d9534f"; ctx.lineWidth=1.6; ctx.beginPath();
-      ctx.moveTo(s.x-4,s.y-4); ctx.lineTo(s.x+4,s.y+4); ctx.moveTo(s.x+4,s.y-4); ctx.lineTo(s.x-4,s.y+4); ctx.stroke(); });
-    else if(r==="sounding") eachPoint(g,c=>{ const s=toScreen(c[1],c[0]);
-      ctx.fillStyle="rgba(139,160,173,0.5)"; ctx.beginPath(); ctx.arc(s.x,s.y,1.1,0,2*Math.PI); ctx.fill(); }); }
-  ctx.restore();
-}
+// THE ENC LAYER'S STATE (chartlayers.js drawENC's `D`), as this page holds it.
+function encDrawData(){ return {wreckOff: !!(nogo.enf && nogo.enf.wreck === false)}; }
+function drawENC(toScreen, ctx){ clDrawENC(toScreen, ctx, {...encDrawData(), features: sea.enc.features, hazExtent}); }
 
 // bbox of the current survey pattern (+pad meters), for the ENC fetch
 function encBbox(pad){ const sp=currentPattern(); if(!sp) return null;
@@ -10825,6 +10758,8 @@ function skinWorkerUsable(){ return !skinWorkerOff && typeof Worker === "functio
 function skinWorkerDown(why){
   for(const [, done] of skinJobWaiting) done({ok: false, error: why});
   skinJobWaiting.clear();
+  // the layers it was drawing are drawn here, for the extracts they were asked of (drawLayerOff)
+  for(const L of [encLayer, nogoLayer, lawLayer]) if(L && L.pend){ L.noWorkerFor = L.pend.encId; L.pend = null; }
   try{ if(skinWorker) skinWorker.terminate(); }catch(e){}
   skinWorker = null;
 }
@@ -10836,7 +10771,9 @@ function skinWorkerGet(){
   try{
     if(!skinWorker){
       skinWorker = new Worker("/static/js/skin_worker.js", {type: "module"});
-      skinWorker.onmessage = (ev) => { const m = ev.data || {}, done = skinJobWaiting.get(m.id);
+      skinWorker.onmessage = (ev) => { const m = ev.data || {};
+                                       if(m.type === "drawn"){ layerAnswer(m); return; }   // a layer it drew (drawLayerOff)
+                                       const done = skinJobWaiting.get(m.id);
                                        if(done){ skinJobWaiting.delete(m.id); done(m); } };
       skinWorker.onerror = (e) => skinWorkerDown("the worker failed: " + ((e && e.message) || "an error"));
     }
@@ -10846,7 +10783,7 @@ function skinWorkerGet(){
 function skinJobStart(raw, b){
   if(!raw || !skinWorkerGet()) return null;
   const id = ++skinJobSeq;
-  return new Promise(res => {
+  const job = new Promise(res => {
     const t = setTimeout(() => {
       if(!skinJobWaiting.delete(id)) return;
       res({ok: false, error: "no answer in " + Math.round(SKIN_WORKER_TIMEOUT_MS / 1000) + " s"});
@@ -10856,6 +10793,8 @@ function skinJobStart(raw, b){
     try{ skinWorker.postMessage({id, raw, b: {W: b.W, S: b.S, E: b.E, N: b.N}}, [raw]); }
     catch(e){ clearTimeout(t); skinJobWaiting.delete(id); res({ok: false, error: String((e && e.message) || e)}); }
   });
+  job.id = id;                                          // the worker keeps the extract under it, to draw from (drawLayerOff)
+  return job;
 }
 // MADE AS THE PAGE LOADS, in the chart window (the one that reads the chart): a worker made at the first read loads its
 // modules first - measured 1,169 ms of waiting on that read, against 631 ms warm on a larger one.
@@ -10869,8 +10808,10 @@ async function skinOffThread(enc, b, feats){
     const m = await job;
     if(m && m.ok && m.skin && Array.isArray(m.skin.gaps) && m.n === feats.length){
       logClient("skin_worker", {ms: m.ms, n: m.n, gaps: m.skin.gaps.length});
+      if(enc) enc.workerState = "ok";
       return m.skin;
     }
+    if(enc) enc.workerState = "failed";                 // nor are its layers asked of it (encIdForWorker)
     logClient("skin_worker", {fallback: true, why: !m ? "no answer" : !m.ok ? String(m.error || "failed")
                                                  : m.n !== feats.length ? "an answer for " + m.n + " features, not " + feats.length
                                                  : "no gaps in the answer"});
@@ -10902,7 +10843,9 @@ async function fetchENCBbox(b, minDepth){
            unread: [...sq(d && d.unread, false), ...sq(d && d.unread_failed, true)],
            readAt: (d && typeof d.read_at === "number") ? d.read_at : null, aged: (d && d.aged) || 0,
            stale: (d && d.stale) || [], supplement: (d && d.supplement) || [], partialNamed: (d && d.partial_named) || [],
-           skinJob};                                // the worker's walk of this extract's seabed, or null (skinOffThread)
+           skinJob,                                 // the worker's walk of this extract's seabed, or null (skinOffThread)
+           workerId: skinJob ? skinJob.id : null,   // ... and the extract it holds to draw from, under this id (drawLayerOff)
+           workerState: skinJob ? "pending" : null};
   return d;
 }
 // clip one survey line to the sub-segments that clear every keep-out (sampled)
@@ -11124,6 +11067,8 @@ async function refreshNogo(centerLL, bbox, ask){     // extract ENC for the oper
     chartInk = {key:null, lines:[], areas:[], detached:[], note:null, z:null, ms:0, busy:false};
     if(!wider){ chartReads = []; inkRefused = null; }
     nogo.features = feats;                              // shared feature snapshot (behaviors + survey build from this)
+    // the extract the worker holds these from (the seabed's gaps its own, the same walk): the keep-out layer is drawn there
+    nogo.featuresFrom = enc.workerState === "ok" ? enc.workerId : null;
     nogo.skin = skin;
     nogo.band = enc.band; nogo.bbox = b; nogo.center = {lat:ll.lat, lon:ll.lon};
     nogo.unread = enc.unread || [];                    // the same extract's: set with the box, never apart from it
@@ -13073,90 +13018,18 @@ function nogoLayerKeyNow(){
 function drawNogoCached(toScreen, w, h, o){
   if(!nogoShow || !nogo.ready || !nogo.features) return;
   if(!(w > 0 && h > 0)) return;                     // a view with no size: see drawENCCached
-  drawLayer(nogoLayer, nogoLayerKeyNow(), [nogo.features, chartInk.lines, chartInk.areas, nogo.unread, corridorRead], drawNogo,
-            toScreen, w, h, o);
+  drawLayerOff(nogoLayer, "nogo", nogoLayerKeyNow(), [nogo.features, chartInk.lines, chartInk.areas, nogo.unread, corridorRead],
+               drawNogo, toScreen, w, h, o, nogoIdForWorker(), nogoDrawData);
 }
-function drawNogo(toScreen, ctx){
-  if(!nogoShow || !nogo.ready || !nogo.features) return;
-  const floorDr=nogoDR();                          // < 1 m corrected -> nogo
-  const surveyDr=depthRange();                      // survey coverage window (panel)
-  const hasPat=!!currentPattern();                  // amber tier only while planning a survey
-  ctx.save();
-  const sees = layerSees(ctx, toScreen);            // only what this layer shows, no finer than a pixel (drawLayer's note)
-  const fill=(g,c)=>{ ctx.beginPath(); let any=false;
-    eachRing(g,r=>{ any=true; tracePx(ctx, toScreen, r); ctx.closePath(); });
-    if(any){ ctx.fillStyle=c; ctx.fill("evenodd"); } };
-  // WHAT IS OVERHEAD AND TOO LOW FOR HER (2026-10-12) is a keep-out like a pier, drawn as one: the span's water filled,
-  // a cable stroked - the same test the model takes it by (overheadBlocks at airNeedM), so the drawing cannot disagree.
-  const airNeed = airNeedM();
-  const lowOver = f => (f.role==="bridge_span"||f.role==="overhead") && overheadBlocks(f, airNeed);
-  for(const f of nogo.features){ const r=f.role, g=f.geometry;
-    if(!sees(f)) continue;
-    // A wreck AREA the operator disregards (Shipwrecks unchecked) is not a keep-out, so it is not drawn as one.
-    if(f.cls==="Wreck_area" && nogo.enf.wreck===false) continue;
-    if(nogo.enf.land && (r==="land"||r==="dock"||r==="hazard_area"||r==="bridge"||lowOver(f))){ fill(g,"rgba(217,83,79,0.20)"); continue; }
-    // The seabed's other Group 1 objects (2026-10-12): a dredged channel by its maintained depth, unsurveyed water always.
-    if(r==="depth_area"||r==="dredged"||r==="unsurveyed"){
-      if(nogo.enf.depth && depthExcluded(f,floorDr)) fill(g,"rgba(217,83,79,0.20)");           // hard nogo (red)
-      else if(hasPat && depthExcluded(f,surveyDr)) fill(g,"rgba(196,150,74,0.22)"); }          // outside survey window (amber)
-  }
-  ctx.strokeStyle="rgba(217,83,79,0.85)"; ctx.lineWidth=1.4;
-  for(const f of nogo.features){ const r=f.role;
-    if(nogo.enf.land && (r==="shore_line"||r==="dock_line"||r==="hazard_line"||r==="land_line"||lowOver(f)) && sees(f))
-      eachPath(f.geometry,p=>{ ctx.beginPath(); tracePx(ctx, toScreen, p); ctx.stroke(); }); }
-  // ⚠ WATER NO CHART COVERS IS DRAWN GRAY (2026-10-11, the layered chart): the model holds nothing there, and a route
-  // through it is refused - the operator sees where before planning. A square whose chart could not be READ is
-  // outlined as well: reading it again may chart it.
-  const unreadAll = [...(nogo.unread || []), ...((corridorRead && corridorRead.unread) || [])];   // + the corridor's (step 3)
-  if(unreadAll.length){
-    ctx.save();
-    for(const r of unreadAll){
-      const a=toScreen(r.N,r.W), c=toScreen(r.S,r.E);
-      ctx.fillStyle=r.failed?"rgba(150,150,150,0.30)":"rgba(128,128,128,0.22)";
-      ctx.fillRect(a.x,a.y,c.x-a.x,c.y-a.y);
-      if(r.failed){ ctx.strokeStyle="rgba(200,200,200,0.8)"; ctx.lineWidth=1; ctx.setLineDash([4,3]);
-        ctx.strokeRect(a.x,a.y,c.x-a.x,c.y-a.y); ctx.setLineDash([]); }
-    }
-    ctx.restore();
-  }
-  // ⚠ THE SEABED'S GAPS ARE OUTLINED IN THEIR OWN COLOR (2026-09-30). They are filled like every structure, because
-  // that is what they are to the router; but no NOAA layer served them - the console read them off the depth areas'
-  // own holes - and the operator must be able to see which floats those are and look at the chart to check them.
-  if(nogo.enf.land){
-    ctx.save(); ctx.strokeStyle="rgba(255,150,30,0.95)"; ctx.lineWidth=2; ctx.setLineDash([5,3]);
-    for(const f of nogo.features){ if(f.derived!=="skin_gap") continue;
-      eachRing(f.geometry,r=>{ ctx.beginPath(); r.forEach((p,i)=>{ const s=toScreen(p[1],p[0]); i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y); }); ctx.closePath(); ctx.stroke(); }); }
-    ctx.restore();
-  }
-  // ⚠ WHAT WAS READ OFF THE CHART IS DRAWN DIFFERENTLY, AND THAT IS NOT DECORATION. These
-  // are keep-outs the console inferred from a PICTURE; every other line here is published
-  // vector data. Drawing them in the ENC's own red would tell the operator the console has a
-  // warrant it does not have - and the one thing they must be able to do is look at the
-  // chart and disagree. Magenta, heavier, with a tick at each end so a 10 m mark is visible
-  // at a zoom where 10 m is ten pixels.
-  // The FOOTPRINTS first, so the lines draw over them rather than under.
-  if(nogo.enf.land && chartInk.areas && chartInk.areas.length){
-    ctx.fillStyle="rgba(224,64,208,0.28)"; ctx.strokeStyle="rgba(224,64,208,0.95)";
-    ctx.lineWidth=2;
-    for(const A of chartInk.areas){
-      if(!A.ring || A.ring.length < 3) continue;
-      ctx.beginPath();
-      A.ring.forEach((q,i)=>{ const sc=toScreen(q.lat,q.lon); i?ctx.lineTo(sc.x,sc.y):ctx.moveTo(sc.x,sc.y); });
-      ctx.closePath(); ctx.fill(); ctx.stroke();
-    }
-  }
-  if(nogo.enf.land && chartInk.lines && chartInk.lines.length){
-    ctx.strokeStyle="rgba(224,64,208,0.95)"; ctx.lineWidth=3.2; ctx.lineCap="round";
-    for(const L of chartInk.lines){
-      const a=toScreen(L.a.lat,L.a.lon), b=toScreen(L.b.lat,L.b.lon);
-      ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
-      const dx=b.x-a.x, dy=b.y-a.y, len=Math.hypot(dx,dy)||1, tx=-dy/len*5, ty=dx/len*5;
-      ctx.beginPath(); ctx.moveTo(a.x+tx,a.y+ty); ctx.lineTo(a.x-tx,a.y-ty);
-      ctx.moveTo(b.x+tx,b.y+ty); ctx.lineTo(b.x-tx,b.y-ty); ctx.stroke();
-    }
-  }
-  ctx.restore();
+// THE KEEP-OUT LAYER'S STATE (chartlayers.js drawNogo's `D`), every input drawNogoCached's key names: plain data, so the
+// chart worker can be sent it - the features and depthExcluded are each side's own.
+function nogoDrawData(){
+  return {show: nogoShow, ready: !!nogo.ready, enf: {...(nogo.enf || {})}, floorDr: nogoDR(), surveyDr: depthRange(),
+          hasPat: !!currentPattern(), airNeed: airNeedM(),
+          unreadAll: [...(nogo.unread || []), ...((corridorRead && corridorRead.unread) || [])],   // + the corridor's (step 3)
+          chartInk: {lines: chartInk.lines || [], areas: chartInk.areas || []}};
 }
+function drawNogo(toScreen, ctx){ clDrawNogo(toScreen, ctx, {...nogoDrawData(), features: nogo.features, depthExcluded}); }
 // Lateral channel marks (buoys/beacons) the console uses to define the channel:
 // green = port-hand (CATLAM 1/3), red = starboard-hand (CATLAM 2/4), amber = other.
 function drawMarks(toScreen){

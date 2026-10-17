@@ -91,7 +91,9 @@ function advance(ms) {
 const SRC = [grabDecl("UI_BRIDGED"), grabDecl("UI_PEER_GONE_MS"), grab("setupUISplit"), grab("pushUISync"), grab("applyUISync"),
              grabDecl("uiMirrored"), grab("uiSameNode"), grab("uiMorph"),      // the mirror's patch (ui_tooltips 17-18)
              grab("uiPeersPrune"), grab("uiSplitApply"), grab("uiSupervisionChanged"), grab("uiOlder"), grab("uiYield"),
-             grab("supervising"), grab("applySupervisor")].join("\n");
+             grab("supervising"), grab("applySupervisor"),
+             // the chart says whether it can be seen, and the controls window warns (2026-10-17; status_bar 5 holds it)
+             grabDecl("CHART_HIDDEN_SAY"), grab("chartHiddenWarn")].join("\n");
 
 // A page: the console's own split-window code in a world of its own.
 function makePage(role, id, born, opts) {
@@ -113,7 +115,7 @@ function makePage(role, id, born, opts) {
                            add: c => classes.add(c), remove: c => classes.delete(c) }, set innerHTML(v) { p.notice = v; } },
       get hidden() { return p.hidden; }, activeElement: null,
       querySelector: s => el(s),
-      getElementById: i => ({ id: i, type: "button", click: () => p.clicks.push(i), dispatchEvent: () => {} }),
+      getElementById: i => ({ id: i, type: "button", style: {}, click: () => p.clicks.push(i), dispatchEvent: () => {} }),
       addEventListener: () => {},
     },
     window: { addEventListener: (ev, fn) => { p.listeners[ev] = fn; },

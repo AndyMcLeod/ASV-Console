@@ -291,6 +291,7 @@ import(${JSON.stringify(pathToFileURL(WPATH).href)}).then(() => parentPort.postM
                                      ...(opts.noBytes ? {} : { arrayBuffer: async () => bytes(PLAIN) }) });
     const realParse = JSON.parse;
     const src = "const SKIN_WORKER_TIMEOUT_MS = 60;\nlet skinWorker = null, skinWorkerOff = false, skinJobSeq = 0;\nconst skinJobWaiting = new Map();\n"
+      + "const encLayer = {}, nogoLayer = {}, lawLayer = {};\n"           // the layers the worker draws (none asked here)
       + ["skinWorkerUsable", "skinWorkerDown", "skinWorkerGet", "skinJobStart", "skinOffThread", "fetchENCBbox"].map(grabFn).join("\n")
       + "\nreturn {fetchENCBbox, skinOffThread};";
     const api = new Function("Worker", "TextDecoder", "fetch", "sea", "skinOverHarbour", "logClient", "JSON", src)(

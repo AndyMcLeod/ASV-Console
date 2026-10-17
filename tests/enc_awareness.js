@@ -275,7 +275,12 @@ console.log("  hulls: " + HULLS.map((h) => h.id + " floor " + h.floor.toFixed(2)
              && /V\.OVERHEAD_CLEARANCE_M = \(v\.planning && typeof v\.planning\.overhead_clearance_m === "number"/.test(H);
   const opts = /airNeedM: airNeedM\(\)/.test(CH.slice(CH.indexOf("function koOpts"), CH.indexOf("function koOpts") + 300));
   const worker = /airDm: Math\.round\(airNeedM\(\) \* 10\)/.test(H);
-  const drawn = /lowOver\(f\)/.test(H) && /r==="dredged"\|\|r==="unsurveyed"/.test(H) && /r==="hazard_line"\|\|r==="land_line"/.test(H);
+  // the zones layer's drawing is static/js/chartlayers.js's drawNogo since 2026-10-17 (the page and the chart worker draw
+  // with it); the page hands it her need (nogoDrawData)
+  const CLS = fs.readFileSync(path.join(ROOT, "static", "js", "chartlayers.js"), "utf8");
+  const DN = CLS.slice(CLS.indexOf("export function drawNogo("), CLS.indexOf("export function drawLawBands("));
+  const drawn = /lowOver\(f\)/.test(DN) && /r==="dredged"\|\|r==="unsurveyed"/.test(DN) && /r==="hazard_line"\|\|r==="land_line"/.test(DN)
+             && /airNeed: airNeedM\(\)/.test(H);
   const files = HULLS.every((h) => h.air > 0 && h.oc >= 0)
              && HULLS.find((h) => h.id === "drix08").air === 2.85 && HULLS.find((h) => h.id === "drix08_em712").air === 2.85
              && HULLS.find((h) => h.id === "ben_cworker4").air === 1.97 && HULLS.find((h) => h.id === "zboat_1800hs").air === 1.1;

@@ -174,9 +174,10 @@ const world = (o) => {
         + "keyed on them)",
         () => /id="tr_read"/.test(panel) && /id="tr_read_st"/.test(panel) && /\$\("#tr_read"\)\.onclick = \(\) => readCorridor\(\);/.test(H)
               && /try\{ corridorAheadTick\(s\); \}catch\(e\)\{ console\.error\(e\); \}/.test(grab("onState"))
-              && /corridorRead && corridorRead\.unread/.test(grab("drawNogo"))
-              && /nogo\.unread, corridorRead\], drawNogo/.test(H),
-        "markup / onState / drawNogo");
+              // (the page gathers the squares for the keep-out layer - nogoDrawData - which chartlayers.js draws, since 2026-10-17)
+              && /corridorRead && corridorRead\.unread/.test(grab("nogoDrawData"))
+              && /nogo\.unread, corridorRead\],\s*drawNogo/.test(H),
+        "markup / onState / nogoDrawData");
 
   console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
   process.exit(fails ? 1 : 0);

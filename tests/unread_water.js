@@ -235,7 +235,9 @@ function rest() {
     // a piece: a coast from (0, 0.2) bulging into the square to (0.6, 1), the rest of its ring along the cut
     const ring = [[0, 0.2], [0.4, 0.5], [0.6, 1], [0, 1], [0, 0.2]];
     const runs = uncut(ring, clip);
-    const drawn = grab("drawENC");
+    // drawENC's drawing is chartlayers.js's since 2026-10-17 (the page and the chart worker draw with it)
+    const CLS = fs.readFileSync(path.join(__dirname, "..", "static", "js", "chartlayers.js"), "utf8");
+    const drawn = CLS.slice(CLS.indexOf("export function drawENC("), CLS.indexOf("export function drawNogo("));
     check("6. A CUT IS NOT A COAST, NOR INK: of a piece's ring only the runs NOT along its square are kept for the "
           + "chart-image check (here the bulge, not its edges on x=0 and y=1), and drawENC fills a piece's land and "
           + "structures with no outline",
@@ -259,8 +261,8 @@ function rest() {
                                                                                                { W: 5, S: 6, E: 7, N: 8, failed: true }])
                   && /nogo\.bbox = b;[^\n]*\n\s*nogo\.unread = enc\.unread \|\| \[\];/.test(rn)
                   // (the corridor's own squares beside them since step 3 - tests/corridor_read.js 5)
-                  && /drawLayer\(nogoLayer, nogoLayerKeyNow\(\), \[nogo\.features, chartInk\.lines, chartInk\.areas, nogo\.unread[,\]]/.test(H)
-                  && /const unreadAll = \[\.\.\.\(nogo\.unread \|\| \[\]\)/.test(grab("drawNogo")),
+                  && /drawLayerOff\(nogoLayer, "nogo", nogoLayerKeyNow\(\), \[nogo\.features, chartInk\.lines, chartInk\.areas, nogo\.unread[,\]]/.test(H)
+                  && /unreadAll: \[\.\.\.\(nogo\.unread \|\| \[\]\)/.test(grab("nogoDrawData")),
             () => JSON.stringify(sea.enc && sea.enc.unread));
       console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
       process.exit(fails ? 1 : 0);
