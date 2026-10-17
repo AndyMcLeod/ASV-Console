@@ -1162,7 +1162,7 @@ import { scanChartSliced, EXPLAIN_PX as INK_EXPLAIN_PX, ATTACH_M as INK_ATTACH_M
 // THE SEABED'S OWN GAPS. S-57's skin of the earth tiles the chart with no gaps, so wherever the depth areas, land
 // and docks the console holds leave the seabed uncovered, the ENC charts an object NOAA's vector service does not
 // serve - the floats at Pepperrell Cove (Andy, 2026-09-30). Pure, like chartink.js: features in, gaps out.
-import { skinGaps, skinGapFeature, SKIN_KIND, SKIN_CLASSES } from "/static/js/skin.js";
+import { skinGaps, skinGapFeature, SKIN_KIND, SKIN_CLASSES, skinOverHarbour } from "/static/js/skin.js";
 // Coming in on the drift: where to stop the prop, and whether it is safe to.
 import { coastLc, coastWorthIt, solveCoast, COAST_ARRIVE_MS, slowLaw, slowLeadM, leadWant, slowProfile } from "/static/js/coast.js";
 import { easeOffered } from "/static/js/turns.js";
@@ -8427,7 +8427,8 @@ const HOME_FIELD_PAD_M = 1500, HOME_FIELD_MIN_CELL_M = 5, HOME_FIELD_MAX_CELLS =
 const HOME_FIELD_REACH_M = 300;      // a home at a berth, or a boat alongside, reaches clear water within this
 const HOME_FIELD_RETRY_MS = 30000;   // a field that could not be built is tried again after this, not every frame
 const FUEL_AT_HOME_M = 50;           // nearer home than this, there is no return to send
-const FUEL_PROJECT_MS = 1000;        // the card's walk of the mission is redone at most this often
+const FUEL_PROJECT_MS = 10000;       // the card's walk of the mission is redone at most this often (fuelProjection)
+const FUEL_PROJECT_JUMP = 0.01;      // ... or at once when the level moves this fraction of the usable span
 let homeFld = {key: null, frame: null, g: null, blk: null, dist: null, ms: 0, at: 0, note: "not built yet"};
 let homeFldBuild = null, homeFldWorker = null, homeFldSeq = 0, homeKoSeen = null, homeKoGen = 0, homeFldKoSent = null;
 // What the field was built for: the home, the buffer, and the keep-out model (a new array on every rebuild - a tide,
@@ -8623,12 +8624,23 @@ function fuelWatchAt(model, ll){
 }
 // THE MISSION AHEAD, WALKED (fuel.js projectMission): from her position along the route the index counts into, each leg
 // at the key the governor will command on it, in the set; and home from its end when the run ends in an RTH.
-let fuelProj = {at: 0, route: null, idx: -1, val: null};
+// ⚠ WALKED EVERY 10 S, NOT EVERY SECOND (2026-10-17, Andy: "implement 1 through 3" of the performance review). Each walk
+// asks the way home at every step of the rest of the mission - measured ~100 ms of the page's only thread on a DriX Go-To
+// out of Portsmouth - and it ran every second for the whole run: a 100 ms hitch each second, the largest steady cost the
+// page had under way. The card's two rows are the only readers (the RTH monitor asks fuelWatchAt live every frame, and
+// never this), and a fuel figure for the mission ahead does not move in ten seconds. A NEW PLAN (the route's identity) is
+// walked at once, and so is a JUMP in the level - a refuel, the rehearsal row - of FUEL_PROJECT_JUMP of the usable span.
+// A new waypoint alone waits for the 10 s: on a turn's arc the index moves every couple of seconds, and a walk from her
+// position that still counts the waypoint just passed reads a few meters long - the safe side.
+let fuelProj = {at: 0, route: null, idx: -1, level: null, val: null};
 function fuelProjection(){
   const model = fuelModel(); if(!model || !asv) return null;
   const rr = indexedRoute(), idx = window._wpIndex || 0;
-  if(fuelProj.val && Date.now() - fuelProj.at < FUEL_PROJECT_MS && fuelProj.route === rr && fuelProj.idx === idx) return fuelProj.val;
-  const st = (S && S.status) || {}, here = {lat: asv.lat, lon: asv.lon}, fr = planeFrame(here);
+  const st = (S && S.status) || {}, level = energyLevel(model, st);
+  const jumped = fuelProj.level != null && level != null
+                 && Math.abs(level - fuelProj.level) >= FUEL_PROJECT_JUMP * Math.abs((model.full - model.floor) || 1);
+  if(fuelProj.val && fuelProj.route === rr && !jumped && Date.now() - fuelProj.at < FUEL_PROJECT_MS) return fuelProj.val;
+  const here = {lat: asv.lat, lon: asv.lon}, fr = planeFrame(here);
   const drift = groundVel(st.env_set_deg, st.env_set_kn) || {e: 0, n: 0}, legs = [];
   let end = here;
   if(rr && rr.length){
@@ -8639,12 +8651,12 @@ function fuelProjection(){
   }
   // Each step asks the rule the monitor will ask when she is there: in range, the energy home (her RTH point); out of
   // range, none - she is watched against the reserve itself, so `turn` is where she will come down to 20%.
-  const P = projectMission(model, legs, drift, energyLevel(model, st), (q) => {
+  const P = projectMission(model, legs, drift, level, (q) => {
     const w = fuelWatchAt(model, fr.fromEN(q.e, q.n));
     return !w ? null : w.mode === "rth" ? (w.h ? w.h.need : null) : 0; });
   P.legs = legs.length;
   P.home = (legs.length && endAction() === "rth") ? fuelHomeNeed(model, end) : null;
-  fuelProj = {at: Date.now(), route: rr, idx, val: P};
+  fuelProj = {at: Date.now(), route: rr, idx, level, val: P};
   return P;
 }
 function fuelFmt(model, x){
@@ -10794,9 +10806,90 @@ function encBbox(pad){ const sp=currentPattern(); if(!sp) return null;
   sp.lines.forEach(l=>l.forEach(p=>{ S=Math.min(S,p.lat);N=Math.max(N,p.lat);W=Math.min(W,p.lon);E=Math.max(E,p.lon); }));
   const dlat=(pad||0)/M_PER_DEG_LAT, dlon=(pad||0)/(M_PER_DEG_LAT*Math.cos((S+N)/2*Math.PI/180));
   return {W:W-dlon,S:S-dlat,E:E+dlon,N:N+dlat}; }
+// ── THE SEABED WALK, OFF THE PAGE'S THREAD (2026-10-17, Andy: "implement 1 through 3" of the performance review) ──────
+// skin.js skinOverHarbour walks every seabed edge of an extract: measured 266 ms (a 16 MB New Castle extract) to 528 ms (a
+// Go-To's 20 MB re-read) of this page's only thread, the largest single piece of a model's arrival, with the clearance
+// guard waiting behind it - and its answer is a handful of gaps. So skin_worker.js walks it: fetchENCBbox hands it the
+// extract's own bytes as they arrive (transferred; this page keeps the text it parses), the two parses run at once, and
+// refreshNogo awaits the answer where it used to walk. THE SAME WALK OR THIS PAGE'S: the worker runs skin.js's own function
+// on the same bytes, and its answer must name the extract's feature count; with no worker, an error, no answer within
+// SKIN_WORKER_TIMEOUT_MS or a count that does not match, this page walks it itself, exactly as before.
+// ⚠ THE MODEL IS STILL BUILT HERE (rebuildNogo), and the extract still parsed here: measured the same day, the features
+// cloned back from a worker cost more than this page's parse (about 150 ms against 112), and the model received packed
+// about what its build does (60-80 ms against 112) - and every reader of the chart is on this page.
+const SKIN_WORKER_TIMEOUT_MS = 20000;
+let skinWorker = null, skinWorkerOff = false, skinJobSeq = 0;
+const skinJobWaiting = new Map();
+function skinWorkerUsable(){ return !skinWorkerOff && typeof Worker === "function" && typeof TextDecoder === "function"; }
+/** Every walk waiting is answered "not done" (the page walks it), and the worker is let go - the next is made afresh. */
+function skinWorkerDown(why){
+  for(const [, done] of skinJobWaiting) done({ok: false, error: why});
+  skinJobWaiting.clear();
+  try{ if(skinWorker) skinWorker.terminate(); }catch(e){}
+  skinWorker = null;
+}
+/** The worker's walk of the extract `raw` (an ArrayBuffer, handed over) over box `b`: a promise of its answer
+ *  {ok, skin, n, ms} or {ok: false, error} - or null when there is no worker to ask. */
+/** The worker, made if there is none - or null when it cannot be (skinWorkerOff then, for good). */
+function skinWorkerGet(){
+  if(!skinWorkerUsable()) return null;
+  try{
+    if(!skinWorker){
+      skinWorker = new Worker("/static/js/skin_worker.js", {type: "module"});
+      skinWorker.onmessage = (ev) => { const m = ev.data || {}, done = skinJobWaiting.get(m.id);
+                                       if(done){ skinJobWaiting.delete(m.id); done(m); } };
+      skinWorker.onerror = (e) => skinWorkerDown("the worker failed: " + ((e && e.message) || "an error"));
+    }
+    return skinWorker;
+  }catch(e){ skinWorkerOff = true; return null; }
+}
+function skinJobStart(raw, b){
+  if(!raw || !skinWorkerGet()) return null;
+  const id = ++skinJobSeq;
+  return new Promise(res => {
+    const t = setTimeout(() => {
+      if(!skinJobWaiting.delete(id)) return;
+      res({ok: false, error: "no answer in " + Math.round(SKIN_WORKER_TIMEOUT_MS / 1000) + " s"});
+      skinWorkerDown("a walk before it got no answer");
+    }, SKIN_WORKER_TIMEOUT_MS);
+    skinJobWaiting.set(id, (m) => { clearTimeout(t); res(m); });
+    try{ skinWorker.postMessage({id, raw, b: {W: b.W, S: b.S, E: b.E, N: b.N}}, [raw]); }
+    catch(e){ clearTimeout(t); skinJobWaiting.delete(id); res({ok: false, error: String((e && e.message) || e)}); }
+  });
+}
+// MADE AS THE PAGE LOADS, in the chart window (the one that reads the chart): a worker made at the first read loads its
+// modules first - measured 1,169 ms of waiting on that read, against 631 ms warm on a larger one.
+if(UIROLE === "main") skinWorkerGet();
+/** The seabed's gaps for the extract `enc` (its features `feats`, box `b`): the worker's walk when it answered for THIS
+ *  extract, else this page's own - the walk refreshNogo always made. */
+async function skinOffThread(enc, b, feats){
+  const job = enc ? enc.skinJob : null;
+  if(enc) enc.skinJob = null;
+  if(job){
+    const m = await job;
+    if(m && m.ok && m.skin && Array.isArray(m.skin.gaps) && m.n === feats.length){
+      logClient("skin_worker", {ms: m.ms, n: m.n, gaps: m.skin.gaps.length});
+      return m.skin;
+    }
+    logClient("skin_worker", {fallback: true, why: !m ? "no answer" : !m.ok ? String(m.error || "failed")
+                                                 : m.n !== feats.length ? "an answer for " + m.n + " features, not " + feats.length
+                                                 : "no gaps in the answer"});
+  }
+  await new Promise(r => setTimeout(r, 0));
+  return skinOverHarbour(feats, b, enc);
+}
 async function fetchENCBbox(b, minDepth){
   const url=`/api/enc?bbox=${b.W.toFixed(5)},${b.S.toFixed(5)},${b.E.toFixed(5)},${b.N.toFixed(5)}&min_depth=${minDepth}`;
-  const d=await (await fetch(url)).json();
+  // THE BYTES FIRST, WHEN THE SEABED IS WALKED OFF THIS THREAD (2026-10-17, skinOffThread): they go to the worker as they
+  // arrive - transferred, this page keeps the text - so the worker's parse runs while this page parses its own.
+  const resp = await fetch(url);
+  let d, skinJob = null;
+  if(typeof resp.arrayBuffer === "function" && skinWorkerUsable()){
+    const raw = await resp.arrayBuffer();
+    const txt = new TextDecoder().decode(raw);
+    skinJob = skinJobStart(raw, b);
+    d = JSON.parse(txt);
+  } else d = await resp.json();
   // `partial` names the layers that failed to arrive (the server serves such an extract once and never caches
   // it). The seabed-gap check refuses on it: a missing depth layer would read as one gap over the whole area.
   // `unread` (2026-10-11, the layered chart): the squares of the box no chart covers, and those whose chart could not
@@ -10808,7 +10901,8 @@ async function fetchENCBbox(b, minDepth){
   sea.enc={features:d.features||[], band:d.band, bands:(d && d.bands) || [], minDepth, partial:(d && d.partial) || [], layered: !!(d && d.layered),
            unread: [...sq(d && d.unread, false), ...sq(d && d.unread_failed, true)],
            readAt: (d && typeof d.read_at === "number") ? d.read_at : null, aged: (d && d.aged) || 0,
-           stale: (d && d.stale) || [], supplement: (d && d.supplement) || [], partialNamed: (d && d.partial_named) || []};
+           stale: (d && d.stale) || [], supplement: (d && d.supplement) || [], partialNamed: (d && d.partial_named) || [],
+           skinJob};                                // the worker's walk of this extract's seabed, or null (skinOffThread)
   return d;
 }
 // clip one survey line to the sub-segments that clear every keep-out (sampled)
@@ -11010,10 +11104,10 @@ async function refreshNogo(centerLL, bbox, ask){     // extract ENC for the oper
     // so every one of them sees the floats with nothing to remember - the lesson foldChartInk's forgotten second
     // caller taught. They carry their own class and kind, so a refusal names them and the readout counts them.
     // ⚠ THE EXTRACT IS TAKEN BEFORE THE TURN, and the turn is the check's own: it walks every seabed edge of the
-    // extract (140-270 ms on his New Castle one), and `sea.enc` can be replaced by another fetch while it waits.
+    // extract (266-528 ms measured at New Castle, 2026-10-17), and `sea.enc` can be replaced by another fetch while it
+    // waits. OFF THIS PAGE'S THREAD where it can be (skinOffThread): the same walk, or this page's own as before.
     const enc = sea.enc, feats = (enc.features||[]).slice();
-    await new Promise(r => setTimeout(r, 0));
-    const skin = skinOverHarbour(feats, b, enc);
+    const skin = await skinOffThread(enc, b, feats);
     for(const g of skin.gaps) feats.push(skinGapFeature(g));
     // ⚠ A NEW EXTRACT INVALIDATES THE CHART READ. The scan is keyed on the box AND the band
     // it was taken over; dropping the key here means the next plan re-reads rather than
@@ -11065,15 +11159,8 @@ async function refreshNogo(centerLL, bbox, ask){     // extract ENC for the oper
 // its cuts are not seabed edges. Floats are charted at harbour scale, and the harbour chart is served whole. A hole in
 // it that a coarser chart's seabed fills is where the harbour chart ENDS (a cell's coverage with a gap in it), not a
 // float, and is not taken for one. An extract that is not layered is read whole, as it always was.
-function skinOverHarbour(feats, b, enc){
-  const layered = !!(enc && enc.layered);
-  const skin = skinGaps(layered ? feats.filter(f => f.band === "enc_harbour") : feats, b, {partial: enc && enc.partial});
-  const coarse = layered ? feats.filter(f => f.band && f.band !== "enc_harbour" && SKIN_CLASSES.includes(f.cls)) : [];
-  if(coarse.length) skin.gaps = skin.gaps.filter(g => !coarse.some(f => {
-    const fb = featureLLBox(f);
-    return g.lat >= fb.S && g.lat <= fb.N && g.lon >= fb.W && g.lon <= fb.E && ptInGeom(g.lat, g.lon, f.geometry); }));
-  return skin;
-}
+// skinOverHarbour - the seabed's gaps over the harbour chart alone - is skin.js's since 2026-10-17 (one copy for this page
+// and skin_worker.js, which walks it off this page's thread: skinOffThread).
 function nogoStatus(t){ showBanner(t); }
 function nogoReadout(){
   // ⚠ THE EFFECTIVE FLOOR, WHICH IS NOT ALWAYS THE HULL'S. Since the operator's Min depth
@@ -17179,7 +17266,10 @@ function setupUISplit(){
       // as a background TAB this page's setInterval slows to ~1/min and the main window
       // saw the peer "gone" for most of every minute, flapping its toolbar/panels back)
       // ANOTHER CONTROLS PAGE, OPENED BEFORE THIS ONE: this one steps aside (uiYield).
-      else if(m.t==="ping" && m.from && m.from !== CLIENT_ID && uiOlder(m)) uiYield(); };
+      else if(m.t==="ping" && m.from && m.from !== CLIENT_ID && uiOlder(m)) uiYield();
+      // THE CHART WINDOW CANNOT BE SEEN (2026-10-17): said here, where the operator is looking - the supervising chart's
+      // word only, so another chart tab that is hidden does not clear it
+      else if(m.t==="vis" && m.sup !== false) chartHiddenWarn(!!m.hidden); };
     // ask main to push current state; retry so boot order (main vs controls) never matters
     [0, 400, 1200, 3000].forEach(ms=> setTimeout(()=> say("hello"), ms));
     // presence: main hides its toolbar/panels only while pings arrive, and a bye
@@ -17205,8 +17295,14 @@ function setupUISplit(){
     // 6-7 s now. The 6 s itself stays: it is what rides out this page's measured 1.5-4.1 s stalls without flapping.
     setInterval(()=>{ if(document.hidden) return;
       if(uiPeersPrune(Date.now())) uiSplitApply(); }, 1000);
+    // ⚠ THE CHART WINDOW SAYS WHEN IT CANNOT BE SEEN (2026-10-17, the performance review: 4.75 hours of the chart page
+    // logged asleep in his last 40 sessions; on 16 October his Controls window was a tab in front of it). The clearance guard, the speed governor
+    // and the RTH chain run in THIS page, and a browser throttles a page it cannot show and then puts it to sleep - so
+    // the Controls window, where the operator is looking, says so the moment it happens, not after (page_asleep).
+    const sayVis = () => uiBus.postMessage({t: "vis", hidden: document.visibilityState === "hidden", sup: supervising()});
+    document.addEventListener("visibilitychange", sayVis);
     uiBus.onmessage = ev=>{ const m=ev.data; if(!m) return;
-      if(m.t==="hello"){ peerSeen(m.from); pushUISync(true); return; }
+      if(m.t==="hello"){ peerSeen(m.from); pushUISync(true); sayVis(); return; }
       if(m.t==="ping"){ peerSeen(m.from); return; }
       if(m.t==="bye"){ peerBye(m.from); return; }
       // ⚠ ONLY THE SUPERVISING CHART CARRIES OUT WHAT THE CONTROLS WINDOW SENDS. Every chart page hears it, and
@@ -17233,6 +17329,23 @@ function setupUISplit(){
       mo.observe(el,{subtree:true, childList:true, attributes:true, characterData:true}); }
     pushUISync();
   }
+}
+const CHART_HIDDEN_SAY = "⚠ THE CHART WINDOW CANNOT BE SEEN: the clearance guard, the speed governor and the RTH chain "
+  + "run only in it, and the browser slows a window it cannot show and then puts it to sleep. Bring it back on screen: its "
+  + "own window, not minimized and not covered.";
+/** The Controls window's warning that the Chart window is hidden (2026-10-17): shown while the supervising chart says so. */
+function chartHiddenWarn(on){
+  let el = document.getElementById("chartHiddenWarn");
+  if(!el){
+    if(!on) return;
+    el = document.createElement("div");
+    el.id = "chartHiddenWarn"; el.setAttribute("role", "alert");
+    el.style.cssText = "position:fixed;left:0;right:0;top:0;z-index:100000;padding:8px 12px;background:#7a1c1c;color:#fff;"
+      + "font:600 13px/1.35 system-ui,sans-serif;text-align:center;box-shadow:0 2px 6px rgba(0,0,0,.4)";
+    el.textContent = CHART_HIDDEN_SAY;
+    document.body.appendChild(el);
+  }
+  el.style.display = on ? "" : "none";
 }
 // ⚠ ONE CHART DRIVES THE CONTROLS WINDOW: the supervising one (2026-10-10). Two charts mirroring into it each sent
 // their own alert card, and the controls window showed whichever came last. And the SAME PICTURE IS NOT SENT AGAIN:
@@ -17423,8 +17536,10 @@ function syncUICards(){                                 // show a card only whil
 // Reopen the controls window (pill shows only while the controls peer is gone - the
 // ui-split class hides it. A user CLICK is a gesture, so window.open is allowed here;
 // the named target refocuses an existing controls window instead of stacking).
+// ... AND A WINDOW OF ITS OWN (2026-10-17): with no features, window.open opens a TAB, and the Chart behind it is a page the
+// browser throttles and puts to sleep. A popup is a window.
 $("#ctlReopen").onclick = ()=> window.open(location.origin + location.pathname + "?panel=controls",
-                                           "asv_controls");
+                                           "asv_controls", "popup,width=520,height=920");
 
 // ── THE TIDE AND WEATHER WINDOWS — ONE TAB EACH, RE-POINTED IN PLACE ────────────────
 //

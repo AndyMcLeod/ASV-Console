@@ -162,5 +162,33 @@ check("3. THE LOWER ROW: the eleven readouts, in their order - POS, SOG, HDG, CO
         () => "padding " + pad + ", gap " + gap + " -> about " + barPx + " px; cards at 96: " + at96);
 }
 
+// ── THE CONTROLS WINDOW, A WINDOW; AND THE CHART WINDOW SAYS WHEN IT CANNOT BE SEEN (2026-10-17, the performance review) ─
+{
+  const grabFn = (name) => { const st = H.indexOf("function " + name + "("); if (st < 0) throw new Error(name + " not found");
+    let k = H.indexOf("{", st), d = 0; for (;;) { const c = H[k]; if (c === "{") d++; else if (c === "}") { d--; if (!d) break; } k++; }
+    return H.slice(st, k + 1); };
+  const say = (H.match(/const CHART_HIDDEN_SAY = [\s\S]*?;\n/) || [""])[0];
+  const els = {}, body = { kids: [], appendChild(e) { this.kids.push(e); els[e.id] = e; } };
+  const doc = { getElementById: (id) => els[id] || null, body,
+                createElement: () => ({ id: "", style: {}, attrs: {}, textContent: "", setAttribute(k, v) { this.attrs[k] = v; } }) };
+  const warn = new Function("document", say + grabFn("chartHiddenWarn") + "\nreturn chartHiddenWarn;")(doc);
+  warn(false); const none = body.kids.length;
+  warn(true); const el = els.chartHiddenWarn, shown = el && el.style.display === "";
+  warn(true); const once = body.kids.length;
+  warn(false); const hidden = el && el.style.display === "none";
+  const reopen = (H.match(/\$\("#ctlReopen"\)\.onclick = [^;]*;/) || [""])[0];
+  check("5. THE CONTROLS WINDOW IS A WINDOW AND SAYS WHEN THE CHART CANNOT BE SEEN: the page's own reopen asks for a popup "
+        + "window, not a tab; the chart window tells the Controls window on every visibility change and on its hello, with "
+        + "whether it supervises; the Controls window heeds only the supervising chart's word; and its warning is created "
+        + "once, shown, and hidden again - nothing made while the chart is visible",
+        () => /"asv_controls",\s*"popup[^"]*"/.test(reopen)
+              && /document\.addEventListener\("visibilitychange", sayVis\)/.test(H)
+              && /t: "vis", hidden: document\.visibilityState === "hidden", sup: supervising\(\)/.test(H)
+              && /if\(m\.t==="hello"\)\{ peerSeen\(m\.from\); pushUISync\(true\); sayVis\(\); return; \}/.test(H)
+              && /else if\(m\.t==="vis" && m\.sup !== false\) chartHiddenWarn\(!!m\.hidden\);/.test(H)
+              && none === 0 && shown && once === 1 && hidden && /CANNOT BE SEEN/.test(el.textContent) && el.attrs.role === "alert",
+        () => JSON.stringify({ reopen: reopen.slice(0, 140), none, shown, once, hidden, text: el && el.textContent.slice(0, 60) }));
+}
+
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
 process.exit(fails ? 1 : 0);

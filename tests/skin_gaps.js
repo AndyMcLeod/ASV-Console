@@ -221,5 +221,119 @@ console.log("The seabed's own gaps - the objects the ENC charts and the vector s
         off.polys.length === 0, () => off.polys.length + " poly(s) with structures off");
 }
 
-console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
-process.exit(fails ? 1 : 0);
+// ── 10. THE WALK OFF THE PAGE'S THREAD (2026-10-17, Andy: "implement 1 through 3" of the performance review) ──────────
+// skinOverHarbour cost 266-528 ms of the page's only thread per chart read; skin_worker.js walks it now, on the extract's
+// own bytes, with the one copy skin.js holds. 10: the worker itself, run in a worker thread, answers exactly what the
+// function answers on this side - plain and layered - with the extract's feature count; bytes that are not an extract
+// answer an error. 10b: the page's side, driven with a stand-in worker - the bytes go over TRANSFERRED as they arrive and
+// before this page parses its own; an answer for THIS extract is taken; one for another count, a silent worker (its
+// timeout) and an error are walked on the page instead, exactly as before; and with no worker nothing is sent at all.
+(async () => {
+  const fs = require("fs"), path = require("path");
+  const { Worker: NodeWorker } = require("worker_threads");
+  const { pathToFileURL } = require("url");
+  const H = fs.readFileSync(process.env.ASV_HTML || path.join(__dirname, "..", "static", "asv.html"), "utf8").split("\r\n").join("\n");
+  const grabFn = (name) => { const st = H.search(new RegExp("(^|\\n)(async )?function " + name + "\\(")); if (st < 0) throw new Error(name + " not found");
+    let k = H.indexOf("{", st), d = 0; for (;;) { const c = H[k]; if (c === "{") d++; else if (c === "}") { d--; if (!d) break; } k++; }
+    return H.slice(st, k + 1).replace(/^\n/, ""); };
+  // the extract: a harbour depth area with a 40 x 40 m hole in it (a float); and, layered, an approach-band depth area over
+  // the hole too - which fills it, so the layered answer has no gap
+  const hole = poly("Depth_Area", rect(-500, -500, 1000, 1000), rect(-20, -20, 40, 40, true));
+  hole.band = "enc_harbour";
+  const cover = poly("Depth_Area", rect(-100, -100, 200, 200)); cover.band = "enc_approach";
+  const PLAIN = { band: "enc_harbour", features: [hole] }, LAYERED = { band: "enc_harbour", layered: true, partial: [], features: [hole, cover] };
+  const bytes = (o) => { const u = new TextEncoder().encode(JSON.stringify(o)); return u.buffer.slice(u.byteOffset, u.byteOffset + u.byteLength); };
+  const direct = (o) => S.skinOverHarbour(o.features, BOX, { layered: !!o.layered, partial: o.partial || [] });
+
+  // 10: the worker, for real
+  const WPATH = path.join(__dirname, "..", "static", "js", "skin_worker.js");
+  const boot = `const { parentPort } = require("worker_threads");
+globalThis.self = globalThis; self.postMessage = (m) => parentPort.postMessage(m);
+parentPort.on("message", (d) => self.onmessage({ data: d }));
+import(${JSON.stringify(pathToFileURL(WPATH).href)}).then(() => parentPort.postMessage({ ready: true }), (e) => parentPort.postMessage({ ready: false, error: String(e) }));`;
+  const w = new NodeWorker(boot, { eval: true });
+  const answers = new Map(); let ready = null;
+  const got = new Promise((res) => { w.on("message", (m) => { if (m && "ready" in m) { ready = m; if (answers.size >= 3) res(); return; }
+    answers.set(m.id, m); if (answers.size >= 3 && ready) res(); }); });
+  await new Promise((res) => { const t = setInterval(() => { if (ready) { clearInterval(t); res(); } }, 5); });
+  w.postMessage({ id: 1, raw: bytes(PLAIN), b: BOX });
+  w.postMessage({ id: 2, raw: bytes(LAYERED), b: BOX });
+  w.postMessage({ id: 3, raw: new TextEncoder().encode("not an extract").buffer, b: BOX });
+  await Promise.race([got, new Promise((r) => setTimeout(r, 10000))]);
+  await w.terminate();
+  const a1 = answers.get(1), a2 = answers.get(2), a3 = answers.get(3), d1 = direct(PLAIN), d2 = direct(LAYERED);
+  check("10. THE WORKER WALKS THE SEABED EXACTLY AS THE PAGE DID: on the extract's bytes, skin_worker.js answers what "
+        + "skinOverHarbour answers on this side - plain (the float found) and layered (the coarser chart's seabed filling it, "
+        + "no gap) - field for field, with the extract's feature count; bytes that are not an extract answer an error",
+        () => ready && ready.ready && a1 && a1.ok && JSON.stringify(a1.skin) === JSON.stringify(d1) && a1.n === 1 && d1.gaps.length === 1
+              && a2 && a2.ok && JSON.stringify(a2.skin) === JSON.stringify(d2) && a2.n === 2 && d2.gaps.length === 0
+              && a3 && a3.ok === false && !!a3.error,
+        () => JSON.stringify({ ready, a1: a1 && { ok: a1.ok, n: a1.n, gaps: a1.skin && a1.skin.gaps.length }, d1: d1.gaps.length,
+                               a2: a2 && { ok: a2.ok, n: a2.n, gaps: a2.skin && a2.skin.gaps.length }, d2: d2.gaps.length, a3 }));
+
+  // 10b: the page's side, with a stand-in worker
+  const run = async (mode, opts = {}) => {
+    const w = { made: 0, posts: [], terminated: 0, logged: [] };
+    class FakeWorker {
+      constructor(url, o) { w.made++; w.url = url; w.opts = o; }
+      postMessage(m, transfer) {
+        w.posts.push({ m, transfer, parsedYet: !!w.parsed });
+        const reply = mode === "ok" ? { id: m.id, ok: true, skin: { gaps: [], marker: "worker" }, n: 1, ms: 7 }
+                    : mode === "count" ? { id: m.id, ok: true, skin: { gaps: [], marker: "worker" }, n: 99, ms: 7 }
+                    : mode === "error" ? { id: m.id, ok: false, error: "boom" } : null;
+        if (reply) setTimeout(() => this.onmessage({ data: reply }), 0);
+      }
+      terminate() { w.terminated++; }
+    }
+    const sea = { enc: null };
+    const json = JSON.stringify(PLAIN);
+    const fetchStub = async () => ({ json: async () => JSON.parse(json),
+                                     ...(opts.noBytes ? {} : { arrayBuffer: async () => bytes(PLAIN) }) });
+    const realParse = JSON.parse;
+    const src = "const SKIN_WORKER_TIMEOUT_MS = 60;\nlet skinWorker = null, skinWorkerOff = false, skinJobSeq = 0;\nconst skinJobWaiting = new Map();\n"
+      + ["skinWorkerUsable", "skinWorkerDown", "skinWorkerGet", "skinJobStart", "skinOffThread", "fetchENCBbox"].map(grabFn).join("\n")
+      + "\nreturn {fetchENCBbox, skinOffThread};";
+    const api = new Function("Worker", "TextDecoder", "fetch", "sea", "skinOverHarbour", "logClient", "JSON", src)(
+      opts.noWorker ? undefined : FakeWorker, TextDecoder, fetchStub, sea, S.skinOverHarbour, (k, d) => w.logged.push([k, d]),
+      { parse: (t) => { w.parsed = true; return realParse(t); }, stringify: JSON.stringify });
+    await api.fetchENCBbox(BOX, 3);
+    const hadJob = !!sea.enc.skinJob;
+    const skin = await api.skinOffThread(sea.enc, BOX, sea.enc.features.slice());
+    return { w, skin, hadJob, jobAfter: sea.enc.skinJob };
+  };
+  const ok = await run("ok"), count = await run("count"), silent = await run("silent"), err = await run("error"),
+        none = await run("ok", { noWorker: true }), nob = await run("ok", { noBytes: true });
+  const walked = (r) => r.skin && !r.skin.marker && JSON.stringify(r.skin) === JSON.stringify(direct(PLAIN));
+  const p0 = ok.w.posts[0] || {};
+  check("10b. THE PAGE HANDS THE BYTES OVER AND TAKES ONLY AN ANSWER FOR ITS OWN EXTRACT: the bytes go to the worker "
+        + "TRANSFERRED, before this page parses its copy, with the box; an answer naming the extract's feature count is "
+        + "taken (and logged); one for another count, a worker that never answers (its timeout - and it is let go) and an "
+        + "error are walked on the page, the same walk as before; with no worker, or a response with no bytes, nothing is "
+        + "sent and the page walks it; and the job is spent once used",
+        () => ok.hadJob && ok.w.made === 1 && /skin_worker\.js$/.test(ok.w.url) && ok.w.opts && ok.w.opts.type === "module"
+              && p0.transfer && p0.transfer.length === 1 && p0.transfer[0] === p0.m.raw && p0.parsedYet === false
+              && p0.m.b && p0.m.b.W === BOX.W && p0.m.b.N === BOX.N
+              && ok.skin && ok.skin.marker === "worker" && ok.jobAfter === null
+              && ok.w.logged.some(([k, d]) => k === "skin_worker" && d.n === 1 && !d.fallback)
+              && walked(count) && count.w.logged.some(([k, d]) => k === "skin_worker" && d.fallback && /99 features/.test(d.why))
+              && walked(silent) && silent.w.terminated === 1 && silent.w.logged.some(([k, d]) => d.fallback && /no answer/.test(d.why))
+              && walked(err) && err.w.logged.some(([k, d]) => d.fallback && d.why === "boom")
+              && walked(none) && !none.hadJob && none.w.posts.length === 0
+              && walked(nob) && !nob.hadJob && nob.w.posts.length === 0,
+        () => JSON.stringify({ ok: { made: ok.w.made, url: ok.w.url, transferred: !!(p0.transfer && p0.transfer[0] === p0.m.raw),
+                                     beforeParse: p0.parsedYet === false, marker: ok.skin && ok.skin.marker, logged: ok.w.logged },
+                               count: [walked(count), count.w.logged], silent: [walked(silent), silent.w.terminated, silent.w.logged],
+                               err: [walked(err), err.w.logged], none: [walked(none), none.hadJob], nob: [walked(nob), nob.hadJob] }));
+  // the wiring: refreshNogo awaits the walk where it used to run it, and the page imports skin.js's one copy
+  check("10c. THE WIRING: refreshNogo takes the gaps from skinOffThread where it walked them itself; the chart window makes "
+        + "the worker as it loads (made at the first read, it loaded its modules first: 1,169 ms of waiting against 631 ms "
+        + "warm); and the page has no copy of skinOverHarbour of its own - it imports skin.js's",
+        () => /const skin = await skinOffThread\(enc, b, feats\);/.test(grabFn("refreshNogo"))
+              && /\nif\(UIROLE === "main"\) skinWorkerGet\(\);\n/.test(H)          // made as the chart window loads
+              && !/\nfunction skinOverHarbour\(/.test(H)
+              && /import \{[^}]*\bskinOverHarbour\b[^}]*\} from "\/static\/js\/skin\.js";/.test(H),
+        "refreshNogo / the skin.js import");
+
+  console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
+  process.exit(fails ? 1 : 0);
+})().catch((e) => { console.log("  FAIL 0. the suite itself CRASHED before finishing - " + (e && e.stack ? e.stack.split("\n").slice(0, 3).join(" | ") : e)); console.log("\n1 CHECK(S) FAILED (crashed before finishing)"); process.exit(1); });

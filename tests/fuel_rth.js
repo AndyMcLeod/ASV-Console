@@ -672,6 +672,36 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
                                  label: label("/api/cmd/energy", { level: 49.6 }), apart }));
   }
 
+  // ── 9g. THE CARD'S WALK OF THE MISSION, EVERY 10 S NOT EVERY SECOND (2026-10-17, measured ~100 ms of the page's thread
+  //        a walk, every second, the whole run). The page's own fuelProjection, driven on a clock of the check's own.
+  {
+    const decl = (re) => { const m = H.match(re); if (!m) throw new Error("not found: " + re); return m[0]; };
+    let clock = 0, walks = 0, level = 200, idx = 3, route = [{ lat: 43, lon: -70 }, { lat: 43.01, lon: -70 }, { lat: 43.02, lon: -70 }];
+    const model = { kind: "fuel", full: 250, floor: 0 };
+    const mk = new Function("Date", "fuelModel", "asv", "indexedRoute", "window", "S", "energyLevel", "planeFrame", "groundVel",
+      "runLegKeys", "V", "roleSpeed", "speedRole", "projectMission", "fuelWatchAt", "endAction", "fuelHomeNeed",
+      decl(/^const FUEL_PROJECT_MS = [^;]*;/m) + "\n"
+      + (H.match(/^const FUEL_PROJECT_JUMP = [^;]*;/m) || ["const FUEL_PROJECT_JUMP = 0.01;"])[0] + "\n"   // (a page before it: unused there)
+      + decl(/^let fuelProj = [^;]*;/m) + "\n" + grab("fuelProjection") + "\nreturn {P: fuelProjection, MS: FUEL_PROJECT_MS};");
+    const api = mk({ now: () => clock }, () => model, { lat: 43, lon: -70 }, () => route, { get _wpIndex(){ return idx; } },
+      { status: { fuel_l: 0 } }, () => level, () => ({ toEN: () => ({ e: 0, n: 0 }), fromEN: () => ({ lat: 43, lon: -70 }) }),
+      () => null, () => () => null, { SPEED_KN: {} }, () => "7", () => "transit",
+      () => { walks++; return { used: 1, seconds: 1 }; }, () => null, () => "loiter", () => null);
+    const at = (t) => { clock = t; api.P(); return walks; };
+    const w0 = at(0);                                   // first: walked
+    const w1 = at(1200);                                // 1.2 s later: kept (it was walked again every second)
+    idx = 4; const w2 = at(2500);                       // a new waypoint alone: kept
+    level = 199.5; const w3 = at(3000);                 // 0.2% of the tank: kept
+    const w4 = at(api.MS + 100);                        // past the interval: walked
+    level = 195; const w5 = at(api.MS + 600);           // a jump of 2% of the tank (the rehearsal row, a refuel): at once
+    route = route.slice(); const w6 = at(api.MS + 900); // a new plan: at once
+    check("9g. THE CARD'S WALK OF THE MISSION IS KEPT FOR " + (api.MS / 1000) + " S (2026-10-17: ~100 ms of the page's thread "
+          + "every second, the whole run) - kept 1.2 s on, on a new waypoint alone and on a 0.2% level drift; walked again past "
+          + "the interval, and AT ONCE on a level jump of 2% of the tank or a new plan",
+          () => api.MS >= 10000 && w0 === 1 && w1 === 1 && w2 === 1 && w3 === 1 && w4 === 2 && w5 === 3 && w6 === 4,
+          () => JSON.stringify({ interval_ms: api.MS, walks: [w0, w1, w2, w3, w4, w5, w6] }));
+  }
+
   const C = require(path.join(APP, "static", "js", "coarse.js"));
   const N = C.GRID_N, N2 = N * N, CD = C.CELL_DEG, M = 111320;
   const grid = (tx, ty) => { const W = tx * C.TILE_DEG - 180, S = ty * C.TILE_DEG - 90;

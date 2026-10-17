@@ -562,5 +562,46 @@ check("34b. the Current pill always shows: live it is full strength and opens it
       and PILL["live"]["tide"] == "none",
       lambda: _json.dumps(PILL)[:400])
 
+# ---- THE CHART AND THE CONTROLS EACH A WINDOW OF THEIR OWN (2026-10-17, the performance review) --------------------- #
+# Python's webbrowser takes new=1 as a hint and Edge on Windows ignores it: the Controls window opened as a TAB beside the
+# Chart, and a page behind another tab is throttled and then put to sleep - the Chart page runs the guard. The picked
+# browser launches the executable itself, --new-window, for EVERY url. Driven against a stand-in executable (a temp file
+# on the executable list) with Popen captured, so nothing is launched and nothing global is patched.
+import tempfile as _tf
+import webbrowser as _wb
+_fake = _tf.NamedTemporaryFile(suffix="_msedge.exe", delete=False); _fake.close()
+_launched = []
+
+
+class _Popen:
+    def __init__(self, cmd, *a, **k):
+        _launched.append(list(cmd))
+
+    def poll(self):
+        return None
+
+
+_real_popen, _real_exes = _wb.subprocess.Popen, dict(getattr(C, "BROWSER_EXES", {}) or {})
+try:
+    _wb.subprocess.Popen = _Popen
+    if hasattr(C, "BROWSER_EXES"):
+        C.BROWSER_EXES = {"edge": [_fake.name]}
+    _b = C.pick_browser("edge")
+    if _b is not None:
+        _b.open("http://127.0.0.1:8791/")
+        _b.open("http://127.0.0.1:8791/?panel=controls", new=1)
+finally:
+    _wb.subprocess.Popen = _real_popen
+    if hasattr(C, "BROWSER_EXES"):
+        C.BROWSER_EXES = _real_exes
+    os.remove(_fake.name)
+check("35. THE CHART AND THE CONTROLS OPEN AS TWO WINDOWS, NOT TWO TABS: the picked browser launches its own executable "
+      "with --new-window for each url (webbrowser's new=1 is a hint Edge ignores - the Controls window opened as a tab and "
+      "the Chart behind it slept); and the console opens both through it",
+      lambda: len(_launched) == 2 and all(c[0] == _fake.name and "--new-window" in c for c in _launched)
+      and _launched[0][-1] == "http://127.0.0.1:8791/" and _launched[1][-1] == "http://127.0.0.1:8791/?panel=controls"
+      and "opener.open(url)" in SRC and 'opener.open(url + "?panel=controls", new=1)' in SRC,
+      lambda: _json.dumps(_launched))
+
 print("%d checks, %d failed" % (ran, fails))
 sys.exit(1 if fails else 0)

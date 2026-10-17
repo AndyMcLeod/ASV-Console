@@ -9796,7 +9796,35 @@ class Handler(BaseHTTPRequestHandler):
             ENGINE.unsubscribe(q)
 
 
+BROWSER_EXES = {
+    "edge": ["msedge", r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+             r"C:\Program Files\Microsoft\Edge\Application\msedge.exe"],
+    "chrome": ["chrome", r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+               r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"],
+}
+
+
+def _browser_exe(pref):
+    """The browser's own executable, where it can be found: on the PATH, or at its usual Windows install paths."""
+    for c in BROWSER_EXES.get(pref, []):
+        p = c if os.path.isabs(c) else shutil.which(c)
+        if p and os.path.exists(p):
+            return p
+    return None
+
+
 def pick_browser(pref):
+    """The browser the console opens its windows in.
+
+    ⚠ EACH WINDOW ITS OWN, NEVER TWO TABS OF ONE (2026-10-17, the performance review). Python's `webbrowser` takes its
+    `new=1` ("a new window") as a hint, and Edge on Windows ignores it: the Controls window opened as a second TAB beside
+    the Chart (his screenshot of 16 October), and a tab behind another is a page the browser throttles and then puts to
+    sleep. The Chart page runs the clearance guard, the speed governor and the RTH chain, and his last 40 sessions logged
+    4.75 hours of it asleep. So where the executable is found it is launched itself, with --new-window, for every URL:
+    the Chart and the Controls each open as a window of their own, to be put side by side or on two screens."""
+    exe = _browser_exe(pref)
+    if exe:
+        return webbrowser.BackgroundBrowser([exe, "--new-window", "%s"])
     candidates = []
     if pref == "edge":
         candidates = ["microsoft-edge", "msedge"]
@@ -9807,17 +9835,6 @@ def pick_browser(pref):
             return webbrowser.get(name)
         except webbrowser.Error:
             continue
-    for path in [
-        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-    ]:
-        if os.path.exists(path):
-            try:
-                webbrowser.register("picked", None, webbrowser.BackgroundBrowser(path))
-                return webbrowser.get("picked")
-            except webbrowser.Error:
-                pass
     return None
 
 

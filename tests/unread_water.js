@@ -200,10 +200,7 @@ function rest() {
 
   // ── 5. the seabed's gaps, over the harbour chart alone ──────────────────────────────────────────────────────────
   {
-    const fn = new Function("skinGaps", "SKIN_CLASSES", "featureLLBox", "ptInGeom",
-      grab("skinOverHarbour") + "\nreturn skinOverHarbour;")(SK.skinGaps, SK.SKIN_CLASSES,
-      new Function("featLLBoxes", "eachRing", "eachPath", "eachPoint", grab("featureLLBox") + "\nreturn featureLLBox;")(
-        new WeakMap(), CG.eachRing, CG.eachPath, CG.eachPoint), G.ptInGeom);
+    const fn = SK.skinOverHarbour;     // skin.js's since 2026-10-17: the one copy the page and skin_worker.js both run
     const r = (W, S, E, N) => [[W, S], [E, S], [E, N], [W, N], [W, S]];
     const B0 = { W: -70.70, S: 43.05, E: -70.60, N: 43.10 };
     // the harbour seabed: two depth areas tiling the box but for a 40 m x 40 m hole between them - a float

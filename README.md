@@ -361,6 +361,18 @@ with `set N.NN kn DDD°` beneath (in the current line's place when there is none
 there - the vessel reports its set every tick - where the current needs a forecast: none at a
 port whose entry names no model (`ofs`), nor while NOAA's model server is down.
 
+**Page-thread performance (2026-10-17).** Measured from 40 session logs and an instrumented copy of
+the page: the chart page's thread had stopped 267 times in 40 sessions (892 s, median 2 s), mostly
+as the keep-out model arrived and as Go-Tos re-read the chart, and its fuel row cost about 100 ms
+every second for the whole of a run. Three fixes, no GPU: the mission card walks the fuel projection
+every 10 s (at once for a new plan or a jump in the level) instead of every second; the controls and
+chart are always separate windows (above); and the walk over the chart's seabed edges that finds the
+floats NOAA leaves out (266-528 ms of the page's thread per chart read) runs in a worker
+(`static/js/skin_worker.js`) on the extract's own bytes, with the page walking it itself exactly as
+before whenever the worker cannot answer for that extract. A chart read lands up to about a quarter
+of a second later and the page no longer stops for it. The extract's parse and the model's build stay
+on the page: measured, receiving them from a worker cost as much as doing them.
+
 **Bug and reliability review (2026-10-16).** Six area reviews of the whole project, every finding
 re-verified, 28 findings repaired the same day, each with a check that failed on the code before it; the
 report, with file and line for each, is [docs/review-2026-10-16.md](docs/review-2026-10-16.md). What an
@@ -457,7 +469,14 @@ the window's last word: in testing, a closing window's goodbye never arrived, so
 chart notices it has gone). **More than two pages** (2026-10-10, Andy: closing the controls
 window left the chart without its cards, and the alert card flashed): every start of the
 console opens a chart and a controls window, and pages left open from before reconnect on
-their own. Only the **supervising** chart drives the controls window - it alone mirrors into
+their own. **Each is a window of its own, never a tab** (2026-10-17): the console launches Edge (or
+Chrome) itself with `--new-window` for both, because Python's request for a new window is a hint Edge
+ignores and the controls window had been opening as a tab in front of the chart - and a page behind
+another tab is one the browser throttles and then puts to sleep, while the chart page runs the
+clearance guard, the speed governor and the RTH chain (40 sessions of logs held 4.75 hours of it
+asleep). The ⏏ Controls pill reopens it as a window too, and while the chart window cannot be seen -
+minimized, covered, or a tab behind another - the controls window says so across its top: bring
+it back on screen. Only the **supervising** chart drives the controls window - it alone mirrors into
 it, carries out its clicks and hides its own cards; a view-only chart keeps its own, and
 TAKE OVER moves the controls window with supervision. Of two controls windows the
 **newer steps aside**: it closes itself, or, where the browser will not let it, goes silent

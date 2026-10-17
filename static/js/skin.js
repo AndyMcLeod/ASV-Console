@@ -38,6 +38,9 @@
 // NOTHING HERE TOUCHES THE PAGE. Features in, gaps out - tests/skin_gaps.js holds it without a browser.
 
 /** The Group 1 classes under the names NOAA's vector service publishes them as (the ones it does not, too). */
+import { ptInGeom } from "./geometry.js";
+import { eachRing, eachPath, eachPoint } from "./core_geometry.js";
+
 export const SKIN_CLASSES = Object.freeze(["Depth_Area", "Dredged_Area", "Land_Area", "Floating_Dock_area",
                                           "Hulk_area", "Pontoon_area", "Unsurveyed_Area"]);
 const SKIN_SET = new Set(SKIN_CLASSES);
@@ -259,4 +262,29 @@ export function skinGapFeature(gap) {
   return { role: "dock", cls: SKIN_GAP_CLASS, kind: SKIN_KIND, derived: "skin_gap",
            props: { AREA_M2: Math.round(gap.areaM2 * 10) / 10 },
            geometry: { type: "Polygon", coordinates: [gap.ring] } };
+}
+
+/**
+ * THE SEABED'S GAPS OVER THE HARBOUR CHART ALONE (static/asv.html's until 2026-10-17, moved here so the page and
+ * skin_worker.js run ONE copy - the worker walks it off the page's thread, the page when there is no worker). In a
+ * layered extract (asv_console.py fetch_enc_layered) the seabed is the harbour chart's: a coarser chart is cut to the
+ * squares it applies in, and its pieces' cut edges are not floats - and a gap the coarser chart's own seabed fills is not
+ * taken for one. An extract that is not layered is read whole, as it always was.
+ */
+export function skinOverHarbour(feats, b, enc) {
+  const layered = !!(enc && enc.layered);
+  const skin = skinGaps(layered ? feats.filter(f => f.band === "enc_harbour") : feats, b, { partial: enc && enc.partial });
+  const coarse = layered ? feats.filter(f => f.band && f.band !== "enc_harbour" && SKIN_CLASSES.includes(f.cls)) : [];
+  if (coarse.length) skin.gaps = skin.gaps.filter(g => !coarse.some(f => {
+    const fb = llBoxOf(f);
+    return g.lat >= fb.S && g.lat <= fb.N && g.lon >= fb.W && g.lon <= fb.E && ptInGeom(g.lat, g.lon, f.geometry); }));
+  return skin;
+}
+/** A feature's lon/lat box {S, N, W, E} - the page's featureLLBox, walked each time (no cache across the worker). */
+function llBoxOf(f) {
+  let S = Infinity, N = -Infinity, W = Infinity, E = -Infinity;
+  const scan = c => { const lon = c[0], lat = c[1]; if (lat < S) S = lat; if (lat > N) N = lat; if (lon < W) W = lon; if (lon > E) E = lon; };
+  const g = f.geometry;
+  eachRing(g, r => r.forEach(scan)); eachPath(g, p => p.forEach(scan)); eachPoint(g, scan);
+  return { S, N, W, E };
 }

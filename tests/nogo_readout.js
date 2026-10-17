@@ -99,7 +99,9 @@ const { nogoKindCounts, nogoDR, airNeedM } = require("../static/js/chart.js");
 // THE SEABED'S GAPS (2026-09-30): refreshNogo folds them in as features and the readout counts them by their kind,
 // so the real module has to resolve in the eval'd scope - a free SKIN_KIND is a RUNTIME error inside the readout,
 // which is exactly how this suite first went red on the change.
-const { skinGaps, skinGapFeature, SKIN_KIND, SKIN_CLASSES } = require("../static/js/skin.js");
+// (skinOverHarbour is skin.js's since 2026-10-17; refreshNogo asks it through skinOffThread, which with no worker here
+// walks it on this side exactly as before)
+const { skinGaps, skinGapFeature, SKIN_KIND, SKIN_CLASSES, skinOverHarbour } = require("../static/js/skin.js");
 // ... read over the harbour chart alone in a layered extract (2026-10-11): refreshNogo asks the page's own
 // skinOverHarbour, which reads each feature's box (featureLLBox) and tests a point in it (ptInGeom) - the real ones.
 const { ptInGeom } = require("../static/js/geometry.js");
@@ -409,7 +411,7 @@ eval("const NOGO_QUEUE_MAX_MS = " + NOGO_QUEUE_MAX_MS + ";" + "\n" +
      grab("updateNogoUI") + "\n" + grab("refreshNogo") + "\n" +
      "const featLLBoxes = new WeakMap(), eachRingF = _eR;\n" +
      grab("featureLLBox").replace(/eachRing\(/g, "_eR(").replace(/eachPath\(/g, "_eP(").replace(/eachPoint\(/g, "_ePt(") + "\n" +
-     grab("skinOverHarbour") + "\n" +
+     grab("skinOffThread") + "\n" +
      // readPlanInk (2026-10-02) is the step ensureNogoCovers reads the chart through; with no `opts` - every call in this
      // suite - it is the one ensureChartInk above. What an Upload's plan reads is tests/ink_reads.js's subject.
      grab("readPlanInk") + "\n" +
