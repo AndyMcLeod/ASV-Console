@@ -17140,9 +17140,9 @@ function setupUISplit(){
       // saw the peer "gone" for most of every minute, flapping its toolbar/panels back)
       // ANOTHER CONTROLS PAGE, OPENED BEFORE THIS ONE: this one steps aside (uiYield).
       else if(m.t==="ping" && m.from && m.from !== CLIENT_ID && uiOlder(m)) uiYield();
-      // THE CHART WINDOW CANNOT BE SEEN (2026-10-17): said here, where the operator is looking - the supervising chart's
-      // word only, so another chart tab that is hidden does not clear it
-      else if(m.t==="vis" && m.sup !== false) chartHiddenWarn(!!m.hidden); };
+      // A CHART'S WORD ON WHETHER IT CAN BE SEEN (2026-10-17): kept by the chart's id, and heeded only for the chart the
+      // console says supervises (chartWatchVerdict) - another chart tab, hidden or not, says nothing about that one
+      else if(m.t==="vis") chartWatchVis(m); };
     // ask main to push current state; retry so boot order (main vs controls) never matters
     [0, 400, 1200, 3000].forEach(ms=> setTimeout(()=> say("hello"), ms));
     // presence: main hides its toolbar/panels only while pings arrive, and a bye
@@ -17172,10 +17172,15 @@ function setupUISplit(){
     // logged asleep in his last 40 sessions; on 16 October his Controls window was a tab in front of it). The clearance guard, the speed governor
     // and the RTH chain run in THIS page, and a browser throttles a page it cannot show and then puts it to sleep - so
     // the Controls window, where the operator is looking, says so the moment it happens, not after (page_asleep).
-    const sayVis = () => uiBus.postMessage({t: "vis", hidden: document.visibilityState === "hidden", sup: supervising()});
+    // Since the same evening it is the AMBER note there, not the red banner (chartWatchVerdict): a covered window is slowed,
+    // not stopped. Each word names this page (`from`), and a controls window that has none from the supervising chart asks
+    // for it ("vis?") - a chart opened after the controls window has heard no hello.
+    const sayVis = () => uiBus.postMessage({t: "vis", from: CLIENT_ID, hidden: document.visibilityState === "hidden",
+                                            sup: supervising()});
     document.addEventListener("visibilitychange", sayVis);
     uiBus.onmessage = ev=>{ const m=ev.data; if(!m) return;
       if(m.t==="hello"){ peerSeen(m.from); pushUISync(true); sayVis(); return; }
+      if(m.t==="vis?"){ sayVis(); return; }
       if(m.t==="ping"){ peerSeen(m.from); return; }
       if(m.t==="bye"){ peerBye(m.from); return; }
       // ⚠ ONLY THE SUPERVISING CHART CARRIES OUT WHAT THE CONTROLS WINDOW SENDS. Every chart page hears it, and
@@ -17203,22 +17208,101 @@ function setupUISplit(){
     pushUISync();
   }
 }
-const CHART_HIDDEN_SAY = "⚠ THE CHART WINDOW CANNOT BE SEEN: the clearance guard, the speed governor and the RTH chain "
-  + "run only in it, and the browser slows a window it cannot show and then puts it to sleep. Bring it back on screen: its "
-  + "own window, not minimized and not covered.";
-/** The Controls window's warning that the Chart window is hidden (2026-10-17): shown while the supervising chart says so. */
-function chartHiddenWarn(on){
-  let el = document.getElementById("chartHiddenWarn");
+// ── THE CONTROLS WINDOW WATCHES THE CHART (2026-10-17, Andy: "implement option 2") ────────────────────────────────────
+// The morning's red banner ("THE CHART WINDOW CANNOT BE SEEN") went up whenever the chart page said it was hidden - and
+// Edge calls a window hidden when another COVERS it, so on one screen, with the Controls window maximized over the Chart,
+// it was up through his 12:27-12:54 run, which went well: no stall and no page_asleep in its log. A covered window is
+// slowed, not stopped - the guard, the governor and the RTH chain run in onState, on the console's stream, which a hidden
+// page still receives - and a banner that is always up is one nobody reads. So two levels, each on its own evidence:
+//   RED, across the top: the CONSOLE says the chart has stopped. Its supervisor post is stale - no report for stale_s, and
+//     a report rides the chart's handling of the stream (supervisorReport), so a stale post is a chart that stopped
+//     handling it: asleep in the browser, or stuck. Never one planning (`busy` is not stale). Or no chart has held the
+//     post for stale_s: closed, or never opened.
+//   AMBER, small in the corner: the supervising chart says it is hidden (covered or minimized), and the console says it
+//     is still reporting in. Worth knowing; nothing to do.
+// This window opens no stream, so it asks the console: GET /api/state, its `supervisor`, every CHART_WATCH_MS, and the
+// moment this window is shown again (its own timers are slowed while it is hidden). A console that does not answer says
+// nothing here - the chart's own TELEMETRY STALE says that, mirrored, and an answer this window did not get is no
+// evidence about the chart. A word older than CHART_WATCH_FRESH_MS is no word.
+const CHART_WATCH_MS = 2000, CHART_WATCH_TIMEOUT_MS = 4000, CHART_WATCH_FRESH_MS = 6000;
+// sup: the console's last supervisor snapshot, `at` when it came; lastFresh: when a chart last held the post and was not
+// stale (or this window's first answer: the grace a chart loading alongside it needs); hidden: chart id -> its last word
+const chartWatch = {sup: null, at: 0, lastFresh: 0, hidden: new Map()};
+const CHART_COVERED_SAY = "Chart window covered or minimized: the browser slows it, and it is still answering the console. "
+  + "This turns red if it stops.";
+function chartStoppedSay(s){
+  // "closed" too: a window closed does not always get its release to the console (pagehide's beacon), and then its post
+  // goes stale like a sleeping one's - seen live, 2026-10-17, a closed chart tab read stale 10 s later
+  return "⚠ THE CHART WINDOW HAS STOPPED ANSWERING: it has not handled the console's telemetry for " + Math.round(s) + " s - "
+    + "closed, asleep in the browser, or stuck. The clearance guard, the speed governor and the RTH chain run only in it, "
+    + "and are not running; nothing has been stopped. Bring the Chart window back on screen or open it again, and reload it "
+    + "if this stays.";
+}
+function chartNoneSay(s){
+  return "⚠ NO CHART WINDOW IS RUNNING: none has reported to the console for " + Math.round(s) + " s. The clearance guard, "
+    + "the speed governor and the RTH chain run only in the Chart window. Open the console's address in a window of its own.";
+}
+/** What the Controls window says about the chart: {level, why, text}, or null. Red on the console's word alone; amber only
+ *  for the chart the console says supervises. */
+function chartWatchVerdict(w, now){
+  if(!w.sup || now - w.at > CHART_WATCH_FRESH_MS) return null;
+  const s = w.sup, staleS = s.stale_s > 0 ? s.stale_s : SUPERVISOR_STALE_MS / 1000;
+  if(!s.holder){
+    const gone = (now - w.lastFresh) / 1000;
+    return gone >= staleS ? {level: "red", why: "none", text: chartNoneSay(gone)} : null;
+  }
+  if(s.stale) return {level: "red", why: "stale", text: chartStoppedSay(s.age_s || staleS)};
+  if(w.hidden.get(s.holder) === true) return {level: "amber", why: "hidden", text: CHART_COVERED_SAY};
+  return null;
+}
+/** The console's answer kept, the post's freshness noted, and the supervising chart asked for its word if none came. */
+function chartWatchNote(sup, now){
+  if(!sup || typeof sup !== "object") return;
+  chartWatch.sup = sup; chartWatch.at = now;
+  if(!chartWatch.lastFresh || (sup.holder && !sup.stale)) chartWatch.lastFresh = now;
+  if(sup.holder && !chartWatch.hidden.has(sup.holder) && uiBus) uiBus.postMessage({t: "vis?"});
+}
+function chartWatchVis(m){
+  if(m && m.from) chartWatch.hidden.set(String(m.from), !!m.hidden);
+  chartWatchRender();
+}
+function chartWatchRender(){ chartWarnShow(chartWatchVerdict(chartWatch, Date.now())); }
+async function chartWatchPoll(){
+  const ac = typeof AbortController === "function" ? new AbortController() : null;
+  const t = ac ? setTimeout(() => ac.abort(), CHART_WATCH_TIMEOUT_MS) : null;
+  try{
+    const r = await fetch("/api/state", {cache: "no-store", signal: ac ? ac.signal : undefined});
+    const j = await r.json();
+    chartWatchNote(j && j.supervisor, Date.now());
+  }catch(e){}                                        // no answer: the last word lapses after CHART_WATCH_FRESH_MS
+  finally{ if(t) clearTimeout(t); chartWatchRender(); }
+}
+function chartWatchStart(){
+  chartWatchPoll();
+  setInterval(chartWatchPoll, CHART_WATCH_MS);
+  document.addEventListener("visibilitychange", () => { if(document.visibilityState === "visible") chartWatchPoll(); });
+}
+/** The banner or the note, one element: red across the top, amber small in the corner; made once, hidden for null. */
+function chartWarnShow(v){
+  let el = document.getElementById("chartWarn");
   if(!el){
-    if(!on) return;
+    if(!v) return;
     el = document.createElement("div");
-    el.id = "chartHiddenWarn"; el.setAttribute("role", "alert");
-    el.style.cssText = "position:fixed;left:0;right:0;top:0;z-index:100000;padding:8px 12px;background:#7a1c1c;color:#fff;"
-      + "font:600 13px/1.35 system-ui,sans-serif;text-align:center;box-shadow:0 2px 6px rgba(0,0,0,.4)";
-    el.textContent = CHART_HIDDEN_SAY;
+    el.id = "chartWarn";
     document.body.appendChild(el);
   }
-  el.style.display = on ? "" : "none";
+  if(!v){ el.style.display = "none"; return; }
+  if(el.chartLevel !== v.level){
+    el.chartLevel = v.level;
+    el.setAttribute("role", v.level === "red" ? "alert" : "status");
+    el.style.cssText = v.level === "red"
+      ? "position:fixed;left:0;right:0;top:0;z-index:100000;padding:8px 12px;background:#7a1c1c;color:#fff;"
+        + "font:600 13px/1.35 system-ui,sans-serif;text-align:center;box-shadow:0 2px 6px rgba(0,0,0,.4)"
+      : "position:fixed;right:12px;bottom:12px;z-index:100000;max-width:360px;padding:6px 10px;border-radius:6px;"
+        + "background:#c98a12;color:#1b1300;font:600 12px/1.35 system-ui,sans-serif;box-shadow:0 2px 6px rgba(0,0,0,.4)";
+  }
+  el.style.display = "";
+  if(el.textContent !== v.text) el.textContent = v.text;
 }
 // ⚠ ONE CHART DRIVES THE CONTROLS WINDOW: the supervising one (2026-10-10). Two charts mirroring into it each sent
 // their own alert card, and the controls window showed whichever came last. And the SAME PICTURE IS NOT SENT AGAIN:
@@ -21596,6 +21680,8 @@ if(UIROLE === "main"){ setFollow(); pathRender(); render();
   // area rather than the literal above it.
   loadPorts().then(loadVessel).then(loadMission); applyNogoControls(); updateNogoUI(); connect(); }
 setupUISplit();
+// the controls window asks the console whether the chart is still running (chartWatchVerdict)
+if(UIROLE === "controls") chartWatchStart();
 </script>
 </body>
 </html>

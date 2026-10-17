@@ -483,9 +483,13 @@ Chrome) itself with `--new-window` for both, because Python's request for a new 
 ignores and the controls window had been opening as a tab in front of the chart - and a page behind
 another tab is one the browser throttles and then puts to sleep, while the chart page runs the
 clearance guard, the speed governor and the RTH chain (40 sessions of logs held 4.75 hours of it
-asleep). The ⏏ Controls pill reopens it as a window too, and while the chart window cannot be seen -
-minimized, covered, or a tab behind another - the controls window says so across its top: bring
-it back on screen. Only the **supervising** chart drives the controls window - it alone mirrors into
+asleep). The ⏏ Controls pill reopens it as a window too. The controls window **watches the chart**
+(2026-10-17): it asks the console every 2 s, and if the chart has stopped handling the console's
+telemetry - closed, asleep in the browser or stuck - it says so in red across its top. While the
+chart is only covered or minimized, slowed by the browser but still answering, a small amber note
+in its corner says that. (The first version put up the red banner whenever the chart was covered,
+so with the controls window maximized over the chart it stood through a whole run that went well.)
+Only the **supervising** chart drives the controls window - it alone mirrors into
 it, carries out its clicks and hides its own cards; a view-only chart keeps its own, and
 TAKE OVER moves the controls window with supervision. Of two controls windows the
 **newer steps aside**: it closes itself, or, where the browser will not let it, goes silent

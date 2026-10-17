@@ -92,8 +92,11 @@ const SRC = [grabDecl("UI_BRIDGED"), grabDecl("UI_PEER_GONE_MS"), grab("setupUIS
              grabDecl("uiMirrored"), grab("uiSameNode"), grab("uiMorph"),      // the mirror's patch (ui_tooltips 17-18)
              grab("uiPeersPrune"), grab("uiSplitApply"), grab("uiSupervisionChanged"), grab("uiOlder"), grab("uiYield"),
              grab("supervising"), grab("applySupervisor"),
-             // the chart says whether it can be seen, and the controls window warns (2026-10-17; status_bar 5 holds it)
-             grabDecl("CHART_HIDDEN_SAY"), grab("chartHiddenWarn")].join("\n");
+             // the chart says whether it can be seen, and the controls window keeps its word (2026-10-17; status_bar 6-6c
+             // hold the watch - nothing asks the console here, so it says nothing)
+             grabDecl("SUPERVISOR_BEAT_MS"), grabDecl("CHART_WATCH_MS"), grabDecl("chartWatch"), grabDecl("CHART_COVERED_SAY"),
+             grab("chartStoppedSay"), grab("chartNoneSay"), grab("chartWatchVerdict"), grab("chartWatchVis"),
+             grab("chartWatchRender"), grab("chartWarnShow")].join("\n");
 
 // A page: the console's own split-window code in a world of its own.
 function makePage(role, id, born, opts) {
