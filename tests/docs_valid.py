@@ -193,7 +193,9 @@ def expected_code_lines():
 
 print("Generated documents — valid packages that a reader will open, with their content intact:")
 
-docs = sorted(glob.glob(os.path.join(DOCS, "*.docx")))
+# THE SET is the four manuals, by name: a dated review report rendered to Word (docs/review-*.docx, from its Markdown by
+# tools/review_to_docx.js) sits beside them and is not one of them - sanitization.py reads it with the rest.
+docs = sorted(glob.glob(os.path.join(DOCS, "asv-simulator-*.docx")))
 check("1. the generated set is present", len(docs) == 4,
       ", ".join(os.path.basename(d) for d in docs) or "none found")
 

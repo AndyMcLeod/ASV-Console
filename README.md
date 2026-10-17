@@ -3792,6 +3792,16 @@ node tests/spelling.js
 python tests/sanitization.py
 ```
 
+**Review reports** are dated Markdown files beside the set — `docs/review-2026-10-16.md` is the
+2026-10-16 bug and reliability review — each with a Word rendering made from it:
+
+```
+node tools/review_to_docx.js docs/review-2026-10-16.md
+```
+
+The Markdown is the source; edit it and rerun, never the `.docx`. `docs_valid.py` checks the four
+manuals by name (`asv-simulator-*.docx`); `sanitization.py` reads a report's `.docx` with the rest.
+
 `docs_valid.py` asks whether each document will open — every part well-formed and
 declared, every relationship resolving — and whether its content reached it;
 `spelling.js` holds the builders to American spelling, the only place a spelling fix
