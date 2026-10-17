@@ -915,7 +915,15 @@ the second rehearsal caught the next one:** held while *swinging onto* the retur
 coverage line under her, the way round had no line to walk beyond her and refused, while the bar
 went on promising the console would route round her. Held on a turn, the way round now picks the
 plan up at its **next waypoint**, routed round her (a next waypoint inside her ring is refused by
-name), and the bar says she was stopped on a turn (ais_avoid 17h).
+name), and the bar says she was stopped on a turn (ais_avoid 17h). **And a live run caught the
+gap in that (2026-10-16):** a test contact dropped on the survey's *approach*, where the next waypoint
+lay 33 m before her and the plan's next leg ran 3 m from her center - the guard held her, the
+console's way round went, and the next leg brought her straight back, ten times in three minutes.
+Held anywhere off the coverage lines (a turn or a transit), the way round now **walks the route past
+her** as a held Go-To's does - from where she stopped, through the waypoints still to fly, to the end
+of the first coverage line - and picks the plan up at the first point clear of her ring with the
+rest of that stretch clear of it, the way in routed round her (ais_avoid 17h-17j); the bar says she
+was stopped off the coverage lines.
 
 **CPA and TCPA** — the closest the two vessels will come, and how long until that happens —
 are shown for every contact with a track. The contact is projected on its present course and
@@ -3421,7 +3429,10 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    short of the planner's route, which keeps right in channels; the reserve covers that.
    Until it is built, or where it cannot reach her, the rows say **straight line**. In the
    simulator, the chart menu's **Set fuel to the RTH point** puts the tank just below it,
-   to rehearse the alert and the shift home (`/api/cmd/energy {level}`, sim only).
+   to rehearse the alert and the shift home (`/api/cmd/energy {level}`, sim only). **While she is
+   armed and running it asks first** (2026-10-16): it sat directly under *Clear test contacts*, and
+   a click meant for that row during an AIS rehearsal set the fuel and sent her home mid-survey. It
+   is set apart by a separator now, and the history names it (it was logged "Unlimited energy off").
 
    **Home along the passage, not the straight line (2026-10-12).** The field covers only the chart
    box round her, so on a passage, with home tens or hundreds of km off, the monitor measured the

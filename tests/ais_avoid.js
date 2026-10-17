@@ -402,7 +402,7 @@ eval([
   // THE HELD LEG (2026-09-29): a Go-To, a Return-to-Home or a transit held for a contact is banked, returned and routed
   // round by these - reached only once a leg is banked, so a bundle without them fails exactly there (check 10 did).
   grab("legName"), grab("legTitle"), grab("heldLegWay"), grab("legWayClear"), grab("aisReturnLegTick"),
-  grab("aisAroundLegPlan"), grab("renderHeldLegBar"), grab("resumeHeldLeg"),
+  grab("aisAroundLegPlan"), grab("aisWalkPast"), grab("renderHeldLegBar"), grab("resumeHeldLeg"),
   "function solveCoastFor(){ return null; }",   // the coast is tests/coast.js's; a leg here powers in
   grabDecl("IDENTIFY_PX"), grabDecl("LINE_MATCH_M"), grab("onLineM"), grab("cmGate"), grab("linkConnected"), grab("canCommand"),
   grab("resumeHereAt"), grab("legOfLine"), grab("lineOfLeg"), grab("alongAsRun"), grab("gateResumeHere"), grab("resumeFromHere"),
@@ -1239,17 +1239,76 @@ const wayInOf = (rte, from, tail = 3) => [from, ...viaOf(rte, tail), rejoinOf(rt
   const whyTurn = $("#gb_why").textContent, bankedTurn = !!guardHeld && !guardHeld.mark && !!aisAvoid;
   const r17h = aisAroundNow(); await settle();
   const up17h = sent.find(x => x.p === "/api/cmd/upload"), rte17h = (up17h && up17h.route) || [];
-  check("17h. held on a TURN (no line under her): the survey is banked with no mark, the bar says she was stopped on a turn instead of promising a line she is not on, and the way round picks the plan up at its NEXT waypoint routed round her - pause, upload route[idx..], LOW, Start, the way in asked with her ring as a fly-through - said and logged with no line",
-        () => bankedTurn && /stopped on a TURN, not a coverage line/.test(whyTurn) && !/back down it/.test(whyTurn) && new RegExp("routes round her itself in " + (WAIT_S - 5) + " s").test(whyTurn)
+  check("17h. held on a TURN (no line under her): the survey is banked with no mark, the bar says she was stopped off the coverage lines instead of promising a line she is not on, and the way round walks the plan on PAST her (2026-10-16: it took the next waypoint, which can lie before her) routed round her - pause, upload, LOW, Start, the way in taut round her ring - said and logged with no line",
+        () => bankedTurn && /stopped OFF the coverage lines \(on a turn or a transit\)/.test(whyTurn) && !/back down it/.test(whyTurn) && new RegExp("routes round her itself in " + (WAIT_S - 5) + " s").test(whyTurn)
               && r17h === true && paths().indexOf("/api/cmd/pause") === 0 && paths().includes("/api/cmd/start") && !paths().includes("/api/cmd/amend")
               && rte17h.length >= 4 && distTo(rejoinOf(rte17h, 2), LINE_E.b) < 0.5 && distTo(rte17h[rte17h.length - 1], ll(-200, 60)) < 0.5
               && pinCalls.length === 0 && minDistTo(wayInOf(rte17h, ll(0, 0), 2), PARKED_C) >= 30 - 0.05   // taut round her to the next waypoint
-              && banners.some(b => /ROUTED ROUND/.test(b) && nearRe.test(b) && /stopped on a turn/.test(b) && /next waypoint/.test(b))
+              && banners.some(b => /ROUTED ROUND/.test(b) && nearRe.test(b) && /stopped off the coverage lines/.test(b) && /on from where she stopped, past AIS: WORKBOAT/.test(b))
               && logged.some(e => e.kind === "ais_around" && e.data.line === null && e.data.manual === true && e.data.wpts === rte17h.length),
         () => "banked " + bankedTurn + "; bar '" + whyTurn.slice(-200) + "'; returned " + r17h + "; sent " + JSON.stringify(paths()) + "; upload " + rte17h.length
             + " wpts" + (rejoinOf(rte17h, 2) ? ", next waypoint " + distTo(rejoinOf(rte17h, 2), LINE_E.b).toFixed(1) + " m of L.b" : "") + "; banners " + JSON.stringify(banners.filter(b => /ROUTED/.test(b)).map(b => b.slice(0, 160)))
             + "; logged " + JSON.stringify(logged.filter(e => e.kind === "ais_around")));
   runLineIdx = 0;
+
+  // 17i. HELD ON A TRANSIT WITH THE NEXT WAYPOINT BEFORE HER (Andy, 2026-10-16 live: TEST-1 dropped on the DriX's
+  // approach to the first line; held 44 m short, the way round picked the plan up at the next waypoint - 33 m BEFORE
+  // her - and the plan's next leg ran 3 m from her center: held again, routed "round" again, ten times, never past).
+  // The approach runs due south down e = -200 to the line's west end in 60 m legs; she is at n = 190 heading south,
+  // her next waypoint n = 180; the workboat is parked across the approach at n = 150, between it and n = 120.
+  {
+    const TRANSIT_HER = () => contact(-200, 150, { sog: 0, cog: null, heading: 90 });
+    surveying(7, [TRANSIT_HER()]); runLineIdx = -1;
+    asv = ll(-200, 190);
+    S = { ...S, status: { ...S.status, cog_deg: 180, heading_deg: 180 } };
+    runRoute = [ll(-200, 300), ll(-200, 240), ll(-200, 180), ll(-200, 120), ll(-200, 60), LINE_E.a, LINE_E.b, ll(200, 60), ll(-200, 60)];
+    window._wpIndex = 2;
+    frame(); nowHolding();
+    sent = []; notes = []; banners = []; logged = []; pinCalls = []; pinNext = null;
+    clock += 5000; aisPolledAt = clock; frame();
+    const held17i = !!guardHeld && !guardHeld.mark && !!aisAvoid, why17i = $("#gb_why").textContent;
+    const r17i = aisAroundNow(); await settle();
+    const up17i = sent.find(x => x.p === "/api/cmd/upload"), rte17i = (up17i && up17i.route) || [];
+    const hull17i = aisKeepouts([TRANSIT_HER()], ref, { now: clock, polledAt: clock, sweepS: 45 }).polys[0];
+    const flown17i = [ll(-200, 190), ...rte17i];
+    const hullClr17i = rte17i.length ? minClearTo(flown17i, hull17i) : -1;
+    const centerClr17i = rte17i.length ? minDistTo(flown17i, { e: -200, n: 150 }) : -1;
+    const keeps17i = [ll(-200, 60), LINE_E.a, LINE_E.b, ll(200, 60), ll(-200, 60)].every(p => rte17i.some(q => distTo(q, p) < 0.5));
+    check("17i. ⚠ HELD ON A TRANSIT WITH THE NEXT WAYPOINT BEFORE HER (2026-10-16 live, TEST-1 on the approach): the way round walks the route PAST her - nothing it uploads, from where she is on, comes within her ring (30 m round her center) or her standoff of her hull, where the next-waypoint pickup ran its next leg through her - the rest of the approach and the survey kept, the bar naming a transit",
+          () => held17i && /stopped OFF the coverage lines/.test(why17i) && r17i === true
+                && paths().indexOf("/api/cmd/pause") === 0 && paths().includes("/api/cmd/start")
+                && rte17i.length >= 6 && centerClr17i >= 30 - 0.05 && hullClr17i >= 3 - 0.05 && keeps17i
+                && banners.some(b => /ROUTED ROUND/.test(b) && /stopped off the coverage lines/.test(b) && /past AIS: WORKBOAT/.test(b)),
+          () => "held " + held17i + "; returned " + r17i + "; sent " + JSON.stringify(paths()) + "; upload " + rte17i.length
+              + " wpts, first " + JSON.stringify(rte17i.slice(0, 4).map(p => { const q = ref.toEN(p); return [Math.round(q.e * 10) / 10, Math.round(q.n * 10) / 10]; }))
+              + "; nearest her center " + centerClr17i.toFixed(1) + " m, her hull " + hullClr17i.toFixed(1) + " m; plan kept " + keeps17i
+              + "; banners " + JSON.stringify(banners.filter(b => /ROUTED|NO WAY/.test(b)).map(b => b.slice(0, 200))));
+    runLineIdx = 0;
+
+    // 17j. ... AND A LATER LEG THROUGH HER IS NOT THIS PICKUP'S BUSINESS: the same approach, but the plan's last leg (after
+    // the coverage line) runs back west THROUGH her. The walk ends where the first coverage line it reaches ends, so the
+    // pickup is still found past her on the approach and that leg is kept for the guard to answer when she gets there -
+    // walked to the plan's end, every point read "not clear" and she kept holding.
+    surveying(7, [TRANSIT_HER()]); runLineIdx = -1;
+    asv = ll(-200, 190);
+    S = { ...S, status: { ...S.status, cog_deg: 180, heading_deg: 180 } };
+    runRoute = [ll(-200, 300), ll(-200, 240), ll(-200, 180), ll(-200, 120), ll(-200, 60), LINE_E.a, LINE_E.b, ll(200, 150), ll(-260, 150)];
+    window._wpIndex = 2;
+    frame(); nowHolding();
+    sent = []; notes = []; banners = []; logged = []; pinCalls = []; pinNext = null;
+    clock += 5000; aisPolledAt = clock; frame();
+    const r17j = aisAroundNow(); await settle();
+    const up17j = sent.find(x => x.p === "/api/cmd/upload"), rte17j = (up17j && up17j.route) || [];
+    const kEnd17j = rte17j.findIndex(q => distTo(q, LINE_E.b) < 0.5);       // the way in, the approach and the line
+    const head17j = kEnd17j >= 0 ? [ll(-200, 190), ...rte17j.slice(0, kEnd17j + 1)] : [];
+    const centerClr17j = head17j.length ? minDistTo(head17j, { e: -200, n: 150 }) : -1;
+    check("17j. ... and a LATER leg of the plan through her (west along n = 150 after the line) does not stop the pickup: the walk ends at the first coverage line's end, so she is routed past her on the approach - nothing to the line's end within her ring - and the later leg is kept, for the guard to answer when she gets there",
+          () => r17j === true && paths().includes("/api/cmd/start") && kEnd17j > 0 && centerClr17j >= 30 - 0.05
+                && distTo(rte17j[rte17j.length - 1], ll(-260, 150)) < 0.5 && !banners.some(b => /NO WAY ROUND/.test(b)),
+          () => "returned " + r17j + "; sent " + JSON.stringify(paths()) + "; upload " + rte17j.length + " wpts, line end at " + kEnd17j
+              + "; nearest her center to the line's end " + centerClr17j.toFixed(1) + " m; banners " + JSON.stringify(banners.filter(b => /ROUTED|NO WAY/.test(b)).map(b => b.slice(0, 200))));
+    runLineIdx = 0;
+  }
 }
 
 // ── 18. THE TREADMILL (Andy, 2026-09-28: "I have to acknowledge warning pop-ups many times why is that?" and

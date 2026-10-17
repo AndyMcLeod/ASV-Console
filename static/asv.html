@@ -433,7 +433,9 @@
     <div class="cmi" id="cmAisTest"><span>Place a test contact here</span><span class="cmk" id="cmAisTestK"></span></div>
     <div class="cmi" id="cmAisClear"><span>Clear test contacts</span><span class="cmk" id="cmAisClearK"></span></div>
     <!-- THE FUEL RTH REHEARSAL (2026-10-11, simulator only): the sim's tank (or pack) put at the RTH point, so the alert
-         and the shift to RTH can be seen in a minute rather than after hours of running. -->
+         and the shift to RTH can be seen in a minute rather than after hours of running. SET APART (2026-10-16): it sat
+         directly under "Clear test contacts", and a click meant for that row sent the DriX home mid-survey. -->
+    <div class="cmsep"></div>
     <div class="cmi" id="cmFuelRth"><span id="cmFuelRthT">Set fuel to the RTH point</span><span class="cmk" id="cmFuelRthK"></span></div>
     <div class="cmsep"></div>
     <div class="cmi" id="cmCopy"><span>Copy position</span><span class="cmk" id="cmCopyK"></span></div>
@@ -2614,12 +2616,13 @@ function renderHeldBar(bar, g){
   if(aisAvoid){
     const nextAt = Math.max(aisAvoid.since, aisAvoid.aroundAt || 0) + AIS_AROUND_AFTER_MS;
     const leftS = Math.max(0, Math.ceil((nextAt - Date.now()) / 1000));
-    // STOPPED ON A TURN (2026-09-27): no line under her, so no backtrack and no line to walk beyond her - the
-    // return and the way round both pick the plan up at its next waypoint, and the bar says so.
+    // STOPPED OFF THE COVERAGE LINES (2026-09-27, a turn; 2026-10-16, a transit - the approach, where this said "a TURN"
+    // of a boat on a straight run to the first line): no line under her, so no backtrack - the return picks the plan up
+    // at its next waypoint once she is clear, and the way round walks the route past her (aisAroundPlan).
     const onLine = !!(g && g.mark);
     $("#gb_why").textContent += " · holding for " + aisAvoid.kind
       + (onLine ? " — resumes on its own once she is clear of the line (" + AIS_RETURN_BACK_M + " m back down it)"
-                : " — stopped on a TURN, not a coverage line: resumes on its own from the plan's next waypoint once she is clear")
+                : " — stopped OFF the coverage lines (on a turn or a transit): resumes on its own from the plan's next waypoint once she is clear")
       + "; right-click the line BEYOND her to resume there (routed round her), or the console routes round her itself "
       + ((S && S.run === "paused") ? "once you resume the hold" : leftS > 0 ? "in " + leftS + " s" : "now");
   }
@@ -3659,19 +3662,38 @@ function aisAroundLegPlan(g, aisKo, std, herMmsi){
   const herOnly = {polys: ring ? [ring] : [], lines: [], points: []};                        // a ship-length round HER
   const others = {polys: (aisKo || []).filter(q => !sameContact(q, her)), lines: [], points: []};   // the guard's hulls
   const runOutM = GUARD_HOLD_S * roleSpeedMS("transit");     // the hold horizon beyond the pick-up, at the leg's speed
+  const w = aisWalkPast(pts, Infinity, herOnly, others, std, runOutM);
+  if(w){
+    const {p, k, s: s0, total} = w;
+    const rest = g.route.slice(g.idx + k - 1);                      // the leg's waypoints after `p`, its end point last
+    const atEnd = total - s0 <= LINE_MATCH_M;
+    const tail = atEnd ? [pts[pts.length - 1]] : (rest.length && distTo(p, rest[0]) < 0.5 ? rest : [p, ...rest]);
+    return {to: p, tail, leg: true, skipM: s0, atEnd, her, roundM: ring ? ring.roundM : null, stdM: std};
+  }
+  return {error: "she covers the end of the " + legName(g.leg) + " - its end point is inside her ring"};
+}
+/**
+ * THE WALK PAST HER (lifted out of aisAroundLegPlan, 2026-10-16, so the survey held OFF its lines walks the same way):
+ * along the polyline `pts` in AIS_AROUND_STEP_M steps, to `endS` meters along it at most, the first point that is
+ *   * `std` clear of HER maneuver ring (`herOnly`), with the way on to `endS` clear of it - she is behind;
+ *   * `std` clear of every OTHER contact's hull (`others`), with none of them within `runOutM` after it.
+ * {p, k, s, total, cum}: `k` the index in pts of the vertex that ends p's segment, `s` how far along, `total` the
+ * length walked to, `cum` the distance along at each vertex - or null when no point to `endS` is clear.
+ */
+function aisWalkPast(pts, endS, herOnly, others, std, runOutM){
   const cum = [0];
   for(let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + distTo(pts[i - 1], pts[i]));
-  const total = cum[cum.length - 1];
-  // the point `s` meters along the leg, with `k` the index (in pts) of the vertex that ends its segment
+  const all = cum[cum.length - 1], total = Math.min(endS, all);
+  // the point `s` meters along the polyline, with `k` the index (in pts) of the vertex that ends its segment
   const at = (s) => {
     let k = 1; while(k < pts.length - 1 && cum[k] < s) k++;
     const len = cum[k] - cum[k - 1], t = len > 0 ? Math.max(0, Math.min(1, (s - cum[k - 1]) / len)) : 1;
     const a = pts[k - 1], b = pts[k];
     return {p: {lat: a.lat + (b.lat - a.lat) * t, lon: a.lon + (b.lon - a.lon) * t}, k};
   };
-  // the leg from `s` to `s2` (its end at most), segment by segment
+  // the polyline from `s` to `s2` (its end at most), segment by segment
   const clearFrom = (s, s2, model, bufM) => {
-    const A = at(s), B = at(Math.min(s2, total));
+    const A = at(s), B = at(Math.min(s2, all));
     const way = [A.p, ...pts.slice(A.k, B.k), B.p];
     for(let i = 1; i < way.length; i++) if(!legClear(way[i - 1], way[i], nogo.frame, model, bufM)) return false;
     return true;
@@ -3681,17 +3703,12 @@ function aisAroundLegPlan(g, aisKo, std, herMmsi){
     const {p, k} = at(s0), pe = nogo.frame.toEN(p);
     const ok = clearanceM(pe, herOnly, std + 1) >= std              // outside her maneuver ring
             && clearanceM(pe, others, std + 1) >= std               // not at another contact's hull
-            && clearFrom(s0, total, herOnly, std)                   // she is behind: the rest of the leg misses her ring
+            && clearFrom(s0, total, herOnly, std)                   // she is behind: the rest of the way misses her ring
             && clearFrom(s0, s0 + runOutM, others, nogo.buffer || 0);   // and no other hull right after
-    if(ok){
-      const rest = g.route.slice(g.idx + k - 1);                    // the leg's waypoints after `p`, its end point last
-      const atEnd = total - s0 <= LINE_MATCH_M;
-      const tail = atEnd ? [pts[pts.length - 1]] : (rest.length && distTo(p, rest[0]) < 0.5 ? rest : [p, ...rest]);
-      return {to: p, tail, leg: true, skipM: s0, atEnd, her, roundM: ring ? ring.roundM : null, stdM: std};
-    }
+    if(ok) return {p, k, s: s0, total, cum};
     if(last) break;
   }
-  return {error: "she covers the end of the " + legName(g.leg) + " - its end point is inside her ring"};
+  return null;
 }
 /**
  * THE THREE ANSWERS TO A CONTACT PARKED ON THE LINE (Andy, 2026-09-27, after KLEOS sat on line 8 at New
@@ -3850,16 +3867,39 @@ function tautRoundHer(fromLL, toLL, herRing, ko, std){
 function aisAroundPlan(g, aisKo, std, herMmsi){
   const L = g.mark ? (mission.lines || [])[g.mark.line] : null;
   if(!nogo.frame) return {error: "the keep-out model is not loaded"};
-  // STOPPED ON A TURN (2026-09-27, the second rehearsal: held swinging onto line 8, 13.5 m off her, no coverage
-  // line under her - and the bar promising a way round that could not be built). There is no line to walk
-  // beyond her, so the plan is picked up at its NEXT waypoint with the way in routed round her; a next waypoint
-  // inside her ring is refused by name by the router (flyThrough), and a plan with nothing left is said.
+  // STOPPED OFF THE COVERAGE LINES - on a turn (2026-09-27, the second rehearsal: held swinging onto line 8, 13.5 m off
+  // her) or on a TRANSIT: the approach, or a hop between lines. ⚠ THE NEXT WAYPOINT IS NOT "BEYOND HER" (Andy,
+  // 2026-10-16 live: TEST-1 dropped on the approach to the first line, the DriX held 44 m short of her). This branch
+  // picked the plan up at the next waypoint, which lay 33 m BEFORE her, and the plan's own next leg ran 3 m from her
+  // center: the guard held her again, the way round went again, ten times in three minutes, and she never got past.
+  // Now the route is WALKED past her as a held leg's is (aisWalkPast): from where she stopped, through the waypoints
+  // she had still to fly, to the end of the first leg that runs a coverage line - the first point clear of her ring
+  // with the rest of that stretch clear of it too. The way in to it is routed round her by resumeHeldRun.
   if(!L){
-    if(g.idx < g.route.length){
-      const herT = aisHerPoly(aisKo, herMmsi, g.at || (asv ? {lat: asv.lat, lon: asv.lon} : null), g.route[g.idx], std);
-      return {to: null, j: g.idx, line: null, fromStart: null, skipM: 0, fromTurn: true, her: herT, roundM: null, stdM: std};
+    const start = g.at || (asv ? {lat: asv.lat, lon: asv.lon} : null);
+    const pts = start ? [start, ...g.route.slice(g.idx)] : [];
+    if(pts.length < 2) return {error: "she was not stopped on a coverage line, and the plan has no waypoint left to pick up"};
+    const herT = aisHerPoly(aisKo, herMmsi, pts[0], pts[1], std);
+    const ringT = herT ? aisRoundKeepout(herT, std, nogo.buffer || 0) : null;
+    const herOnlyT = {polys: ringT ? [ringT] : [], lines: [], points: []};
+    const othersT = {polys: (aisKo || []).filter(q => !sameContact(q, herT)), lines: [], points: []};
+    // the stretch walked ends where the first coverage line it reaches ends: a line further on that passes her is the
+    // line walk's to answer when she gets there, and must not make every point of this stretch "not clear"
+    let lineK = 0, lineHit = null;
+    for(let i = 1; i < pts.length && !lineHit; i++){ const m = lineOfLeg(pts[i - 1], pts[i]); if(m){ lineK = i; lineHit = m; } }
+    let endS = 0;
+    for(let i = 1; i < pts.length; i++){ endS += distTo(pts[i - 1], pts[i]); if(i === lineK) break; }
+    const w = aisWalkPast(pts, endS, herOnlyT, othersT, std, GUARD_HOLD_S * roleSpeedMS("transit"));
+    if(!w){
+      return {error: "nothing on the way on" + (lineHit ? " to the end of line " + lineNo(lineHit.line) : " to the end of the plan")
+                     + " is clear of her ring - she lies across it"};
     }
-    return {error: "she was not stopped on a coverage line, and the plan has no waypoint left to pick up"};
+    const j = g.idx + w.k - 1;                                      // the route index of the waypoint after the pick-up
+    const onWp = distTo(w.p, pts[w.k]) < 0.5;
+    const lineStartS = lineK ? w.cum[lineK - 1] : Infinity;        // where the coverage line's leg begins, along the walk
+    return {to: onWp ? null : w.p, j, line: null, fromStart: null, skipM: w.s, fromTurn: true,
+            onLine: lineHit && w.k === lineK ? lineHit.line : null, coverM: lineHit && w.k === lineK ? Math.max(0, w.s - lineStartS) : 0,
+            her: herT, roundM: ringT ? ringT.roundM : null, stdM: std};
   }
   const leg = legOfLine(g.route, g.mark.line, g.idx);
   if(!leg) return {error: "the held route does not run line " + lineNo(g.mark.line)};
@@ -8780,6 +8820,21 @@ async function setFuelToRthPoint(){
   if(!canSpawn()){ flashNote("Setting the fuel is a simulator rehearsal."); return; }
   const N = fuelNow;
   if(!N || N.rth == null){ flashNote("No RTH point to set the fuel to: it needs a home and a fuel reading."); return; }
+  // ⚠ IT SENDS HER HOME, SO UNDER WAY IT ASKS FIRST (Andy, 2026-10-16 live: "clearing the target vessel deleted the transit
+  // to the survey area sending the ASV home"). This row sat directly under "Clear test contacts"; in the middle of an
+  // AIS rehearsal, with the page overloaded, it fired instead, the monitor did what it is for, and the survey was
+  // replaced by an RTH - two seconds before the contact was cleared. While she is armed and running, and the RTH point
+  // would send her home (not merely alert: home out of range commands nothing), the answer changes what she does, so it
+  // is asked in the simulator too (`always`). Idle, disarmed or paused it acts at once, as the rehearsal was built to.
+  const kindWord = N.model.kind === "fuel" ? "fuel" : "battery";
+  const sendsHome = !(N.w && N.w.mode === "alert");
+  if(sendsHome && S && S.armed && S.run === "running"
+     && !(await guiConfirm("Set " + kindWord + " to the RTH point",
+          "She is under way. Setting the " + kindWord + " just below the RTH point (" + fuelFmt(N.model, N.rth)
+          + ") sends her HOME on the next frame, replacing what she is doing now. Set it?", {always: true}))){
+    flashNote("The " + kindWord + " was not set: she carries on as she was.");
+    return;
+  }
   const span = N.model.full - N.model.floor, lv = Math.max(N.model.kind === "fuel" ? 0 : N.model.floor - 0.5, N.rth - 0.002 * span);
   const r = await cmd("/api/cmd/energy", {level: lv});
   if(!took(r)){ flashNote("Fuel not set — " + ((r && r.error) || "no answer") + "."); return; }
@@ -18179,7 +18234,10 @@ function cmdLabel(path, body){
     case "speed":      return "Speed " + (b.speed || "?");
     case "amend":      return b.note ? "Route amended — " + b.note : "Route amended";
     case "approach":   return "Approach radius " + b.m + " m";
-    case "energy":     return b.unlimited ? "Unlimited energy on" : "Unlimited energy off";
+    // a LEVEL is the fuel rehearsal (setFuelToRthPoint), not the unlimited switch: it was logged "Unlimited energy off"
+    // (2026-10-16), which named the wrong control in the history of the run it sent home
+    case "energy":     return b.unlimited === true ? "Unlimited energy on" : b.unlimited === false ? "Unlimited energy off"
+                            : b.level != null ? "Sim energy set (rehearsal)" : "Energy";
     case "roc":        return "ROC " + String(b.op || "").replace(/_/g, " ");
     default:           return name;
   }
@@ -19912,7 +19970,10 @@ async function resumeHeldRun(opts){
   } else if(at){
     const who = auto ? auto.kind : "the contact";
     note = at.fromTurn
-      ? "she was stopped on a turn, not a coverage line, so the plan is picked up at its next waypoint, routed round " + who
+      ? "she was stopped off the coverage lines (on a turn or a transit), so the plan is picked up "
+        + (at.skipM ? fmtDist(at.skipM) + " on from where she stopped, past " + who : "at its next waypoint, clear of " + who)
+        + (at.onLine != null && at.coverM ? ", " + fmtDist(at.coverM) + " of line " + lineNo(at.onLine) + " left under " + who : "")
+        + ", the way in routed round her"
       : at.skipLine
       ? "line " + lineNo(at.line) + " is covered by " + who + " from there to its end, so it is left and the "
         + "plan is picked up at its next waypoint"

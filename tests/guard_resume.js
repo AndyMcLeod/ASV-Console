@@ -396,7 +396,7 @@ eval([
   grab("aisReturnTick"), grab("logClient"),
   // the way round a contact that stays (2026-09-27) - asked every frame beside the return; no episode ever
   // opens in this world, so it returns at its first line, and these are the names it would reach
-  grabDecl("AIS_AROUND_AFTER_MS"), grabDecl("AIS_AROUND_STEP_M"), grab("koWithAis"), grab("aisAroundPlan"), grab("aisAroundTick"),
+  grabDecl("AIS_AROUND_AFTER_MS"), grabDecl("AIS_AROUND_STEP_M"), grab("koWithAis"), grab("aisAroundPlan"), grab("aisWalkPast"), grab("aisAroundTick"),
   grab("sameContact"), grab("aisHerPoly"), grab("koRoundHer"), grab("tautRoundHer"),   // the tighter way round (2026-09-28)
   grabDecl("LINE_MATCH_M"), grab("onLineM"), grab("legOfLine"), grab("lineOfLeg"),
   grabDecl("AIS_RETURN_BACK_M"), grabDecl("AIS_RETURN_DWELL_MS"),

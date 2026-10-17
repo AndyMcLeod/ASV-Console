@@ -634,6 +634,44 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
 // builds it in the coarse worker. Over synthetic grids, against distances worked by hand; the page's own functions
 // with the console, the corridor read and the worker stubbed.
 (async () => {
+  // ── 9f. THE REHEARSAL ROW ASKS FIRST WHILE SHE IS UNDER WAY (Andy, 2026-10-16 live: "clearing the target vessel deleted
+  //        the transit to the survey area sending the ASV home"). The row sat under "Clear test contacts"; a click meant
+  //        for that one set the fuel and the monitor sent her home mid-survey. The page's own setFuelToRthPoint, driven.
+  {
+    const mk = (S, N, answer) => {
+      const w = { asked: [], sent: [], notes: [] };
+      const run = new Function("S", "fuelNow", "canSpawn", "guiConfirm", "cmd", "took", "flashNote", "fuelFmt",
+        "return async " + grab("setFuelToRthPoint") + ";")(S, N, () => true,
+        (t, m, o) => { w.asked.push({ t, m, always: !!(o && o.always) }); return Promise.resolve(answer); },
+        (path, body) => { w.sent.push([path, body]); return Promise.resolve({ ok: true }); }, (r) => !!(r && r.ok),
+        (t) => w.notes.push(t), (m, x) => x.toFixed(1) + " L");
+      return { run, w };
+    };
+    const N = { model: { kind: "fuel", full: 250, floor: 0 }, rth: 50.13, level: 120, w: { mode: "rth" } };
+    const UNDER_WAY = { armed: true, run: "running", behavior: "survey" };
+    const no = mk(UNDER_WAY, N, false), yes = mk(UNDER_WAY, N, true);
+    const idle = mk({ armed: true, run: "idle" }, N, false), paused = mk({ armed: true, run: "paused" }, N, false);
+    const disarmed = mk({ armed: false, run: "running" }, N, false), alert = mk(UNDER_WAY, { ...N, w: { mode: "alert" } }, false);
+    for (const x of [no, yes, idle, paused, disarmed, alert]) await x.run();
+    const label = new Function(grab("cmdLabel") + "\nreturn cmdLabel;")();
+    const apart = /<div class="cmsep"><\/div>\s*<div class="cmi" id="cmFuelRth">/.test(H);
+    check("9f. ⚠ THE FUEL REHEARSAL ASKS FIRST WHILE SHE IS UNDER WAY (2026-10-16 live: a click meant for 'Clear test contacts' "
+          + "set it and the monitor sent her home mid-survey): armed and running it asks - in the simulator too (always) - "
+          + "saying it sends her home; a no sends nothing and says so, a yes sets it; idle, paused, disarmed, or with home "
+          + "out of range (an alert, no RTH) it acts at once as built; the history names it, not 'Unlimited energy off'; "
+          + "and a separator sets it apart from the test-contact rows",
+          () => no.w.asked.length === 1 && no.w.asked[0].always && /sends her HOME/.test(no.w.asked[0].m) && no.w.sent.length === 0
+                && /not set/.test(no.w.notes[0] || "")
+                && yes.w.asked.length === 1 && yes.w.sent.length === 1 && yes.w.sent[0][0] === "/api/cmd/energy"
+                && [idle, paused, disarmed, alert].every(x => x.w.asked.length === 0 && x.w.sent.length === 1)
+                && label("/api/cmd/energy", { level: 49.6 }) === "Sim energy set (rehearsal)"
+                && label("/api/cmd/energy", { unlimited: true }) === "Unlimited energy on"
+                && label("/api/cmd/energy", { unlimited: false }) === "Unlimited energy off" && apart,
+          () => JSON.stringify({ no: no.w, yes: { asked: yes.w.asked.length, sent: yes.w.sent.length },
+                                 acts: [idle, paused, disarmed, alert].map(x => [x.w.asked.length, x.w.sent.length]),
+                                 label: label("/api/cmd/energy", { level: 49.6 }), apart }));
+  }
+
   const C = require(path.join(APP, "static", "js", "coarse.js"));
   const N = C.GRID_N, N2 = N * N, CD = C.CELL_DEG, M = 111320;
   const grid = (tx, ty) => { const W = tx * C.TILE_DEG - 180, S = ty * C.TILE_DEG - 90;
