@@ -13,6 +13,8 @@ day: New Hampshire, Maine and Massachusetts publish no speed-zone layer (their r
           outside a state not asked
     3-3c  THE CACHE AND FAILURE: a tile asked once a week; a service down said in the report, not asked again for a
           while, and its last good answer served, said stale; the chart served whatever happens
+    3d-3f THE READ WAITS ONLY SO LONG (2026-10-16): the fetches together, to a deadline, stragglers into the cache behind
+          the answer; two reads of one cold tile share the fetch; a tile cut short at the cap served, said, not kept
     4     THE WIRING: /api/enc merges them (asv_console.py _serve_enc)
     5-5f  WHOSE WATER, for New Hampshire's, Maine's and Massachusetts' rules (2026-10-16), against a stub boundary
           service: the clip to the chart's box; each state's water as a feature, clipped; cached a month, the last copy
@@ -27,8 +29,9 @@ import shutil
 import sys
 import tempfile
 import threading
+import time
 import urllib.parse
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 
 APP = os.environ.get("ASV_APP") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path.insert(0, APP)
@@ -142,6 +145,8 @@ RECS.append({"attributes": {"OBJECTID": 50, "KIND": "entry"}, "geometry": {"ring
 class Stub(BaseHTTPRequestHandler):
     def do_GET(self):
         HITS.append(self.path)
+        if STATE.get("delay"):
+            time.sleep(STATE["delay"])                  # a service that accepts and is slow to answer (3d, 3e)
         if STATE["down"]:
             self.send_response(503); self.end_headers(); return
         q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
@@ -156,7 +161,7 @@ class Stub(BaseHTTPRequestHandler):
         pass
 
 
-srv = HTTPServer(("127.0.0.1", 0), Stub)
+srv = ThreadingHTTPServer(("127.0.0.1", 0), Stub)      # the services answer in parallel, as the real ones do (3d, 3e)
 threading.Thread(target=srv.serve_forever, daemon=True).start()
 URL = "http://127.0.0.1:%d/arcgis/rest/services/x/FeatureServer/0" % srv.server_port
 SRC = {"id": "stub", "name": "Stub boating zones", "covers": (-81.0, 25.0, -79.0, 26.5), "url": URL,
@@ -204,6 +209,59 @@ try:
           and len(HITS) == n3 and len(old2) == 6 and not rep4[0]["ok"] and rep3[0]["stale"] == NT,
           json.dumps(rep3))
     STATE["down"] = False
+
+    # ── 3d-3f. THE READ WAITS ONLY SO LONG (the 2026-10-16 review, finding 11), ONE FETCH SHARED, A CUT TILE NOT KEPT
+    #          (finding 20) ──
+    # The merge ran inside /api/enc, in series, at a 12 s timeout per query: a service that accepted and never answered
+    # stalled the chart read for tiles x sources x 12 s. Now every fetch starts at once and the read waits for them all
+    # until the deadline; a straggler lands in the cache behind it.
+    import threading as _th
+    SRC2 = dict(SRC, id="stub2")                         # its own memo keys and cache files: 3b parked SRC's tiles
+    CACHE3 = os.path.join(CACHE, "deadline")
+    STATE["delay"] = 1.0
+    n4 = len(HITS)
+    t0 = time.time()
+    slow, rep_slow = SZ.zones_for_bbox(BOX, CACHE3, None, [SRC2], now=1000.0, deadline_s=0.4)
+    took = time.time() - t0
+    time.sleep(4.0)                                      # the four tiles' fetches finish behind the answer (three pages: 3 s)
+    STATE["delay"] = 0
+    n5 = len(HITS)
+    after, rep_after = SZ.zones_for_bbox(BOX, CACHE3, None, [SRC2], now=1000.0, deadline_s=0.4)
+    check("3d. A SLOW SERVICE DOES NOT STALL THE CHART: four cold tiles at 1 s a page, a 0.4 s deadline - the read answers "
+          "within about a second with nothing yet, saying the tiles are still being read; four seconds later they are in "
+          "the cache and the next read serves all six zones from it, asking nothing more",
+          lambda: took < 1.3 and slow == [] and not rep_slow[0]["ok"] and rep_slow[0].get("pending") == NT
+          and "still being read" in (rep_slow[0]["error"] or "")
+          and len(after) == 6 and rep_after[0]["ok"] and rep_after[0]["cached"] == NT and len(HITS) == n5 and n5 > n4,
+          "took %.2f s; first %s; second %s; hits %d then %d" % (took, json.dumps(rep_slow), json.dumps(rep_after), n5 - n4, len(HITS) - n5))
+    # one fetch, shared: two reads of the same cold tile at once ask the service once
+    CACHE3b = os.path.join(CACHE, "shared")
+    STATE["delay"] = 0.3
+    n6 = len(HITS)
+    outs = []
+    one_tile = (-80.2, 25.76, -80.1, 25.79)              # inside the -80.25..-80.0 / 25.75..26 tile: 8 records, 3 pages
+    ts = [_th.Thread(target=lambda: outs.append(SZ.zones_for_bbox(one_tile, CACHE3b, None, [SRC2], now=1000.0, deadline_s=5.0))) for _ in range(2)]
+    for t in ts: t.start()
+    for t in ts: t.join(20)
+    STATE["delay"] = 0
+    n7 = len(HITS)
+    check("3e. TWO READS OF ONE COLD TILE AT ONCE share the fetch: the service is asked for its three pages once, and both "
+          "reads get the tile's six zones",
+          lambda: len(outs) == 2 and all(len(o[0]) == 6 and o[1][0]["ok"] for o in outs) and n7 - n6 == 3,
+          "service asked %d time(s); reads %s" % (n7 - n6, [len(o[0]) for o in outs]))
+    # a tile cut short at the cap: served, said, not kept
+    CACHE3c = os.path.join(CACHE, "cut")
+    real_cap = SZ.SPEED_MAX_RECORDS
+    SZ.SPEED_MAX_RECORDS = 4                             # the stub pages 3 at a time and says there is more
+    try:
+        cut, rep_cut = SZ.zones_for_bbox(one_tile, CACHE3c, None, [SRC2], now=1000.0)
+        kept = sorted(f for f in os.listdir(CACHE3c)) if os.path.isdir(CACHE3c) else []
+    finally:
+        SZ.SPEED_MAX_RECORDS = real_cap
+    check("3f. A TILE CUT SHORT AT THE CAP: what came is served (two pages, their four speed zones), the report says it was "
+          "cut and is not kept - no cache file, so it is read again next time (it was cached as complete for a week)",
+          lambda: len(cut) == 4 and not rep_cut[0]["ok"] and "cut short" in (rep_cut[0]["error"] or "") and kept == [],
+          "zones %d; report %s; cached files %s" % (len(cut), json.dumps(rep_cut), kept))
 
     def boom(*a, **k):
         raise RuntimeError("the zone reader fell over")

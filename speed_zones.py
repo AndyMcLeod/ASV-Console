@@ -37,6 +37,74 @@ SPEED_MAX_RECORDS = 2000            # one tile's records from one source - far m
 
 _lock = threading.Lock()
 _failed = {}                         # (source id, tile) -> time it failed
+# ── THE READ WAITS FOR THE SERVICES ONLY SO LONG (the 2026-10-16 review, finding 11) ──────────────────────────────────
+# The merge ran inside /api/enc, one query per tile per source in series at SPEED_TIMEOUT_S: a service that accepted the
+# connection and never answered stalled the chart read for tiles x sources x 12 s (a Portsmouth box asking two state
+# lines: 24 s; a 2-degree Florida box: minutes), and the page fetches /api/enc with no timeout. Every fetch a read needs is
+# started at once (SPEED_PARALLEL at a time) and the read waits for them all together until SPEED_DEADLINE_S; a fetch not
+# done by then goes on BEHIND the answer and lands in the cache for the next read, said in the report ("still being read").
+# Two reads that need the same fetch share the one in flight.
+SPEED_DEADLINE_S = 6.0
+SPEED_PARALLEL = 6
+_fetch_sem = threading.BoundedSemaphore(SPEED_PARALLEL)
+_inflight = {}                       # key -> _Pending, under _lock
+
+
+class _Pending:
+    __slots__ = ("done", "result", "error")
+
+    def __init__(self):
+        self.done, self.result, self.error = threading.Event(), None, None
+
+
+def _start(key, work):
+    """`work()` once for `key`, on its own thread - a read that needs what another is already fetching joins it."""
+    with _lock:
+        p = _inflight.get(key)
+        if p is not None:
+            return p
+        p = _Pending()
+        _inflight[key] = p
+
+    def run():
+        try:
+            with _fetch_sem:
+                p.result = work()
+        except Exception as e:                                # noqa: BLE001 - the read reports it
+            p.error = e
+        finally:
+            p.done.set()                                      # visible first: a read that finds it in flight reads the answer
+            with _lock:
+                _inflight.pop(key, None)
+    threading.Thread(target=run, name="speed-zones", daemon=True).start()
+    return p
+
+
+def _await(p, deadline):
+    """(done, result, error) by `deadline` (a time.monotonic value); not done, the fetch goes on behind the read."""
+    p.done.wait(max(0.0, deadline - time.monotonic()))
+    return p.done.is_set(), p.result, p.error
+
+
+def _write_json(path, obj):
+    """Whole or not at all. A temp of this process AND thread (finding 20: one per process, two threads reading the same
+    cold tile collided - a refused replace reported as the source failing, and 2 writes in 12 left a corrupt cache file),
+    the replace retried (on Windows a reader holding the file refuses it)."""
+    tmp = "%s.%d.%d.tmp" % (path, os.getpid(), threading.get_ident())
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(obj, fh)
+    for i in range(20):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if i == 19:
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+                raise
+            time.sleep(0.05)
 
 
 def kn_from_mph(mph):
@@ -204,9 +272,10 @@ def _fetch_tile(src, tile, ssl_ctx, timeout):
     q = {"where": src.get("where", "1=1"), "geometry": "%f,%f,%f,%f" % tile, "geometryType": "esriGeometryEnvelope",
          "inSR": "4326", "outSR": "4326", "spatialRel": "esriSpatialRelIntersects", "outFields": "*",
          "returnGeometry": "true", "f": "json"}
-    # PAGED: a service answers at most its own page (North Carolina's is 600) and says when there is more
+    # PAGED: a service answers at most its own page (North Carolina's is 600) and says when there is more. Every page
+    # adds a record or ends the loop, so the cap bounds the pages (the bound was cap // 100: nothing at all under 100).
     recs, exceeded = [], False
-    for _page in range(SPEED_MAX_RECORDS // 100):
+    for _page in range(SPEED_MAX_RECORDS):
         q["resultOffset"] = str(len(recs))
         d = _get_json(src["url"].rstrip("/") + "/query?" + urllib.parse.urlencode(q), ssl_ctx, timeout)
         if "error" in d:
@@ -233,10 +302,13 @@ def _fetch_tile(src, tile, ssl_ctx, timeout):
     return {"features": feats, "unread": unread, "exceeded": exceeded}
 
 
-def zones_for_bbox(bbox, cache_dir, ssl_ctx=None, sources=None, timeout=SPEED_TIMEOUT_S, now=None):
+def zones_for_bbox(bbox, cache_dir, ssl_ctx=None, sources=None, timeout=SPEED_TIMEOUT_S, now=None, deadline_s=None):
     """THE SPEED ZONES IN A BOX, from every source that covers it: (features, report). `report` lists each source asked
-    - {id, name, ok, count, unread, cached, stale, error} - so a source that failed is said, never silent."""
+    - {id, name, ok, count, unread, cached, stale, error, [pending]} - so a source that failed, or one still being read
+    behind this answer, is said, never silent. The fetches run together and are waited for until `deadline_s`
+    (SPEED_DEADLINE_S); see the note at _start."""
     now = time.time() if now is None else now
+    deadline = time.monotonic() + (SPEED_DEADLINE_S if deadline_s is None else deadline_s)
     srcs = SOURCES if sources is None else sources
     os.makedirs(cache_dir, exist_ok=True)
     feats, report, seen = [], [], set()
@@ -246,6 +318,7 @@ def zones_for_bbox(bbox, cache_dir, ssl_ctx=None, sources=None, timeout=SPEED_TI
             continue                                      # not this state's water
         rep = {"id": src["id"], "name": src["name"], "ok": True, "count": 0, "unread": 0, "cached": 0, "stale": 0, "error": None}
         unread_ids = set()
+        plan = []                                         # (tile, cached copy, fresh, pending fetch)
         for tile in _tiles(bbox):
             path = _cache_path(cache_dir, src["id"], tile)
             got, age = None, None
@@ -258,26 +331,44 @@ def zones_for_bbox(bbox, cache_dir, ssl_ctx=None, sources=None, timeout=SPEED_TI
             fresh = got is not None and age is not None and age < SPEED_CACHE_TTL_S
             with _lock:
                 failed_at = _failed.get((src["id"], tile))
-            fetched = False
+            pending = None
             if not fresh and not (failed_at and now - failed_at < SPEED_FAIL_RETRY_S):
-                try:
-                    res = _fetch_tile(src, tile, ssl_ctx, timeout)
-                    got = {"t": now, **res}
-                    tmp = path + ".tmp%d" % os.getpid()
-                    with open(tmp, "w", encoding="utf-8") as fh:
-                        json.dump(got, fh)
-                    os.replace(tmp, path)
-                    fresh = fetched = True
+                def work(src=src, tile=tile, path=path):
+                    try:
+                        res = _fetch_tile(src, tile, ssl_ctx, timeout)
+                    except Exception:
+                        with _lock:
+                            _failed[(src["id"], tile)] = now
+                        raise
+                    out = {"t": now, **res}
+                    # A TILE CUT SHORT AT THE CAP IS SERVED AND SAID, NOT KEPT (finding 20): the records past the cap are
+                    # missing, and a week in the cache would make that silence last - it is read again next time instead
+                    if not res.get("exceeded"):
+                        _write_json(path, out)
                     with _lock:
                         _failed.pop((src["id"], tile), None)
-                except Exception as e:                    # a source down never takes the chart with it
-                    with _lock:
-                        _failed[(src["id"], tile)] = now
-                    rep["ok"] = False
-                    rep["error"] = str(e)[:200]
+                    return out
+                pending = _start((src["id"], tile, cache_dir), work)
             elif not fresh:
                 rep["ok"] = False
                 rep["error"] = rep["error"] or "it did not answer a few minutes ago; asked again shortly"
+            plan.append((tile, got, fresh, pending))
+        still = 0
+        for tile, got, fresh, pending in plan:
+            fetched = False
+            if pending is not None:
+                done, res, err = _await(pending, deadline)
+                if done and err is None:
+                    got, fresh, fetched = res, True, True
+                    if res.get("exceeded"):
+                        rep["ok"] = False
+                        rep["error"] = rep["error"] or ("a tile's records were cut short at %d by the service: what came is "
+                                                        "served and not kept; read again next time" % SPEED_MAX_RECORDS)
+                elif done:
+                    rep["ok"] = False
+                    rep["error"] = str(err)[:200]
+                else:
+                    still += 1
             if got is None:
                 continue
             if not fresh:
@@ -294,6 +385,10 @@ def zones_for_bbox(bbox, cache_dir, ssl_ctx=None, sources=None, timeout=SPEED_TI
                 seen.add(zid)
                 feats.append(f)
                 rep["count"] += 1
+        if still:
+            rep["ok"] = False
+            rep["pending"] = still
+            rep["error"] = rep["error"] or ("%d tile(s) still being read behind this answer; served with the next read" % still)
         rep["unread"] = len(unread_ids)
         report.append(rep)
     return feats, report
@@ -358,21 +453,21 @@ def _cut_y(a, b, y):
     return [a[0] + (b[0] - a[0]) * t, y]
 
 
-def _state_rings(st, cache_dir, ssl_ctx, timeout, now):
-    """A state's boundary rings, from the cache while it is a month old, else TIGERweb (the old copy if that fails)."""
+def _state_cached(st, cache_dir, now):
+    """A state's boundary from the cache: (rings or None, fresh) - fresh while it is a month old."""
     path = os.path.join(cache_dir, "state_%s.json" % st)
-    got = None
     try:
         with open(path, encoding="utf-8") as fh:
             got = json.load(fh)
     except (OSError, ValueError):
-        got = None
-    if got and now - float(got.get("t", 0)) < STATE_TTL_S:
-        return got["rings"], True, None
-    with _lock:
-        failed_at = _failed.get(("tiger", st))
-    if failed_at and now - failed_at < SPEED_FAIL_RETRY_S:
-        return (got or {}).get("rings"), False, "the state boundary service did not answer a few minutes ago"
+        return None, False
+    rings = got.get("rings") if isinstance(got, dict) else None
+    return rings, bool(rings) and now - float(got.get("t", 0)) < STATE_TTL_S
+
+
+def _state_fetch(st, cache_dir, ssl_ctx, timeout, now):
+    """TIGERweb asked for a state's boundary, kept a month (_write_json); a failure memoed SPEED_FAIL_RETRY_S. Raises."""
+    path = os.path.join(cache_dir, "state_%s.json" % st)
     q = {"where": "STUSAB='%s'" % st, "outFields": "STUSAB", "returnGeometry": "true", "outSR": "4326",
          "maxAllowableOffset": str(STATE_SIMPLIFY_DEG), "geometryPrecision": "6", "f": "json"}
     try:
@@ -382,20 +477,38 @@ def _state_rings(st, cache_dir, ssl_ctx, timeout, now):
         rings = [r for f in d.get("features") or [] for r in ((f.get("geometry") or {}).get("rings") or []) if len(r) >= 4]
         if not rings:
             raise RuntimeError("no boundary came back for %s" % st)
-        tmp = path + ".tmp%d" % os.getpid()
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump({"t": now, "rings": rings}, fh)
-        os.replace(tmp, path)
-        with _lock:
-            _failed.pop(("tiger", st), None)
-        return rings, False, None
-    except Exception as e:
+    except Exception:
         with _lock:
             _failed[("tiger", st)] = now
-        return (got or {}).get("rings"), False, str(e)[:200]
+        raise
+    _write_json(path, {"t": now, "rings": rings})
+    with _lock:
+        _failed.pop(("tiger", st), None)
+    return rings
 
 
-def state_waters_for_bbox(bbox, cache_dir, ssl_ctx=None, timeout=SPEED_TIMEOUT_S, now=None):
+def _state_rings(st, cache_dir, ssl_ctx, timeout, now, deadline=None):
+    """A state's boundary rings: (rings, cached, error) - from the cache while it is a month old, else TIGERweb, waited
+    for until `deadline` (the old copy, and a word, when it fails or has not answered yet)."""
+    rings, fresh = _state_cached(st, cache_dir, now)
+    if fresh:
+        return rings, True, None
+    with _lock:
+        p = _inflight.get(("tiger", st, cache_dir))           # the fetch state_waters_for_bbox started for it
+        failed_at = _failed.get(("tiger", st))
+    if p is None and failed_at and now - failed_at < SPEED_FAIL_RETRY_S:
+        return rings, False, "the state boundary service did not answer a few minutes ago"
+    if p is None:
+        p = _start(("tiger", st, cache_dir), lambda: _state_fetch(st, cache_dir, ssl_ctx, timeout, now))
+    done, got, err = _await(p, time.monotonic() + SPEED_DEADLINE_S if deadline is None else deadline)
+    if done and err is None:
+        return got, False, None
+    if done:
+        return rings, False, str(err)[:200]
+    return rings, False, "the state boundary service has not answered yet; it is read behind this answer"
+
+
+def state_waters_for_bbox(bbox, cache_dir, ssl_ctx=None, timeout=SPEED_TIMEOUT_S, now=None, deadline_s=None):
     """NEW HAMPSHIRE'S, MAINE'S AND MASSACHUSETTS' WATER over a box, as features of role "state_water" ({state}): the line
     of each state whose box (LAW_STATE_BOXES) the box reaches, clipped to the box and STATE_PAD_DEG round it. (features,
     report) - none, and no report, for a box outside them all. A state asked whose line could not be read at all (no answer
@@ -409,8 +522,16 @@ def state_waters_for_bbox(bbox, cache_dir, ssl_ctx=None, timeout=SPEED_TIMEOUT_S
     os.makedirs(cache_dir, exist_ok=True)
     box = (bbox[0] - STATE_PAD_DEG, bbox[1] - STATE_PAD_DEG, bbox[2] + STATE_PAD_DEG, bbox[3] + STATE_PAD_DEG)
     feats, errs, cached, unread = [], [], 0, []
+    deadline = time.monotonic() + (SPEED_DEADLINE_S if deadline_s is None else deadline_s)
+    # every state's fetch started before any is waited for (a state already cached starts none)
     for st in asked:
-        rings, hit, err = _state_rings(st, cache_dir, ssl_ctx, timeout, now)
+        rings, fresh = _state_cached(st, cache_dir, now)
+        with _lock:
+            failed_at = _failed.get(("tiger", st))
+        if not fresh and not (failed_at and now - failed_at < SPEED_FAIL_RETRY_S):
+            _start(("tiger", st, cache_dir), lambda st=st: _state_fetch(st, cache_dir, ssl_ctx, timeout, now))
+    for st in asked:
+        rings, hit, err = _state_rings(st, cache_dir, ssl_ctx, timeout, now, deadline)
         cached += 1 if hit else 0
         if err:
             errs.append("%s: %s" % (st, err))

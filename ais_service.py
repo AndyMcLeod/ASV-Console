@@ -765,11 +765,22 @@ def decode_aivdm_payload(payload, fill):
 
 
 class NmeaAivdmDecoder:
-    """Reassembles multi-part AIVDM sentences and decodes them."""
-    def __init__(self):
-        self._parts = {}                    # seqid -> {total, frags:{n:payload}, fill}
+    """Reassembles multi-part AIVDM sentences and decodes them.
 
-    def feed_line(self, line):
+    The parts are keyed by CHANNEL and sequential id (the 2026-10-16 review, finding 17): the id is 0-9 per channel and
+    wraps, and keyed by id alone a lost datagram joined one ship's part 1 to another's part 2 and decoded a report under
+    the first MMSI with the second ship's name and destination. A part not joined within PART_TTL_S is dropped (the parts
+    of one sentence follow each other at once), and a part whose total disagrees starts the sentence over."""
+    PART_TTL_S = 10.0
+
+    def __init__(self):
+        self._parts = {}                    # (channel, seqid) -> {total, frags:{n:payload}, fill, t}
+
+    def _expire(self, now):
+        for k in [k for k, r in self._parts.items() if now - r["t"] > self.PART_TTL_S]:
+            del self._parts[k]
+
+    def feed_line(self, line, now=None):
         line = line.strip()
         if not line or ("AIVDM" not in line and "AIVDO" not in line):
             return None
@@ -789,19 +800,27 @@ class NmeaAivdmDecoder:
             fill = 0
         if total == 1:
             return decode_aivdm_payload(payload, fill)
-        sid = f[3] or "0"                    # sequential message id
-        rec = self._parts.setdefault(sid, {"total": total, "frags": {}, "fill": 0})
+        now = time.time() if now is None else now
+        self._expire(now)
+        key = (f[4], f[3] or "0")           # the channel and the sequential message id
+        rec = self._parts.get(key)
+        if rec is None or rec["total"] != total:
+            rec = self._parts[key] = {"total": total, "frags": {}, "fill": 0, "t": now}
         rec["frags"][seq] = payload
-        rec["fill"] = fill                  # fill bits belong to the LAST fragment
+        rec["t"] = now
+        if seq == total:
+            rec["fill"] = fill              # fill bits belong to the LAST fragment
         if len(rec["frags"]) >= total:
             joined = "".join(rec["frags"].get(k, "") for k in range(1, total + 1))
-            del self._parts[sid]
+            del self._parts[key]
             return decode_aivdm_payload(joined, rec["fill"])
         return None
 
 
 class NmeaSource(Source):
     name = "nmea"
+    TCP_CONNECT_S = 15.0
+    TCP_READ_S = 5.0                        # a quiet stream is not a dead one: wait on, connected (finding 18)
 
     def __init__(self, reg, host="127.0.0.1", port=10110, udp=False, label=None):
         super().__init__(reg)
@@ -845,11 +864,18 @@ class NmeaSource(Source):
     def _run_tcp(self):
         while True:
             try:
-                s = socket.create_connection((self.host, self.port), timeout=15)
+                s = socket.create_connection((self.host, self.port), timeout=self.TCP_CONNECT_S)
+                # ⚠ THE CONNECT TIMEOUT STAYED ON THE SOCKET (the 2026-10-16 review, finding 18): a connected receiver with
+                # nothing to say for 15 s read as "error: timed out" and was reconnected every 18 s or so. A read that times
+                # out on a connected socket is silence, not failure; EOF is the end of the stream.
+                s.settimeout(self.TCP_READ_S)
                 self._ok("tcp %s:%d" % (self.host, self.port))
                 buf = b""
                 while True:
-                    chunk = s.recv(4096)
+                    try:
+                        chunk = s.recv(4096)
+                    except socket.timeout:
+                        continue
                     if not chunk:
                         break
                     buf += chunk

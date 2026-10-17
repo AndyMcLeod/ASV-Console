@@ -5225,6 +5225,14 @@ function zoneTrack(zc, jobKey, toldKey){
         logClient("speed_zone", {state: zc.where, zone: zoneName(zc.zone), key: zc.key, job: jobKey, capping});
       return;
     }
+    if(jobKey == null){
+      // no commanded speed to compare or cap (the leg unknown and no speed set yet): said as that, not "Her undefined is
+      // within it" (the 2026-10-16 review, finding 19)
+      showBanner("SPEED ZONE " + (zc.where === "ahead" ? "AHEAD - " : "- ") + zoneName(zc.zone) + ": " + zoneRuleTxt(zc.zone)
+        + ". The console cannot say her commanded speed here, so it is not capped: check her speed against the rule.");
+      logClient("speed_zone", {state: zc.where, zone: zoneName(zc.zone), rule: zoneRuleTxt(zc.zone), key: zc.key, job: null, capping: false});
+      return;
+    }
     const below = zc.below ? " - the rule asks for less than her slowest speed that steers, so she runs at " + zoneSpd(zc.key)
                              + "; check the local rule" : "";
     showBanner(!capping
@@ -5254,6 +5262,7 @@ function zoneTrack(zc, jobKey, toldKey){
 function zoneOnlyGovern(st){
   const zc = zoneCap(null), cur = st.speed_key;
   if(zc && zc.key){
+    if(!cur && zoneRestore == null){ zoneTrack(zc, null, null); return null; }   // no commanded speed to compare or cap (finding 19)
     if(zoneRestore == null && cur && (V.SPEED_KN[cur] || 0) > (V.SPEED_KN[zc.key] || 0)) zoneRestore = cur;
     zoneTrack(zc, zoneRestore || cur, zoneRestore != null ? zc.key : cur);
     if(zoneRestore != null && commandedSpeed !== zc.key){ commandedSpeed = zc.key; commandSpeed(zc.key); }
@@ -6141,6 +6150,8 @@ async function loadMission(){
                  surveys:Array.isArray(m.surveys) ? m.surveys : [],
                  // ... and THE SURVEY BREAK-OFFS (2026-10-11), for the same reason: Continue's records ride the plan.
                  breaks:Array.isArray(m.breaks) ? m.breaks : [],
+                 // ... the hold a dropped passage left her at (dropPassage, 2026-10-16: the chain stands down there) ...
+                 passage_hold:(m.passage_hold && typeof m.passage_hold === "object") ? m.passage_hold : null,
                  // ... and THE PASSAGE BEING SAILED (2026-10-12): which section she is on, where she left it.
                  passage:(m.passage && typeof m.passage === "object" && !Array.isArray(m.passage)) ? m.passage : null};
       // ... and are JUDGED before anything reads the plan: a plan from before surveys were kept becomes one survey,
@@ -12551,9 +12562,16 @@ async function divertPassage(ll){
 /** The x beside Continue passage: the passage is dropped (she is not stopped). */
 async function dropPassage(){
   const P = mission.passage; if(!P) return;
+  // ⚠ DROPPED WHILE SHE HOLDS AT ITS END (the 2026-10-16 review, finding 4): with the record gone the end-of-plan chain
+  // saw an ordinary hold and sent her home from it on the next frame. The hold is kept for THIS run (the server's run
+  // sequence; the next motion is another run), saved with the plan so a reload keeps it too - and the confirm says so.
+  const held = !!(S && S.status && S.status.holding && S.run_seq != null && sailOwnsHold());
   if(!await guiConfirm("Drop the passage", "Drop the passage being sailed? She is not stopped - she finishes what she was "
-      + "sent and holds; no further section is sent.", {always: true})) return;
-  mission.passage = null; saveMission();
+      + "sent and holds; no further section is sent." + (held ? " She keeps holding here: End of plan does not send her home "
+      + "from a passage's hold." : ""), {always: true})) return;
+  mission.passage = null;
+  mission.passage_hold = held && asv ? {lat: asv.lat, lon: asv.lon, run_seq: S.run_seq, t: Date.now()} : null;
+  saveMission();
   logClient("passage_drop", {id: P.id, state: P.state, sent: P.sent});
   flashNote("Passage dropped."); applyCmdState(S); updateTransitPanel(); render();
 }
@@ -12610,13 +12628,30 @@ function sailOwnsHold(){
   const P = mission && mission.passage;
   // (AND THE END OF A GO-TO GIVEN WHILE SHE SAILED, 2026-10-16: there she rejoins the passage - sailRejoinTick)
   if(sailRejoinHere(P)) return true;
-  if(!P || !runRoute || !runRoute.length) return false;
+  // THE HOLD A DROPPED PASSAGE LEFT HER AT, for the run that holds there (dropPassage): saved with the plan
+  const hk = mission && mission.passage_hold;
+  if(hk && hk.run_seq != null && S && S.run_seq === hk.run_seq && asv && distTo(asv, hk) <= PASSAGE_HOLD_NEAR_M) return true;
+  if(!P) return false;
+  // ⚠ THE RECORD, NOT THIS TAB'S MEMORY (the 2026-10-16 review, finding 4). This answered from `runRoute`, which a
+  // reload leaves null (passageTick restores it only while a section runs): a tab reloaded while she held at a
+  // section's end, a fuel stop or the arrival saw no passage hold, and the end-of-plan chain sent her home from it on
+  // its second frame - as it did from a tab that took over mid-passage with a stale record. The record is saved with
+  // the plan and says where she stands - holding, at a port, done, or diverting from a hold - the route aboard is the
+  // passage's own (its length: a later plan uploaded over it is not it) and she is at its end: there she holds for
+  // Continue passage, whatever this tab remembers. A section under way is judged by the route, as before.
+  const rt = P.route || [];
+  if(["holding", "at_port", "done", "diverting"].includes(P.state) && rt.length && S && S.wp_total === rt.length
+     && asv && distTo(asv, rt[rt.length - 1]) <= PASSAGE_HOLD_NEAR_M) return true;
+  if(!runRoute || !runRoute.length)
+    return !!(P.state === "diverted" && P.breakoff && P.breakoff.to && asv && distTo(asv, P.breakoff.to) <= PASSAGE_HOLD_NEAR_M);
   const end = runRoute[runRoute.length - 1];
   if(P.end && distTo(end, P.end) <= PASSAGE_END_M) return true;
   // ⚠ AND THE PORT IT WAS DIVERTED TO (FOUND LIVE, 2026-10-12): she reached the divert point, held, and End of plan RTH
   // chained her home from the port she had been sent to refuel in. There she waits for the refuel and Continue passage.
   return !!(P.state === "diverted" && P.breakoff && P.breakoff.to && distTo(end, P.breakoff.to) <= PASSAGE_END_M);
 }
+/** She is AT a hold the record names when she is within this of its point (her hold disc is a few meters). */
+const PASSAGE_HOLD_NEAR_M = 50;
 // ── HOME ALONG THE PASSAGE (2026-10-12, step 6 of the long-transit plan) ─────────────────────────────────────────
 // An RTH with home beyond RTH_MAX_M is refused (doRTH): no chart box holds the water between. But from a passage's
 // water, with home at one end of it, the way home is the passage's own (coarse.js homeSections): the water its chart
@@ -20279,6 +20314,10 @@ $("#supPill").onclick = async ()=>{
     "The tab supervising now stops commanding the moment this one takes over: its clearance guard and speed governor "
     + "stand down and this tab's take their place. The vessel is not touched by the handover.", {always: true})) return;
   const j = await supervisorBeat(true);
+  // THE PLAN AS SAVED, READ AGAIN (the 2026-10-16 review, finding 4): the tab that supervised wrote the passage record
+  // (which section she is on, where she holds); this one loaded the plan when it opened and knows none of that - and
+  // would have chained an RTH from a passage's hold, or sent no section ahead.
+  if(j && j.you) await loadMission();
   showNote(j && j.you ? "This tab is supervising." : "The console did not hand supervision over.");
 };
 $("#b_estop").onclick = async ()=>{

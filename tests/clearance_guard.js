@@ -1955,6 +1955,38 @@ Promise.all([Promise.resolve(globalThis.__guardRetract), Promise.resolve(globalT
                 + " of " + RAN_FLOOR + " checks ran");
     fails++;
   }
+  // ── UNKNOWN READS AS BLOCKED (the 2026-10-16 review, finding 7) ──────────────────────────────────────────────────
+  // A NaN position read as CLEAR water: blocked false, clearanceM its 500 m cap, a leg with an undefined buffer clear
+  // through land, the guard "clear" at a position that is not a number. The wire refuses non-finite numbers; this is the
+  // backstop, and it fails the safe way.
+  {
+    const K7 = require("../static/js/keepouts.js"), G7 = require("../static/js/guard.js");
+    const F7 = planeFrame({ lat: 43.07, lon: -70.71 });
+    const sq7 = [{ e: -50, n: -50 }, { e: 50, n: -50 }, { e: 50, n: 50 }, { e: -50, n: 50 }];
+    const ko7 = { polys: [{ ring: sq7, bb: bbOf(sq7), kind: "land" }], lines: [], points: [], marks: [] };
+    const LL7 = (e, n) => F7.fromEN(e, n);
+    const nanP = { e: NaN, n: 0 }, vel = { e: 3, n: 0 }, still = { e: 0, n: 0 };
+    const u = {
+      blockedNaN: K7.blocked(nanP, ko7, 3), blockedOk: K7.blocked({ e: -100, n: 0 }, ko7, 3), blockedBufNaN: K7.blocked({ e: -100, n: 0 }, ko7, NaN),
+      clrNaN: K7.clearanceM(nanP, ko7), clrOk: K7.clearanceM({ e: -100, n: 0 }, ko7),
+      clrInf: K7.clearanceM({ e: -100, n: 0 }, ko7, Infinity), clrCapNaN: K7.clearanceM({ e: -100, n: 0 }, ko7, NaN),
+      legNaN: K7.legClear(LL7(-100, 0), { lat: NaN, lon: NaN }, F7, ko7, 3), legBufUndef: K7.legClear(LL7(-100, 0), LL7(100, 0), F7, ko7, undefined),
+      legBufNaN: K7.legClear(LL7(-100, 0), LL7(100, 0), F7, ko7, NaN), legOk: K7.legClear(LL7(-100, 60), LL7(100, 60), F7, ko7, 3),
+      firstNaN: K7.firstBlockAlong(LL7(-100, 0), { lat: NaN, lon: NaN }, F7, ko7, 3), infoNaN: K7.blockedInfo(nanP, ko7, 3),
+      assessNaN: G7.assess(nanP, vel, still, ko7, 3).level, assessVelNaN: G7.assess({ e: -100, n: 0 }, { e: NaN, n: NaN }, still, ko7, 3).level,
+      assessOk: G7.assess({ e: -100, n: 0 }, vel, still, ko7, 3).level,
+    };
+    check("UNKNOWN READS AS BLOCKED: a NaN position is blocked, 0 m clear, its block named; a leg to NaN, or asked with an "
+          + "undefined or NaN buffer, is not clear (a clear leg still is); the guard at a NaN position or velocity does not "
+          + "read clear (and reads hold 100 m off, heading at the land - the control); an INFINITE cap is no cap (the nearest "
+          + "contact is found with one), a NaN cap 0 m",
+          () => u.blockedNaN === true && u.blockedOk === false && u.blockedBufNaN === true && u.clrNaN === 0 && Math.abs(u.clrOk - 50) < 0.01
+                && Math.abs(u.clrInf - 50) < 0.01 && u.clrCapNaN === 0
+                && u.legNaN === false && u.legBufUndef === false && u.legBufNaN === false && u.legOk === true
+                && u.firstNaN && u.firstNaN.info && u.firstNaN.info.type === "unknown" && u.infoNaN && u.infoNaN.type === "unknown"
+                && u.assessNaN !== "clear" && u.assessVelNaN !== "clear" && u.assessOk !== "clear",
+          JSON.stringify(u, (k, v) => (Number.isNaN(v) ? "NaN" : v)));
+  }
   console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"
                     : "\nall checks passed (" + ran + ")");
   process.exit(fails ? 1 : 0);

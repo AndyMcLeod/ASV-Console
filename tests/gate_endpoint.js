@@ -38,6 +38,13 @@
 //   the exemption drops the endpoint test again (the reported 0.47 m)  -> 2
 //   the exemption is dropped entirely (a moored boat is re-routed)     -> 3, 8
 //   startIn / goalIn are computed at 2·buf instead of the buffer       -> 2
+//   legCrosses dropped from clearButEnds / the gate's exemption       -> 13
+//   smoothTrack tests the moved vertex alone again                   -> 14
+//   the snap takes a free cell across the line again                 -> 16
+//   clearButEnds / the gate's exemption each alone                   -> 17 / 18
+//   the smoothing pass tests the vertex alone again                  -> 19
+//   legClear asked at the buffer, not hypot(buf, h/2)                 -> 20
+//   the string-pull trusts the raster alone again / round dilation  -> 21, 22
 //   the gate stops re-checking altogether                              -> 1, 2, 7, 8b
 //   the leading run is not asked for (the whole leg from a berth)      -> 7
 //   the run is capped at 2·buf from the berth                          -> 8
@@ -344,6 +351,166 @@ check("6. ⚠ AND THIS FILE IS ASV'S NOW — re-vendoring it from asv_core would
       },
       "the same note keepouts.js and core_turns.js already carry; a --check reporting DRIFT " +
       "over there is correct");
+
+// ── A LEG ACROSS A CHARTED LINE (the 2026-10-16 review, finding 1) ───────────────────────────────────────────────────
+// A pier drawn as a LINE (dock_line, shore_line) is zero-width: the raster stamps it one cell wide, so the free cell
+// nearest a start 0.8 m off it could lie on its far side; the ends' exemption asked legClear at 0.05 m with a 2 m step,
+// which cannot see a line between two samples; the gate's start exemption asked "no nearer than the start is", which a
+// crossing never is; and smoothTrack tested the moved vertex, not the legs it made. Three starts in four shipped a
+// route straight across the pier. Now legCrosses (keepouts.js), geometric, is asked at all four.
+{
+  const { channelLaneRoute, smoothTrack, routeAround } = require("../static/js/routing.js");
+  const { legCrosses, legCrossesEN } = require("../static/js/keepouts.js");
+  const FR = planeFrame({ lat: 43.07, lon: -70.71 });
+  const LL = (e, n) => FR.fromEN(e, n);
+  const crosses = (route, xe, n0, n1) => {
+    const en = route.map((p) => FR.toEN(p));
+    for (let i = 1; i < en.length; i++) {
+      const a = en[i - 1], b = en[i];
+      if ((a.e - xe) * (b.e - xe) < 0) { const t = (xe - a.e) / (b.e - a.e), n = a.n + (b.n - a.n) * t; if (n >= n0 && n <= n1) return i; }
+    }
+    return 0;
+  };
+  const dockKo = (n0, n1) => { const pts = [{ e: 0, n: n0 }, { e: 0, n: n1 }];
+    return { polys: [], lines: [{ pts, bb: bbOf(pts), kind: "a dock / pier" }], points: [], marks: [], sys: [], chans: [], restricted: [] }; };
+  const cases = [[1.0, 0, -40, 0, -30, 30], [1.0, 3, -60, -5, -40, 40], [0.8, 10, -45, 12, -25, 25], [1.2, -4, -50, 2, -30, 30]];
+  const got = cases.map(([ae, an, be, bn, n0, n1]) => {
+    const ko = dockKo(n0, n1), A = LL(ae, an), B = LL(be, bn);
+    const lp = legPath(A, B, FR, ko, 3);
+    if (!lp) return { lp: null };
+    const r1 = [A, ...lp], shipped = channelLaneRoute(r1, FR, ko, 3, { lane: false }).route;
+    return { lpX: crosses(r1, 0, n0, n1), shipX: crosses(shipped, 0, n0, n1), ends: FR.distTo(shipped[shipped.length - 1], B) < 0.5,
+             startIn: blocked(FR.toEN(A), ko, 3), n: shipped.length };
+  });
+  check("13. ⚠ A START 0.8-1.2 m OFF A PIER DRAWN AS A LINE (inside the 3 m buffer), the goal west of it: legPath rounds the "
+        + "pier's end and so does the shipped route, in all four geometries; each ends at the goal",
+        got.every((g) => g.lp !== null && g.startIn && g.lpX === 0 && g.shipX === 0 && g.ends),
+        JSON.stringify(got));
+  // the smoothing alone: a correct five-point detour round the line must not become a leg across it
+  const ko3 = dockKo(-25, 25);
+  const detour = [[0.8, 10], [5.2, 6.2], [5.2, 30.2], [-6.8, 30.2], [-45, 12]].map(([e, n]) => LL(e, n));
+  const sm = smoothTrack(detour, FR, ko3, 3);
+  check("14. smoothTrack keeps a detour round the pier a detour: the smoothed route crosses the line nowhere, and the legs it "
+        + "made are clear at the buffer (its moved points are no longer tested alone)",
+        crosses(sm, 0, -25, 25) === 0 && sm.slice(1, -1).every((p, i) => legClear(sm[i], p, FR, ko3, 3) || blocked(FR.toEN(sm[i]), ko3, 3)),
+        JSON.stringify(sm.map((p) => { const q = FR.toEN(p); return [+q.e.toFixed(1), +q.n.toFixed(1)]; })));
+  // legCrosses itself
+  const sq = [{ e: 10, n: -10 }, { e: 30, n: -10 }, { e: 30, n: 10 }, { e: 10, n: 10 }];
+  const koP = { polys: [{ ring: sq, bb: bbOf(sq), kind: "land" }], lines: ko3.lines, points: [{ e: 60, n: 0, r: 4 }], marks: [] };
+  const u = {
+    line: legCrossesEN({ e: 1, n: 0 }, { e: -5, n: 0 }, koP),                 // across the dock line
+    along: legCrossesEN({ e: 0, n: -40 }, { e: 0, n: 40 }, koP),              // exactly along it: a run, not a crossing
+    past: legCrossesEN({ e: 1, n: 30 }, { e: -5, n: 30 }, koP),               // past its end
+    through: legCrossesEN({ e: 5, n: 0 }, { e: 35, n: 0 }, koP),              // through the square: in and out
+    out: legCrossesEN({ e: 20, n: 0 }, { e: 40, n: 0 }, koP),                 // from inside the square: led out
+    into: legCrossesEN({ e: 40, n: 0 }, { e: 20, n: 0 }, koP),                // into it: led in (an arrival at a dock)
+    corner: legCrossesEN({ e: 5, n: 15 }, { e: 35, n: -15 }, koP),            // through two edges by way of a vertex
+    pointThru: legCrossesEN({ e: 50, n: 0 }, { e: 70, n: 0 }, koP),           // through a point hazard's extent
+    pointOut: legCrossesEN({ e: 61, n: 0 }, { e: 80, n: 0 }, koP),            // out of it
+    pointBy: legCrossesEN({ e: 50, n: 5 }, { e: 70, n: 5 }, koP),             // 5 m off a 4 m extent
+    ll: legCrosses(LL(1, 0), LL(-5, 0), FR, koP),
+  };
+  check("15. legCrosses: across a line yes, along it no, past its end no; through a polygon yes, out of it or into it no "
+        + "(the one exit or entry is the way out of the water the endpoint lies in), through a vertex yes; through a point "
+        + "hazard's extent yes, out of it no, 5 m off a 4 m extent no; the lat/lon form agrees",
+        u.line && !u.along && !u.past && u.through && !u.out && !u.into && u.corner && u.pointThru && !u.pointOut && !u.pointBy && u.ll,
+        JSON.stringify(u));
+  // the snap: with free cells on both sides of the line, the start's cell is on HER side
+  // (the geometry whose first free cell in scan order lay across the line: a start 1 m east of it, abeam its middle)
+  const ko0 = dockKo(-30, 30);
+  const viaS = routeAround(LL(1, 0), LL(-40, 0), FR, ko0, 3);
+  const firstE = viaS && viaS.length ? FR.toEN(viaS[0]).e : null;
+  check("16. the raster's start snap takes a free cell on her side of the line (the first via point east of it), not the "
+        + "first free cell in scan order on the far side",
+        viaS && viaS.length > 0 && firstE > 0 && crosses([LL(1, 0), ...viaS, LL(-40, 0)], 0, -30, 30) === 0,
+        JSON.stringify(viaS && viaS.map((p) => { const q = FR.toEN(p); return [+q.e.toFixed(1), +q.n.toFixed(1)]; })));
+  // each layer on its own, since each backs the others up
+  const { clearButEnds, END_CLEAR_M } = require("../static/js/routing.js");
+  check("17. clearButEnds: a leg out of a berth 0.8 m east of the line to clear water west of it is refused - the crossing is "
+        + "asked, not only the 0.05 m samples 2 m apart; a leg out of the berth away from the line is allowed",
+        clearButEnds(LL(0.8, 10), LL(-10, 12), FR, ko3, END_CLEAR_M, true, false) === false
+          && clearButEnds(LL(0.8, 10), LL(12, 12), FR, ko3, END_CLEAR_M, true, false) === true);
+  const g18 = gateLegClear([LL(0.8, 10), LL(-45, 12)], detour, FR, ko3, 3);
+  check("18. the gate's start exemption does not wave a leg across the line through: a two-point route from the berth straight "
+        + "across is spliced (the search's detour), and the shipped route crosses nowhere",
+        g18.splices >= 1 && !g18.abandoned && crosses(g18.route, 0, -25, 25) === 0,
+        JSON.stringify({ splices: g18.splices, abandoned: g18.abandoned, route: g18.route.map((p) => { const q = FR.toEN(p); return [+q.e.toFixed(1), +q.n.toFixed(1)]; }) }));
+  // the smoothing PASS (the resampler keeps the search's vertices here, its chords crossing): the corner vertex at (5, 30)
+  // would round to (-17.5, 2.5), and the leg to it crosses a line running from -70 to 25
+  const koL = dockKo(-70, 25);
+  const sm19 = smoothTrack([[5, -80], [5, 30], [-85, 30]].map(([e, n]) => LL(e, n)), FR, koL, 3);
+  check("19. the smoothing pass leaves a vertex where rounding it would make a leg across the line: the smoothed route crosses "
+        + "nowhere (the moved vertex alone, 17 m off the line, is clear - the leg to it is what crosses)",
+        crosses(sm19, 0, -70, 25) === 0,
+        JSON.stringify(sm19.map((p) => { const q = FR.toEN(p); return [+q.e.toFixed(1), +q.n.toFixed(1)]; })));
+  // finding 3: the clearance legClear reads between two samples
+  const r20 = (buf, d) => { const pt = { polys: [], lines: [], points: [{ e: 0, n: d, r: 0 }], marks: [] };
+    // the hazard midway between two samples: a 20 m leg at buf 5 is sampled every 2.5 m, so put it at e = 1.25
+    const step = Math.max(2, buf / 2); pt.points[0].e = step / 2;
+    return legClear(LL(0, 0), LL(20, 0), FR, pt, buf); };
+  check("20. legClear reads the clearance between its samples exactly: a point hazard midway between two samples, 4.9 m off a "
+        + "20 m leg, is refused at a 5 m buffer (it passed at 4.845 m), 9.8 m off at 10 m (passed at 9.685), 2.9 m at 3 m "
+        + "(passed at 2.84) - and 5.1, 10.1 and 3.1 m off are allowed",
+        !r20(5, 4.9) && !r20(10, 9.8) && !r20(3, 2.9) && r20(5, 5.1) && r20(10, 10.1) && r20(3, 3.1),
+        JSON.stringify([r20(5, 4.9), r20(10, 9.8), r20(3, 2.9), r20(5, 5.1), r20(10, 10.1), r20(3, 3.1)]));
+}
+
+// ── NO ROUTED LEG UNDER THE BUFFER (the 2026-10-16 review, finding 2) ─────────────────────────────────────────────────
+// routeAround's string-pull tested a shortcut against the raster alone, once per cell, each sample rounded to the grid:
+// with the buffer between one and one and a half cells a shortcut passed ~0.9 cell from a feature (2.149 m of 3 m,
+// reproduced below), and the gate spliced its own patches unasked. Now a shortcut is confirmed with legClear, the
+// dilation is a whole cell more than the buffer, and a patch is asked like any leg.
+{
+  const { routeAround, channelLaneRoute } = require("../static/js/routing.js");
+  const K = require("../static/js/keepouts.js");
+  const FR = planeFrame({ lat: 43.07, lon: -70.71 });
+  const LL = (e, n) => FR.fromEN(e, n);
+  const sq = (pts) => ({ ring: pts.map(([e, n]) => ({ e, n })), bb: bbOf(pts.map(([e, n]) => ({ e, n }))), kind: "a rock" });
+  const koOf = (points, polys) => ({ polys: polys.map(sq), lines: [], points: points.map(([e, n, r]) => ({ e, n, r })), marks: [], sys: [], chans: [], restricted: [] });
+  // the least clearance along a route's legs whose ENDS are clear (a leg out of a blocked start is the exemption's), at 0.25 m
+  const minClear = (route, ko, buf) => {
+    let m = Infinity;
+    for (let i = 1; i < route.length; i++) {
+      const a = FR.toEN(route[i - 1]), b = FR.toEN(route[i]);
+      if (K.blocked(a, ko, buf) || K.blocked(b, ko, buf)) continue;
+      const n = Math.max(1, Math.ceil(Math.hypot(b.e - a.e, b.n - a.n) / 0.25));
+      for (let k = 0; k <= n; k++) { const t = k / n; m = Math.min(m, K.clearanceM({ e: a.e + (b.e - a.e) * t, n: a.n + (b.n - a.n) * t }, ko, 100)); }
+    }
+    return m;
+  };
+  const ko21 = koOf([[10.1, 106.51, 0], [-18.93, -122.25, 10], [140.04, 61.14, 10], [53.16, -58.23, 10]], [[[60.7, -27.5], [99.7, 14.2], [53.8, 57.1], [14.8, 15.4]]]);
+  const A21 = LL(-339.78778, 34.12468), B21 = LL(333.71086, 28.24948);
+  const via = routeAround(A21, B21, FR, ko21, 3), r21 = via ? [A21, ...via, B21] : null;
+  const lp21 = legPath(A21, B21, FR, ko21, 3), rr21 = lp21 ? [A21, ...lp21] : null;
+  check("21. ⚠ THE REPRODUCED WORLD: routeAround's string-pull shipped a leg 2.149 m from a 10 m rock with a 3 m buffer; its "
+        + "route and legPath's now keep the buffer on every leg (to a centimeter)",
+        r21 && rr21 && minClear(r21, ko21, 3) >= 3 - 0.01 && minClear(rr21, ko21, 3) >= 3 - 0.01,
+        JSON.stringify({ via: via && minClear(r21, ko21, 3).toFixed(3), legPath: rr21 && minClear(rr21, ko21, 3).toFixed(3) }));
+  // a seeded fuzz: random rocks and one tilted block between A and B, 300-800 m apart, at a 3 m and a 5 m buffer, through
+  // legPath and through the whole pipeline (the gate's patches included)
+  let seed = 20261016;
+  const rnd = () => { seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  const worst = { legPath: Infinity, shipped: Infinity, routed: 0, refused: 0, ex: null };
+  for (let w = 0; w < 160; w++) {
+    const buf = w % 2 ? 5 : 3, span = 300 + rnd() * 500;
+    const pts = []; for (let k = 0; k < 5; k++) pts.push([rnd() * span - span / 2, rnd() * 300 - 150, k === 0 ? 0 : 10]);
+    const c = { e: rnd() * 200 - 100, n: rnd() * 100 - 50 }, th = rnd() * Math.PI, L2 = 20, W2 = 40;
+    const rot = (e, n) => [c.e + e * Math.cos(th) - n * Math.sin(th), c.n + e * Math.sin(th) + n * Math.cos(th)];
+    const ko = koOf(pts, [[rot(-L2, -W2), rot(L2, -W2), rot(L2, W2), rot(-L2, W2)]]);
+    const A = LL(-span / 2, rnd() * 60 - 30), B = LL(span / 2, rnd() * 60 - 30);
+    if (K.blocked(FR.toEN(A), ko, buf) || K.blocked(FR.toEN(B), ko, buf)) continue;
+    const lp = legPath(A, B, FR, ko, buf);
+    if (!lp) { worst.refused++; continue; }
+    worst.routed++;
+    const m1 = minClear([A, ...lp], ko, buf), m2 = minClear(channelLaneRoute([A, ...lp], FR, ko, buf, { lane: false }).route, ko, buf);
+    if (m1 - buf < worst.legPath - (worst.ex ? worst.ex.buf : 0) || m1 < buf - 0.01) worst.ex = { w, buf, m1: +m1.toFixed(3), m2: +m2.toFixed(3) };
+    worst.legPath = Math.min(worst.legPath, m1 - buf); worst.shipped = Math.min(worst.shipped, m2 - buf);
+  }
+  check("22. ⚠ A SEEDED FUZZ, 160 worlds at 3 and 5 m: every routed leg with clear ends keeps the buffer, out of legPath and "
+        + "out of the whole pipeline (before the fix: 19 of 614 routeAround legs and 12 of 446 shipped routes under it)",
+        worst.routed >= 100 && worst.legPath >= -0.01 && worst.shipped >= -0.01,
+        JSON.stringify({ routed: worst.routed, refused: worst.refused, underByLegPath: +worst.legPath.toFixed(3), underByShipped: +worst.shipped.toFixed(3), ex: worst.ex }));
+}
 
 console.log("");
 console.log(fails ? (fails + " CHECK(S) FAILED of " + ran) : ("all " + ran + " checks pass"));

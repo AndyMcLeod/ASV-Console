@@ -269,5 +269,102 @@ check("5. every cache writer named in the finding - the ENC layer map, extract a
       lambda: all(v == (True, 0, 0, 0) for v in report.values()),
       lambda: "; ".join("%s: _cache_json %s, raw writes %d, opens %d, fixed .part %d" % (k, *v) for k, v in report.items()))
 
+# 6. the port registry and the comms config, with a reader holding the file (the 2026-10-16 review, finding 26)
+_C.PORTS_PATH = os.path.join(TMP, "ports.json")
+_C.COMMS_CONFIG_PATH = os.path.join(TMP, "comms_config.json")
+_C.PORTS = {"active": "x", "ports": [{"id": "x", "name": "X"}]}
+_C.save_ports()
+_C._save_comms_config("ubnt", "10.0.0.0", "ubnt")
+_hold_stop = threading.Event()
+
+
+def _holder(path):
+    while not _hold_stop.is_set():
+        try:
+            with open(path, "rb") as fh:
+                fh.read()
+        except OSError:
+            pass
+        time.sleep(0.001)                      # a reader that lets go between reads, as the page does
+
+
+_holders = [threading.Thread(target=_holder, args=(p,), daemon=True) for p in (_C.PORTS_PATH, _C.COMMS_CONFIG_PATH)]
+for t in _holders:
+    t.start()
+oks6, errs6 = [], []
+for i in range(40):
+    oks6.append(_C.save_ports())
+    try:
+        _C._save_comms_config("ubnt", "10.0.0.%d" % (i + 1), "ubnt")
+    except OSError as e:
+        errs6.append(e)
+_hold_stop.set()
+for t in _holders:
+    t.join(2.0)
+ports6 = json.load(open(_C.PORTS_PATH, encoding="utf-8"))
+comms6 = json.load(open(_C.COMMS_CONFIG_PATH, encoding="utf-8"))
+left6 = [f for f in os.listdir(TMP) if f.startswith(("ports.json.", "comms_config.json."))]
+check("6. THE PORT REGISTRY AND THE COMMS CONFIG are written through a temp of their own and a RETRIED replace: forty saves "
+      "of each with a reader holding the file, every one lands (the mission store measured 2,460 refusals in 10 s with one "
+      "reader; these retried nothing), the last value on disk, no temp file left",
+      lambda: all(oks6) and not errs6 and ports6["active"] == "x" and comms6["host"] == "10.0.0.40" and left6 == [],
+      lambda: "ports saved %d/40; comms errors %d; on disk %s / %s; left %s"
+      % (sum(1 for o in oks6 if o), len(errs6), ports6.get("active"), comms6.get("host"), left6))
+
+# 7. a session log that cannot be written says so once and stops (finding 27)
+import contextlib                                                      # noqa: E402
+import io                                                              # noqa: E402
+
+
+class _FullDisk(io.StringIO):
+    def write(self, s):
+        raise OSError(28, "No space left on device")
+
+
+_lg = _C.SessionLogger(enabled=True, log_dir=os.path.join(TMP, "logs"))
+_was_on = _lg.enabled and _lg._f is not None
+_lg._f.close()
+_lg._f = _FullDisk()
+_err = io.StringIO()
+with contextlib.redirect_stderr(_err):
+    _lg.event("one")
+    _lg.event("two")
+    _lg.event("three")
+_said = [ln for ln in _err.getvalue().splitlines() if "[log]" in ln]
+check("7. A SESSION LOG THAT CANNOT BE WRITTEN (the disk full) SAYS SO ONCE and stops recording - it swallowed every OSError "
+      "for ever, the state still saying it was recording",
+      lambda: _was_on and _lg.enabled is False and len(_said) == 1 and "recording stopped" in _said[0],
+      lambda: "was on %s; enabled now %s; said %d time(s): %s" % (_was_on, _lg.enabled, len(_said), _said[:1]))
+
+# 8. the temp files a killed process left are swept at startup, the live ones kept (finding 28)
+_sw = os.path.join(TMP, "sweep")
+os.makedirs(os.path.join(_sw, "enc"), exist_ok=True)
+_old_t = time.time() - 2 * 3600
+
+
+def _plant(rel, old):
+    p = os.path.join(_sw, rel)
+    with open(p, "w") as fh:
+        fh.write("x")
+    if old:
+        os.utime(p, (_old_t, _old_t))
+    return p
+
+
+_gone_expected = [_plant("mission.json.1234.5678.part", True), _plant("enc/tile_v3_t.jsonl.12.34.build", True),
+                  _plant("ports.json.tmp", True), _plant("comms_config.json.part", True),
+                  _plant("enc/asv_x.jsonl.9.9.gz.part", True), _plant("enc/water_v1.json.part.77", True)]
+_kept_expected = [_plant("mission.json.9.9.part", False), _plant("enc/tile_v3_t.jsonl", True),
+                  _plant("enc/features_v5.json", True), _plant("notes.part", True)]
+_gone = _C._sweep_leftovers([(_sw, True)], min_age_s=3600.0)
+check("8. THE TEMP FILES A KILLED PROCESS LEFT - <file>.<pid>.<tid>.part and .build, .part.<tid>, .gz.part, the old "
+      "comms_config.json.part and ports.json.tmp - older than an hour are swept at startup; a fresh temp (another "
+      "console's live write), the real files and a name that only ends in .part are kept",
+      lambda: sorted(map(os.path.normpath, _gone)) == sorted(map(os.path.normpath, _gone_expected))
+      and not any(os.path.exists(p) for p in _gone_expected)
+      and all(os.path.exists(p) for p in _kept_expected),
+      lambda: "gone %s; kept %s" % (sorted(os.path.basename(p) for p in _gone),
+                                    [os.path.basename(p) for p in _kept_expected if os.path.exists(p)]))
+
 print("\n" + ("%d CHECK(S) FAILED (%d ran)" % (fails, ran) if fails else "all checks passed (%d)" % ran))
 sys.exit(1 if fails else 0)

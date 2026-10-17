@@ -1358,8 +1358,14 @@ function ringDist(p, pts, closed, cap) {
   return best;
 }
 
+/** A position or a buffer that is not a number: unknown, and unknown reads as BLOCKED (the 2026-10-16 review,
+ *  finding 7 - NaN read as clear water: `blocked` false, `clearanceM` its cap, a leg with an undefined buffer clear
+ *  through land). The wire refuses non-finite numbers, so this is the backstop, and it fails the safe way. */
+const unknownAt = (p, buf) => !p || !Number.isFinite(p.e) || !Number.isFinite(p.n) || !Number.isFinite(buf);
+export const UNKNOWN_KIND = 'a position or buffer that is not a number';
 /** Is this point (frame meters) inside a keep-out, or within `buf` of one? */
 export function blocked(p, ko, buf) {
+  if (unknownAt(p, buf)) return true;
   // (each list through its grid: only the features that could be within `buf` of `p`, in their own order)
   for (const poly of nearIn(ko.polys, p, buf)) {
     if (!inBB(p, poly.bb, buf)) continue;
@@ -1397,6 +1403,7 @@ export function blocked(p, ko, buf) {
  * boat in open water costs one bounding-box test per feature and nothing more.
  */
 export function clearanceM(p, ko, cap = 500) {
+  if (!p || !Number.isFinite(p.e) || !Number.isFinite(p.n) || Number.isNaN(cap)) return 0;   // an infinite cap is no cap
   let best = cap;
   for (const poly of nearIn(ko.polys, p, cap)) {
     if (!inBB(p, poly.bb, best)) continue;
@@ -1446,6 +1453,7 @@ export function featureClearanceM(p, f, cap = 500) {
 
 /** Like `blocked`, but returns the offending keep-out so a refusal can name it. */
 export function blockedInfo(p, ko, buf) {
+  if (unknownAt(p, buf)) return { kind: UNKNOWN_KIND, type: 'unknown' };
   const near = (list) => (buf <= GRID_PAD_M ? nearIn(list, p, buf) : list || NO_FEATURES);
   for (const poly of near(ko.polys)) {
     if (!inBB(p, poly.bb, buf)) continue;
@@ -1476,14 +1484,35 @@ export function blockedInfo(p, ko, buf) {
  * THE KEEP-OUT TESTS ARE POINT TESTS, so a leg is only as well tested as it is
  * densely sampled. Half the buffer is the step, which guarantees no keep-out
  * wide enough to matter can sit between two samples.
+ *
+ * ⚠ AND THE CLEARANCE READ BETWEEN TWO SAMPLES (the 2026-10-16 review, finding 3). A step of h means a point of the
+ * leg lies up to h/2 from the nearest sample, so a keep-out `d` off the leg reads as sqrt(d^2 + h^2/4) off that sample:
+ * asked at the buffer, the leg passed 4.845 m of a 5 m buffer and 9.685 m of 10 m (2.84 m of 3 m with the 2 m floor).
+ * The closest point of the leg to a keep-out is either perpendicular to the leg - the nearest sample within h/2 along
+ * it - or one of the leg's ends, which are sampled exactly; so a keep-out within `buf` of the leg is within
+ * hypot(buf, h/2) of a sample - and that radius is what DETECTS one. A sample that answers blocked at it but not at
+ * the buffer has a keep-out in the slack: the leg's nearest point to it lies within h of that sample, and that stretch
+ * is asked again at the buffer itself, LEG_FINE_M apart (a slack of 0.4 mm at a 3 m buffer). So the answer is the
+ * buffer's, to a millimeter, in both directions: a leg 2.9 m off is refused, one 3.1 m off is clear - the refinement
+ * only runs where something is near, so a leg in open water costs what it always did.
  */
+export const LEG_FINE_M = 0.1;
 export function legClear(a, b, frame, ko, buf) {
   const ae = frame.toEN(a), be = frame.toEN(b);
   const L = Math.hypot(be.e - ae.e, be.n - ae.n);
+  if (!Number.isFinite(L) || !Number.isFinite(buf)) return false;   // unknown is not clear (finding 7): the loop below never ran on NaN
   const n = Math.max(1, Math.ceil(L / Math.max(2, buf / 2)));
+  const h = L / n, r = Math.hypot(buf, h / 2);
+  const at = (t) => ({ e: ae.e + (be.e - ae.e) * t, n: ae.n + (be.n - ae.n) * t });
   for (let i = 0; i <= n; i++) {
-    const t = i / n;
-    if (blocked({ e: ae.e + (be.e - ae.e) * t, n: ae.n + (be.n - ae.n) * t }, ko, buf)) return false;
+    const p = at(i / n);
+    if (!blocked(p, ko, r)) continue;                 // nothing could lie within the buffer of the leg near this sample
+    if (blocked(p, ko, buf)) return false;            // within the buffer of the sample itself
+    const m = Math.max(1, Math.ceil(2 * h / LEG_FINE_M));
+    for (let j = 0; j <= m; j++) {                    // the stretch within h either side, at the buffer
+      const t = (i - 1 + 2 * j / m) / n;
+      if (t > 0 && t < 1 && blocked(at(t), ko, buf)) return false;
+    }
   }
   return true;
 }
@@ -1498,6 +1527,7 @@ export function legClear(a, b, frame, ko, buf) {
 export function firstBlockAlong(a, b, frame, ko, buf) {
   const ae = frame.toEN(a), be = frame.toEN(b);
   const L = Math.hypot(be.e - ae.e, be.n - ae.n);
+  if (!Number.isFinite(L) || !Number.isFinite(buf)) return { at: a, info: { kind: UNKNOWN_KIND, type: 'unknown' }, distance: 0 };
   const n = Math.max(2, Math.ceil(L / Math.max(2, buf / 2)));
   for (let i = 0; i <= n; i++) {
     const t = i / n;
@@ -1506,4 +1536,56 @@ export function firstBlockAlong(a, b, frame, ko, buf) {
     if (info) return { at: frame.fromEN(p.e, p.n), info, distance: L * t };
   }
   return null;
+}
+
+/**
+ * DOES THE LEG a->b CROSS A CHARTED EDGE (the 2026-10-16 review, finding 1): a keep-out LINE (the coastline, a dock
+ * line, an islet's or a hazard's line), a polygon's RING (into or out of land, a dock, a hazard area), or a point
+ * hazard's own extent? GEOMETRIC, NOT SAMPLED. `legClear` tests points along the leg, and at a radius under half its
+ * step - the ends' END_CLEAR_M of 0.05 m against its 2 m step - a zero-width line between two samples is never seen:
+ * that is how a start 0.8 m off a pier drawn as a line was routed straight across the pier, three geometries in four.
+ * An endpoint already inside a polygon (or a point hazard's extent) is led OUT of it: its one exit is not a crossing.
+ * An intersection at the leg's own ends (an endpoint on the edge) is none, and a run exactly along an edge (collinear)
+ * is none - `blocked` holds the leg off it at the buffer. The margin layer (ko.deep) is a band, not an edge: not asked.
+ */
+export function legCrosses(a, b, frame, ko) {
+  return legCrossesEN(frame.toEN(a), frame.toEN(b), ko);
+}
+const EDGE_T_EPS = 1e-6;
+/** The leg's parameter t where A->B meets the edge P->Q, strictly inside the leg and on the edge (the edge's far end
+ *  counted by the next edge), or null - a parallel edge included. */
+function segX(A, B, P, Q) {
+  const d1x = B.e - A.e, d1y = B.n - A.n, d2x = Q.e - P.e, d2y = Q.n - P.n, den = d1x * d2y - d1y * d2x;
+  if (Math.abs(den) < 1e-12) return null;
+  const t = ((P.e - A.e) * d2y - (P.n - A.n) * d2x) / den, u = ((P.e - A.e) * d1y - (P.n - A.n) * d1x) / den;
+  return (t > EDGE_T_EPS && t < 1 - EDGE_T_EPS && u >= 0 && u < 1) ? t : null;
+}
+const bbTouch = (a, b) => a.x0 <= b.x1 && a.x1 >= b.x0 && a.y0 <= b.y1 && a.y1 >= b.y0;
+export function legCrossesEN(A, B, ko) {
+  if (!ko) return false;
+  const L = Math.hypot(B.e - A.e, B.n - A.n);
+  if (!(L > 0)) return false;
+  const mid = { e: (A.e + B.e) / 2, n: (A.n + B.n) / 2 }, half = L / 2 + 1;
+  const box = { x0: Math.min(A.e, B.e), x1: Math.max(A.e, B.e), y0: Math.min(A.n, B.n), y1: Math.max(A.n, B.n) };
+  for (const poly of nearIn(ko.polys, mid, half)) {
+    if (!bbTouch(box, poly.bb)) continue;
+    const ring = poly.ring, n = ring.length;
+    let cuts = 0;
+    for (let i = 0, j = n - 1; i < n; j = i++) if (segX(A, B, ring[j], ring[i]) != null) cuts++;
+    if (!cuts) continue;
+    const allowed = (ringInside(A, ring) ? 1 : 0) + (ringInside(B, ring) ? 1 : 0);   // the way out of the water it lies in
+    if (cuts > allowed) return true;
+  }
+  for (const ln of nearIn(ko.lines, mid, half)) {
+    if (!bbTouch(box, ln.bb)) continue;
+    const pts = ln.pts;
+    for (let i = 1; i < pts.length; i++) if (segX(A, B, pts[i - 1], pts[i]) != null) return true;
+  }
+  for (const pt of nearIn(ko.points, mid, half)) {
+    const r = Math.max(pt.r || 0, 0.05);
+    if (!bbTouch(box, { x0: pt.e - r, x1: pt.e + r, y0: pt.n - r, y1: pt.n + r })) continue;
+    const aIn = Math.hypot(A.e - pt.e, A.n - pt.n) < r, bIn = Math.hypot(B.e - pt.e, B.n - pt.n) < r;
+    if (!aIn && !bIn && dSeg({ e: pt.e, n: pt.n }, A, B) < r) return true;
+  }
+  return false;
 }

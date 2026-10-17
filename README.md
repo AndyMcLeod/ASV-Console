@@ -361,6 +361,19 @@ with `set N.NN kn DDD°` beneath (in the current line's place when there is none
 there - the vessel reports its set every tick - where the current needs a forecast: none at a
 port whose entry names no model (`ofs`), nor while NOAA's model server is down.
 
+**Bug and reliability review (2026-10-16).** Six area reviews of the whole project, every finding
+re-verified, 28 findings repaired the same day, each with a check that failed on the code before it; the
+report, with file and line for each, is [docs/review-2026-10-16.md](docs/review-2026-10-16.md). What an
+operator can see of it: a route is never shipped across a charted line from a berth alongside it, nor under
+its buffer; a passage's hold survives a page reload, a take-over and Drop passage (End of plan does not send
+her home from it); LINK LOST stops the run and says so, and LINK RESTORED says she is stopped and disarmed -
+check her, then ARM; a second console on the same port exits saying so instead of serving nothing; the
+states' speed zones never hold a chart read past 6 s (a slow service's tiles arrive behind the answer, said
+as still being read); the current readout keeps refreshing while NOAA's model server is slow (the look goes
+on behind it, said), and an unreadable cycle is set aside and fetched again; an E-STOP is taken from any tab
+but released only from the supervising one; a session log that cannot be written says so once and stops
+rather than silently; and a sleeping laptop no longer moves the simulated boat an hour's way in one tick.
+
 ## Run
 
 ```

@@ -645,11 +645,26 @@ class RocTracker:
         # No `home_id` in the file: a key that is written and never honored is a promise the
         # operator reads and the console breaks (see _load). The HOME ROC still survives the
         # cap above, so it is there to select again after a restart.
+        # Whole or not at all (the 2026-10-16 review, finding 25): it was written in place - truncate, then write - so a
+        # crash mid-write left a file _load reads as an empty registry, without a word. A temp of this process and
+        # thread, and the replace retried: on Windows a reader holding the file refuses it.
+        tmp = "%s.%d.%d.part" % (self._config_path, os.getpid(), threading.get_ident())
         try:
-            with open(self._config_path, "w", encoding="utf-8") as f:
+            with open(tmp, "w", encoding="utf-8") as f:
                 json.dump({"rocs": [r.to_config() for r in keep]}, f, indent=2)
+            for i in range(20):
+                try:
+                    os.replace(tmp, self._config_path)
+                    break
+                except PermissionError:
+                    if i == 19:
+                        raise
+                    time.sleep(0.05)
         except OSError:
-            pass
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
 
     # -- registry mutation ----------------------------------------------------- #
     def add(self, kind, name=None, lat=None, lon=None, offset=None, roc_id=None):

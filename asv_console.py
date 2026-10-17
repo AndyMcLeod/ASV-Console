@@ -581,11 +581,11 @@ def load_ports():
 def save_ports():
     """Persist the registry - this is what makes an operator's own port RETAINED."""
     try:
-        tmp = PORTS_PATH + ".tmp"
+        tmp = "%s.%d.%d.part" % (PORTS_PATH, os.getpid(), threading.get_ident())
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump({"active": PORTS["active"], "ports": PORTS["ports"]}, f, indent=2)
             f.write(chr(10))
-        os.replace(tmp, PORTS_PATH)          # atomic: never a half-written registry
+        _replace_retrying(tmp, PORTS_PATH)   # atomic, and RETRIED: a reader holding the file refuses the replace (finding 26)
         return True
     except OSError as e:
         print("[ports] could not save: %s" % e, file=sys.stderr)
@@ -1007,8 +1007,17 @@ class SessionLogger:
             with self._lock:
                 if self._f is not None:
                     self._f.write(line)
-        except (OSError, ValueError, TypeError):
+        except (ValueError, TypeError):
             pass
+        except OSError as e:
+            # ⚠ A LOG THAT CANNOT BE WRITTEN SAYS SO ONCE AND STOPS (the 2026-10-16 review, finding 27): every OSError
+            # was swallowed for ever, so a full drive ended the recording silently while the state still said it was on.
+            self.enabled = False
+            try:
+                print("[log] the session log cannot be written (%s): recording stopped at %s" % (e, self.path),
+                      file=sys.stderr, flush=True)
+            except Exception:               # noqa: BLE001 - a console window that has gone
+                pass
 
     def event(self, kind, **payload):
         """Record a lifecycle marker (session_start/end, connect, disconnect)."""
@@ -1717,6 +1726,7 @@ def load_mission():
             # THE SURVEY BREAK-OFFS (2026-10-11) - carried in both dicts for the same reason as the surveys
             "breaks": m.get("breaks") if isinstance(m.get("breaks"), list) else [],
             "passage": m.get("passage") if isinstance(m.get("passage"), dict) else None,
+            "passage_hold": m.get("passage_hold") if isinstance(m.get("passage_hold"), dict) else None,
             # the revision a page sends back with its next save - see save_mission (review #10)
             "rev": (m.get("rev") if isinstance(m.get("rev"), int) and not isinstance(m.get("rev"), bool)
                     and m.get("rev") >= 0 else 0),
@@ -1727,7 +1737,7 @@ def load_mission():
             "speeds": _norm_speeds(None), "completion": "rth",
             "buffer_m": NOGO_BUFFER_DEFAULT_M, "min_depth_m": 2.0,
             "lead_mode": "m", "lead_in": 0, "lead_out": 0, "turn_ease": "arc",
-            "boundary": [], "boundary_closed": False, "survey_bounded": None, "surveys": [], "breaks": [], "passage": None,
+            "boundary": [], "boundary_closed": False, "survey_bounded": None, "surveys": [], "breaks": [], "passage": None, "passage_hold": None,
             "rev": 0}
     return dict(_MISSION_CACHE)
 
@@ -1777,6 +1787,8 @@ def save_mission(m):
         "surveys": m.get("surveys") or [],          # checked by check_plan_body above; see load_mission
         "breaks": m.get("breaks") or [],            # the survey break-offs (2026-10-11); checked above, see load_mission
         "passage": m.get("passage") if isinstance(m.get("passage"), dict) else None,   # the passage sailed (2026-10-12)
+        # the hold a dropped passage left her at (2026-10-16): {lat, lon, run_seq, t}; carried in load_mission too
+        "passage_hold": m.get("passage_hold") if isinstance(m.get("passage_hold"), dict) else None,
     }
     # ⚠ THE LOCK THE READS NOW HOLD TOO, the previous plan kept (_keep_previous_plan), a temp
     # file per writer, and the replace retried - review #5, see _read_mission_file. The revision is
@@ -1823,11 +1835,13 @@ def _load_comms_config():
 
 
 def _save_comms_config(mode, host, username):
+    """Whole or not at all: a temp of this process and thread, and the replace retried - on Windows a reader holding the
+    file refuses it (the mission store measured 2,460 refusals in 10 s with one reader; finding 26, 2026-10-16)."""
     data = json.dumps({"mode": mode, "host": host, "username": username}, indent=1)
-    tmp = COMMS_CONFIG_PATH + ".part"
+    tmp = "%s.%d.%d.part" % (COMMS_CONFIG_PATH, os.getpid(), threading.get_ident())
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(data)
-    os.replace(tmp, COMMS_CONFIG_PATH)
+    _replace_retrying(tmp, COMMS_CONFIG_PATH)
 
 
 def _signal_pct_from_dbm(dbm, floor=-95.0, ceil=-50.0):
@@ -2389,7 +2403,7 @@ def _enc_layer_map(band, timeout=20.0):
         old = m if time.time() - os.path.getmtime(path) > ENC_LAYER_MAP_MAX_AGE_S else None
         if old is not None:
             m = None
-    except (OSError, ValueError):
+    except (OSError, ValueError, http.client.HTTPException):
         old = None
     if m is None:
         try:
@@ -2397,7 +2411,7 @@ def _enc_layer_map(band, timeout=20.0):
                                          headers={"User-Agent": "ASV-Console/1.0"})
             with urllib.request.urlopen(req, timeout=timeout, context=_enc_ssl()) as r:
                 info = json.loads(r.read())
-        except (OSError, ValueError):
+        except (OSError, ValueError, http.client.HTTPException):
             info = None
         m = {}
         for L in (info or {}).get("layers", []):
@@ -2512,12 +2526,17 @@ ENC_QUERY_BACKOFF_S = (0.5, 1.5)
 
 def _enc_retry(fn, *args):
     """fn(*args), again after a short wait when the SERVICE refused (an error payload, a short answer, an HTTP error
-    status), ENC_QUERY_ATTEMPTS times in all; the last raises. A link that is down (a timeout, no route) raises at
-    once: three 25 s timeouts on a dead link would hold every chart read 75 s before the copy on disk is served."""
+    status, a body cut mid-read), ENC_QUERY_ATTEMPTS times in all; the last raises. A link that is down (a timeout, no
+    route) raises at once: three 25 s timeouts on a dead link would hold every chart read 75 s before the copy on disk
+    is served.
+    ⚠ http.client.IncompleteRead IS NEITHER AN OSError NOR A ValueError (the 2026-10-16 review, finding 9): a body cut
+    mid-read - ordinary on a satellite link, and caught by the water-level readers - was caught by NOTHING in this reader,
+    and one such cut among a tile's ~600 queries unwound the whole build: the child exited 1, the stale copy was not
+    served, and nothing was held, so the next read built it again. Every except in the reader takes HTTPException now."""
     for k in range(ENC_QUERY_ATTEMPTS):
         try:
             return fn(*args)
-        except (urllib.error.HTTPError, ValueError):
+        except (urllib.error.HTTPError, ValueError, http.client.HTTPException):
             if k == ENC_QUERY_ATTEMPTS - 1:
                 raise
             time.sleep(ENC_QUERY_BACKOFF_S[min(k, len(ENC_QUERY_BACKOFF_S) - 1)])
@@ -2534,7 +2553,7 @@ def _enc_pick_band(bbox):
             try:
                 if int(_enc_query(band, lid, bbox, count_only=True).get("count", 0)) > 0:
                     return band
-            except (OSError, ValueError):
+            except (OSError, ValueError, http.client.HTTPException):
                 pass
     return None
 
@@ -2651,19 +2670,19 @@ def fetch_enc_features(bbox, min_depth=0.0, band=None, extras=True, use_cache=Tr
             # the plain bbox+geometry query returns them EMPTY on some line layers.
             try:
                 ids = _enc_retry(_enc_query_ids, band, lid, bbox)
-            except (OSError, ValueError):
+            except (OSError, ValueError, http.client.HTTPException):
                 return (False, cls, [])
             if not ids:
                 return (True, cls, [])                 # genuinely nothing of this class here
             try:
                 features = _enc_retry(_enc_query_by_ids, band, lid, ids)
-            except (OSError, ValueError):
+            except (OSError, ValueError, http.client.HTTPException):
                 try:                                   # last resort: the direct query
                     d = _enc_query(band, lid, bbox)
                     if isinstance(d.get("error"), dict) or d.get("exceededTransferLimit"):
                         return (False, cls, [])
                     features = d.get("features", [])
-                except (OSError, ValueError):
+                except (OSError, ValueError, http.client.HTTPException):
                     return (False, cls, [])
             # ⚠⚠ A SHORT ANSWER IS A FAILED LAYER, NOT A THIN ONE. `resultRecordCount` is
             # a REQUEST; the service caps at its own maxRecordCount - 1000 on ENCDirect -
@@ -2827,7 +2846,7 @@ def _enc_coverage(band, tile):
         if time.time() - os.path.getmtime(path) <= ENC_TILE_FRESH_S:
             with open(path, "r", encoding="utf-8") as f:
                 return json.load(f)
-    except (OSError, ValueError):
+    except (OSError, ValueError, http.client.HTTPException):
         pass
     lm = _enc_layer_map(band)
     if not lm:
@@ -3131,7 +3150,7 @@ def _enc_tile_build(tile):
     try:
         idx = [_cov_index(_enc_coverage(b, tile)) for b in ENC_BANDS]
         berth = _enc_coverage(ENC_BERTHING, tile)
-    except (OSError, ValueError) as e:
+    except (OSError, ValueError, http.client.HTTPException) as e:
         if isinstance(e, OSError):
             _enc_down_until = time.monotonic() + 30.0
         return dict(fail, note="the chart's coverage could not be read here (%s)" % e)
@@ -3480,15 +3499,25 @@ def _tile_refresh_later(tile):
         _enc_tile_refreshing.add(key)
 
     def run():
+        ok = False
         try:
             got = _tile_build_now(tile)
             if got.get("complete"):
                 _tile_keep(key, got)
+                ok = True
         except Exception as e:                     # a refresh must never take anything else with it
             print("[enc] the re-read of tile %s failed: %s" % (key, e), file=sys.stderr)
         finally:
+            # ⚠ A RE-READ THAT FAILED HOLDS THE COPY ENC_TILE_RETRY_S (the 2026-10-16 review, finding 14): nothing recorded
+            # the failure, so every chart read - the nogo refresh, a Go-To, the guard's reads - started another child of
+            # some six hundred queries behind the served copy, back to back for as long as NOAA stayed short, with the
+            # one build slot busy on it while the tiles a passage needed queued behind.
             with _enc_tile_locks_lock:
                 _enc_tile_refreshing.discard(key)
+                if not ok:
+                    mem = _enc_tile_mem.get(key)
+                    if mem is not None:
+                        mem["retry_at"] = time.time() + ENC_TILE_RETRY_S
     threading.Thread(target=run, name="enc-refresh", daemon=True).start()
 
 
@@ -3528,9 +3557,11 @@ def fetch_enc_tile(tile):
         got = _tile_build_now(tile)
         if got.get("complete"):
             _tile_keep(key, got)
-        elif got.get("stale") or (got.get("bands") and not got.get("unread_failed")):
-            # An older copy, or a fresh read short of a layer, is HELD ENC_TILE_RETRY_S before it is read again: each read
-            # is a child and some six hundred queries, and the page asks for its tiles every time it reads the chart.
+        else:
+            # An older copy, a fresh read short of a layer - AND a read that got no chart at all (its coverage refused
+            # by the service: the 2026-10-16 review, finding 14) - is HELD ENC_TILE_RETRY_S before it is read again: each
+            # read is a child and some six hundred queries, and the page asks for its tiles every time it reads the chart.
+            # (A link that is DOWN sets the breaker instead, _enc_tile_build.)
             got["retry_at"] = now + ENC_TILE_RETRY_S
             _tile_keep(key, got)
         return got
@@ -4170,7 +4201,7 @@ def fetch_chart_info(bbox):
         if time.time() - os.path.getmtime(cache) <= ENC_TILE_FRESH_S:
             with open(cache, "r", encoding="utf-8") as f:
                 return json.load(f)
-    except (OSError, ValueError):
+    except (OSError, ValueError, http.client.HTTPException):
         pass
     if time.monotonic() < _enc_down_until:
         return {"band": None, "cells": [], "quality": [], "note": "ENC offline"}
@@ -4189,7 +4220,7 @@ def fetch_chart_info(bbox):
             feats = _enc_retry(_enc_query_by_ids, band, lid, ids) if ids else []
             if len(feats) < len(ids):
                 raise ValueError("short")
-        except (OSError, ValueError):
+        except (OSError, ValueError, http.client.HTTPException):
             failed.append(cls)
             continue
         for ft in feats:
@@ -4919,6 +4950,9 @@ class WaterLevel:
             self._force.set()
 
     def set_manual(self, offset):
+        # (a finite number or nothing - the 2026-10-16 review, finding 10: json.loads reads `Infinity`, float() keeps it)
+        if offset is not None and not math.isfinite(float(offset)):
+            raise ValueError("manual water level must be a finite number of meters")
         with self._lock:
             self._manual = None if offset is None else float(offset)
 
@@ -5390,7 +5424,13 @@ class EnvMonitor:
                     if v in (None, ""):
                         m.pop(k, None)
                     else:
-                        m[k] = float(v)
+                        # ⚠ FINITE, OR REFUSED (the 2026-10-16 review, finding 10). `json.loads` accepts a bare
+                        # Infinity or NaN and float() keeps it; the sim's trig then raised on every tick - twelve of
+                        # them read as LINK LOST - and a NaN drift left her position NaN until Reset.
+                        fv = float(v)
+                        if not math.isfinite(fv):
+                            raise ValueError("%s must be a finite number" % k)
+                        m[k] = fv
             self._manual = m
 
     def refresh_now(self):
@@ -5794,6 +5834,7 @@ class CurrentsMonitor:
     # only every POLL_S, so it could be a quarter of an hour behind the tide it describes (review #13).
     SAMPLE_S = 60.0
     PROBE_TIMEOUT_S = 10.0               # the one GET that says WHY there is no cycle (_why_no_cycle)
+    CYCLE_WAIT_S = 20.0                  # a pass waits this long for the look before sampling (_look_for_cycle)
     REFETCH_KM = 15.0                    # a move this far re-scopes the fetch bbox
     BBOX_DEG = 0.35                      # ~39 km half-box around the boat
 
@@ -5808,6 +5849,9 @@ class CurrentsMonitor:
         self._sampled_at = None          # when _last was computed (epoch)
         self._error = None               # the last pass's failure, if it raised - see _monitor_pass
         self._no_cycle_why = None        # why the last look found no cycle - see _pass
+        self._look = None                # the look for a cycle in flight - see _look_for_cycle
+        self._relook = False             # look again at once when the look in flight is collected
+        self._aside = set()              # the cycles set aside as unreadable, once each - see _ensure_cycle
         self._force = threading.Event()
         self._stop = threading.Event()
         # THE OTHER LAYERS, ON THEIR OWN THREAD (stream_fusion.StreamSources): NOAA's station predictions and a PacIOOS
@@ -6001,6 +6045,7 @@ class CurrentsMonitor:
         cycle could be had, or None."""
         if not self._ofs:                    # no model named: no NOAA request at all (2026-10-09)
             return NO_OFS_NOTE
+        ofs = self._ofs                      # the model this look is for (it runs behind the pass: _look_for_cycle)
         now = datetime.now(timezone.utc)
         bbox = (lat - self.BBOX_DEG, lon - self.BBOX_DEG,
                 lat + self.BBOX_DEG, lon + self.BBOX_DEG)
@@ -6046,6 +6091,8 @@ class CurrentsMonitor:
             if not tag:
                 return "%s; its S3 copy holds no %s cycle covering now" % (why, self._ofs.upper())
             print("[currents] NOAA's model server is down - %s read from its S3 copy" % tag, file=sys.stderr)
+        if self._ofs != ofs:
+            return None                      # the model was switched while this look ran: its cycle is the old grid's
         if tag != self._tag or self._cur is None:
             try:
                 self._cur = currents.Currents(tag=tag)
@@ -6055,8 +6102,72 @@ class CurrentsMonitor:
                       % (tag, self._cur.start.strftime("%Y-%m-%d %H:%MZ"),
                          self._cur.end.strftime("%H:%MZ")), file=sys.stderr)
             except Exception as e:
-                print("[currents] cycle %s unreadable: %s" % (tag, e), file=sys.stderr)
+                # ⚠ A CYCLE THAT CANNOT BE READ IS SET ASIDE (the 2026-10-16 review, finding 13). The reader writes
+                # <tag>_meta.json before <tag>_uv.bin.gz: a console killed between the two left a cycle every look
+                # returned (covering_cycle reads the meta alone), Currents refused, this line printed, and she had no
+                # model current for as long as its span covered now - nothing deleted it or fetched it again. Its files
+                # are renamed .unreadable and it is fetched again: at once the first time, at the next look after that
+                # (a cycle that comes back unreadable - a full disk - must not be fetched every pass).
+                moved = self._set_aside(tag)
+                aside = getattr(self, "_aside", None)
+                first = aside is not None and tag not in aside
+                if aside is not None:
+                    aside.add(tag)
+                when = "now" if first else "at the next look"
+                print("[currents] cycle %s unreadable: %s - set aside (%s), fetched again %s"
+                      % (tag, e, ", ".join(moved) or "no file to move", when), file=sys.stderr)
+                if first:
+                    self._relook = True
+                return "%s cycle %s could not be read (%s): set aside, fetched again %s" % (self._ofs, tag, type(e).__name__, when)
         return None
+
+    def _set_aside(self, tag):
+        """A cycle's cache files renamed .unreadable, so no look returns it again; the names moved, for the log."""
+        moved = []
+        for name in ("%s_meta.json" % tag, "%s_uv.bin.gz" % tag):
+            p = currents.CACHE / name
+            try:
+                if p.exists():
+                    os.replace(str(p), str(p) + ".unreadable")
+                    moved.append(name)
+            except OSError as e:
+                moved.append("%s not moved: %s" % (name, e))
+        return moved
+
+    def _look_for_cycle(self, lat, lon):
+        """The look for a cycle (_ensure_cycle) on its own thread, waited for CYCLE_WAIT_S: its answer, or that it has
+        not answered yet.
+
+        ⚠ THE LOOK HELD THE PASS (the 2026-10-16 review, finding 12). currents._get asks a stalled THREDDS four times at
+        180 s, in series, with no deadline - and the READING, recomputed from the cached cycle every SAMPLE_S, follows
+        the look in the same pass: a server that accepted and never answered froze the readout for up to 24 minutes.
+        The look goes on behind the pass now (the cycle it finds is installed by the look itself, so the reading has it
+        the moment it lands); the passes between keep the reading moving, and the readout says the look is still out.
+        One look at a time: a pass due while one runs waits for it and does not start another. A look collected after
+        she moved REFETCH_KM from where it looked, or one that set a cycle aside, is followed by another at once."""
+        lk = getattr(self, "_look", None)
+        if lk is None:
+            lk = {"thread": None, "result": None, "error": None, "started": time.time(), "pos": (lat, lon)}
+
+            def run():
+                try:
+                    lk["result"] = self._ensure_cycle(lat, lon)
+                except Exception as e:             # noqa: BLE001 - carried to the pass, which raises it as before
+                    lk["error"] = e
+            lk["thread"] = threading.Thread(target=run, name="currents-look", daemon=True)
+            self._look = lk
+            lk["thread"].start()
+        lk["thread"].join(self.CYCLE_WAIT_S)
+        if lk["thread"].is_alive():
+            return ("the look for a %s cycle has not answered in %.0f s - it goes on behind this reading"
+                    % (self._ofs.upper() if self._ofs else "model", time.time() - lk["started"]))
+        self._look = None
+        if getattr(self, "_relook", False) or _haversine_km(lk["pos"][0], lk["pos"][1], lat, lon) > self.REFETCH_KM:
+            self._relook = False
+            self._force.set()
+        if lk["error"] is not None:
+            raise lk["error"]
+        return lk["result"]
 
     def _why_no_cycle(self):
         """WHY THERE IS NO CYCLE, in NOAA's terms, when the reader found none - or None to keep the generic note.
@@ -6101,8 +6212,9 @@ class CurrentsMonitor:
                 due = 0.0                            # landing between the two - it failed a commit, under load
 
     def _pass(self, pos, look):
-        if look:
-            self._no_cycle_why = self._ensure_cycle(pos[0], pos[1])
+        lk = getattr(self, "_look", None)
+        if look or (lk is not None and not lk["thread"].is_alive()):   # due, or a look that finished behind a pass
+            self._no_cycle_why = self._look_for_cycle(pos[0], pos[1])
         res = self._sample(pos[0], pos[1])
         if self._no_cycle_why and self._cur is None:
             # WHY THERE IS NO CYCLE, not "no cycle cached yet": _ensure_cycle's reason used to be overwritten
@@ -6189,8 +6301,14 @@ def _json_body_yielding(obj):
 
 
 def _opt_float(v):
-    """None/"" -> None; else float(v). For optional numeric fields in JSON bodies."""
-    return None if v in (None, "") else float(v)
+    """None/"" -> None; else a FINITE float(v) - a NaN or an infinity is refused (ValueError), as _coord refuses them: one
+    posted to /api/roc as a range or a heading reached roc_config.json (the 2026-10-16 review, finding 21)."""
+    if v in (None, ""):
+        return None
+    fv = float(v)
+    if not math.isfinite(fv):
+        raise ValueError("%r is not a finite number" % (v,))
+    return fv
 
 
 def _coord(v, what):
@@ -7241,6 +7359,7 @@ class Engine:
     LINK_LOST = "lost"
 
     TICK_HZ = 4.0
+    DT_MAX_S = 1.0                       # the most one tick may advance her (clamp_dt)
     MISS_LOST = 12          # ticks with no telemetry -> link lost
 
     def __init__(self):
@@ -7305,6 +7424,7 @@ class Engine:
         self.wp_index = 0
         self.wp_total = 0
         self._misses = 0
+        self._frames_seen = False  # has THIS link ever produced a frame (a lost link that never spoke is not in failsafe)
         # THE COMMAND GENERATION. Bumped, under the lock, by every command that changes what the
         # run is doing; the telemetry loop notes it before it asks the link for a frame, and a
         # frame read before a command is never applied after it - see _commanded and _run.
@@ -7347,8 +7467,8 @@ class Engine:
             except queue.Full:
                 try:
                     q.get_nowait(); q.put_nowait(data)
-                except queue.Empty:
-                    pass
+                except (queue.Empty, queue.Full):     # a second publisher refilled it between the two: this frame is
+                    pass                              # lost to that sleeping tab, not raised out of a Stop (finding 16)
 
     def _push_state(self):
         ev = self.state()
@@ -7384,6 +7504,7 @@ class Engine:
             self.run = "idle"
             self.wp_index = self.wp_total = 0
             self._misses = 0
+            self._frames_seen = False
             self.loop_fault = None           # it described the previous link's loop
             self._loop_clean_ticks = 0
             # ... and with NO telemetry: status was only ever ASSIGNED on a frame, so
@@ -8368,13 +8489,23 @@ class Engine:
         if LOG is not None:
             LOG.event("loop_recovered", error=gone["error"], count=gone["count"])
 
+    @classmethod
+    def clamp_dt(cls, dt):
+        """A tick's dt, bounded: never negative, never more than DT_MAX_S.
+
+        ⚠ THE LOOP'S dt WAS THE WALL CLOCK, UNCLAMPED (the 2026-10-16 review, finding 15): a laptop asleep for an hour
+        woke to one tick of 3600 s and the sim moved her an hour's way in one hop, through anything; a clock stepped
+        back made it negative, which inverts the speed clamp. The loop reads a monotonic clock now (a clock step cannot
+        move it), and a long gap is worth one tick's dt at most."""
+        return min(max(float(dt), 0.0), cls.DT_MAX_S)
+
     def _run_loop(self, stop):
         period = 1.0 / self.TICK_HZ
-        last = time.time()
+        last = time.monotonic()
         while not stop.is_set():
             time.sleep(period)
-            now = time.time()
-            dt = now - last
+            now = time.monotonic()
+            dt = self.clamp_dt(now - last)
             last = now
             with self._lock:
                 link = self._link
@@ -8402,10 +8533,11 @@ class Engine:
                     # uploads and STARTS the link. The link did answer, so this is not a miss; the
                     # next frame is read after the command and describes it.
                     self._misses = 0
-                    self.link = self.LINK_OK
+                    self._link_back()
                 elif telem:
                     self._misses = 0
-                    self.link = self.LINK_OK
+                    self._frames_seen = True
+                    self._link_back()
                     # the link's own set where it reports one, else the stream forecast under her (with_forecast_set)
                     telem = with_forecast_set(telem)
                     self.status = telem
@@ -8527,13 +8659,42 @@ class Engine:
                 else:
                     self._misses += 1
                     if self._misses >= self.MISS_LOST and self.link != self.LINK_LOST:
-                        self.link = self.LINK_LOST
-                        # link-loss is safe: stop commanding, surface the failsafe
-                        self.armed = False
-                        self.note = ("LINK LOST - commanding halted. ASV failsafe: "
-                                     "motors to 0, steering straight. Take the RC.")
+                        self._link_lost(link)
             self._push_state()
             self._loop_clean()
+
+    def _link_lost(self, link):
+        """MISS_LOST ticks with no frame, under the lock. Link-loss is safe: commanding stops and the failsafe is said -
+        AND DONE (the 2026-10-16 review, finding 5): this said "motors to 0" and told the vessel nothing, so the simulated
+        boat sailed on under a disarmed console whose guard had stood down. The link is told to stop (the sim stops; a real
+        link in Phase 0 refuses, and its own failsafe is the vessel's). A link that has NEVER produced a frame (finding 24:
+        RealVcu answers the transport and no frame) is not a vessel in failsafe - it is one the console has never heard
+        from, and the note says that instead."""
+        self.link = self.LINK_LOST
+        self.armed = False
+        if not self._frames_seen:
+            self.run = "idle"
+            self.note = ("NO TELEMETRY from the vessel since connecting: the link answers the transport and sends no "
+                         "frame (the VCU wire protocol is not implemented yet - run --sim). Nothing is commanded.")
+            return
+        try:
+            link.stop()
+        except Exception as e:                # a link that refuses: the failsafe is the vessel's own, and still said
+            print("[link] lost: the link did not take the stop: %s: %s" % (type(e).__name__, e), file=sys.stderr)
+        self.run = "stopped"
+        self._commanded()
+        self.note = ("LINK LOST - commanding halted. ASV failsafe: "
+                     "motors to 0, steering straight. Take the RC.")
+
+    def _link_back(self):
+        """A frame after a loss, under the lock (finding 5): the link reads OK again, she stays DISARMED - the failsafe
+        stopped her, and arming is the operator's - and the note says so, in place of the loss (or the fault that caused
+        it), which stood for ever."""
+        if self.link == self.LINK_LOST:
+            self.note = ("LINK RESTORED. She was stopped by the failsafe and is disarmed: check her, then ARM to continue.")
+        elif self.link == self.LINK_OK and str(self.note or "").startswith("link error: "):
+            self.note = "Link OK again."
+        self.link = self.LINK_OK
 
     # -- state snapshot for SSE ------------------------------------------- #
     def _autonomy_label(self):
@@ -8549,6 +8710,7 @@ class Engine:
 
     def state(self):
         st = dict(self.status)
+        link = self._link                    # read ONCE: a disconnect between two reads raised in here (finding 23)
         etype = st.get("energy_type", POWER_TYPE)
         if etype == "fuel" and st.get("fuel_l") is not None and FUEL_CAPACITY_L > 0:
             # Diesel: report tank %, and a live endurance (hrs) + range (nm) at the
@@ -8600,14 +8762,14 @@ class Engine:
             "plan_uploaded": self.plan_uploaded,
             # An uploaded plan waiting for Start while the boat carries on (station-keeping or
             # paused) - the page enables Start for it even though the run reads "running".
-            "plan_staged": bool(self._link is not None and self._link.plan_staged),
+            "plan_staged": bool(link is not None and link.plan_staged),
             "route_max_wpts": ROUTE_MAX_WPTS,          # a longer route is refused whole (review #9)
             # a fault the telemetry loop survived: {error, count, since}, or None (review #12)
             "loop_fault": dict(lf) if lf else None,
             "log_quiet": bool(LOG is not None and LOG.quiet),
             # The loop publishes a frame on EVERY tick while a link exists, healthy or lost, so frames
             # that stop while this is true mean the console stopped - the page says TELEMETRY STALE.
-            "streaming": self._link is not None,
+            "streaming": link is not None,
             "run": self.run,
             "autonomy": self._autonomy_label(),
             "behavior": self.behavior,
@@ -8813,6 +8975,18 @@ class Server(ThreadingHTTPServer):
     exactly those; let any real error surface as usual."""
 
     daemon_threads = True
+    # ⚠ ONE CONSOLE PER PORT (the 2026-10-16 review, finding 8). HTTPServer sets SO_REUSEADDR, and on Windows that lets a
+    # SECOND listening socket bind the same address with no error: a console started on a port another one serves
+    # printed "serving at", opened its browser windows (which talked to the OLD console), started its own engine and
+    # session log, and served nothing - until the first console closed, when it took every connection; a console
+    # restarted then bound beside it and served nothing either, the page commanding a stale process. Reproduced on a
+    # scratch port. SO_EXCLUSIVEADDRUSE refuses the second bind (WinError 10048), and main() says so and exits.
+    allow_reuse_address = False
+
+    def server_bind(self):
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
 
     def handle_error(self, request, client_address):
         exc = sys.exc_info()[1]
@@ -9180,7 +9354,7 @@ class Handler(BaseHTTPRequestHandler):
         body = self._read_json()
         refused = post_refusal(self.path, self.headers.get("Content-Type"), body)   # review #25: JSON, or a stop
         if not refused:              # review #14: one tab supervises; the others watch (a stop is still taken)
-            refused = supervisor_refusal(self.path, self.headers.get("X-ASV-Client"))
+            refused = supervisor_refusal(self.path, self.headers.get("X-ASV-Client"), body)
         try:
             code, obj = refused if refused else self._dispatch_post(self.path, body)
         except Exception as e:
@@ -9199,7 +9373,7 @@ class Handler(BaseHTTPRequestHandler):
         if LOG is not None and self.path not in LOG_QUIET_POSTS and not (LOG.quiet and self.path == "/api/logevent"):
             LOG.command(self.path, body, code,
                         obj.get("error") if isinstance(obj, dict) else None)
-        self._send(code, json.dumps(obj))
+        self._send(code, json.dumps(finite_only(obj)))   # nothing non-finite leaves by a POST either (finding 21)
 
     def _dispatch_post(self, path, body):
         """Route a POST to its handler; return (http_code, response_obj). Split
@@ -9602,7 +9776,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         q = ENGINE.subscribe()
         try:
-            self.wfile.write(b"data: " + json.dumps(ENGINE.state()).encode() + b"\n\n")
+            self.wfile.write(b"data: " + json.dumps(finite_only(ENGINE.state())).encode() + b"\n\n")
             self.wfile.flush()
             while True:
                 try:
@@ -10261,16 +10435,26 @@ def _busy_seconds(v):
     return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and v > 0 else None
 
 
-def supervisor_refusal(path, client_id):
+def supervisor_refusal(path, client_id, body=None):
     """(409, {error}) when a tab the console KNOWS, and which is not the supervisor, commands anything but a stop.
-    An anonymous caller passes: this guards the operator's own second tab, not the API."""
-    if not path.startswith("/api/cmd/") or path in SUPERVISOR_ANY:
+    An anonymous caller passes: this guards the operator's own second tab, not the API.
+
+    ⚠ AN E-STOP IS TAKEN FROM ANY TAB; ITS RELEASE ONLY FROM THE SUPERVISING ONE (the 2026-10-16 review, finding 22).
+    SUPERVISOR_ANY let the whole estop path through, both directions, so a second tab could release a latch the
+    supervising tab had set. The latch stays ungated by design; the release is a command like any other."""
+    if not path.startswith("/api/cmd/"):
+        return None
+    release = path == "/api/cmd/estop" and body is not None and not estop_wants_latch(body)
+    if path in SUPERVISOR_ANY and not release:
         return None
     cid = str(client_id or "")[:64]
     if not cid or SUPERVISION.is_holder(cid) or not SUPERVISION.knows(cid):
         return None
-    return 409, {"error": "another browser tab is supervising this console. Command from that tab, or press "
-                          "TAKE OVER here - Stop, Pause and E-STOP are taken from any tab.",
+    return 409, {"error": ("another browser tab is supervising this console: the E-STOP stays latched. Release it from "
+                           "that tab, or press TAKE OVER here - an E-STOP is taken from any tab, its release only from "
+                           "the supervising one." if release else
+                           "another browser tab is supervising this console. Command from that tab, or press "
+                           "TAKE OVER here - Stop, Pause and E-STOP are taken from any tab."),
                  "supervisor": SUPERVISION.snapshot()}
 
 
@@ -10573,6 +10757,41 @@ def use_mission_path(path):
     return path
 
 
+LEFTOVER_MIN_AGE_S = max(3600.0, 2.0 * ENC_TILE_BUILD_TIMEOUT_S)
+_LEFTOVER_RE = re.compile(r"(\.\d+\.\d+\.(part|build)|\.part\.\d+|\.gz\.part|^comms_config\.json\.part|^ports\.json\.tmp)$")
+
+
+def _sweep_leftovers(dirs=None, min_age_s=None, now=None):
+    """The temp files a KILLED process leaves - <file>.<pid>.<tid>.part and .build, <file>.part.<tid>, the compressor's
+    .gz.part, the old comms_config.json.part and ports.json.tmp - removed at startup once they are older than
+    `min_age_s` (the 2026-10-16 review, finding 28: nothing swept them). The age is what keeps another console's LIVE
+    temp: two consoles share charts/, a .build lives at most ENC_TILE_BUILD_TIMEOUT_S, a .part seconds. The state folder
+    is swept at its top level only (by default it is the app folder); charts/ and logs/ throughout. The paths removed."""
+    now = time.time() if now is None else now
+    min_age_s = LEFTOVER_MIN_AGE_S if min_age_s is None else min_age_s
+    if dirs is None:
+        dirs = ((os.path.dirname(MISSION_PATH), False), (CHART_DIR, True), (LOG_DIR, True))
+    gone = []
+    for d, recurse in dirs:
+        if not d or not os.path.isdir(d):
+            continue
+        for root, subdirs, files in os.walk(d):
+            if not recurse:
+                subdirs[:] = []
+            for fn in files:
+                if not _LEFTOVER_RE.search(fn):
+                    continue
+                p = os.path.join(root, fn)
+                try:
+                    if now - os.path.getmtime(p) < min_age_s:
+                        continue
+                    os.remove(p)
+                    gone.append(p)
+                except OSError:
+                    pass
+    return gone
+
+
 def main():
     global AIS_BASE, AIS_COLLECT_RADIUS_KM, AIS_SHOW_RADIUS_KM
     global AIS_SOURCE_ARG, AIS_NMEA_SPECS, AIS_OPENCPN
@@ -10778,6 +10997,9 @@ def main():
     # log_dir PASSED, not defaulted: the default was bound when the class was defined, before
     # --state-dir could move LOG_DIR (review #16).
     LOG = SessionLogger(enabled=not args.no_log, log_dir=LOG_DIR, quiet_after_s=args.log_quiet_s)
+    swept = _sweep_leftovers()                    # what a killed process left behind (finding 28)
+    if swept:
+        print("[state] %d temp file(s) a killed process had left were removed" % len(swept), file=sys.stderr)
     STORAGE.start()                               # sizes of logs/ and charts/, and a warning when a drive runs low
     SUPERVISION.start()                           # says when the supervising tab stops reporting (review #14)
     STOFS.start()                                 # NOAA STOFS-3D's surge forecast, fetched for the domain she is in
@@ -10785,7 +11007,18 @@ def main():
         LOG.event("session_start", pid=os.getpid(), argv=sys.argv[1:],
                   host=args.host, port=args.port)
 
-    srv = Server((args.host, args.port), Handler)
+    try:
+        srv = Server((args.host, args.port), Handler)
+    except OSError as e:
+        # (the Server's note: another console is serving this port - say so instead of a traceback, or worse, a ghost)
+        msg = ("port %d on %s is in use - another console (or something else) is serving it. Close it, or start this one "
+               "with --port <another>." % (args.port, args.host))
+        print("ASV Console: " + msg, file=sys.stderr)
+        if LOG.enabled:
+            LOG.event("session_end", reason="port in use", error=str(e))
+            LOG.close()
+        _stop_ais_service()
+        sys.exit(2)
     url = "http://%s:%d/" % ("localhost" if args.host in ("0.0.0.0", "127.0.0.1") else args.host, args.port)
 
     if args.sim:

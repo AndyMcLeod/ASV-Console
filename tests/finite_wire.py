@@ -158,6 +158,54 @@ check("4. both doors a frame leaves by are sanitised - the stream AND the polled
               % ("json.dumps(finite_only(event))" in _src,
                  "json.dumps(finite_only(ENGINE.state()))" in _src))
 
+# ── THE TWO OVERRIDES THAT TOOK A NON-FINITE NUMBER (the 2026-10-16 review, finding 10) ──────────────────────────────
+# /api/env and /api/waterlevel cast with float() and no finiteness check; json.loads accepts a bare Infinity or NaN, so
+# wind_from=inf reached math.sin on every sim tick (twelve raising ticks read as LINK LOST) and hs_m=inf left her
+# position NaN until Reset. Refused in words now, as the plan's fields and every other command surface refuse them.
+
+
+def _refuses(fn):
+    try:
+        fn()
+        return None
+    except (TypeError, ValueError) as e:
+        return str(e)
+
+
+env_inf = _refuses(lambda: A.ENV.set_manual({"wind_kn": float("inf")}))
+env_nan = _refuses(lambda: A.ENV.set_manual({"wave_from": float("nan")}))
+env_txt = _refuses(lambda: A.ENV.set_manual({"hs_m": "Infinity"}))
+env_ok = _refuses(lambda: A.ENV.set_manual({"wind_kn": 12.5, "wind_from": 270}))
+env_has = dict(getattr(A.ENV, "_manual", {}) or {})
+A.ENV.set_manual({"clear": True})
+wl_nan = _refuses(lambda: A.WATER.set_manual(float("nan")))
+wl_inf = _refuses(lambda: A.WATER.set_manual("inf"))
+wl_ok = _refuses(lambda: A.WATER.set_manual(0.35))
+wl_has = A.WATER.snapshot().get("offset_m")
+A.WATER.set_manual(None)
+check("5. THE ENV AND WATER-LEVEL OVERRIDES REFUSE A NON-FINITE NUMBER in words (Infinity, NaN, the string 'Infinity'), "
+      "and take a finite one as before",
+      lambda: env_inf and "finite" in env_inf and env_nan and "finite" in env_nan and env_txt and "finite" in env_txt
+      and env_ok is None and env_has.get("wind_kn") == 12.5 and env_has.get("wind_from") == 270
+      and wl_nan and "finite" in wl_nan and wl_inf and "finite" in wl_inf and wl_ok is None and wl_has == 0.35,
+      "env: inf %r, nan %r, text %r, ok %r -> %s; water: nan %r, inf %r, ok %r -> %s"
+      % (env_inf, env_nan, env_txt, env_ok, env_has, wl_nan, wl_inf, wl_ok, wl_has))
+
+# ── POST RESPONSES AND THE FIRST SSE FRAME GO THROUGH finite_only TOO (the 2026-10-16 review, finding 21) ───────────
+# The GET responders and the stream did; a POST's answer did not, so a NaN posted to /api/roc as a range or a heading came
+# back as a bare NaN the page could not parse - and was persisted. An optional number off a body is refused non-finite now.
+of_nan = _refuses(lambda: A._opt_float(float("nan")))
+of_inf = _refuses(lambda: A._opt_float("inf"))
+of_ok = A._opt_float("12.5")
+check("6. THE POST RESPONDER AND THE FIRST SSE FRAME pass finite_only, and an optional number off a body refuses NaN and "
+      "inf in words while taking 12.5",
+      lambda: "self._send(code, json.dumps(finite_only(obj)))" in _src
+      and "json.dumps(finite_only(ENGINE.state())).encode()" in _src
+      and of_nan and "finite" in of_nan and of_inf and "finite" in of_inf and of_ok == 12.5,
+      "post responder %s; sse %s; nan %r; inf %r; ok %r"
+      % ("self._send(code, json.dumps(finite_only(obj)))" in _src, "json.dumps(finite_only(ENGINE.state())).encode()" in _src,
+         of_nan, of_inf, of_ok))
+
 print(("\n%d CHECK(S) FAILED (%d ran)" % (fails, ran)) if fails
       else ("\nall checks passed (%d)" % ran))
 sys.exit(1 if fails else 0)

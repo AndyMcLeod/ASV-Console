@@ -323,14 +323,29 @@ export function searchLeg(field, a, b, ports, popCap = SEARCH_POP_CAP) {
   return { error: "blocked", pops };
 }
 
-/** The cells a straight segment between two cells' centers passes through (sampled at a quarter cell). */
+/**
+ * The cells a straight segment between two cells' centers passes through - EVERY one of them (the 2026-10-16 review,
+ * finding 6). Sampled at a quarter cell, a segment clipped a blocked cell's corner between two samples: 26 taut segments
+ * in 300 random fields ran through a blocked cell's interior, one through the corner shared by two diagonal blocked
+ * cells (the cut searchLeg forbids), and narrowStretches - the same sampler - flagged none of them for the detail
+ * planner. This is a grid walk, cell boundary by cell boundary; a pass exactly through a corner lists BOTH cells beside
+ * it, so a corner between two blocked cells is a blocked cell on the way, as the search reads it.
+ */
 export function lineCells(a, b) {
-  const n = Math.max(1, Math.ceil(Math.max(Math.abs(b.gx - a.gx), Math.abs(b.gy - a.gy)) * 4));
-  const out = [];
-  let lx = null, ly = null;
-  for (let k = 0; k <= n; k++) {
-    const x = Math.floor(a.gx + 0.5 + (b.gx - a.gx) * k / n), y = Math.floor(a.gy + 0.5 + (b.gy - a.gy) * k / n);
-    if (x !== lx || y !== ly) { out.push({ gx: x, gy: y }); lx = x; ly = y; }
+  const x0 = a.gx + 0.5, y0 = a.gy + 0.5, dx = b.gx - a.gx, dy = b.gy - a.gy;
+  const out = [{ gx: a.gx, gy: a.gy }];
+  if (!dx && !dy) return out;
+  let gx = a.gx, gy = a.gy;
+  const sx = dx > 0 ? 1 : -1, sy = dy > 0 ? 1 : -1;
+  const tDx = dx ? Math.abs(1 / dx) : Infinity, tDy = dy ? Math.abs(1 / dy) : Infinity;
+  let tX = dx ? ((dx > 0 ? gx + 1 : gx) - x0) / dx : Infinity, tY = dy ? ((dy > 0 ? gy + 1 : gy) - y0) / dy : Infinity;
+  for (let guard = 0; (gx !== b.gx || gy !== b.gy) && guard < 1e6; guard++) {
+    if (Math.abs(tX - tY) < 1e-9) {               // through a corner: the two cells beside it, then the one across it
+      out.push({ gx: gx + sx, gy }, { gx, gy: gy + sy });
+      gx += sx; gy += sy; tX += tDx; tY += tDy;
+    } else if (tX < tY) { gx += sx; tX += tDx; }
+    else { gy += sy; tY += tDy; }
+    out.push({ gx, gy });
   }
   return out;
 }

@@ -801,6 +801,55 @@ try:
         _fault["mode"] = None
         E.unsubscribe(q)
 
+    # ── 17h. LINK LOST STOPS THE VESSEL IT SAYS IS STOPPED, AND THE RESTORE SAYS WHERE SHE STANDS (the 2026-10-16
+    #        review, finding 5) ──
+    # The loss announced "ASV failsafe: motors to 0" and told the vessel nothing: the sim sailed on under a disarmed
+    # console whose guard had stood down, and a restore re-greened the link with the stale "link error" note standing.
+    E.connect("sim", "", _C.DEFAULT_VCU_PORT, "tcp")
+    _until(lambda: E.status.get("lat_deg") is not None, 10.0)
+    if not E.armed:
+        E.set_armed(True)
+    E.go_to(*far)
+    under_way = _until(lambda: E.status.get("running") and (E.status.get("sog_kn") or 0) > 1.0, 10.0)
+    link17 = E._link
+    real_tick = link17.tick
+
+    def _tick_fell_over(dt):
+        raise RuntimeError("a frame that fell over")
+    link17.tick = _tick_fell_over
+    lost_after = _until(lambda: E.link == E.LINK_LOST, 10.0)
+    at_loss = {"armed": E.armed, "run": E.run, "note": E.note or "", "sim_running": getattr(link17, "_running", None)}
+    link17.tick = real_tick
+    back_after = _until(lambda: E.link == E.LINK_OK, 10.0)
+    _until(lambda: E.status.get("running") is False, 5.0)
+    at_back = {"armed": E.armed, "run": E.run, "note": E.note or "", "running": E.status.get("running"), "sog": E.status.get("sog_kn")}
+    check("17h. LINK LOST (12 frames that fell over, under way): the console disarms, the run reads stopped, the failsafe is "
+          "said - and DONE: the sim is stopped; frames again: the link is OK, she stays DISARMED (arming is the operator's), "
+          "she is not running, and the note says LINK RESTORED and what to do, not the fault",
+          lambda: under_way is not None and lost_after is not None and at_loss["armed"] is False and at_loss["run"] == "stopped"
+          and "failsafe" in at_loss["note"] and at_loss["sim_running"] is False
+          and back_after is not None and at_back["armed"] is False and at_back["running"] is False
+          and "LINK RESTORED" in at_back["note"] and "ARM" in at_back["note"] and "link error" not in at_back["note"],
+          "under way after %s s; lost after %s s: %s; back after %s s: %s" % (under_way, lost_after, at_loss, back_after, at_back))
+
+    # ── 17i. A LINK THAT HAS NEVER SPOKEN IS NOT A VESSEL IN FAILSAFE (finding 24) ──
+    # RealVcu in Phase 0 answers the transport and sends no frame; it was declared LINK LOST with "motors to 0, steering
+    # straight. Take the RC." - a claim about a vessel the console has never heard from.
+    import socket as _socket
+    _lst = _socket.socket(); _lst.bind(("127.0.0.1", 0)); _lst.listen(1)
+    try:
+        E.connect("real", "127.0.0.1", _lst.getsockname()[1], "tcp")
+        quiet_lost = _until(lambda: E.link == E.LINK_LOST, 10.0)
+        quiet = {"note": E.note or "", "armed": E.armed, "run": E.run}
+    finally:
+        _lst.close()
+        E.connect("sim", "", _C.DEFAULT_VCU_PORT, "tcp")
+    check("17i. a real link that answers the transport and sends no frame is LINK LOST after 12 ticks - saying NO TELEMETRY "
+          "and that the protocol is not implemented, not a failsafe; disarmed, idle",
+          lambda: quiet_lost is not None and "NO TELEMETRY" in quiet["note"] and "not implemented" in quiet["note"]
+          and "failsafe" not in quiet["note"] and quiet["armed"] is False and quiet["run"] == "idle",
+          "lost after %s s: %s" % (quiet_lost, quiet))
+
     # ── 18. A SPAWN THAT LANDS WHILE THE OLD BOAT'S FRAME IS STILL IN FLIGHT (Andy, 2026-10-13: "spawn means reseting
     #        home. review that process") ──
     # connect() waits 2 s for the old link's loop to finish the frame it is on, and a frame can take longer: this
@@ -853,6 +902,56 @@ finally:
         E.disconnect()
     except Exception:
         pass
+
+# ── 18-20. THE 2026-10-16 REVIEW: a tick's dt bounded (finding 15), a subscriber queue still full (16), one read of the
+#          link in state() (23) ──
+import inspect                                                        # noqa: E402
+import queue as _queue                                                # noqa: E402
+_loop_src = inspect.getsource(_C.Engine._run_loop)
+check("18. THE SIM TICK'S dt IS BOUNDED - never negative, never more than DT_MAX_S (a laptop asleep an hour woke to one tick "
+      "of 3600 s: she moved an hour's way in one hop, through anything; a clock stepped back inverted the speed clamp) - "
+      "and the loop reads a monotonic clock, which a clock step cannot move",
+      lambda: _C.Engine.clamp_dt(3600.0) == _C.Engine.DT_MAX_S and _C.Engine.clamp_dt(-5.0) == 0.0
+      and _C.Engine.clamp_dt(0.25) == 0.25 and 0.5 <= _C.Engine.DT_MAX_S <= 2.0
+      and "now = time.monotonic()" in _loop_src and "dt = self.clamp_dt(now - last)" in _loop_src,
+      lambda: "clamp 3600 -> %s, -5 -> %s, 0.25 -> %s; DT_MAX_S %s; monotonic %s"
+      % (_C.Engine.clamp_dt(3600.0), _C.Engine.clamp_dt(-5.0), _C.Engine.clamp_dt(0.25), _C.Engine.DT_MAX_S,
+         "now = time.monotonic()" in _loop_src))
+
+
+class _Jammed:
+    """A subscriber queue that is full however much is taken from it: two publishers at once on a sleeping tab's queue."""
+    def __init__(self):
+        self.puts = 0
+
+    def put_nowait(self, _d):
+        self.puts += 1
+        raise _queue.Full()
+
+    def get_nowait(self):
+        return "stale"
+
+
+_j = _Jammed()
+with E._sub_lock:
+    E._subscribers.append(_j)
+try:
+    E._publish({"x": 1})
+    _pub_raised = None
+except Exception as e:                                                # noqa: BLE001
+    _pub_raised = e
+finally:
+    with E._sub_lock:
+        E._subscribers.remove(_j)
+check("19. A SUBSCRIBER QUEUE STILL FULL after the drop-oldest fallback does not raise out of the publish (a Stop or E-STOP "
+      "that had reached the link answered 500 with an empty error): the frame is lost to that tab, both puts tried",
+      lambda: _pub_raised is None and _j.puts == 2,
+      lambda: "raised %r; puts %d" % (_pub_raised, _j.puts))
+_state_src = inspect.getsource(_C.Engine.state)
+check("20. state() READS THE LINK ONCE: `self._link` appears once in it (a disconnect between two unlocked reads raised "
+      "in the state read)",
+      lambda: _state_src.count("self._link") == 1,
+      lambda: "self._link x%d" % _state_src.count("self._link"))
 
 print(("\n%d CHECK(S) FAILED (%d ran)" % (fails, ran)) if fails
       else ("\nall checks passed (%d)" % ran))

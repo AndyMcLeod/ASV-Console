@@ -299,5 +299,32 @@ check("12b. ... and removing an unknown id is False, not a crash",
 check("13. the cap is %d, as asked" % 3, lambda: R.ROC_PERSIST_MAX == 3,
       lambda: "ROC_PERSIST_MAX=%s" % R.ROC_PERSIST_MAX)
 
+# ---- 14. the file is written whole or not at all (the 2026-10-16 review, finding 25) ------------------------------ #
+p4 = fresh("torn.json")
+t4 = R.RocTracker(config_path=p4)
+t4.add("shore", name="A", lat=38.79, lon=-75.161)
+before4 = open(p4, "rb").read()
+_real_dump = R.json.dump
+
+
+def _torn_dump(obj, fh, **k):
+    fh.write('{"rocs": [{"id": "half')
+    raise OSError(28, "No space left on device")
+
+
+R.json.dump = _torn_dump
+try:
+    t4.add("shore", name="B", lat=38.80, lon=-75.160)                 # the save fails part way
+finally:
+    R.json.dump = _real_dump
+after4 = open(p4, "rb").read()
+left4 = [f for f in os.listdir(TMP) if f.startswith("torn.json.")]
+t4.add("shore", name="C", lat=38.81, lon=-75.159)                     # the disk is back
+check("14. A SAVE INTERRUPTED PART WAY (the disk full) leaves the file as it was, byte for byte, and no temp file - it was "
+      "written in place, and a crash mid-write left a file that loaded as an empty registry without a word; the next save "
+      "writes every ROC",
+      lambda: after4 == before4 and left4 == [] and names(p4) == ["A", "B", "C"],
+      lambda: "file %s; temp files %s; then %s" % ("unchanged" if after4 == before4 else "CHANGED: %r" % after4[:60], left4, names(p4)))
+
 print("%d checks, %d failed" % (ran, fails))
 sys.exit(1 if fails else 0)

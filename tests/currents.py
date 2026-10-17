@@ -32,6 +32,7 @@ snapshot and 6 fails; report a projected value without the flag and 5 fails.
 
 import json
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -68,6 +69,8 @@ def _crash_report(t, e, tb):
     sys.stderr.flush()
     if STATE is not None:                  # ConsoleState removes it through atexit, which os._exit skips
         shutil.rmtree(STATE.dir, ignore_errors=True)
+    if "_cache_dir" in globals():          # 6e's OFS cache folder, made at module level below
+        shutil.rmtree(_cache_dir, ignore_errors=True)
     os._exit(1)
 
 
@@ -233,6 +236,109 @@ check("6c. a cycle missing a frame is named in words - the gap and where - while
       and why_hole == "gomofs cycle is missing frames - a gap of 6.00 h at 2016-01-01T03:00:00Z"
       and three_hourly == [0, 1, 2, 3] and why_out == "gomofs does not cover this position",
       "hole %r; 3-hourly order %r; outside %r" % (why_hole, three_hourly, why_out))
+
+# ── 6d. THE LOOK DOES NOT HOLD THE PASS (the 2026-10-16 review, finding 12) ──────────────────────────────────────
+# currents._get tries a stalled THREDDS four times at 180 s, in series, with no deadline, and the look ran on the
+# monitor's thread AHEAD of the sample: a server that accepted and never answered froze the readout for 24 minutes.
+# A look that has not answered in CYCLE_WAIT_S is left to go on behind the pass, said in the readout; a pass due while
+# it runs waits for it and starts no other; the pass after it finishes collects its answer.
+from datetime import datetime as _dt, timezone as _tz                 # noqa: E402
+from pathlib import Path as _Path                                    # noqa: E402
+
+
+def _bare_monitor(ofs):
+    m = A.CurrentsMonitor.__new__(A.CurrentsMonitor)                 # no thread, no network (as `mon` above)
+    m._lock, m._last, m._tag, m._cur, m._ofs, m._box_at = _th.Lock(), {}, None, None, ofs, None
+    m._no_cycle_why, m._sampled_at, m._error, m._sources = None, None, None, None
+    m._force, m._look, m._relook, m._aside = _th.Event(), None, False, set()
+    m._why_no_cycle = lambda: None                                   # no probe GET
+    return m
+
+
+gate = _th.Event()
+looks = {"n": 0}
+
+
+def _slow_ensure(*a, **k):
+    looks["n"] += 1
+    gate.wait(10)
+    return None, False
+
+
+W = _bare_monitor("gomofs")
+W.CYCLE_WAIT_S = 0.3
+A.currents.ensure_cycle_covering = _slow_ensure
+try:
+    t0 = time.time()
+    W._pass((43.073, -70.71), True)
+    took = time.time() - t0
+    note_out, sampled_out = W._no_cycle_why, W._sampled_at
+    snap_out = dict(W._last)
+    W._pass((43.073, -70.71), True)                                  # due again while the look runs: waits, no second look
+    n_looks = looks["n"]
+    gate.set()
+    W._look["thread"].join(2.0)
+    W._pass((43.073, -70.71), False)                                 # not due: collects the finished look
+    note_after, look_after = W._no_cycle_why, W._look
+finally:
+    A.currents.ensure_cycle_covering = _real_ensure
+    gate.set()
+check("6d. A LOOK THAT HAS NOT ANSWERED goes on behind the pass: the pass returns within the wait (0.3 s here), the "
+      "reading is sampled and says the look is still out; a pass due while it runs starts no second look; the pass after "
+      "it finishes collects its answer (none: no cycle)",
+      took < 1.5 and "has not answered" in (note_out or "") and sampled_out is not None
+      and "has not answered" in (snap_out.get("note") or "") and n_looks == 1 and note_after is None and look_after is None,
+      "pass took %.2f s; note %r; sampled %s; reading note %r; looks %d; after %r / %r"
+      % (took, note_out, sampled_out is not None, snap_out.get("note"), n_looks, note_after, look_after))
+
+# ── 6e. A CYCLE THAT CANNOT BE READ IS SET ASIDE (finding 13) ───────────────────────────────────────────────────────
+# The reader writes <tag>_meta.json before <tag>_uv.bin.gz. A console killed between the two left a cycle every look
+# returned (covering_cycle reads the meta alone), Currents(tag) refused, and she had no model current for as long as its
+# span covered now. Its files are renamed .unreadable, the look says so, and it is fetched again - at once the first
+# time, at the next look after that.
+_cache_dir = tempfile.mkdtemp(prefix="asv-ofs-cache-")
+_real_cache, _real_remote = A.currents.CACHE, A.currents.remote_cycle_covering
+remote = {"n": 0}
+
+
+def _no_remote(*a, **k):
+    remote["n"] += 1
+    return None
+
+
+def _stuck_meta(tag):
+    now = _dt.now(_tz.utc)
+    t0 = (now - A.currents.EPOCH).total_seconds()
+    meta = {"date": tag.split("_")[1], "cycle": tag.split("_t")[-1], "lat0": 42.0, "lon0": -72.0, "dlat": 0.1, "dlon": 0.1,
+            "ny": 30, "nx": 30, "times": [t0 - 6 * 3600 + h * 3600 for h in range(13)], "mask": []}
+    (_Path(_cache_dir) / ("%s_meta.json" % tag)).write_text(json.dumps(meta), encoding="utf8")
+
+
+TAG = "gomofs_20261016_t00z"
+M = _bare_monitor("gomofs")
+try:
+    A.currents.CACHE = _Path(_cache_dir)
+    A.currents.remote_cycle_covering = _no_remote
+    _stuck_meta(TAG)
+    why1 = M._ensure_cycle(43.073, -70.71)                            # the meta alone: Currents(tag) cannot read it
+    relook1, files1 = M._relook, sorted(os.listdir(_cache_dir))
+    M._relook = False
+    why2 = M._ensure_cycle(43.073, -70.71)                            # nothing cached now: a fetch is asked for
+    asked = remote["n"]
+    _stuck_meta(TAG)                                                 # the same cycle, unreadable again
+    why3 = M._ensure_cycle(43.073, -70.71)
+    relook3 = M._relook
+finally:
+    A.currents.CACHE, A.currents.remote_cycle_covering = _real_cache, _real_remote
+    shutil.rmtree(_cache_dir, ignore_errors=True)
+check("6e. A CYCLE WHOSE DATA FILE IS MISSING is set aside - its meta renamed .unreadable, the look saying so and that "
+      "it is fetched again now - so the next look finds nothing cached and asks NOAA for one; the same cycle unreadable "
+      "a second time is set aside again but not looked for at once (the next look, not every pass)",
+      why1 is not None and "could not be read" in why1 and "set aside" in why1 and relook1 is True
+      and files1 == ["%s_meta.json.unreadable" % TAG] and M._cur is None
+      and why2 is None and asked == 1 and why3 is not None and "at the next look" in why3 and relook3 is False,
+      "first %r (relook %s, files %s); second %r asked NOAA %d time(s); third %r (relook %s)"
+      % (why1, relook1, files1, why2, asked, why3, relook3))
 
 # --- 7-10: the real console ---------------------------------------------------------- #
 port = free_port()

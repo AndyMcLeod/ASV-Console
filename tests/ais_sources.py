@@ -502,6 +502,73 @@ check("9c. the SAME vessel over UDP merges - one entry, both feeds in srcs",
       lambda: json.dumps((reg_x.snapshot() or [{}])[0].get("srcs")))
 
 
+# ---- 10. multi-part sentences: keyed by channel and id, expired, their total honored (the 2026-10-16 review, 17) ---- #
+# The canonical type-5 example (GPSd AIVDM docs), two parts; the decoder's own read of the joined payload is the truth.
+P5A = "55P5TL01VIaAL@7WKO@mBplU@<PDhh000000001S;AJ::4A80?4i@E53"
+P5B = "1@0000000000000"
+exp5 = m.decode_aivdm_payload(P5A + P5B, 2)
+dec = m.NmeaAivdmDecoder()
+r1 = dec.feed_line("!AIVDM,2,1,3,A,%s,0*00" % P5A, now=100.0)          # ship X: channel A, id 3, part 1
+r2 = dec.feed_line("!AIVDM,2,2,3,B,%s,2*00" % P5B, now=100.1)          # another ship's part 2: channel B, the same id
+r3 = dec.feed_line("!AIVDM,2,2,3,A,%s,2*00" % P5B, now=100.2)          # X's own part 2
+check("10. MULTI-PART SENTENCES ARE KEYED BY CHANNEL AND ID: a part 2 on the other channel with the same id does not "
+      "complete ship X's sentence (keyed by id alone it did, and decoded a report under X's MMSI with the other ship's "
+      "name); X's own part 2 does, to the decoder's own read of the joined payload",
+      lambda: exp5 and exp5.get("mmsi") and r1 is None and r2 is None and r3 == exp5,
+      lambda: json.dumps({"exp": exp5, "r1": r1, "r2": r2, "r3": r3}))
+dec2 = m.NmeaAivdmDecoder()
+ttl = m.NmeaAivdmDecoder.PART_TTL_S
+e1 = dec2.feed_line("!AIVDM,2,1,3,A,%s,0*00" % P5A, now=200.0)
+e2 = dec2.feed_line("!AIVDM,2,2,3,A,%s,2*00" % P5B, now=200.0 + ttl + 1.0)   # part 1 is gone by now
+e3 = dec2.feed_line("!AIVDM,2,1,3,A,%s,0*00" % P5A, now=200.0 + ttl + 1.5)   # a fresh part 1 joins the waiting part 2
+check("10b. A PART NOT JOINED WITHIN PART_TTL_S (%g s) IS DROPPED: part 2 arriving after it does not complete the "
+      "sentence (it did - a part 1 never expired); a fresh part 1 then does" % ttl,
+      lambda: e1 is None and e2 is None and e3 == exp5,
+      lambda: json.dumps({"e1": e1, "e2": e2, "e3": e3}))
+dec3 = m.NmeaAivdmDecoder()
+dec3.feed_line("!AIVDM,2,1,5,A,%s,0*00" % P5A, now=300.0)
+dec3.feed_line("!AIVDM,3,1,5,A,%s,0*00" % P5A, now=300.1)
+rec5 = dec3._parts.get(("A", "5")) or {}
+check("10c. A PART WHOSE TOTAL DISAGREES starts the sentence over: a 3-part first part after a 2-part one leaves a 3-part "
+      "record holding that part alone",
+      lambda: rec5.get("total") == 3 and set(rec5.get("frags", {})) == {1},
+      lambda: json.dumps({"total": rec5.get("total"), "frags": sorted(rec5.get("frags", {}))}))
+
+# ---- 11. a connected but quiet TCP stream is not a dead one (the 2026-10-16 review, finding 18) ------------------- #
+q_port = free_port()
+accepts = {"n": 0}
+
+
+def quiet_server():
+    srv = socket.socket()
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", q_port))
+    srv.listen(1)
+    while True:
+        try:
+            c, _ = srv.accept()
+            accepts["n"] += 1
+            time.sleep(1.0)                        # five read timeouts of silence, connected
+            c.sendall(SENTENCE)
+            time.sleep(1.0)
+            c.close()
+        except OSError:
+            return
+
+
+threading.Thread(target=quiet_server, daemon=True).start()
+m.NmeaSource.TCP_READ_S = 0.2
+reg_q = m.Registry(ttl=600)
+src_q = m.NmeaSource(reg_q, host="127.0.0.1", port=q_port, udp=False)
+src_q.start()
+landed_q = wait_for(lambda: reg_q.count() == 1, 6.0)
+accepts_q, status_q = accepts["n"], dict(src_q.status)
+check("11. A CONNECTED BUT QUIET TCP STREAM IS NOT A DEAD ONE: a second of silence at a 0.2 s read timeout (the socket "
+      "kept its 15 s connect timeout: a quiet receiver read as 'error: timed out' and was reconnected every 18 s) - the "
+      "source stays connected, one accept, and the sentence that follows the silence lands",
+      lambda: landed_q and accepts_q == 1 and status_q.get("state") == "ok",
+      lambda: "landed %s; accepts %d; status %s" % (landed_q, accepts_q, json.dumps(status_q)))
+
 print()
 if fails:
     print("FAILED: %d of %d checks" % (fails, ran))

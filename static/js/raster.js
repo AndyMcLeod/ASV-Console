@@ -184,7 +184,10 @@ export function rasterKeepouts(blk, W, H, x0, y0, cell, ko, buffer) {
   // covers. Both window culls below widen by the same margin in world units:
   // culling a feature that the clamp would have painted is the same hole one
   // gate up, and it was the half that made case (a) invisible.
-  const rad = Math.max(1, Math.round(buffer / cell));
+  // ⚠ CEIL, NOT ROUND (the 2026-10-16 review, finding 2): a buffer of 1.22 cells rounded to ONE cell of dilation, and the
+  // raster then kept 4.1 m off a feature the operator had asked 5 m from - the "conservative raster" the string-pull
+  // trusts was not. A whole cell more than the buffer, always.
+  const rad = Math.max(1, Math.ceil(buffer / cell - 1e-9));
   const pad = rad + 1, PM = pad * cell;
 
   for (const poly of ko.polys) {

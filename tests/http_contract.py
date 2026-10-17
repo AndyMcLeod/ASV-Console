@@ -408,6 +408,30 @@ try:
             time.sleep(0.25)
     check("9. a console comes up to drive", up, "port %d" % port)
 
+    # ⚠ ONE CONSOLE PER PORT (the 2026-10-16 review, finding 8). HTTPServer's SO_REUSEADDR let a second console BIND the
+    # port this one serves, on Windows, with no error: it said "serving at", served nothing, and took the port when the
+    # first closed - a ghost the operator's page then commanded. A second console on this port must exit, say why, and
+    # leave the first answering.
+    ghost_log = tempfile.TemporaryFile(mode="w+")
+    ghost = subprocess.Popen([sys.executable, "asv_console.py", "--sim", "--browser", "none",
+                              "--port", str(port), "--no-ais-service", "--no-log",
+                              "--roc-config", ROC_CFG, *STATE.args()],
+                             cwd=APP, stdout=ghost_log, stderr=subprocess.STDOUT)
+    try:
+        ghost_rc = ghost.wait(timeout=60)
+    except subprocess.TimeoutExpired:
+        ghost.kill(); ghost.wait(timeout=10); ghost_rc = "still running after 60 s"
+    ghost_log.seek(0); ghost_out = ghost_log.read()
+    still = None
+    try:
+        still = json.loads(urllib.request.urlopen("http://127.0.0.1:%d/api/state" % port, timeout=5).read().decode("utf-8")).get("type")
+    except Exception as e:
+        still = "no answer: %r" % (e,)
+    check("9b. a SECOND console started on the port this one serves exits (code 2) saying the port is in use - it does not "
+          "bind beside it as a ghost - and this one still answers",
+          ghost_rc == 2 and "in use" in ghost_out and still == "state",
+          "exit %r; said in use: %s; the first answers: %s" % (ghost_rc, "in use" in ghost_out, still))
+
     for p in ENDPOINTS:
         code, txt = post(port, p, BODIES.get(p, {}))
         if code is None:

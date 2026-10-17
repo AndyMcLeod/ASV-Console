@@ -164,6 +164,25 @@ def ids_dead(band, lid, bbox, timeout=25.0):
     raise urllib.error.URLError("timed out")
 
 
+# A BODY CUT MID-READ (the 2026-10-16 review, finding 9): http.client.IncompleteRead is an HTTPException, neither an
+# OSError nor a ValueError, and NOTHING in the reader caught it - one cut among a tile's ~600 queries unwound the whole
+# build. The water-level readers catch it; the chart reader must too: tried again like a refusal, a failed layer when it
+# persists.
+import http.client as _hc
+
+
+def by_cut(band, lid, ids, timeout=30.0, batch=200):
+    tries["by"] += 1
+    if tries["by"] < 3:
+        raise _hc.IncompleteRead(b"x", 100)
+    return F5
+
+
+def by_cut_always(band, lid, ids, timeout=30.0, batch=200):
+    tries["by"] += 1
+    raise _hc.IncompleteRead(b"x", 100)
+
+
 def ids_503(band, lid, bbox, timeout=25.0):
     tries["ids"] += 1
     if tries["ids"] < 2:
@@ -178,6 +197,8 @@ try:
     dead_err = run(by_dead, direct={"error": {"code": 500}})
     dead_link = run(by_short, ids=ids_dead)
     busy = run(lambda *a, **k: F5, ids=ids_503)
+    cut = run(by_cut)
+    cut_always = run(by_cut_always, direct={"error": {"code": 500}})
 finally:
     A._enc_layer_map, A._enc_query_ids, A._enc_query_by_ids, A._enc_query, A.ENC_ROLES = saved
 check("2. A LAYER SHORT OF ITS IDS on the by-id path every read takes - 2 of 5 - is a FAILED layer: `partial` names it "
@@ -192,6 +213,12 @@ check("2b. A REFUSAL BY THE SERVICE is tried again: an error payload twice, then
               and dead_err["partial"] == ["Depth_Area"] and dead_err["n"] == 0
               and busy["complete"] and busy["ids"] == 2,
       lambda: "flaky %s; dead %s; dead+error %s; 503 %s" % (json.dumps(flaky), json.dumps(dead_by), json.dumps(dead_err), json.dumps(busy)))
+check("2d. A BODY CUT MID-READ (IncompleteRead) is tried again like a refusal - cut twice, whole on the third try, complete; "
+      "cut every time, with the direct query an error payload too, the LAYER fails (partial) and the read goes on - it "
+      "used to unwind the whole tile build",
+      lambda: cut["complete"] and cut["by"] == 3 and cut["n"] == 5
+              and cut_always["partial"] == ["Depth_Area"] and not cut_always["complete"] and cut_always["by"] == 3 and cut_always["n"] == 0,
+      lambda: "cut %s; always %s" % (json.dumps(cut), json.dumps(cut_always)))
 check("2c. ... and a DEAD LINK (no route, a timeout) is NOT tried again - the layer fails on the first try",
       lambda: dead_link["ids"] == 1 and dead_link["partial"] == ["Depth_Area"],
       lambda: json.dumps(dead_link))
@@ -341,6 +368,50 @@ check("5. A TILE A WEEK OLD is SERVED AT ONCE (no read in the way) and read agai
 check("5b. ... and a re-read that FAILS leaves the copy as it was - served, and on disk",
       lambda: [f["oid"] for f in kept["features"]] == [1] and after_fail and [f["oid"] for f in after_fail["features"]] == [1],
       lambda: "served %s, on disk %s" % ([f["oid"] for f in kept["features"]], after_fail and [f["oid"] for f in after_fail["features"]]))
+
+# ── 5c-5d. a read that failed HOLDS the tile (the 2026-10-16 review, finding 14) ──────────────────────────────────
+# A re-read that failed recorded nothing, so every chart read started another child of some six hundred queries behind
+# the served copy; a tile with no copy whose coverage read failed with a service error was not held either. Both are held
+# ENC_TILE_RETRY_S now (a link that is down sets the breaker instead).
+TILE3 = [-70.5, 43.0, -70.25, 43.25]
+A.ENC_TILE_IN_PROCESS, A._enc_tile_build = True, fake_build
+try:
+    A._enc_tile_mem.clear()
+    A._enc_down_until = 0.0
+    old_tile(TILE, 8)
+    BUILD["fail"] = True
+    A.fetch_enc_tile(TILE)                                           # served stale; the re-read behind it fails
+    settle()
+    n_before = len(builds)
+    again = A.fetch_enc_tile(TILE)                                   # held: no second re-read
+    settle()
+    builds_again = len(builds) - n_before
+    hold_for = (A._enc_tile_mem[A._bbox_key(TILE)].get("retry_at") or 0) - time.time()
+    try:
+        os.remove(A._tile_path(TILE3))
+    except OSError:
+        pass
+    A._enc_tile_mem.pop(A._bbox_key(TILE3), None)
+    n3 = len(builds)
+    none1 = A.fetch_enc_tile(TILE3)                                  # no copy, and the coverage read fails
+    none2 = A.fetch_enc_tile(TILE3)                                  # held: served the same answer, no second read
+    builds3 = len(builds) - n3
+    hold3 = (none2.get("retry_at") or 0) - time.time()
+    BUILD["fail"] = False
+finally:
+    A.ENC_TILE_IN_PROCESS, A._enc_tile_build = saved
+    A._enc_tile_mem.clear()
+    BUILD["fail"] = False
+check("5c. A RE-READ THAT FAILED HOLDS THE COPY: the next request serves it (oid 1) and starts no second re-read; the hold "
+      "is ENC_TILE_RETRY_S",
+      lambda: [f["oid"] for f in again["features"]] == [1] and builds_again == 0
+              and A.ENC_TILE_RETRY_S - 5 < hold_for <= A.ENC_TILE_RETRY_S,
+      lambda: "served %s; re-reads after the failed one %d; held %.0f s" % ([f["oid"] for f in again["features"]], builds_again, hold_for))
+check("5d. A TILE WITH NO COPY WHOSE COVERAGE READ FAILS is held too: one read, its squares unread_failed, and the second "
+      "request served the same answer without a read",
+      lambda: builds3 == 1 and none1.get("unread_failed") == [TILE3] and none2 is none1
+              and A.ENC_TILE_RETRY_S - 5 < hold3 <= A.ENC_TILE_RETRY_S,
+      lambda: "reads %d; first %s; same answer %s; held %.0f s" % (builds3, none1.get("unread_failed"), none2 is none1, hold3))
 
 # ── 6. the hull's overhead inputs ────────────────────────────────────────────────────────────────────────────────────
 profiles = {}

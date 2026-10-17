@@ -153,6 +153,8 @@ function grabDecl(name) {
 const HELPERS = ["bandIndex", "indexFor", "ringIndexed", "ringInside", "ringDist", "fileList", "gridOf", "nearIn",
                  "blocked", "clearanceM", "stampSeg", "dilateGrid", "rasterKeepouts", "routeAround", "snapClearLL",
                  "routeAroundSeg", "pruneStitch", "legClear", "legPath",
+                 // A LEG ACROSS A CHARTED EDGE (the 2026-10-16 review, finding 1): asked at the snap, the ends and the gate
+                 "segX", "legCrossesEN", "legCrosses",
                  "blockedInfo", "firstBlockAlong", "clearButEnds", "gateLegClear",
                  "smoothTrack", "systemCenterline", "extendCenterline",
                  // A PRIVATE HELPER OF asv_core's routing module. The lane bodies grabbed
@@ -177,7 +179,7 @@ const LANE_DECLS = ["chartRings", "CHART_MARCH_MAX_M", "CHART_BRIDGE_REACH_M", "
                     "CHART_EDGE_WINDOW_M", "CHART_OPEN_PARALLEL_COS", "CHART_BASE_ROUND_M", "CHART_TAN_M", "CHART_END_SLIVER", "CHART_CONE_REACH_M", "CHART_CONE_STRAIGHT_COS",
                     "MARK_REACH_M", "MARK_NEIGHBOR_M", "MARK_ROUTE_NEIGHBOR_M", "MARK_SINGLE_NEIGHBOR_M", "MARK_STEP_MAX",
                     "MARK_ALONG_COS", "MARK_COURSE_COS", "MARK_COURSE_LOOK_M",
-                    "MARK_STAGE_LEGS", "MARK_STAGE_ROUNDS", "MARK_CLEAR_SEARCH_M", "GATE_PATCH_RATIO", "GATE_PATCH_SLACK_M", "END_CLEAR_M",
+                    "MARK_STAGE_LEGS", "MARK_STAGE_ROUNDS", "MARK_CLEAR_SEARCH_M", "GATE_PATCH_RATIO", "GATE_PATCH_SLACK_M", "END_CLEAR_M", "EDGE_T_EPS", "bbTouch", "LEG_FINE_M", "unknownAt", "UNKNOWN_KIND",
                     "MARK_PORT_BERTH", "MARK_PASS_M", "MARK_RUN_TURN_DEG", "MARK_JOIN_MAX_DEG", "MARK_TRACK_COS", "MARK_GATE_M", "MARK_BESIDE_RATIO",
                     "OFFSHORE_DANGER_M", "OFFSHORE_BEAM_DEG", "OFFSHORE_SIDE_RATIO", "MARK_BERTH_SLACK_M",
                     "REACH_EDGE_M", "REACH_MAX_WIDTH_M", "REACH_MIN_M", "REACH_ANCHOR_GAP", "REACH_HOLD_ROUNDS", "ROCK_MAX_M", "ROCK_MARKED_M", "ROCK_CLASSES", "ROCK_ROUNDS", "NEW_TURN_NEAR_M", "REACH_STRAIGHT_COS", "REACH_RUN_COS", "RESTRICTED_LOCAL_M2",

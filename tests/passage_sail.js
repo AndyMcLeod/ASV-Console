@@ -56,6 +56,7 @@ const APP = process.env.ASV_APP || path.join(__dirname, "..");
 const H = fs.readFileSync(process.env.ASV_HTML || path.join(APP, "static", "asv.html"), "utf8");
 const C = require(path.join(APP, "static", "js", "coarse.js"));
 const F = require(path.join(APP, "static", "js", "fuel.js"));
+const PY = fs.readFileSync(path.join(__dirname, "..", "asv_console.py"), "utf8");   // the mission store (15c)
 
 let fails = 0, ran = 0;
 function check(name, cond, detail) {
@@ -207,7 +208,7 @@ console.log("The passage, sailed:");
       // (the join point: the page's model when it is ready, passage.js passageJoinVia - here what the world says, 8e)
       "const nogo = w.nogo || {ready: false};",
       "const passageJoinVia = (line, ends, frame, ko, std) => { w.joins = (w.joins || []).concat([{line, ends, frame, ko, std}]); return w.joinVia === undefined ? null : w.joinVia; };",
-      decl("PASSAGE_RETRY_MS"), decl("PASSAGE_END_M"), decl("PASSAGE_ONGOING"),
+      decl("PASSAGE_RETRY_MS"), decl("PASSAGE_END_M"), decl("PASSAGE_HOLD_NEAR_M"), decl("PASSAGE_ONGOING"),
       "let sailBusy = false, sailTriedAt = 0, sailSaid = null;",
       ["passageEndsSay", "sailRecord", "sailPortName", "sailRefusal", "sailSegM", "sectionRest", "sailOwns", "sailGuardQuiet", "sailLeftM", "sailSend",
        "sailPassage", "sailAppend", "sailAtEnd", "sailBreakOff", "sailRejoinHere", "sailRejoinTick", "passageTick", "sailRestM",
@@ -766,6 +767,43 @@ console.log("The passage, sailed:");
         + "chart's row, the plan's loader, the coarse plan's sections, the drawing",
         () => owns && !notOwn && Object.values(wiring).every(Boolean),
         () => "owns " + owns + "/" + notOwn + "; " + (Object.entries(wiring).filter(([, v]) => !v).map(([k]) => k).join(", ") || "all wired"));
+
+  // ── 15. THE HOLD SURVIVES A RELOAD, A TAKE-OVER AND A DROP (the 2026-10-16 review, finding 4) ───────────────────
+  // sailOwnsHold answered from this tab's runRoute, which a reload leaves null: a tab reloaded while she held at a
+  // section's end saw no passage hold, and the end-of-plan chain sent her home from it on its second frame.
+  const reload = (state, o) => { const w = waiting(state, o); w.api.set("runRoute", null); return w.api.sailOwnsHold(); };
+  const own15 = { holding: reload("holding"), port: reload("at_port"), done: reload("done"), diverting: reload("diverting"),
+                  running: reload("running"), stopped: reload("stopped"),
+                  // a later plan over the record: another route aboard, or her away from the hold - no stand-down
+                  other: reload("holding", { S: { armed: true, estop: false, run: "running", status: { holding: true }, wp_total: 9 } }),
+                  away: reload("holding", { asv: east(HERE, 2000) }) };
+  check("15. ⚠ THE PASSAGE'S HOLD IS THE RECORD'S, NOT THIS TAB'S MEMORY: with no route in memory (a reloaded or a taking-over "
+        + "tab) she holds for Continue at a section's end, a fuel stop, the arrival and while diverting from one; a section under "
+        + "way, or a passage left for another command, stands the chain down nowhere - nor does a record whose route is not "
+        + "the one aboard, or one she is 2 km from",
+        () => own15.holding && own15.port && own15.done && own15.diverting && !own15.running && !own15.stopped && !own15.other && !own15.away,
+        () => JSON.stringify(own15));
+  const W15 = waiting("holding"); W15.S.run_seq = 7;
+  await W15.api.dropPassage();
+  const hk15 = W15.mission.passage_hold, kept15 = W15.api.sailOwnsHold();
+  W15.S.run_seq = 8; const gone15 = W15.api.sailOwnsHold();
+  const W15b = waiting("holding"); W15b.S.run_seq = 7; W15b.api.set("runRoute", null);   // dropped from a reloaded tab, the same
+  await W15b.api.dropPassage(); const keptReload = W15b.api.sailOwnsHold();
+  const W15c = running(); W15c.S.run_seq = 7; await W15c.api.dropPassage();            // dropped under way: nothing kept
+  check("15b. DROP PASSAGE WHILE SHE HOLDS keeps the hold for this run: the record gone, the hold kept with the run's sequence "
+        + "and her position (saved with the plan), the chain stood down - from a reloaded tab too - and not for the next motion; "
+        + "dropped under way, nothing is kept",
+        () => W15.mission.passage === null && hk15 && hk15.run_seq === 7 && distTo(hk15, P1) < 1 && kept15 && !gone15
+              && keptReload && W15c.mission.passage === null && W15c.mission.passage_hold === null,
+        () => JSON.stringify({ hk15, kept15, gone15, keptReload, under: W15c.mission.passage_hold }));
+  check("15c. THE WIRING: a tab that takes over re-reads the plan (the passage record with it); the loader carries the kept "
+        + "hold; the drop's confirm says she keeps holding; the server carries the hold in both of its mission dicts",
+        () => /const j = await supervisorBeat\(true\);[\s\S]{0,400}?if\(j && j\.you\) await loadMission\(\);/.test(H)
+              && /passage_hold:\(m\.passage_hold && typeof m\.passage_hold === "object"\) \? m\.passage_hold : null,/.test(H)
+              && /She keeps holding here: End of plan does not send her home/.test(H)
+              && (PY.match(/"passage_hold": m\.get\("passage_hold"\) if isinstance\(m\.get\("passage_hold"\), dict\) else None,/g) || []).length === 2
+              && /"passage": None, "passage_hold": None,/.test(PY),
+        () => "wiring");
 
   // ── 12. the sections home (step 6) ──────────────────────────────────────────────────────────────────────────────
   // the passage of 2-11: P0 (her start, home) -> P1 (turning at 10 km) -> P2, the fuel stop T1 (turning at 30 km) -> P3, T2

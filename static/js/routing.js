@@ -193,7 +193,7 @@
 // `chart.js` re-export from those. tests/geometry.py asserts that hop BY IDENTITY.
 import { inBB, pinp, segSamplesEN } from './geometry.js';
 import {
-  blocked, legClear, firstBlockAlong, clearanceM,
+  blocked, legClear, firstBlockAlong, clearanceM, legCrosses, legCrossesEN,
   extendCenterline, systemCenterline, channelPolys,
 } from './keepouts.js';
 import { stampSeg, dilateGrid, rasterKeepouts } from './raster.js';
@@ -256,21 +256,27 @@ export function routeAround(A, B, frame, ko, buffer, marginOv, maxDimOv) {
   // Start and goal may themselves sit in the buffer — a vessel alongside a
   // dock, or a line end at marginal charted depth. Snap to the nearest free
   // cell rather than refusing; the route's job is to lead it out.
+  // ⚠ AND NOT ACROSS A CHARTED EDGE (the 2026-10-16 review, finding 1). The nearest free cell can lie on the FAR
+  // side of the pier she is moored to - a pier drawn as a LINE stamps one cell wide - and the first free cell in
+  // row-major order was taken, so the first leg ran straight across the pier. A free cell is taken only when the leg
+  // from the endpoint to it crosses no edge (legCrossesEN); the order is as it was, so a snap that never crossed
+  // anything is the cell it always was. None within reach, and the endpoint is unroutable at this rung (the ladder
+  // goes on; refused at every rung, the leg is refused rather than routed across).
   const snapR = Math.max(6, Math.ceil(90 / cell));
-  const freeNear = (gx, gy) => {
+  const freeNear = (gx, gy, from) => {
     for (let r = 0; r <= snapR; r++) {
       for (let dy = -r; dy <= r; dy++) {
         for (let dx = -r; dx <= r; dx++) {
           const x = gx + dx, y = gy + dy;
           if (x < 0 || y < 0 || x >= W || y >= H) continue;
-          if (!blk[y * W + x]) return [x, y];
+          if (!blk[y * W + x] && !legCrossesEN(from, { e: EX(x), n: NY(y) }, ko)) return [x, y];
         }
       }
     }
     return null;
   };
-  const s = freeNear(Math.round((ae.e - x0) / cell), Math.round((ae.n - y0) / cell));
-  const g = freeNear(Math.round((be.e - x0) / cell), Math.round((be.n - y0) / cell));
+  const s = freeNear(Math.round((ae.e - x0) / cell), Math.round((ae.n - y0) / cell), ae);
+  const g = freeNear(Math.round((be.e - x0) / cell), Math.round((be.n - y0) / cell), be);
   if (!s || !g) return null;
 
   const gS = s[1] * W + s[0], gG = g[1] * W + g[0], N = W * H;
@@ -386,12 +392,19 @@ export function routeAround(A, B, frame, ko, buffer, marginOv, maxDimOv) {
     return true;
   };
 
+  // ⚠ A RASTER-CLEAR SHORTCUT IS CONFIRMED EXACTLY BEFORE IT IS TAKEN (the 2026-10-16 review, finding 2). rasterClear
+  // samples the shortcut once per cell and rounds each sample to the grid, so with the buffer between one and one and
+  // a half cells a shortcut could pass ~0.9 cell from a feature: measured, 2.149 m of a 3 m buffer, and 49 of 353
+  // long routes at the DriX's 5 m under it. The raster stays the cheap filter; a shortcut it passes is asked with
+  // legClear at the buffer and, refused there, the next shorter is tried. A leg between CONSECUTIVE key points is the
+  // search's own path - runs of cells the dilation (Math.ceil of the buffer in cells, raster.js) keeps the buffer off
+  // every feature - and is taken as it was.
   const simp = [pts[0]];
   let ci = 0;
   while (ci < pts.length - 1) {
     let nx = ci + 1;
-    for (let j = pts.length - 1; j > ci; j--) {
-      if (rasterClear(pts[ci], pts[j])) { nx = j; break; }
+    for (let j = pts.length - 1; j > ci + 1; j--) {
+      if (rasterClear(pts[ci], pts[j]) && legClear(pts[ci], pts[j], frame, ko, buffer)) { nx = j; break; }
     }
     simp.push(pts[nx]);
     ci = nx;
@@ -520,6 +533,10 @@ export const END_CLEAR_M = 0.05;
 /** The leg P->Q is clear at `r` but for the blocked water contiguous with P (`pIn`) or with Q (`qIn`): sampled to find
  *  those runs, the rest asked with the exact `legClear`. */
 export function clearButEnds(P, Q, frame, ko, r, pIn, qIn) {
+  // ⚠ ASKED AT 0.05 m WITH A 2 m STEP, A LINE BETWEEN TWO SAMPLES IS INVISIBLE (the 2026-10-16 review, finding 1): the
+  // crossing itself is asked first, geometrically - a leg out of a berth may run through the blocked water the berth
+  // lies in, never across the pier that makes it
+  if (legCrosses(P, Q, frame, ko)) return false;
   const a = frame.toEN(P), b = frame.toEN(Q), n = Math.max(1, Math.ceil(Math.hypot(b.e - a.e, b.n - a.n) / 0.25));
   const s = (k) => ({ e: a.e + (b.e - a.e) * k / n, n: a.n + (b.n - a.n) * k / n });
   let lo = 0, hi = n;
@@ -3719,13 +3736,21 @@ export function smoothTrack(pathLL, frame, ko, buf, opts = {}) {
   const STEP = Math.max(45, buf * 13);
   const keep = opts.keep || [];
   const kept = (p) => keep.some((q) => Math.hypot(p.e - q.e, p.n - q.n) < 0.75);
+  // ⚠ AND NO CHORD ACROSS A CHARTED EDGE (the 2026-10-16 review, finding 1). The resampled points lie on the path; the
+  // chords between them do not, and a detour shorter than STEP round a pier drawn as a line was resampled into one
+  // chord straight across it - the gate caught it downstream, but the route out of here should not need catching. A
+  // piece whose resampled chords cross an edge (legCrossesEN: geometric, so a zero-width line is seen) keeps the
+  // search's own vertices instead. A chord that merely comes within the buffer is the gate's to splice, as it always
+  // was: asking legClear here moved routes along channel walls the gate had settled.
+  const chordOk = (p, q) => !legCrossesEN(p, q, ko);
+  const chordsOk = (ps) => ps.every((p, j) => j === 0 || chordOk(ps[j - 1], p));
   // Resampled piece by piece between the kept vertices (one piece, the whole path, with none).
   let pts = [];
   const fixed = [];
   for (let i = 0, from = 0; i < en.length; i++) {
     if (i < en.length - 1 && !(i > from && kept(en[i]))) continue;
     const rs = resampleEN(en.slice(from, i + 1), STEP);
-    const piece = rs ? rs.pts : [en[i]];
+    const piece = rs ? (chordsOk(rs.pts) ? rs.pts : en.slice(from, i + 1)) : [en[i]];
     for (let j = pts.length ? 1 : 0; j < piece.length; j++) { pts.push(piece[j]); fixed.push(false); }
     if (i < en.length - 1) fixed[pts.length - 1] = true;
     from = i;
@@ -3733,6 +3758,10 @@ export function smoothTrack(pathLL, frame, ko, buf, opts = {}) {
   if (keep.length && kept(en[0])) fixed[0] = true;
   if (pts.length < 3) return pathLL;
   const hit = (e, n) => blocked({ e, n }, ko, buf);
+  // ⚠ AND THE LEGS A MOVE MAKES, NOT THE VERTEX ALONE (the 2026-10-16 review, finding 1): a rounded vertex in clear
+  // water can still have the leg to it, or from it, cross the pier the detour was going round. Both legs the move
+  // makes are asked for a crossing (chordOk): the one from the point already placed before it, and the one to the next
+  // point as it stands (asked again if that one moves). A move that crosses leaves the vertex where the search put it.
   for (let pass = 0; pass < 2; pass++) {
     const np = [pts[0]];
     for (let i = 1; i < pts.length - 1; i++) {
@@ -3740,7 +3769,8 @@ export function smoothTrack(pathLL, frame, ko, buf, opts = {}) {
         e: 0.25 * pts[i - 1].e + 0.5 * pts[i].e + 0.25 * pts[i + 1].e,
         n: 0.25 * pts[i - 1].n + 0.5 * pts[i].n + 0.25 * pts[i + 1].n,
       };
-      np.push(fixed[i] || hit(s.e, s.n) ? pts[i] : s);
+      const prev = np[np.length - 1];
+      np.push(fixed[i] || hit(s.e, s.n) || !chordOk(prev, s) || !chordOk(s, pts[i + 1]) ? pts[i] : s);
     }
     np.push(pts[pts.length - 1]);
     pts = np;
@@ -3801,8 +3831,10 @@ export const GATE_PATCH_SLACK_M = 200;
  * instead, a Go-To starting 11 m off the land inside a 19.5 m standoff - its first leg leaving
  * that land's standoff at 51 m - was spliced into a 110 degree turn 34 m from the start.)
  *
- * A spliced patch is the router's own product and is NOT re-checked: the gate exists to
- * catch the lane's inventions, and re-checking a patch whose ends sit in-buffer would loop.
+ * A spliced patch IS asked like any other leg (the 2026-10-16 review, finding 2: spliced unasked, the router's own
+ * slack shipped 10 of 446 fuzzed routes with a leg under the buffer, worst 2.88 m of 3). A leg of it out of a blocked
+ * end is the exemption's, as any other; a patch that would not settle is bounded by the splice cap, and the fallback
+ * route ships then, as when no patch is found.
  */
 export function gateLegClear(route, fallback, frame, ko, buf, opts = {}) {
   if (!route || route.length < 2) return { route, abandoned: false, splices: 0 };
@@ -3855,6 +3887,9 @@ export function gateLegClear(route, fallback, frame, ko, buf, opts = {}) {
     return { pts, len: sb - sa };
   };
   const exempt = (i) => {
+    // (and never a leg that CROSSES a charted edge - the 2026-10-16 review, finding 1: the run out of a berth 0.8 m off
+    // a pier drawn as a line was exempt across it, its samples 0.5 m apart never nearer the line than the start was)
+    if (legCrosses(out[i - 1], out[i], frame, ko)) return false;
     const s = pts(out[i - 1], out[i]), bl = s.map((q) => blocked(q, ko, buf));
     let lo = 0, hi = s.length - 1;
     if (startIn && bl[0] && inLead(i - 1)) while (lo <= hi && bl[lo] && noNearer(s[lo], sLim)) lo++;
@@ -3898,7 +3933,7 @@ export function gateLegClear(route, fallback, frame, ko, buf, opts = {}) {
       patch = [...fb.pts, out[j]];
     }
     out.splice(i, j - i + 1, ...patch);
-    i += patch.length;
+    // (the loop goes on from the patch's own first leg - see the note above)
   }
   return { route: out, abandoned: false, splices };
 }

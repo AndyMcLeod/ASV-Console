@@ -560,5 +560,16 @@ check("7d. MASSACHUSETTS' LINE UNREAD: with no line read and the chart in its bo
         () => JSON.stringify({ m: [m0, m1, m2, m3, m4, m5], banners: MG.banners }));
 }
 
+{
+  // 8. NO COMMANDED SPEED TO COMPARE (the 2026-10-16 review, finding 19): the leg unknown and no speed_key on the frame
+  const U = gov({ speedKey: undefined, indexed: false });
+  U.pos = at(200, 200); const u1 = U.api.tick();
+  check("8. IN A ZONE WITH NO COMMANDED SPEED (no speed_key on the frame, the leg unknown): nothing is commanded, and the "
+        + "banner says the console cannot say her speed - not 'Her undefined is within it'",
+        () => u1 == null && U.sent.length === 0 && U.banners.length === 1 && !/undefined/.test(U.banners[0])
+              && /cannot say her commanded speed/.test(U.banners[0]) && /^SPEED ZONE - Test limit \(TEST\): 5 kn\./.test(U.banners[0]),
+        () => JSON.stringify({ u1, sent: U.sent, banners: U.banners }));
+}
+
 console.log("\n" + (fails ? fails + " CHECK(S) FAILED" : "all checks passed") + " (" + ran + ")");
 process.exit(fails ? 1 : 0);

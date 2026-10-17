@@ -272,6 +272,53 @@ const FLOOR = 30;
         () => trials >= 8 && shortcuts > 20 && crossed === 0 && worse === 0,
         () => trials + " fields planned, " + shortcuts + " shortcuts; blocked crossed " + crossed + ", worse cells " + worse);
 
+  // 9a. EVERY CELL A SEGMENT PASSES THROUGH (the 2026-10-16 review, finding 6): lineCells sampled a quarter cell and
+  // missed a blocked cell's corner between two samples - 26 taut segments in 300 random fields ran into one. Against
+  // brute force (every cell any point of the segment lies in, at 1/400 cell), and the corner pass lists both cells.
+  const bruteCells = (p, q) => { const set = new Set(); const n = Math.max(1, Math.ceil(Math.hypot(q.gx - p.gx, q.gy - p.gy) * 400));
+    for (let k = 0; k <= n; k++) { const x = p.gx + 0.5 + (q.gx - p.gx) * k / n, y = p.gy + 0.5 + (q.gy - p.gy) * k / n;
+      // interior points only (a point on a boundary belongs to both cells; the walk lists them)
+      if (Math.abs(x - Math.floor(x) - 0.5) < 0.499 && Math.abs(y - Math.floor(y) - 0.5) < 0.499) set.add(Math.floor(x) + "," + Math.floor(y)); }
+    return set; };
+  let seedA = 777, missing = 0, segs = 0;
+  const rndA = () => { seedA = (seedA * 1103515245 + 12345) % 2147483648; return seedA / 2147483648; };
+  for (let t = 0; t < 400; t++) {
+    const p = { gx: Math.floor(rndA() * 40), gy: Math.floor(rndA() * 40) }, q = { gx: Math.floor(rndA() * 40), gy: Math.floor(rndA() * 40) };
+    const got = new Set(C.lineCells(p, q).map((c) => c.gx + "," + c.gy));
+    segs++;
+    for (const k of bruteCells(p, q)) if (!got.has(k)) missing++;
+  }
+  const diag = C.lineCells({ gx: 0, gy: 0 }, { gx: 2, gy: 2 }).map((c) => c.gx + "," + c.gy);
+  check("9a. lineCells LISTS EVERY CELL a segment passes through: 400 random segments against brute force, none missing; "
+        + "a diagonal through the corners lists the two cells beside each corner (the corner cut the search forbids)",
+        () => segs === 400 && missing === 0 && ["0,0", "1,0", "0,1", "1,1", "2,1", "1,2", "2,2"].every((k) => diag.includes(k)),
+        () => segs + " segments, " + missing + " cell(s) missed; diagonal " + JSON.stringify(diag));
+  // ... and so a taut route never runs through a blocked cell's interior, nor between two diagonal blocked cells
+  let seedB = 3, cutIn = 0, cutCorner = 0, tautSegs = 0, fields = 0;
+  const rndB = () => { seedB = (seedB * 1103515245 + 12345) % 2147483648; return seedB / 2147483648; };
+  for (let t = 0; t < 60 && fields < 30; t++) {
+    const g = grid(TX, TY), S = 24, blk = new Set();
+    for (let i = 0; i < S * S * 0.18; i++) { const x = Math.floor(rndB() * S), y = Math.floor(rndB() * S); blk.add(x + "," + y); setC(g, x, y, C.GRID_HARD); }
+    const f = C.buildField([g], FLOOR);
+    const free = () => { for (;;) { const x = Math.floor(rndB() * S), y = Math.floor(rndB() * S); if (!blk.has(x + "," + y)) return { gx: TX * N + x, gy: TY * N + y }; } };
+    const r = C.searchLeg(f, free(), free(), []);
+    if (r.error) continue;
+    fields++;
+    const taut = C.pullTaut(f, r.cells, []);
+    for (let i = 1; i < taut.length; i++) {
+      const p = taut[i - 1], q = taut[i]; tautSegs++;
+      for (const k of bruteCells(p, q)) { const [cx, cy] = k.split(",").map(Number); if (f.level(cx, cy) === C.LV_BLOCKED) { cutIn++; break; } }
+      const dx = q.gx - p.gx, dy = q.gy - p.gy;
+      if (Math.abs(dx) === Math.abs(dy) && dx) { const sx = Math.sign(dx), sy = Math.sign(dy);
+        for (let k = 1; k <= Math.abs(dx); k++) { const cx = p.gx + k * sx, cy = p.gy + k * sy;
+          if (f.level(cx, cy - sy) === C.LV_BLOCKED && f.level(cx - sx, cy) === C.LV_BLOCKED) { cutCorner++; break; } } }
+    }
+  }
+  check("9c. PULLED TAUT, THROUGH NO BLOCKED CELL: over random 24 x 24 fields (18% blocked), no taut segment runs through a "
+        + "blocked cell's interior and none passes between two diagonal blocked cells (before: 26 and 1 in 300)",
+        () => fields >= 20 && tautSegs >= 60 && cutIn === 0 && cutCorner === 0,
+        () => fields + " fields, " + tautSegs + " taut segments; through a blocked cell " + cutIn + ", through a corner " + cutCorner);
+
   // a wall with a one-cell gap a danger touches, then a shoal across the straight way on: the path goes through the gap
   // and ROUND the shoal - a shortcut from the gap (itself partly) must not take that as leave to cross the shoal
   const s9 = grid(TX, TY);

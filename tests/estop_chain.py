@@ -418,6 +418,29 @@ check("15b. ... and a release the link refuses leaves it LATCHED, saying so - a 
       lambda: isinstance(release_err, _C.VcuProtocolError) and E.estop is True and "NOT released" in (E.note or ""),
       "raised %r; estop=%s; note: %s" % (release_err, E.estop, (E.note or "")[:70]))
 
+# ── 16. AN E-STOP FROM ANY TAB; ITS RELEASE ONLY FROM THE SUPERVISING ONE (the 2026-10-16 review, finding 22) ────────
+_sup_saved = _C.SUPERVISION
+_SUP = _C.Supervision()
+_C.SUPERVISION = _SUP
+try:
+    _SUP.beat("tab-one")                                              # in charge
+    _SUP.beat("tab-two")                                              # known, not in charge
+    latch2 = _C.supervisor_refusal("/api/cmd/estop", "tab-two", {"on": True})
+    rel2 = _C.supervisor_refusal("/api/cmd/estop", "tab-two", {"on": False})
+    rel1 = _C.supervisor_refusal("/api/cmd/estop", "tab-one", {"on": False})
+    rel_anon = _C.supervisor_refusal("/api/cmd/estop", "", {"on": False})
+    stop2 = _C.supervisor_refusal("/api/cmd/stop", "tab-two", {})
+    start2 = _C.supervisor_refusal("/api/cmd/start", "tab-two", {})
+finally:
+    _C.SUPERVISION = _sup_saved
+check("16. A SECOND TAB LATCHES THE E-STOP (any tab may) and is REFUSED ITS RELEASE - 409, saying the latch stays and whose "
+      "it is to release (SUPERVISOR_ANY let the whole path through, both ways); the supervising tab releases it, an "
+      "anonymous caller passes as ever, Stop is any tab's and Start is not",
+      lambda: latch2 is None and rel2 and rel2[0] == 409 and "release" in rel2[1]["error"] and "latched" in rel2[1]["error"]
+      and rel1 is None and rel_anon is None and stop2 is None and start2 and start2[0] == 409,
+      json.dumps({"latch2": latch2, "rel2": rel2 and rel2[1]["error"], "rel1": rel1, "anon": rel_anon,
+                  "stop2": stop2, "start2": start2 and start2[0]}))
+
 print(("\n%d CHECK(S) FAILED (%d ran)" % (fails, ran)) if fails
       else ("\nall checks passed (%d)" % ran))
 sys.exit(1 if fails else 0)
