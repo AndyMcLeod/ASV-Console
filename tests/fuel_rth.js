@@ -336,7 +336,7 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
     const w = { banners: [], logs: [], sent: [], sup: true, need: 11, far: null, S: { home: { lat: 0, lon: 0 } } };
     const mk = new Function("S", "asv", "fuelModel", "energyLevel", "fuelHomeNeed", "rthTooFar", "fuelWatch", "rthLevel", "rthDecision",
       "homeFieldTick", "coarseHomeTick", "supervising", "showBanner", "logClient", "doRTH", "fuelSay", "fuelFmt", "fmtDist", "FUEL_AT_HOME_M",
-      "FUEL_RESERVE_FRAC", "RTH_MAX_M",
+      "FUEL_RESERVE_FRAC", "RTH_MAX_M", "fmtVol",
       "let fuelRth = {acted: false, alerted: false};\nlet fuelNow = null, fuelErrSaid = false;\n" + grab("fuelTick")
       + "\n" + grab("fuelWatchAt") + "\n" + grab("fuelOutOfRangeSay") + "\n" + grab("fuelReserveOf") + "\n" + grab("homeHowSay")
       + "\nreturn {tick: fuelTick, latch: () => ({...fuelRth}), now: () => fuelNow};");
@@ -345,7 +345,8 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
       F.rthLevel, F.rthDecision, () => {}, () => {}, () => w.sup,
       (t) => w.banners.push(t), (k, d) => w.logs.push([k, d]),
       (o) => { w.sent.push(o); return Promise.resolve(); }, () => "the sentence", (m, x) => x.toFixed(1) + " L",
-      (m) => (m / 1000).toFixed(1) + " km", AT_HOME, F.FUEL_RESERVE_FRAC, RTH_MAX);
+      (m) => (m / 1000).toFixed(1) + " km", AT_HOME, F.FUEL_RESERVE_FRAC, RTH_MAX,
+      require("../static/js/units.js").fmtVol);   // the alert's tenths in the operator's units (2026-10-17)
     w.frame = (fuel, o) => w.api.tick({ armed: true, estop: false, behavior: "survey",
       status: m0.kind === "fuel" ? { fuel_l: fuel } : { battery_v: fuel }, ...(o || {}) });
     return w;

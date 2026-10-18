@@ -408,7 +408,7 @@ const FLOOR = 30;
     w.api = new Function("asv", "passageWps", "planPassageEnds", "fuelModel", "V", "roleSpeed", "S", "energyLevel", "passageFuel", "FUEL_RESERVE_FRAC",
       "fmtDist", "fmtDur", "fmtMS", "distTo", "PASSAGE_PORT_R_M", "M_PER_DEG_LAT", "nogoDR", "postCorridor", "getCorridor",
       "corridorSummary", "toCorridor", "fetch", "passageInWorker", "showBanner", "flashNote", "logClient", "updateTransitPanel",
-      "render", "worldPx", "zoom", "ctx", "airNeedM", "ensureNogoCovers", src)(
+      "render", "worldPx", "zoom", "ctx", "airNeedM", "ensureNogoCovers", "fmtVol", src)(
       w.asv, w.transit, async () => { w.endsAsked = (w.endsAsked || 0) + 1; return w.ends; }, () => w.model, { SPEED_KN: { transit: w.kn } }, () => "transit", { status: w.status }, F.energyLevel,
       F.passageFuel, F.FUEL_RESERVE_FRAC, fmtDist, fmtDur, (s) => s + "s", flat, C.PORT_R_M, 111320, () => ({ min: 3.15 }),
       async (b) => { w.posts.push(b); return w.seq.length ? w.seq.shift() : { id: "j", state: "done", total: 0, done: 0, tiles: [] }; },
@@ -417,7 +417,8 @@ const FLOOR = 30;
       async (msg) => { w.workerMsgs.push(msg); if (w.duringWorker) w.duringWorker(w); return w.worker; },
       (t) => w.banners.push(t), (t) => w.notes.push(t), (k, d) => w.logs.push([k, d]), () => {}, () => { w.renders++; },
       (lat, lon) => ({ x: lon * 1000, y: -lat * 1000 }), 9, ctx, () => 3.85,
-      async (pts, pad, opts) => { w.preReads.push({ pts, pad, opts }); return true; });
+      async (pts, pad, opts) => { w.preReads.push({ pts, pad, opts }); return true; },
+      require("../static/js/units.js").fmtVol);   // the page's fuelFmt writes fuel through it (2026-10-17)
     return w;
   };
 

@@ -124,6 +124,7 @@ check("3. THE LOWER ROW: the eleven readouts, in their order - POS, SOG, HDG, CO
     p_batt: longest(["100%", "99.99 V", "on RC", "--"]),
     p_wpt: len(routeMax + " / " + routeMax),
     p_time: len("00:00:00 · 00:00:00Z"),
+    p_units: longest([U.unitLabel("km"), U.unitLabel("nm")]),   // the unit system, METRIC or SAE (2026-10-17)
     linktext: longest(modes.flatMap((m) => links.map((l) => m + " · " + l)).concat(links)),
     // the autonomy word carries .08em of letter-spacing a character, in a font whose ch is about .6em
     autonomy: Math.ceil(longest(labels) * (1 + 0.08 / 0.6)),

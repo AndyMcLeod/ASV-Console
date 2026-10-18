@@ -14,8 +14,16 @@
 // fmtDist() is THE formatter for a long distance; a new readout that hand-rolls its own
 // divide-by-1000 kilometer string beside it will not follow the pill.
 // (tests/units_toggle.js checks none has crept back in.)
+//
+// ⚠ THE PILL IS A UNIT SYSTEM, METRIC OR SAE (Andy, 2026-10-17: "Change Distance pill to Metric/SAE and add fuel levels to
+// the changeover so we get liters or gallons along with kilometers or miles" - and, asked, NAUTICAL miles on the SAE side,
+// the charts', the AIS card's and every knot's mile). METRIC: long distances in km, fuel in liters. SAE: long distances in
+// nm, fuel in US gallons (L_PER_GAL). The stored value is still "km" / "nm" - a preference saved before this reads the same
+// - and unitLabel() names it on the pill. fmtVol() is THE formatter for a fuel volume, as fmtDist() is for a distance; the
+// short distances, the AIS card and the battery's volts are unchanged.
 
 export const M_PER_NM = 1852;                  // one definition, shared with the AIS helpers
+export const L_PER_GAL = 3.785411784;          // the US gallon
 
 let _distUnit = "km";                          // module-private; reach it via the accessors
 
@@ -31,6 +39,18 @@ export function fmtDist(m, dp){
   if(m < 1000) return Math.round(m)+" m";      // short stays METRIC in both modes
   const d = dp==null ? 2 : dp;
   return _distUnit==="nm" ? (m/M_PER_NM).toFixed(d)+" nm" : (m/1000).toFixed(d)+" km";
+}
+
+/** The pill's word for the unit system `u` (the stored "km" / "nm"): METRIC or SAE. */
+export function unitLabel(u){ return (u === undefined ? _distUnit : u) === "nm" ? "SAE" : "METRIC"; }
+
+/** A fuel volume of `l` LITERS in the operator's system: liters (METRIC) or US gallons (SAE). Under 10, to a tenth;
+ *  from 10, whole - or to `dp` places where a caller needs two numbers that must not read equal (the low-fuel alert). */
+export function fmtVol(l, dp){
+  if(l == null || !Number.isFinite(+l)) return "--";
+  const v = _distUnit === "nm" ? +l / L_PER_GAL : +l;
+  const s = dp != null ? v.toFixed(dp) : Math.abs(v) < 10 ? v.toFixed(1) : String(Math.round(v));
+  return s + (_distUnit === "nm" ? " gal" : " L");
 }
 
 // The AIS card's own range formatter: ALWAYS nautical miles, never the pill (see above).

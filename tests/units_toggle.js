@@ -54,7 +54,7 @@ const path = require("path");
 // and the checks below exercise the shipped function rather than an eval of its text.
 // Top-level so the suite's DIRECT eval() of page functions still resolves them.
 const { distTo, llEN } = require("../static/js/geodesy.js");
-const { distUnit, fmtDist, fmtDur, fmtNm, setDistUnit } = require("../static/js/units.js");
+const { distUnit, fmtDist, fmtDur, fmtNm, setDistUnit, unitLabel, fmtVol, L_PER_GAL } = require("../static/js/units.js");
 
 
 
@@ -156,7 +156,7 @@ check("5. nothing stored defaults to km — existing consoles read exactly as be
 // ---- applyDistUnit: persist, paint, repaint ---------------------------------------- //
 // The REAL function, with its collaborators stubbed and observed.
 function harness() {
-  const calls = { lsSet: [], recalc: 0 };
+  const calls = { lsSet: [], recalc: 0, fuelRows: 0 };
   const pill = { textContent: "" };
   const env = {
     UNITS_KEY: "asv_units_v1",
@@ -164,22 +164,23 @@ function harness() {
     lsGet: (k, fb) => fb,
     $: sel => (sel === "#p_units" ? pill : { textContent: "" }),
     recalcForSpeed: () => { calls.recalc++; },
+    renderFuelRows: () => { calls.fuelRows++; },
   };
   const src = grab("applyDistUnit");
   // eslint-disable-next-line no-eval
-  const fn = eval("(function(UNITS_KEY, lsSet, lsGet, $, recalcForSpeed){ " + src +
-                  " return applyDistUnit; })")(env.UNITS_KEY, env.lsSet, env.lsGet, env.$, env.recalcForSpeed);
+  const fn = eval("(function(UNITS_KEY, lsSet, lsGet, $, recalcForSpeed, renderFuelRows){ " + src +
+                  " return applyDistUnit; })")(env.UNITS_KEY, env.lsSet, env.lsGet, env.$, env.recalcForSpeed, env.renderFuelRows);
   return { fn, calls, pill };
 }
 
 check("6. a CLICK persists the choice under the one units key",
   () => { setDistUnit("km"); const h = harness(); h.fn("nm", true);
           return h.calls.lsSet.length === 1 && h.calls.lsSet[0][0] === "asv_units_v1"
-              && h.calls.lsSet[0][1].u === "nm" && distUnit() === "nm" && h.pill.textContent === "NM"; },
+              && h.calls.lsSet[0][1].u === "nm" && distUnit() === "nm" && h.pill.textContent === "SAE"; },
   () => { const h = harness(); h.fn("nm", true); return JSON.stringify(h.calls.lsSet); });
 
-check("7. ... and REPAINTS through recalcForSpeed — the same path a plan-speed change takes",
-  () => { setDistUnit("km"); const h = harness(); h.fn("nm", true); return h.calls.recalc === 1; },
+check("7. ... and REPAINTS through recalcForSpeed — the same path a plan-speed change takes - and the mission card's fuel rows at once (2026-10-17: liters or gallons)",
+  () => { setDistUnit("km"); const h = harness(); h.fn("nm", true); return h.calls.recalc === 1 && h.calls.fuelRows === 1; },
   "the survey/committed figures are owned by that path; without it the toggle lies until the next punch");
 
 check("8. the cross-window adoption does NOT persist — storage echoes must not write back",
@@ -306,6 +307,32 @@ check("12. the AIS card still reads nm ALWAYS — its own earlier decision, not 
       ? bad.concat(trips.map(nm => nm + " nm did not round-trip")).join(" | ")
       : "9.26 km = 5 nm, 5 km = 2.7, 50 km = 27, 150 km = 81; 5 / 2.7 / 1.6 / 9.9 / 10 / 27 / 81 nm survive km and back");
 }
+
+// ---- 15-17. METRIC / SAE: the pill names a unit system, and fuel follows it (Andy, 2026-10-17: "Change Distance pill to
+//      Metric/SAE and add fuel levels to the changeover so we get liters or gallons along with kilometers or miles" -
+//      asked, NAUTICAL miles on the SAE side) -------------------------------------------------------------------------- //
+check("15. the pill names the SYSTEM - METRIC for km, SAE for nm - from the same stored value (a preference saved before "
+      + "reads the same), and the page writes it through unitLabel at the click, at the other window's echo and at startup",
+  () => unitLabel("km") === "METRIC" && unitLabel("nm") === "SAE" && unitLabel("garbage") === "METRIC"
+        && /<span class="k">UNITS<\/span><b id="p_units">METRIC<\/b>/.test(H)
+        && /el\.textContent = unitLabel\(adopted\);/.test(H) && /el\.textContent = unitLabel\(distUnit\(\)\);/.test(H)
+        && !/p_units"\)[^\n]*toUpperCase\(\)/.test(H),
+  () => unitLabel("km") + " / " + unitLabel("nm"));
+check("16. FUEL FOLLOWS IT: liters on METRIC, US gallons (3.785 L) on SAE - under 10 to a tenth, whole from 10, or to the "
+      + "places asked for; nothing for no number",
+  () => { setDistUnit("km"); const m = [fmtVol(250), fmtVol(7.25), fmtVol(49.54, 1), fmtVol(null), fmtVol(NaN)];
+          setDistUnit("nm"); const s = [fmtVol(250), fmtVol(7.57), fmtVol(37.85, 1), fmtVol(null)];
+          setDistUnit("km");
+          return L_PER_GAL === 3.785411784 && m.join("|") === "250 L|7.3 L|49.5 L|--|--" && s.join("|") === "66 gal|2.0 gal|10.0 gal|--"; },
+  () => { setDistUnit("nm"); const r = [fmtVol(250), fmtVol(7.57), fmtVol(37.85, 1)].join(" / "); setDistUnit("km"); return r; });
+check("17. ... and EVERY fuel volume the page shows goes through it: fuelFmt (the card, the RTH point, the alerts, the "
+      + "passage's refuel words), the low-fuel alert's tenths, the fuel pill's tank - and that pill's range through fmtDist; "
+      + "no hand-made ' L' left",
+  () => /return model\.kind === "fuel" \? fmtVol\(x\) : x\.toFixed\(2\) \+ " V";/.test(grab("fuelFmt"))
+        && /const fine = \(x\) => model\.kind === "fuel" \? fmtVol\(x, 1\)/.test(H)
+        && /st\.fuel_l!=null \? fmtVol\(st\.fuel_l\)/.test(H) && /fmtDist\(st\.range_nm \* M_PER_NM, 1\)/.test(H)
+        && !/toFixed\(\d\)\s*\+\s*" L"/.test(H) && !/fuel_l\s*\+\s*" L"/.test(H) && !/range_nm \+ " nm"/.test(H),
+  () => "fuelFmt: " + grab("fuelFmt").replace(/\s+/g, " ").slice(0, 120));
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"
                   : "\nall checks passed (" + ran + ")");

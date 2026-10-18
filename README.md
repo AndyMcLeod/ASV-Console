@@ -77,7 +77,7 @@ windows, and last any warning that comes and goes (`RESTART CONSOLE`, `DISK LOW`
 supervisor's pill), so one appearing moves nothing already there (only a warning too long for
 the room left can add a line, and that moves the readouts down, never sideways). The lower line, from the
 right, is the vessel's live data - POS, SOG, HDG, COG, HOME→, PITCH, ROLL, the energy, WPT,
-the distance unit and TIME - each at a fixed width sized to its longest value, so nothing in
+the units (METRIC / SAE) and TIME - each at a fixed width sized to its longest value, so nothing in
 either line moves as the numbers change. Until then it was one line that wrapped inside the
 readouts on most screens, and the readouts jumped between lines as their widths changed. Both
 lines fit a window wider than about 1,200 px; a narrower one wraps a line, always at the same
@@ -1350,12 +1350,15 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    says which and asks again every 30 s (2026-10-17: it had kept the empty answer for as long as she
    stayed there).
 
-   **Distance units (`DIST`).** A pill on the top bar switches every **long**
-   distance — route lengths, distance remaining, HOME range, station distances —
-   between **kilometers and nautical miles** (persisted, both windows). Display
-   only: every stored and transmitted value stays metric. Deliberately outside it:
-   short distances (spacing, buffers, depths, the LINES table) always read metres,
-   chart tiles print feet as charted, and the AIS card always reads nm.
+   **Units (`UNITS`: METRIC / SAE).** A pill on the top bar switches the display
+   units (2026-10-17; it was the DIST pill, km / nm): **METRIC** reads every **long**
+   distance — route lengths, distance remaining, HOME range, station distances — in
+   **kilometers** and fuel in **liters**; **SAE** reads them in **nautical miles** and
+   **US gallons** (persisted, both windows; a choice saved before carries over).
+   Display only: every stored and transmitted value stays metric. Deliberately
+   outside it: short distances (spacing, buffers, depths, the LINES table) always
+   read meters, chart tiles print feet as charted, the AIS card always reads nm,
+   and a battery reads volts.
 
    **The Lines card (`LINES`).** A per-survey-line table: each line's length, its
    planned time at the plan speed, and the actual time once flown (actuals accrue
@@ -1406,7 +1409,7 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    pointer and the reading — **distance and true bearing** — is drawn **along the
    line**, rotated to it and flipped so it never reads upside-down. Distance goes
    through the same `fmtDist()` as every other long distance, so a measurement follows
-   the `DIST` pill. Legs accumulate until cleared; `Esc` peels one layer at a time
+   the `UNITS` pill. Legs accumulate until cleared; `Esc` peels one layer at a time
    (menu → half-drawn leg → all measurements → the tool), and **dragging still pans**.
    Drawn in **magenta** — S-52's colour for the mariner's own information, and the one
    chart colour this console had not spent — because a measurement is an *annotation*:

@@ -57,7 +57,7 @@
   #p_pos{min-width:25ch;} #p_sog{min-width:8ch;} #p_hdg{min-width:6ch;}
   #p_cog{min-width:4ch;} #p_home{min-width:17ch;} #p_pitch{min-width:6ch;}
   #p_roll{min-width:6ch;} #p_batt{min-width:7ch;} #p_wpt{min-width:13ch;}
-  #p_time{min-width:20ch;}
+  #p_time{min-width:20ch;} #p_units{min-width:6ch;}
   #linktext{display:inline-block;min-width:14ch;}   /* "serial · stale" (the console's modes: sim, tcp, serial) */
   #autonomy{min-width:10ch;}                         /* "FAILSAFE" (the console's longest), and the letter-spacing */
   .pill.state{border-color:var(--line2);text-transform:uppercase;letter-spacing:.08em;font-size:10px;}
@@ -497,7 +497,7 @@
     <div class="pill" title="Vessel roll (starboard down +). In the sim, driven by the sea state (beam seas roll most)."><span class="k">ROLL</span><b id="p_roll">--</b></div>
     <div class="pill batt" id="battPill" title="Click to toggle the energy-full override (report the battery/fuel as full and stop the sim drain/burn). Turns MAGENTA when on. Applies in every mode."><span class="k" id="p_batt_k">BATT</span><b id="p_batt">--</b></div>
     <div class="pill"><span class="k">WPT</span><b id="p_wpt">--</b></div>
-    <div class="pill" id="unitsPill" style="cursor:pointer" title="Distance display unit for LONG distances — route lengths, remaining distance, HOME range, tide-station distance: kilometers or NAUTICAL MILES. Click to toggle (persisted). Short distances (line spacing, buffers, depths, the LINES table) always read in meters, chart-tile soundings stay in feet, and the AIS card always reads nm."><span class="k">DIST</span><b id="p_units">KM</b></div>
+    <div class="pill" id="unitsPill" style="cursor:pointer" title="Display units: METRIC - long distances (route lengths, remaining distance, HOME range, tide-station distance) in kilometers and fuel in liters - or SAE - nautical miles and US gallons. Click to toggle (persisted, both windows). Short distances (line spacing, buffers, depths, the LINES table) always read in meters, chart-tile soundings stay in feet, the AIS card always reads nm, and a battery reads volts."><span class="k">UNITS</span><b id="p_units">METRIC</b></div>
     <div class="pill" title="Local time · UTC"><span class="k">TIME</span><b id="p_time">--</b></div>
     </div>
   </div>
@@ -1117,7 +1117,7 @@
 import { M_PER_DEG_LAT, TILE, azTo, distTo, atDA, toEN, fromEN, llEN, planeFrame,
          worldPx, worldToLatLon, distPtSegPx, alignDeg } from "/static/js/geodesy.js";
 import { M_PER_NM, distUnit, setDistUnit, fmtDist, fmtNm, nmFromKm, kmFromNm, nmRound, nmField,
-         fmtETA, fmtDur, fmtMS, fmtLL } from "/static/js/units.js";
+         fmtETA, fmtDur, fmtMS, fmtLL, fmtVol, unitLabel } from "/static/js/units.js";
 import { bbOf, inBB, bboxContains, bboxAround, lerpLL, dSeg, segInt, pinp,
          eachRing, eachPath, eachPoint,
          ptInGeom, segSamplesEN, acrossTrackM } from "/static/js/geometry.js";
@@ -8717,7 +8717,8 @@ function fuelProjection(){
 }
 function fuelFmt(model, x){
   if(x == null || !Number.isFinite(x)) return "--";
-  return model.kind === "fuel" ? (Math.abs(x) < 10 ? x.toFixed(1) : String(Math.round(x))) + " L" : x.toFixed(2) + " V";
+  // fuel in the operator's units - liters or US gallons (units.js fmtVol, the UNITS pill); a battery in volts
+  return model.kind === "fuel" ? fmtVol(x) : x.toFixed(2) + " V";
 }
 // Percent of the USABLE span: the tank, or a pack down to its factory alarm (fuel.js header).
 function fuelPct(model, x){ return Math.round(100 * (x - model.floor) / (model.full - model.floor)); }
@@ -8768,7 +8769,7 @@ function fuelTick(s){
     const out = fuelOutOfRangeSay(model, w);
     // To a tenth of a liter: the card's whole liters put 49.5 aboard as "50 L" beside a 50 L reserve - an alert whose
     // two numbers read equal (seen on the live check).
-    const fine = (x) => model.kind === "fuel" ? x.toFixed(1) + " L" : fuelFmt(model, x);
+    const fine = (x) => model.kind === "fuel" ? fmtVol(x, 1) : fuelFmt(model, x);
     showBanner("⚠ LOW FUEL — AT THE " + Math.round(FUEL_RESERVE_FRAC * 100) + "% RESERVE: " + fine(level)
       + (model.kind === "fuel" ? " aboard" : " on the pack") + " (" + fuelReserveOf(model) + " is " + fine(rth) + "). "
       + out.charAt(0).toUpperCase() + out.slice(1) + ", so she is NOT being sent home: find a port to refuel.");
@@ -20649,7 +20650,8 @@ $("#battPill").onclick = ()=>{
                : "Energy override OFF — actual energy reported.");
 };
 
-// DIST pill: the km<->nm display toggle (see fmtDist, where the scope decisions live).
+// UNITS pill: METRIC (km, liters) <-> SAE (nm, US gallons) - units.js, where the scope decisions live (2026-10-17: it
+// was the DIST pill, km <-> nm; the stored value is still "km" / "nm").
 // One function whether the change came from a click HERE or from the OTHER window of the
 // UI split: localStorage is shared per-origin and `storage` fires in every window that
 // did not make the change, so both stay in step without a second mechanism. Repaint is
@@ -20660,9 +20662,11 @@ function applyDistUnit(u, save){
   // units.js owns the value and normalises it; take back what it actually adopted rather
   // than re-deriving the same ternary here and risking the two disagreeing.
   const adopted = setDistUnit(u);
-  const el = $("#p_units"); if(el) el.textContent = adopted.toUpperCase();
+  const el = $("#p_units"); if(el) el.textContent = unitLabel(adopted);
   if(save) lsSet(UNITS_KEY, {u: adopted});
   recalcForSpeed();
+  // the mission card's fuel rows (liters or gallons) at once, not at the next frame the card draws on (2026-10-17)
+  renderFuelRows();
 }
 if($("#unitsPill")) $("#unitsPill").onclick = ()=> applyDistUnit(distUnit()==="km" ? "nm" : "km", true);
 window.addEventListener("storage", e=>{
@@ -20674,7 +20678,7 @@ window.addEventListener("storage", e=>{
 // ReferenceError that takes out the whole script - the showPanel lesson). Nothing
 // unit-dependent has painted yet, so there is nothing to repaint: every readout that
 // follows reads distUnit() when it first draws.
-{ const el = $("#p_units"); if(el) el.textContent = distUnit().toUpperCase(); }
+{ const el = $("#p_units"); if(el) el.textContent = unitLabel(distUnit()); }
 
 // THE V.VESSEL-COMMAND GATES — ONE COPY OF EACH RULE, and they live out here as named
 // predicates rather than inline in the poll below because THE CHART MENU NEEDS THEM TOO.
@@ -20872,9 +20876,10 @@ function onState(s){
     const fcls = fstate==="critical"?"critical":fstate==="warn"?"warn":fstate==="ok"?"ok":"";
     if(pbk) pbk.textContent = "FUEL";
     pb.textContent = (st.fuel_pct!=null ? st.fuel_pct+"%" : "--"); pb.className = fcls;
-    let vtxt = (st.fuel_l!=null ? st.fuel_l+" L" : "--") + (st.fuel_pct!=null ? " ("+st.fuel_pct+"%)" : "");
+    // the tank and her range in the operator's units (the UNITS pill: liters and km, or US gallons and nm)
+    let vtxt = (st.fuel_l!=null ? fmtVol(st.fuel_l) : "--") + (st.fuel_pct!=null ? " ("+st.fuel_pct+"%)" : "");
     if(st.endurance_h!=null) vtxt += " · " + st.endurance_h + " h";
-    if(st.range_nm!=null)    vtxt += " · " + st.range_nm + " nm";
+    if(st.range_nm!=null)    vtxt += " · " + fmtDist(st.range_nm * M_PER_NM, 1);
     setTip(pill, "Fuel: " + vtxt + fuelPillLine() + "\n" + OVR_TIP);   // see setTip: not under the pointer
   } else {
     const bstate = st.battery_state || "unknown";

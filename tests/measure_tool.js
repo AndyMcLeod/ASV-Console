@@ -127,7 +127,7 @@ var M_PER_DEG_LAT = 111320;   // distUnit now lives in units.js (setDistUnit)
 eval(grab("measLabel"));
 
 const MEAS_SRC = grab("measLabel");
-check("1  distance goes through fmtDist, so a measurement follows the DIST pill",
+check("1  distance goes through fmtDist, so a measurement follows the UNITS pill",
   () => /fmtDist\s*\(\s*distTo\s*\(/.test(MEAS_SRC) && !/\/\s*1000/.test(MEAS_SRC),
   () => MEAS_SRC.replace(/\s+/g, " ").slice(0, 96));
 
