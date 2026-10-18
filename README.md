@@ -1340,16 +1340,19 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    correction being applied, and WGS 84 / Mercator. It states the **sounding units
    on both sides**, because they differ: the chart image prints **feet**, while the
    ENC data and every depth the console computes — including this vessel's
-   draft-derived nogo floor — are **metres**. Below that, the part a printed title
+   draft-derived nogo floor — are **meters**. Below that, the part a printed title
    block can't give you: the IHO **zone of confidence under the vessel right now**,
    with the **survey dates** and source behind it, read from the chart's own
    `M_QUAL` polygons and re-evaluated as the vessel moves. It matters — the DriX
    operating area at Lewes returns a mix of ZOC B and **ZOC D** (the lowest
-   confidence class), and the card flags the poor ones in amber as you enter them.
+   confidence class), and the card flags the poor ones in amber as you enter them. Where NOAA does
+   not answer whole for the water she is in - its chart-cell or confidence query fails - the card
+   says which and asks again every 30 s (2026-10-17: it had kept the empty answer for as long as she
+   stayed there).
 
    **Distance units (`DIST`).** A pill on the top bar switches every **long**
    distance — route lengths, distance remaining, HOME range, station distances —
-   between **kilometres and nautical miles** (persisted, both windows). Display
+   between **kilometers and nautical miles** (persisted, both windows). Display
    only: every stored and transmitted value stays metric. Deliberately outside it:
    short distances (spacing, buffers, depths, the LINES table) always read metres,
    chart tiles print feet as charted, and the AIS card always reads nm.

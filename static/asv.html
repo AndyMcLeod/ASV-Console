@@ -17884,6 +17884,25 @@ const CATZOC_LBL = {1:["ZOC A1","\u00b15 m + 5% depth"], 2:["ZOC A2","\u00b120 m
 const ENC_USAGE_LBL = {"1":"Overview","2":"General","3":"Coastal","4":"Approach",
   "5":"Harbour","6":"Berthing"};
 let chartInfoBox = null, chartBusy = false, chartRetryAt = 0;
+// ⚠ AN ANSWER NOAA DID NOT GIVE WHOLE IS SHOWN, NOT KEPT (Andy, 2026-10-17: "The SRC chip is not updating. Chart source
+// card is not getting data"). The console serves an answer with a failed query ONCE and never keeps it (asv_console.py
+// fetch_chart_info: "not read whole (Coverage_area)", the failed classes in `partial`) - but this page kept it: the box
+// was adopted, and a box that covers the vessel is never asked again. NOAA's cell query failed once for the water he was
+// surveying (and answered whole the next time - both measured), and the card showed no chart for as long as she stayed
+// in that box. Now a partial answer is shown with what did come, the card says what did not, and it is asked again
+// CHART_RETRY_MS on. A console from before `partial` says it in its note, which is read the same way.
+const CHART_RETRY_MS = 30000;
+const CHART_PART_WORDS = {Coverage_area: "the chart cells", Quality_of_Data_area: "the zones of confidence"};
+/** The classes NOAA did not answer whole in a chart-source answer: its `partial`, or the note an older console wrote. */
+function chartPartial(d){
+  if(Array.isArray(d && d.partial)) return d.partial.map(String);
+  const m = /^not read whole \(([^)]*)\)/.exec(String((d && d.note) || ""));
+  return m ? m[1].split(",").map(s => s.trim()).filter(Boolean) : [];
+}
+function chartPartialSay(parts){
+  return "NOAA did not answer whole for " + parts.map(p => CHART_PART_WORDS[p] || p).join(" and ")
+       + " - asked again every " + Math.round(CHART_RETRY_MS / 1000) + " s";
+}
 function cellName(props){ return String((props&&props.DSNM) || "").replace(/\.\d+$/, ""); }
 function bboxCovers(b, ll){ return b && ll && ll.lon>=b.W && ll.lon<=b.E && ll.lat>=b.S && ll.lat<=b.N; }
 async function ensureChartInfo(){
@@ -17905,12 +17924,14 @@ async function ensureChartInfo(){
     const d = await r.json();
     if(!r.ok || d.error){
       sea.chartInfo = {note:"chart source unavailable ("+(d.error || ("HTTP "+r.status))+")", cells:[], quality:[]};
-      chartRetryAt = Date.now() + 30000;
+      chartRetryAt = Date.now() + CHART_RETRY_MS;
+    } else if(chartPartial(d).length){             // shown, not kept: asked again (see CHART_RETRY_MS)
+      sea.chartInfo = {...d, retrying: chartPartial(d)}; chartRetryAt = Date.now() + CHART_RETRY_MS;
     } else { sea.chartInfo = d; chartInfoBox = b; chartRetryAt = 0; }
   }catch(e){
     sea.chartInfo = {note:(e && e.name === "AbortError") ? "chart source timed out" : "chart source unavailable",
                  cells:[], quality:[]};
-    chartRetryAt = Date.now() + 30000;
+    chartRetryAt = Date.now() + CHART_RETRY_MS;
   }
   clearTimeout(killer);
   chartBusy = false;
@@ -17998,7 +18019,10 @@ function updateChartCard(){
   if(!sea.chartInfo){ h = `<div style="color:var(--ink-faint);">${chartBusy
       ? "reading the chart source…<div style=\"margin-top:3px;font-size:10px;\">first read of a new area fetches from NOAA — this can take up to a minute</div>"
       : "no chart source yet"}</div>`; }
-  else if(!names.length){ h = `<div style="color:var(--ink-faint);">${sea.chartInfo.note || "no ENC coverage here"}</div>`; }
+  // an answer NOAA did not give whole names what is missing and that it is asked again (CHART_RETRY_MS), not the
+  // console's bare note, and never "no ENC coverage" or "no quality polygon" for data that simply did not arrive
+  else if(!names.length){ h = `<div style="color:var(--ink-faint);">${(sea.chartInfo.retrying && sea.chartInfo.retrying.length)
+      ? chartPartialSay(sea.chartInfo.retrying) : (sea.chartInfo.note || "no ENC coverage here")}</div>`; }
   else {
     h += hdr(names.length === 1 ? "Chart in view" : names.length + " charts in view", true);
     for(const c of chartList) h += cellLine(c);
@@ -18059,6 +18083,8 @@ function updateChartCard(){
       if(q.SORIND) h += row("Source", `<span style="font-size:10px;">${q.SORIND}</span>`+
                  (q.SORDAT ? ` <span style="color:var(--ink-faint);">${fmtEncDate(q.SORDAT)}</span>` : ""));
       if(poor) h += `<div style="margin-top:4px;color:#e0a33f;font-size:10px;">Low-confidence data here — treat charted depths and positions with caution.</div>`;
+    } else if(sea.chartInfo.retrying && sea.chartInfo.retrying.length){
+      h += `<div style="color:#e0a33f;font-size:10px;">${chartPartialSay(sea.chartInfo.retrying)}</div>`;
     } else {
       h += `<div style="color:var(--ink-faint);">no quality polygon at this position</div>`;
     }

@@ -4234,6 +4234,9 @@ def fetch_chart_info(bbox):
     # follows. This one kept it: a quality layer that failed once was an empty zone-of-confidence card for ever.
     if failed:
         out["note"] = "not read whole (%s)" % ", ".join(failed)
+        # ... and which, as data (2026-10-17): the page shows such an answer, says what is missing and asks again,
+        # where it had kept it - one NOAA failure was an empty SRC card for as long as she stayed in that water
+        out["partial"] = list(failed)
     else:
         _cache_json(cache, out)
     return out

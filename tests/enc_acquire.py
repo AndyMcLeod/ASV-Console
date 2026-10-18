@@ -287,10 +287,13 @@ try:
     reread = len(asked) > n0
 finally:
     A._enc_pick_band, A._enc_layer_map, A._enc_query_ids, A._enc_query_by_ids = saved
-check("4. THE CHART-SOURCE CARD'S ANSWER with a failed query is served once, says so, and is NOT kept - it was kept, "
-      "empty, for ever; a whole one is kept and read from the disk; one a week old is read again",
+check("4. THE CHART-SOURCE CARD'S ANSWER with a failed query is served once, says so - and names the failed class in "
+      "`partial` - and is NOT kept - it was kept, empty, for ever; a whole one is kept and read from the disk; one a week old "
+      "is read again",
       lambda: "not read whole" in bad["note"] and not bad["quality"] and not bad_kept and good_kept and good["quality"]
-              and from_disk and again["quality"] and reread and aged["quality"],
+              and from_disk and again["quality"] and reread and aged["quality"]
+              # the failed classes as data (2026-10-17: the page asks again on them - tests/chart_source_card.js 12)
+              and bad.get("partial") == ["Quality_of_Data_area"] and "partial" not in good,
       lambda: "failed: note %r kept %s; whole kept %s; again from disk %s; aged re-read %s"
               % (bad["note"], bad_kept, good_kept, from_disk, reread))
 

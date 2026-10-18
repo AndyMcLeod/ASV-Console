@@ -78,7 +78,7 @@ const path = require("path");
 // and the checks below exercise the shipped function rather than an eval of its text.
 // Top-level so the suite's DIRECT eval() of page functions still resolves them.
 const { llEN } = require("../static/js/geodesy.js");
-const { eachRing, pinp, ptInGeom } = require("../static/js/geometry.js");
+const { eachRing, pinp, ptInGeom, bboxAround } = require("../static/js/geometry.js");
 
 // The vessel-derived parameter block moved to static/js/state.js (2026-08-09). The page
 // functions eval'd below read V.NOGO_MIN_DEPTH_M / V.WRECK_RADIUS_M / ..., so the suite
@@ -141,10 +141,11 @@ for (const d of ["CHART_DISPLAY_UNITS", "CHART_DATA_UNITS", "CATZOC_LBL", "ENC_U
   code += grabDecl(d) + "\n";
 // ptInGeom and qualityAt are REQUIRED at the top of this file, so the sandbox is handed
 // the real ones through its parameter list rather than a second copy eval'd beside them.
-for (const f of ["cellName", "fmtEncDate", "updateChartCard"]) code += grab(f) + "\n";
-code += "(function(cells, quality, at){\n"
+for (const d of ["CHART_RETRY_MS", "CHART_PART_WORDS"]) code += grabDecl(d) + "\n";
+for (const f of ["cellName", "fmtEncDate", "chartPartialSay", "updateChartCard"]) code += grab(f) + "\n";
+code += "(function(cells, quality, at, retrying){\n"
       + "  asv = at; sea.chartInfo = cells === null ? null\n"
-      + "        : {band:'enc_harbour', cells:cells, quality:quality||[], note:'no ENC coverage here'};\n"
+      + "        : {band:'enc_harbour', cells:cells, quality:quality||[], note:'no ENC coverage here', retrying: retrying};\n"
       + "  chartLastHtml = null; __body = '';\n"     // the card skips an unchanged write
       + "  updateChartCard(); return __body;\n"
       + "})";
@@ -159,7 +160,7 @@ const cell = (dsnm, lat, lon, d, extra) =>
 
 // The vessel sits at the DriX base off Lewes.
 const AT = { lat: 38.78965, lon: -75.16094 };
-const paint = (cells, quality, at) => painter(cells, quality, at || { lat: AT.lat, lon: AT.lon });
+const paint = (cells, quality, at, retrying) => painter(cells, quality, at || { lat: AT.lat, lon: AT.lon }, retrying);
 // Rows are read by their data-cell key, NOT by scanning for cell names: the name
 // also appears in each row's tooltip and in the legend sentence, so a bare name
 // scan counts one row three times (it did, and reported a fold bug that wasn't).
@@ -278,5 +279,71 @@ check("11. no ENC coverage still reads as a note, not an empty list",
       () => { const empty = paint([]);
               return empty.includes("no ENC coverage here") && !/charts? in view/i.test(empty); });
 
-console.log(ran + " checks, " + fails + " failed");
-process.exit(fails ? 1 : 0);
+// ── 12-12d. AN ANSWER NOAA DID NOT GIVE WHOLE IS SHOWN, NOT KEPT (Andy, 2026-10-17: "The SRC chip is not updating. Chart
+//    source card is not getting data") ──────────────────────────────────────────────────────────────────────────────
+// The console serves an answer with a failed query once and never keeps it ("not read whole (Coverage_area)"); the page
+// adopted its box, and a box that covers the vessel is never asked again - so one NOAA failure (measured, for the water he
+// was surveying: the cell query failed, then answered whole) left the card with no chart for as long as she stayed there.
+// ensureChartInfo driven here against a console that answers as the test says, on a clock the test moves.
+(async () => {
+  let code2 = "const M_PER_DEG_LAT = 111320;\n"
+    + grabDecl("CHART_RETRY_MS") + "\n" + grabDecl("CHART_PART_WORDS") + "\n" + grabDecl("chartInfoBox") + "\n"
+    + "let asv = {lat: 43.038327, lon: -70.640525}, center = {lat: 0, lon: 0}, nogo = {bbox: null};\n"
+    + "const sea = {chartInfo: null}; let __paints = 0; function updateChartCard(){ __paints++; }\n"
+    + grab("chartPartial") + "\n" + grab("bboxCovers") + "\nasync " + grab("ensureChartInfo") + "\n"
+    + "({ ensure: ensureChartInfo, st: () => ({ info: sea.chartInfo, box: chartInfoBox, retryAt: chartRetryAt, busy: chartBusy }) })";
+  const realFetch = globalThis.fetch, realNow = Date.now;
+  let clock = 1.79e12, asked = [], answers = [];
+  globalThis.fetch = (url) => { asked.push(url); const a = answers.shift();
+    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(a || { error: "no answer queued" }) }); };
+  Date.now = () => clock;
+  try {
+    const W = eval(code2);
+    const QZ = [{ props: { CATZOC: "2" }, geometry: sq(43.038, -70.64, 0.05) }];
+    const CELLS = [cell("US5PSMCD", 43.038, -70.64, 0.05)];
+    answers.push({ band: "enc_harbour", cells: [], quality: QZ, note: "not read whole (Coverage_area)", partial: ["Coverage_area"] });
+    await W.ensure();
+    const p1 = W.st();
+    clock += 10000; await W.ensure(); const at10 = asked.length;
+    clock += 21000; answers.push({ band: "enc_harbour", cells: CELLS, quality: QZ, note: "" }); await W.ensure();
+    const p2 = W.st(), at31 = asked.length;
+    clock += 60000; await W.ensure(); const later = asked.length;
+    check("12. A PARTIAL ANSWER IS SHOWN, NOT KEPT: NOAA's cell query failed - the answer is shown with what came, names "
+          + "what did not, and its box is NOT adopted; nothing is asked 10 s on, it is asked again past CHART_RETRY_MS (30 s), "
+          + "and the whole answer that comes then IS kept - nothing asked a minute later",
+          () => p1.info && JSON.stringify(p1.info.retrying) === '["Coverage_area"]' && p1.info.quality.length === 1
+                && p1.box === null && p1.retryAt === 1.79e12 + 30000 && !p1.busy && at10 === 1 && at31 === 2
+                && p2.box && !p2.info.retrying && p2.info.cells.length === 1 && p2.retryAt === 0 && later === 2,
+          () => JSON.stringify({ retrying: p1.info && p1.info.retrying, box1: p1.box, at10, at31, kept: !!p2.box, later }));
+    // 12b. a console from before `partial`: its note says it, read the same way - both classes
+    const W2 = eval(code2);
+    answers.push({ band: "enc_harbour", cells: [], quality: [], note: "not read whole (Coverage_area, Quality_of_Data_area)" });
+    await W2.ensure();
+    const q2 = W2.st();
+    check("12b. ... and from a console before `partial` the note is read the same way: both classes named, the box not kept",
+          () => q2.info && JSON.stringify(q2.info.retrying) === '["Coverage_area","Quality_of_Data_area"]' && q2.box === null,
+          () => JSON.stringify({ retrying: q2.info && q2.info.retrying, box: q2.box }));
+    // 12d. an honest empty answer is kept, as before
+    const W3 = eval(code2);
+    answers.push({ band: null, cells: [], quality: [], note: "no ENC coverage here" });
+    await W3.ensure(); const n3 = asked.length; clock += 60000; await W3.ensure();
+    check("12d. an answer that is WHOLE and empty (no ENC coverage here) is kept as before - not asked again while she stays in it",
+          () => W3.st().box && !W3.st().info.retrying && asked.length === n3,
+          () => JSON.stringify({ box: !!W3.st().box, asked: asked.length - n3 }));
+  } finally {
+    globalThis.fetch = realFetch; Date.now = realNow;
+  }
+  // 12c. the card says it
+  const noCells = paint([], [], null, ["Coverage_area"]);
+  const noZoc = paint(LEWES, [], null, ["Quality_of_Data_area"]);
+  check("12c. THE CARD SAYS IT: with the cells missing it names them and that they are asked again every 30 s - not the "
+        + "console's bare note, not 'no ENC coverage here'; with the zones of confidence missing, the vessel's own section "
+        + "says so - not 'no quality polygon at this position'",
+        () => /NOAA did not answer whole for the chart cells - asked again every 30 s/.test(noCells) && !/no ENC coverage here/.test(noCells)
+              && /NOAA did not answer whole for the zones of confidence/.test(noZoc) && !/no quality polygon at this position/.test(noZoc)
+              && rowsOf(noZoc).length > 0,
+        () => JSON.stringify({ noCells: noCells.replace(/<[^>]+>/g, "").slice(0, 120), zoc: /zones of confidence/.test(noZoc) }));
+
+  console.log(ran + " checks, " + fails + " failed");
+  process.exit(fails ? 1 : 0);
+})();
