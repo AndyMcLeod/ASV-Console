@@ -17,12 +17,19 @@
 //     hides its own cards; a view-only chart keeps its own (3), and the controls window follows supervision (4);
 //   * the SAME PICTURE IS NOT SENT AGAIN - a forced send for a page that has just said hello (2);
 //   * each controls page says which it is and when it was opened, the chart keeps a table of the ones alive, and of
-//     two controls windows the NEWER steps aside - silent at once, then closed (5, 7);
-//   * a closed controls window gives the cards back within 6-7 s of its last word, asked every second (6).
+//     two controls windows the NEWER steps aside - silent at once, then closed (5, 7).
+// And (2026-10-18, Andy: "Stop moving cards to chart automatically unless the browser window closes. allow button to
+// swap back and forth."):
+//   * a controls window is gone when it CLOSES: it holds a Web Lock for its life and the chart waits on it, so the cards
+//     come back the moment it closes, the chart hidden or not (6), never while it is open but asleep (8), and a word
+//     still on its way from a closed one brings nothing back (8b); a page that holds no lock (one loaded before, or a
+//     browser without Web Locks) still goes by its silence, 6-7 s after its last word (6b);
+//   * the chart's swap pill and the controls window's own buttons move the cards between the two while both are open;
+//     only the supervising chart heeds them; a controls window coming after none takes the cards again (9, 9b).
 //
 // The pages here are the page's OWN functions - setupUISplit, pushUISync, applyUISync, the peer table, the split rule,
 // the supervision hook - each evaluated in its own world, connected by a fake channel that delivers to every other
-// page, on a fake clock.
+// page, on a fake clock, sharing one fake Web Locks manager.
 //
 //   node tests/ui_split_peers.js      # exit 0 = pass, 1 = fail   (stdlib Node)
 
@@ -69,26 +76,50 @@ function check(name, cond, detail) {
 const clock = { t: 1000000 };
 const timers = [];                     // {page, at, every, fn}
 const pages = [];
+// a page ASLEEP (the browser froze it - open, but it runs nothing and answers nothing) hears nothing and fires no timer
 function deliver(from, m) {
   for (const p of pages) {
-    if (p === from || p.closed || !p.bus.onmessage) continue;
+    if (p === from || p.closed || p.asleep || !p.bus.onmessage) continue;
     p.got.push(m.t);
     p.bus.onmessage({ data: JSON.parse(JSON.stringify(m)) });
   }
 }
-function advance(ms) {
+const flush = () => new Promise(r => setImmediate(r));      // a freed lock's grant runs as a promise settles
+async function advance(ms) {
   const end = clock.t + ms;
+  await flush();
   for (;;) {
-    const due = timers.filter(x => !x.page.closed && x.at <= end).sort((a, b) => a.at - b.at)[0];
+    const due = timers.filter(x => !x.page.closed && !x.page.asleep && x.at <= end).sort((a, b) => a.at - b.at)[0];
     if (!due) break;
     clock.t = Math.max(clock.t, due.at);
     if (due.every) due.at += due.every; else timers.splice(timers.indexOf(due), 1);
     due.fn();
+    await flush();
   }
   clock.t = end;
 }
 
-const SRC = [grabDecl("UI_BRIDGED"), grabDecl("UI_PEER_GONE_MS"), grab("setupUISplit"), grab("pushUISync"), grab("applyUISync"),
+// ---- the browser's Web Locks: ONE manager for every page (a lock belongs to the origin, not to a page) ----------- //
+// Granted in the order asked, one holder per name, and LATER - never inside the request, as the browser grants it; held
+// while the callback's promise is unsettled; and every lock a page holds is freed when the page closes (lockFreeAll) -
+// what the browser does for a page closed, reloaded or crashed.
+const locks = { held: new Map(), queue: [] };              // name -> holding page; [{page, name, cb, done}]
+function lockPump() {
+  locks.queue = locks.queue.filter(q => !q.page.closed);
+  const i = locks.queue.findIndex(q => !locks.held.has(q.name));
+  if (i < 0) return;
+  const q = locks.queue.splice(i, 1)[0];
+  locks.held.set(q.name, q.page);
+  const release = () => { if (locks.held.get(q.name) === q.page) locks.held.delete(q.name); q.done(); lockPump(); };
+  const r = q.cb();
+  if (r && typeof r.then === "function") r.then(release, release); else release();
+  lockPump();
+}
+function lockFreeAll(page) { for (const [n, p] of [...locks.held]) if (p === page) locks.held.delete(n); setImmediate(lockPump); }
+const lockApi = page => ({ request: (name, cb) => new Promise(done => { locks.queue.push({ page, name, cb, done }); setImmediate(lockPump); }) });
+
+const SRC = [grabDecl("UI_BRIDGED"), grabDecl("UI_PEER_GONE_MS"), grabDecl("UI_LOCK"), grab("uiCardsTo"),
+             grab("setupUISplit"), grab("pushUISync"), grab("applyUISync"),
              grabDecl("uiMirrored"), grab("uiSameNode"), grab("uiMorph"),      // the mirror's patch (ui_tooltips 17-18)
              grab("uiPeersPrune"), grab("uiSplitApply"), grab("uiSupervisionChanged"), grab("uiOlder"), grab("uiYield"),
              grab("supervising"), grab("applySupervisor"),
@@ -97,11 +128,15 @@ const SRC = [grabDecl("UI_BRIDGED"), grabDecl("UI_PEER_GONE_MS"), grab("setupUIS
              grabDecl("SUPERVISOR_BEAT_MS"), grabDecl("CHART_WATCH_MS"), grabDecl("chartWatch"), grabDecl("CHART_COVERED_SAY"), grabDecl("CHART_SLEEP_SAY"),
              grab("chartStoppedSay"), grab("chartNoneSay"), grab("chartWatchVerdict"), grab("chartWatchVis"),
              grab("chartWatchRender"), grab("chartWarnShow")].join("\n");
+// the page's own state, as the page declares it
+const STATE = ["uiPeers", "uiWatched", "uiClosed", "uiYielded", "uiLockFree", "uiCardsHome"].map(grabDecl).join("\n");
 
 // A page: the console's own split-window code in a world of its own.
 function makePage(role, id, born, opts) {
   const closeBlocked = !!(opts && opts.closeBlocked);    // a browser that will not let a page close a window it did not open
-  const p = { role, id, closed: false, got: [], sent: [], clicks: [], renders: 0, listeners: {}, mo: null, dom: {}, hidden: false };
+  const noLocks = !!(opts && opts.noLocks);              // a page with no Web Locks: one loaded before them, or a browser without
+  const p = { role, id, closed: false, got: [], sent: [], clicks: [], renders: 0, listeners: {}, mo: null, dom: {}, hidden: false,
+              made: {}, swapPill: { textContent: "", title: "", onclick: null } };
   p.bus = { onmessage: null, postMessage: m => { if (p.closed) return; p.sent.push(m); p.lastSentAt = clock.t; deliver(p, m); } };
   const classes = new Set();
   const el = s => ({
@@ -110,50 +145,61 @@ function makePage(role, id, born, opts) {
     set outerHTML(v) { p.dom[s] = v; p.rebuilt = (p.rebuilt || 0) + 1; },
     querySelectorAll: () => [], contains: () => false,
   });
+  const made = e => { if (e.id) p.made[e.id] = e; (e.kids || []).forEach(made); };    // what the page put on its body
   const world = {
     UIROLE: role, CLIENT_ID: id, born,
     uiBus: p.bus,
+    navigator: noLocks ? {} : { locks: lockApi(p) },
     document: {
       body: { classList: { contains: c => classes.has(c), toggle: (c, on) => (on ? classes.add(c) : classes.delete(c)),
-                           add: c => classes.add(c), remove: c => classes.delete(c) }, set innerHTML(v) { p.notice = v; } },
+                           add: c => classes.add(c), remove: c => classes.delete(c) }, set innerHTML(v) { p.notice = v; },
+              appendChild: e => made(e) },
       get hidden() { return p.hidden; }, activeElement: null,
       querySelector: s => el(s),
       getElementById: i => ({ id: i, type: "button", style: {}, click: () => p.clicks.push(i), dispatchEvent: () => {} }),
       addEventListener: () => {},
+      createElement: tag => ({ tagName: tag.toUpperCase(), id: "", className: "", textContent: "", title: "", style: {},
+                               onclick: null, kids: [], appendChild(c) { this.kids.push(c); } }),
     },
     window: { addEventListener: (ev, fn) => { p.listeners[ev] = fn; },
-              close: () => { if (closeBlocked) return; p.closed = true; p.closedBy = "window.close"; } },
+              close: () => { if (closeBlocked) return; p.closed = true; p.closedBy = "window.close"; lockFreeAll(p); } },
     setInterval: (fn, ms) => timers.push({ page: p, at: clock.t + ms, every: ms, fn }),
     setTimeout: (fn, ms) => timers.push({ page: p, at: clock.t + ms, every: 0, fn }),
     MutationObserver: class { constructor(cb) { p.mo = cb; } observe() {} },
     Date: { now: () => clock.t },
-    render: () => { p.renders++; }, $: () => null, showBanner: () => {},
+    render: () => { p.renders++; }, $: s => (s === "#cardsSwap" ? p.swapPill : null), showBanner: () => {},
     applyAlertWhere: () => {}, alertCardTidy: () => {}, wrapUICards: () => {}, saveUILayout: () => {}, uiSaveSoon: () => {},
     syncUICards: () => {}, Event: class { constructor(t) { this.type = t; } },
   };
   const names = Object.keys(world);
   // eslint-disable-next-line no-new-func
   const f = new Function(...names,
-    "const UI_BORN = born; const uiPeers = new Map(); let uiYielded = false;\n" +
+    "const UI_BORN = born;\n" + STATE + "\n" +
     "let tipEl = null; const tipSay = () => {};\n" +     // nothing hovered here: the tip's half is ui_tooltips 13-18
     "const SUPERVISES = UIROLE === \"main\"; let supHolder = null, supStale = false, supSaidViewOnly = false, supWas = true;\n" +
     "let supBeatMs = 2000, supStaleMs = 10000;\n" + grabDecl("uiSyncLast") + "\n" + SRC + "\n" +
-    "return { setupUISplit, pushUISync, applySupervisor, peers: () => [...uiPeers.keys()], yielded: () => uiYielded };");
+    "return { setupUISplit, pushUISync, applySupervisor, peers: () => [...uiPeers.keys()], yielded: () => uiYielded, " +
+    "home: () => uiCardsHome };");
   p.api = f(...names.map(k => world[k]));
   p.split = () => classes.has("ui-split");
+  p.peerOn = () => classes.has("ui-peer");
+  p.away = () => classes.has("ui-away");
   pages.push(p);
   p.api.setupUISplit();
   return p;
 }
 const syncsFrom = p => p.sent.filter(m => m.t === "sync").length;
 function mutate(p, html) { if (html != null) p.dom["#alertCard"] = html; p.mo([]); }   // the chart's observer fires
-function close(p) { p.closed = true; }        // a window closed with no word: what a real close was measured to do
+// a window closed with no word - what a real close was measured to send - and every lock it held freed by the browser
+function close(p) { p.closed = true; lockFreeAll(p); }
+
+(async () => {
 console.log("The split windows, with more than two pages:");
 
 // 1. ONE CHART, ONE CONTROLS WINDOW - the ordinary case stays what it was.
 const A = makePage("main", "chart-A", 1000);
 const C1 = makePage("controls", "ctl-1", 2000);
-advance(3500);
+await advance(3500);
 check("1. one chart and one controls window: the chart hides its cards (split) once the controls window says hello, "
       + "and gives it a picture at once",
       () => A.split() && A.api.peers().join() === "ctl-1" && syncsFrom(A) >= 1 && C1.got.includes("sync"),
@@ -161,9 +207,9 @@ check("1. one chart and one controls window: the chart hides its cards (split) o
 
 // 2. THE SAME PICTURE IS NOT SENT AGAIN.
 let s0 = syncsFrom(A);
-for (let i = 0; i < 10; i++) { mutate(A); advance(250); }
+for (let i = 0; i < 10; i++) { mutate(A); await advance(250); }
 const idle = syncsFrom(A) - s0;
-mutate(A, "<div id='alertCard'>NEW</div>"); advance(250);
+mutate(A, "<div id='alertCard'>NEW</div>"); await advance(250);
 check("2. ten frames that rewrite the same readouts send NOTHING; one that changes the picture sends ONE sync",
       () => idle === 0 && syncsFrom(A) - s0 === 1 && C1.dom["#alertCard"] === "<div id='alertCard'>NEW</div>",
       () => "idle frames sent " + idle + ", after a change " + (syncsFrom(A) - s0));
@@ -171,10 +217,10 @@ check("2. ten frames that rewrite the same readouts send NOTHING; one that chang
 // 3. TWO CHARTS: only the supervising one drives the controls window.
 const B = makePage("main", "chart-B", 3000);
 A.api.applySupervisor({ holder: "chart-A" }); B.api.applySupervisor({ holder: "chart-A" });
-advance(3000);
+await advance(3000);
 s0 = syncsFrom(B);
-for (let i = 0; i < 8; i++) { mutate(B, "<div id='alertCard'>B " + i + "</div>"); advance(250); }
-mutate(A, "<div id='alertCard'>A</div>"); advance(250);
+for (let i = 0; i < 8; i++) { mutate(B, "<div id='alertCard'>B " + i + "</div>"); await advance(250); }
+mutate(A, "<div id='alertCard'>A</div>"); await advance(250);
 C1.bus.postMessage({ t: "ev", kind: "click", id: "pp_draw" });
 check("3. two charts: the SUPERVISING one alone hides its cards, mirrors into the controls window and carries out its "
       + "clicks; the view-only one keeps its own cards, sends nothing however its picture changes, and runs no click",
@@ -186,7 +232,7 @@ check("3. two charts: the SUPERVISING one alone hides its cards, mirrors into th
 // 4. SUPERVISION MOVES, AND THE CONTROLS WINDOW WITH IT.
 const bSyncs = syncsFrom(B);
 A.api.applySupervisor({ holder: "chart-B" }); B.api.applySupervisor({ holder: "chart-B" });
-advance(250);
+await advance(250);
 check("4. TAKE OVER in the other chart: it hides its cards and sends its picture at once (B's 'B 7'), and the chart "
       + "that lost supervision shows its own again",
       () => B.split() && !A.split() && syncsFrom(B) === bSyncs + 1 && C1.dom["#alertCard"] === "<div id='alertCard'>B 7</div>",
@@ -194,54 +240,53 @@ check("4. TAKE OVER in the other chart: it hides its cards and sends its picture
 
 // 5. A SECOND CONTROLS WINDOW: the newer steps aside.
 const C2 = makePage("controls", "ctl-2", 5000);
-advance(2500);
+await advance(2500);
 const c2after = C2.sent.length;
-advance(6000);
+await advance(6000);
 check("5. a second controls window, opened after the first, hears it and STEPS ASIDE: it closes itself and says "
       + "nothing more - no ping, no hello, no bye; the first one never yields to it",
       () => C2.api.yielded() && C2.closedBy === "window.close" && C2.sent.length === c2after && !C1.api.yielded() && !C1.closed,
       () => "C2 yielded " + C2.api.yielded() + " (" + C2.closedBy + "), C2 sent after " + (C2.sent.length - c2after)
             + "; C1 yielded " + C1.api.yielded());
-check("5b. ... and the chart, which heard the newcomer's hello, lets it go within 7 s and stays split on the first",
+check("5b. ... and the chart, which heard the newcomer's hello, lets it go - its lock freed as it stepped aside - and "
+      + "stays split on the first",
       () => B.api.peers().join() === "ctl-1" && B.split(), () => "peers " + B.api.peers() + ", split " + B.split());
 
 const C4 = makePage("controls", "ctl-x", 6000, { closeBlocked: true });
-advance(2500);
+await advance(2500);
 const c4after = C4.sent.length;
-advance(7000);
+await advance(7000);
 check("5c. ... and where the browser will not let it close: it STAYS open but silent - nothing sent from the moment it "
-      + "stepped aside - says why it is blank, and the chart lets it go and stays split on the first",
+      + "stepped aside - says why it is blank, frees its lock, and the chart lets it go and stays split on the first",
       () => C4.api.yielded() && !C4.closed && C4.sent.length === c4after && /ANOTHER CONTROLS WINDOW IS ALREADY OPEN/.test(C4.notice || "")
-            && B.api.peers().join() === "ctl-1" && B.split(),
+            && B.api.peers().join() === "ctl-1" && B.split() && !locks.held.has("asv_ui_controls_ctl-x"),
       () => "yielded " + C4.api.yielded() + ", open " + !C4.closed + ", sent after " + (C4.sent.length - c4after)
             + ", notice " + !!C4.notice + "; chart peers " + B.api.peers());
 
-// 6. CLOSING THE CONTROLS WINDOW gives the cards back - not while the chart is hidden, at once when it is seen.
+// 6. CLOSING THE CONTROLS WINDOW gives the cards back the moment its lock is freed - the chart hidden or not.
 B.hidden = true;
-const lastWord = clock.t;
 close(C1);
-advance(9000);
-const whileHidden = B.split();
+await advance(10);
+const hiddenBack = { split: B.split(), peers: B.api.peers().length };
 B.hidden = false;
-let backAt = null;
-for (let i = 0; i < 20 && backAt == null; i++) { advance(250); if (!B.split()) backAt = clock.t; }
-check("6. the controls window closed with no word (as a real close was measured to send none): a HIDDEN chart passes "
-      + "no verdict, and once it is seen the cards come back within a second - its peer table emptied",
-      () => whileHidden && backAt != null && backAt - (lastWord + 9000) <= 1000 && B.api.peers().length === 0,
-      () => "hidden: split " + whileHidden + "; seen, back after " + (backAt == null ? "never" : (backAt - lastWord - 9000) + " ms"));
-const C3 = makePage("controls", "ctl-3", 9000);
-advance(1000);
+check("6. the controls window closed with no word (as a real close was measured to send none): the browser frees its "
+      + "lock and the cards come back at once - no wait on its silence - even to a chart that is hidden",
+      () => !hiddenBack.split && hiddenBack.peers === 0, () => JSON.stringify(hiddenBack));
+const C3 = makePage("controls", "ctl-3", 9000, { noLocks: true });
+await advance(1000);
 const split3 = B.split();
 close(C3);
 let back3 = null;
-for (let i = 0; i < 80 && back3 == null; i++) { advance(125); if (!B.split()) back3 = clock.t - C3.lastSentAt; }
-check("6b. a visible chart gives the cards back more than 6 s and within 7 s of the controls window's last word - never "
-      + "sooner, which is what rides out the page's measured stalls; asked every second (it was every 3 s: 6-9 s, measured 9)",
-      () => split3 && back3 != null && back3 > 6000 && back3 <= 7000, () => "back " + back3 + " ms after its last word");
+// read every 10 ms: the time is the end of the step it changed in, so up to one step late
+for (let i = 0; i < 1000 && back3 == null; i++) { await advance(10); if (!B.split()) back3 = clock.t - C3.lastSentAt; }
+check("6b. a controls page that holds NO lock (loaded before them, or a browser without): a visible chart gives the cards "
+      + "back more than 6 s and within 7 s of its last word (read to 10 ms) - never sooner, which is what rides out the "
+      + "page's measured stalls; asked every second",
+      () => split3 && back3 != null && back3 > 6000 && back3 <= 7010, () => "back " + back3 + " ms after its last word");
 
 // 7. A BYE drops the page that said it, and only that page; a page with no id is tracked as one.
 const D1 = makePage("controls", "ctl-4", 20000);
-advance(500);
+await advance(500);
 B.bus.onmessage({ data: { t: "ping" } });                               // a page loaded before ids: tracked as "anon"
 D1.listeners.beforeunload(); close(D1);
 const afterBye = { split: B.split(), peers: B.api.peers().join() };
@@ -249,5 +294,69 @@ check("7. a controls window's bye drops IT, not every controls page: an older pa
       + "split, tracked as one anonymous page",
       () => afterBye.split && afterBye.peers === "anon", () => JSON.stringify(afterBye));
 
+// ---- 2026-10-18: closed, not quiet; and the swap -------------------------------------------------------------- //
+close(A); close(B);                                         // a fresh pair: one chart, no supervisor named (it supervises)
+const E = makePage("main", "chart-E", 30000);
+const C5 = makePage("controls", "ctl-5", 31000);
+await advance(3500);
+const before8 = E.split();
+C5.asleep = true;                                           // the browser freezes it: open, silent, answering nothing
+await advance(60000);
+const asleep8 = { split: E.split(), peers: E.api.peers().join(), sent: C5.sent.length };
+C5.asleep = false; close(C5);
+await advance(10);
+check("8. A CONTROLS WINDOW ASLEEP IS NOT CLOSED: frozen by the browser for a minute - not a word from it - the chart "
+      + "keeps its cards there; closed, they come back at once",
+      () => before8 && asleep8.split && asleep8.peers === "ctl-5" && !E.split() && E.api.peers().length === 0,
+      () => "before " + before8 + "; asleep 60 s: " + JSON.stringify(asleep8) + "; closed: split " + E.split());
+E.bus.onmessage({ data: { t: "ping", from: "ctl-5", born: 31000, lock: true } });   // still on its way as it closed
+const late = { split: E.split(), peers: E.api.peers().join() };
+check("8b. ... and a word from it still on its way when it closed brings nothing back",
+      () => !late.split && late.peers === "", () => JSON.stringify(late));
+
+const C6 = makePage("controls", "ctl-6", 40000);
+await advance(3500);
+const pill0 = { split: E.split(), peer: E.peerOn(), label: E.swapPill.textContent, btn: (C6.made.cardsSwapCtl || {}).textContent };
+C6.made.cardsSwapCtl.onclick();                             // the controls window's own button: the cards to the chart
+await advance(250);
+const toChart = { split: E.split(), peer: E.peerOn(), home: E.api.home(), away: C6.away(), label: E.swapPill.textContent };
+C6.made.cardsHere.onclick();                                // ... and back, from the note it shows while they are away
+await advance(250);
+const toCtl = { split: E.split(), home: E.api.home(), away: C6.away(), label: E.swapPill.textContent };
+E.swapPill.onclick();                                       // the chart's pill: here
+await advance(250);
+const pillHere = { split: E.split(), away: C6.away() };
+E.swapPill.onclick();                                       // ... and back
+await advance(250);
+const pillBack = { split: E.split(), away: C6.away() };
+const F = makePage("main", "chart-F", 41000);               // a second chart, view-only: E supervises
+E.api.applySupervisor({ holder: "chart-E" }); F.api.applySupervisor({ holder: "chart-E" });
+await advance(500);
+C6.made.cardsSwapCtl.onclick();
+await advance(250);
+const viewOnly = { fHome: F.api.home(), eHome: E.api.home(), eSplit: E.split() };
+check("9. THE SWAP: with the controls window open the chart shows its pill (⇄ Cards here) and the controls window "
+      + "its button; that button sends the cards to the chart - the chart unsplit, the controls window showing only its "
+      + "note, the pill reading ⇄ Cards to Controls - and the note's button brings them back; the chart's pill does "
+      + "the same both ways; only the supervising chart heeds it",
+      () => pill0.split && pill0.peer && pill0.label === "⇄ Cards here" && /Cards to chart/.test(pill0.btn || "")
+            && !toChart.split && toChart.peer && toChart.home === "chart" && toChart.away
+            && toChart.label === "⇄ Cards to Controls"
+            && toCtl.split && toCtl.home === "controls" && !toCtl.away && toCtl.label === "⇄ Cards here"
+            && !pillHere.split && pillHere.away && pillBack.split && !pillBack.away
+            && viewOnly.fHome === "controls" && viewOnly.eHome === "chart" && !viewOnly.eSplit,
+      () => JSON.stringify({ pill0, toChart, toCtl, pillHere, pillBack, viewOnly }));
+
+close(C6);
+await advance(10);
+const closedAway = E.split();
+const C7 = makePage("controls", "ctl-7", 50000);
+await advance(3500);
+check("9b. the cards on the chart and the controls window closed: they stay on the chart; a controls window opened "
+      + "after takes them again",
+      () => !closedAway && E.split() && E.api.home() === "controls" && !C7.away(),
+      () => "after the close split " + closedAway + "; the new window: split " + E.split() + ", home " + E.api.home());
+
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED" : "\nall checks passed");
 process.exit(fails ? 1 : 0);
+})();

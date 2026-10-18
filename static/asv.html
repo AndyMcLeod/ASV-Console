@@ -479,6 +479,7 @@
     <div class="pill state safe" id="p_autonomy"><b id="autonomy">SAFE</b></div>
     <a class="pill" href="/playback" target="_blank" title="Open the session playback viewer — review a recorded run" style="text-decoration:none;color:var(--ink-dim);">▶ Playback</a>
     <div class="pill" id="ctlReopen" title="Reopen the controls window (it closed or crashed — the toolbar and panels moved back to this window)" style="cursor:pointer;color:var(--ink-dim);">⏏ Controls</div>
+    <div class="pill" id="cardsSwap" style="cursor:pointer;color:var(--ink-dim);">⇄ Cards here</div>
     <div class="pill" id="tideWin" style="display:none;cursor:pointer;color:var(--ink-dim);">⏏ Tide</div>
     <div class="pill" id="wxWin" style="display:none;cursor:pointer;color:var(--ink-dim);">⏏ Weather</div>
     <div class="pill" id="curWin" style="display:none;cursor:pointer;color:var(--ink-dim);">⏏ Current</div>
@@ -1391,10 +1392,23 @@ const uiBus = ("BroadcastChannel" in window) ? new BroadcastChannel("asv_ui") : 
 // hidden - reproduced, and the likely reason his did not come back. So each controls
 // page now says which it is and when it was opened (UI_BORN): the chart keeps a table of the ones alive, only the
 // SUPERVISING chart drives the controls window, and a newer controls page that hears an older one steps aside.
-const UI_PEER_GONE_MS = 6000;      // a controls page not heard from for this long is gone (the 6 s it always was)
+// ⚠ A CONTROLS WINDOW IS GONE WHEN IT CLOSES, NOT WHEN IT GOES QUIET (2026-10-18, Andy: "Stop moving cards to chart
+// automatically unless the browser window closes. allow button to swap back and forth."). Silence was the test - 6 s
+// unheard and the chart took the cards back - and a controls window the browser slows, freezes or puts to sleep goes
+// silent while it is still open in front of him. So each controls page holds a Web Lock of its own (UI_LOCK + its id)
+// for its whole life, and the chart that hears it waits on that lock: the browser frees it when the page is closed,
+// reloaded or crashes, never while it sleeps. A page that holds none (one loaded before this, or a browser without Web
+// Locks) is still judged by silence. And the ⇄ pill (the chart) and button (the controls window) move the cards
+// between the two windows while both are open (uiCardsTo).
+const UI_PEER_GONE_MS = 6000;      // a controls page holding no lock, not heard from for this long, is gone
+const UI_LOCK = "asv_ui_controls_";
 const UI_BORN = Date.now();        // when this page was opened: of two controls windows the OLDER stays
 const uiPeers = new Map();         // chart window: controls page id -> when last heard
+const uiWatched = new Set();       // chart window: controls pages whose lock it waits on - gone only when it is freed
+const uiClosed = new Set();        // chart window: controls pages whose lock was freed (closed): a late word is no return
 let uiYielded = false;             // controls window: it stepped aside for an older one
+let uiLockFree = null;             // controls window: frees its lock (it steps aside)
+let uiCardsHome = "controls";      // where the cards are while a controls window is alive: "controls" or "chart"
 // Every pop-out this console has. There is no Mission entry: the Mission readout is a
 // section of #vcard, so it rides across on that card's mirror.
 const UI_BRIDGED = [".controls", "#pathPanel", "#rocPanel", "#lineTablePanel", "#aisTablePanel",
@@ -1447,7 +1461,13 @@ document.body.classList.add("ui-" + UIROLE);
   // actually alive (body.ui-split, set by the presence pings in setupUISplit). With no
   // peer — --single-window, or the controls window closed/crashed — everything shows on
   // main again, so the app is never left without its toolbar.
-  "body.ui-split #ctlReopen{display:none!important;}"+
+  // ⏏ Controls reopens a controls window that is GONE; ⇄ swaps the cards with one that is open (ui-peer: alive, and this
+  // chart drives it) - so one or the other, never both (2026-10-18).
+  "body.ui-peer #ctlReopen{display:none!important;}"+
+  "body:not(.ui-peer) #cardsSwap{display:none!important;}"+
+  // the controls window while the cards are on the chart (ui-away): nothing but a note and the button that brings them back
+  "body.ui-controls.ui-away .controls,body.ui-controls.ui-away .uicard,body.ui-controls.ui-away #aisReopen,"+
+  "body.ui-controls.ui-away #cardsSwapCtl,body.ui-controls:not(.ui-away) #cardsAway{display:none!important;}"+
   "body.ui-split .controls,body.ui-split #pathPanel,"+
   "body.ui-split #rocPanel,body.ui-split #lineTablePanel,body.ui-split #aisTablePanel,"+
   "body.ui-split #chartPanel,"+
@@ -17188,8 +17208,9 @@ function setupUISplit(){
     // not delivered while this window is occluded, so a resize made and then switched away
     // from would rely entirely on beforeunload. mouseup is event-driven and always lands.
     window.addEventListener("mouseup", uiSaveSoon);
-    // Every presence message says WHICH controls page this is and when it was opened (see UI_BORN).
-    const say = t => { if(!uiYielded) uiBus.postMessage({t, from: CLIENT_ID, born: UI_BORN}); };
+    // Every presence message says WHICH controls page this is, when it was opened (see UI_BORN), and whether it holds its
+    // lock - a chart that hears it waits on the lock, not on the silence (UI_LOCK).
+    const say = t => { if(!uiYielded) uiBus.postMessage({t, from: CLIENT_ID, born: UI_BORN, lock: !!uiLockFree}); };
     uiBus.onmessage = ev=>{ const m=ev.data; if(!m || uiYielded) return;
       if(m.t==="sync") applyUISync(m);
       else if(m.t==="ping?") say("ping");          // echo main's poll (event-driven:
@@ -17201,29 +17222,75 @@ function setupUISplit(){
       // A CHART'S WORD ON WHETHER IT CAN BE SEEN (2026-10-17): kept by the chart's id, and heeded only for the chart the
       // console says supervises (chartWatchVerdict) - another chart tab, hidden or not, says nothing about that one
       else if(m.t==="vis") chartWatchVis(m); };
-    // ask main to push current state; retry so boot order (main vs controls) never matters
-    [0, 400, 1200, 3000].forEach(ms=> setTimeout(()=> say("hello"), ms));
-    // presence: main hides its toolbar/panels only while pings arrive, and a bye
-    // (or ping timeout, if we crash) puts everything back on the main window. The
-    // interval still helps when this page is a visible separate window and main is not.
-    setInterval(()=> say("ping"), 2000);
+    // THE CARDS' BUTTONS IN THIS WINDOW (2026-10-18): send them to the chart, and while they are there, bring them back.
+    // This window's own - not mirrored, outside every bridged panel, so the click is handled here: it asks the chart,
+    // which owns where they are (uiCardsTo), and the chart's next picture says so (ui-away).
+    const askHome = home => { if(!uiYielded) uiBus.postMessage({t: "home", home}); };
+    const swap = document.createElement("div");
+    swap.id = "cardsSwapCtl"; swap.className = "pill"; swap.textContent = "⇄ Cards to chart";
+    swap.title = "Move the toolbar and the cards to the Chart window. They stay there until you bring them back - with the "
+      + "button that appears here, or the ⇄ pill on the chart's top bar. (Closing this window moves them too.)";
+    swap.style.cssText = "position:fixed;right:12px;top:8px;z-index:21;cursor:pointer;";
+    swap.onclick = () => askHome("chart");
+    const away = document.createElement("div");
+    away.id = "cardsAway";
+    away.style.cssText = "position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;"
+      + "gap:14px;background:#0a141c;color:#e8b46a;font:600 15px var(--mono,Consolas,monospace);text-align:center;"
+      + "padding:24px;z-index:20;";
+    away.textContent = "THE CONTROLS ARE ON THE CHART WINDOW.";
+    const back = document.createElement("button");
+    back.id = "cardsHere"; back.textContent = "⇄ Bring the controls here";
+    back.style.cssText = "font:600 14px var(--mono,Consolas,monospace);padding:8px 16px;cursor:pointer;";
+    back.onclick = () => askHome("controls");
+    away.appendChild(back);
+    document.body.appendChild(swap); document.body.appendChild(away);
+    // ask main to push current state; retry so boot order (main vs controls) never matters. Presence: the chart hides
+    // its toolbar/panels while this page is open. It knows this page is open by its LOCK, taken before the first hello
+    // and held until the page goes (UI_LOCK) - so a page the browser has slowed or put to sleep keeps the cards; a
+    // browser without Web Locks still has the pings and the bye. The interval still helps when this page is a visible
+    // separate window and main is not.
+    let presentOnce = false;
+    const present = () => { if(presentOnce) return; presentOnce = true;
+      [0, 400, 1200, 3000].forEach(ms=> setTimeout(()=> say("hello"), ms));
+      setInterval(()=> say("ping"), 2000); };
+    try{
+      if(typeof navigator !== "undefined" && navigator.locks)
+        navigator.locks.request(UI_LOCK + CLIENT_ID, () => new Promise(free => { uiLockFree = free; present(); }))
+          .catch(present);
+      else present();
+    }catch(e){ present(); }
     window.addEventListener("beforeunload", ()=> say("bye"));
   } else {                                            // main = single source of truth
     // controls-window presence: hide the toolbar/panels here only while a controls page is
     // alive AND this is the chart that drives it (uiSplitApply). hello/ping mark a page alive;
-    // its bye (close) or a ping timeout (crash) drops it, so the toolbar comes back —
     // --single-window simply never gets a ping. A page that names no id (one loaded before
-    // 2026-10-10) is tracked as one anonymous page, as every page was before.
-    const peerSeen = id=>{ uiPeers.set(id || "anon", Date.now()); uiSplitApply(); };
+    // 2026-10-10) is tracked as one anonymous page, as every page was before. GONE (2026-10-18): a page that holds its
+    // lock when the browser frees it - closed, reloaded or crashed - and only then (UI_LOCK); one that holds none, by its
+    // bye or its silence (uiPeersPrune), as before. Either way the toolbar comes back.
     const peerBye = id=>{ uiPeers.delete(id || "anon"); uiSplitApply(); };
+    const uiWatch = k=>{ try{
+        if(typeof navigator === "undefined" || !navigator.locks) return;
+        uiWatched.add(k);
+        // granted only once the controls page has let go of it: this runs as that window goes, and lets go at once
+        navigator.locks.request(UI_LOCK + k, ()=>{ uiWatched.delete(k); uiClosed.add(k); peerBye(k); })
+          .catch(()=>{ uiWatched.delete(k); });
+      }catch(e){ uiWatched.delete(k); } };
+    const peerSeen = (id, lock)=>{ const k = id || "anon";
+      if(uiClosed.has(k)) return;                      // its lock was freed: a word still on its way is no return
+      if(!uiPeers.size) uiCardsHome = "controls";      // a controls window coming (back) takes the cards
+      uiPeers.set(k, Date.now());
+      if(lock && id && !uiWatched.has(k)) uiWatch(k);
+      uiSplitApply(); };
+    { const sw = $("#cardsSwap"); if(sw) sw.onclick = ()=> uiCardsTo(uiCardsHome === "chart" ? "controls" : "chart"); }
     // poll the peer: the controls page echoes ping? instantly even as a throttled
     // background tab (its own 2 s ping does not survive tab throttling — ~1/min).
     setInterval(()=> uiBus.postMessage({t:"ping?"}), 2000);
     // No peerGone verdict while THIS tab is hidden: our own timers are throttled too,
     // so the 6 s window misjudges — and nobody is looking at a hidden main anyway.
     // ASKED EVERY SECOND (2026-10-10; it was every 3 s, so a closed controls window gave the cards back 6-9 s later -
-    // measured 9 s - which reads as never). A close does not reliably deliver its bye, so this is the usual way back:
-    // 6-7 s now. The 6 s itself stays: it is what rides out this page's measured 1.5-4.1 s stalls without flapping.
+    // measured 9 s - which reads as never). A close does not reliably deliver its bye, so for a page that holds no lock
+    // this is the usual way back: 6-7 s. The 6 s itself stays: it is what rides out this page's measured 1.5-4.1 s
+    // stalls without flapping. A page that holds its lock is never pruned (2026-10-18).
     setInterval(()=>{ if(document.hidden) return;
       if(uiPeersPrune(Date.now())) uiSplitApply(); }, 1000);
     // ⚠ THE CHART WINDOW SAYS WHEN IT CANNOT BE SEEN (2026-10-17, the performance review: 4.75 hours of the chart page
@@ -17237,10 +17304,12 @@ function setupUISplit(){
                                             sup: supervising()});
     document.addEventListener("visibilitychange", sayVis);
     uiBus.onmessage = ev=>{ const m=ev.data; if(!m) return;
-      if(m.t==="hello"){ peerSeen(m.from); pushUISync(true); sayVis(); return; }
+      if(m.t==="hello"){ peerSeen(m.from, m.lock); pushUISync(true); sayVis(); return; }
       if(m.t==="vis?"){ sayVis(); return; }
-      if(m.t==="ping"){ peerSeen(m.from); return; }
+      if(m.t==="ping"){ peerSeen(m.from, m.lock); return; }
       if(m.t==="bye"){ peerBye(m.from); return; }
+      // the controls window's own buttons: the cards to the chart, or back (uiCardsTo - the supervising chart alone)
+      if(m.t==="home"){ uiCardsTo(m.home); return; }
       // ⚠ ONLY THE SUPERVISING CHART CARRIES OUT WHAT THE CONTROLS WINDOW SENDS. Every chart page hears it, and
       // before 2026-10-10 every one ran it: one click on the controls window, carried out once per chart open.
       if(m.t!=="ev" || !supervising()) return;
@@ -17381,10 +17450,10 @@ function pushUISync(force){
   for(const s of UI_BRIDGED){ const el=document.querySelector(s); if(!el) continue;
     html[s]=el.outerHTML;
     el.querySelectorAll("input,select,textarea").forEach(f=>{ if(f.id) vals[f.id]={value:f.value, checked:f.checked}; }); }
-  const key = JSON.stringify([html, vals]);
+  const key = JSON.stringify([html, vals, uiCardsHome]);
   if(!force && key === uiSyncLast) return;
   uiSyncLast = key;
-  uiBus.postMessage({t:"sync", html, vals});
+  uiBus.postMessage({t:"sync", html, vals, home: uiCardsHome});   // where the cards are (uiCardsTo, 2026-10-18)
 }
 // ⚠ THE MIRROR PATCHES ITS CARDS, IT DOES NOT REPLACE THEM (2026-10-14). Each sync set the panel's outerHTML, so any
 // reading that changed - about every 3 s while she moves - put a NEW copy of every node in the card under the
@@ -17411,6 +17480,9 @@ function uiMorph(live, next){
   for(let i = want.length; i < have.length; i++) have[i].remove();
 }
 function applyUISync(m){
+  // the cards on the chart (uiCardsTo): this window shows only the note and the button that brings them back
+  if(m.home === "chart" || m.home === "controls"){
+    uiCardsHome = m.home; document.body.classList.toggle("ui-away", m.home === "chart"); }
   const foc=document.activeElement;
   for(const s of UI_BRIDGED){ const h=m.html[s]; if(h==null) continue;
     const el=document.querySelector(s); if(!el) continue;
@@ -17433,11 +17505,22 @@ function applyUISync(m){
     const v=m.vals[id]; if(f.type==="checkbox"||f.type==="radio") f.checked=v.checked; else f.value=v.value; } }
   syncUICards();                                        // a hidden panel hides its whole card
 }
-// Chart window: drop every controls page not heard from for UI_PEER_GONE_MS; true when one was dropped.
+// Chart window: drop every controls page not heard from for UI_PEER_GONE_MS - except one whose lock it waits on, gone only
+// when that is freed (UI_LOCK); true when one was dropped.
 function uiPeersPrune(now){
   let dropped = false;
-  for(const [id, t] of uiPeers) if(now - t > UI_PEER_GONE_MS){ uiPeers.delete(id); dropped = true; }
+  for(const [id, t] of uiPeers) if(!uiWatched.has(id) && now - t > UI_PEER_GONE_MS){ uiPeers.delete(id); dropped = true; }
   return dropped;
+}
+// Chart window: the cards to `home` - "chart" or "controls" - while a controls window is alive (the ⇄ pill here, the
+// controls window's own buttons there). The supervising chart alone: it is the one driving the controls window. The
+// controls window is told by the picture sent at once (`home`). A controls window coming (back) after none takes them
+// again (peerSeen); closing it brings them here whatever this says.
+function uiCardsTo(home){
+  if(UIROLE === "controls" || !supervising()) return;
+  uiCardsHome = home === "chart" ? "chart" : "controls";
+  uiSplitApply();
+  pushUISync(true);
 }
 // Chart window: SPLIT - its toolbar and cards hidden here, shown in the controls window - only while a controls page is
 // alive AND this is the chart that drives it. A view-only chart (another tab supervises) keeps its own cards, as it
@@ -17445,7 +17528,13 @@ function uiPeersPrune(now){
 // supervision (uiSupervisionChanged).
 function uiSplitApply(){
   if(UIROLE === "controls") return;
-  const on = uiPeers.size > 0 && supervising();
+  const peer = uiPeers.size > 0 && supervising(), on = peer && uiCardsHome !== "chart";
+  document.body.classList.toggle("ui-peer", peer);          // ⇄ shows, ⏏ Controls hides (2026-10-18)
+  const sw = $("#cardsSwap");
+  if(sw){ sw.textContent = on ? "⇄ Cards here" : "⇄ Cards to Controls";
+    sw.title = on ? "Bring the toolbar and the cards to this window. They stay here until you send them back - with this "
+                    + "pill or the button in the Controls window. (Closing the Controls window brings them here too.)"
+                  : "Send the toolbar and the cards back to the Controls window"; }
   if(document.body.classList.contains("ui-split") !== on){ document.body.classList.toggle("ui-split", on); render(); }
 }
 // The chart that takes supervision takes the controls window with it, and gives it a picture at once; the one that
@@ -17462,11 +17551,13 @@ function uiOlder(m){
   return Number.isFinite(b) && (b < UI_BORN || (b === UI_BORN && String(m.from) < String(CLIENT_ID)));
 }
 // Controls window: STEP ASIDE for an older controls page. It goes silent at once - no ping, no echo, no bye, which
-// would read in the chart as the one controls window closing - and closes itself; a browser that will not let a page
-// close a window it did not open gets the window told why it has nothing to show.
+// would read in the chart as the one controls window closing - frees its lock, so the chart that waits on it lets it go,
+// and closes itself; a browser that will not let a page close a window it did not open gets the window told why it has
+// nothing to show.
 function uiYield(){
   if(uiYielded) return;
   uiYielded = true;
+  if(uiLockFree){ uiLockFree(); uiLockFree = null; }  // its lock freed: the chart lets it go, as a close (2026-10-18)
   try{ window.close(); }catch(e){}
   setTimeout(()=>{ try{
     document.body.innerHTML = '<div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;'

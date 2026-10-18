@@ -473,9 +473,17 @@ controls window is the toolbar. **Every card on the chart window is resizable** 
 drag its bottom-right corner; the size is remembered per card, and only a size you
 actually changed is stored, so a card's default can still be improved later. If the controls window is closed the toolbar and panels
 return to the main window automatically, and a **⏏ Controls** pill appears on the top
-bar to reopen it — so the console is never left without its controls (within 6-7 s of
-the window's last word: in testing, a closing window's goodbye never arrived, so the
-chart notices it has gone). **More than two pages** (2026-10-10, Andy: closing the controls
+bar to reopen it — so the console is never left without its controls. **They move only when
+the window CLOSES** (2026-10-18, Andy: "Stop moving cards to chart automatically unless the
+browser window closes. allow button to swap back and forth."): the controls window holds a
+browser lock (Web Locks) for as long as it is open, and the chart waits on it, so the cards
+come back the moment it is closed, reloaded or crashes - and never while it is merely slowed,
+covered or asleep in the browser (it used to be 6-7 s of silence). A controls page from before
+this, holding no lock, still goes by its silence. **To move them yourself**, while both windows
+are open: the **⇄ Cards here** pill on the chart's top bar (it reads **⇄ Cards to Controls**
+while they are on the chart), or the **⇄ Cards to chart** button at the top right of the controls
+window, which then shows only a note and **⇄ Bring the controls here**. A controls window
+opened after none takes the cards again. **More than two pages** (2026-10-10, Andy: closing the controls
 window left the chart without its cards, and the alert card flashed): every start of the
 console opens a chart and a controls window, and pages left open from before reconnect on
 their own. **Each is a window of its own, never a tab** (2026-10-17): the console launches Edge (or

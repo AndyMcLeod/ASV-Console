@@ -81,8 +81,9 @@ const idsIn = (html) => [...html.matchAll(/id="([^"]+)"/g)].map((m) => m[1]);
 }
 
 // ── 2-3. what each row holds ──────────────────────────────────────────────────────────
-const GROUP = ["portSel", "vesselSel", "dot", "linktext", "p_autonomy", "autonomy", "ctlReopen", "tideWin", "wxWin", "curWin",
-               "buildPill", "diskPill", "supPill"];
+// cardsSwap beside ctlReopen (2026-10-18): one or the other shows - reopen a controls window gone, swap with one open
+const GROUP = ["portSel", "vesselSel", "dot", "linktext", "p_autonomy", "autonomy", "ctlReopen", "cardsSwap", "tideWin", "wxWin",
+               "curWin", "buildPill", "diskPill", "supPill"];
 const LIVE = ["p_pos", "p_sog", "p_hdg", "p_cog", "p_home", "p_pitch", "p_roll", "battPill", "p_batt_k", "p_batt", "p_wpt",
               "unitsPill", "p_units", "p_time"];
 {
@@ -218,7 +219,7 @@ check("3. THE LOWER ROW: the eleven readouts, in their order - POS, SOG, HDG, CO
         () => /"asv_controls",\s*"popup[^"]*"/.test(reopen)
               && /t: "vis", from: CLIENT_ID, hidden: document\.visibilityState === "hidden"/.test(H)
               && /document\.addEventListener\("visibilitychange", sayVis\)/.test(H)
-              && /if\(m\.t==="hello"\)\{ peerSeen\(m\.from\); pushUISync\(true\); sayVis\(\); return; \}/.test(H)
+              && /if\(m\.t==="hello"\)\{ peerSeen\(m\.from, m\.lock\); pushUISync\(true\); sayVis\(\); return; \}/.test(H)
               && /if\(m\.t==="vis\?"\)\{ sayVis\(\); return; \}/.test(H)
               && /else if\(m\.t==="vis"\) chartWatchVis\(m\);/.test(H)
               && /\nif\(UIROLE === "controls"\) chartWatchStart\(\);/.test(H)
