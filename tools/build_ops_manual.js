@@ -192,7 +192,7 @@ c.push(H1("6  Chart awareness and the keep-out model"));
 c.push(H2("6.1  Layers"));
 c.push(TBL(["Toggle", "Shows"], [
   ["`CHRT`", "Charted features fetched for the operating area — shoreline, structures, depth areas, hazards, marks"],
-  ["`NOGO`", "The keep-out overlay: everything commanded motion will refuse to cross"],
+  ["`NOGO`", "The keep-out overlay: everything commanded motion will refuse to cross. While it shows, the NOGO KEY at the bottom left of the chart names what each of its colors is (click its title to fold it)"],
   ["`AREA`", "The survey-area boundary polygon"],
   ["`AIS`", "Nearby traffic, with an openable table"],
   ["`SRC`", "The chart's own title block and survey confidence"],

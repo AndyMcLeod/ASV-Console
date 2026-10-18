@@ -115,6 +115,25 @@ export function drawENC(toScreen, ctx, D){
   ctx.restore();
 }
 
+/** THE NOGO KEY (Andy, 2026-10-18: "Need a NOGO key so the user knows what color is representing what component."): what
+ *  drawNogo below draws, one row each, in the colors it draws them in. The page builds the key from this (nogoKeyBuild);
+ *  tests/nogo_key.js holds every color here to drawNogo's own, so a color changed there and not here fails. `kind`: area
+ *  (a fill, `edge` its outline), line, dash (a dashed outline, `fill` under it), ink (a footprint and a line with a tick at
+ *  each end). `{floor}` in a label is the depth floor, filled in by the page. */
+export const NOGO_KEY = [
+  {kind: "area", fill: "rgba(217,83,79,0.20)",
+   label: "Keep-out: land, docks, hazards, bridges and spans too low for her, and water shallower than {floor}"},
+  {kind: "line", stroke: "rgba(217,83,79,0.85)", width: 1.4, label: "Keep-out edge: shoreline, piers, hazard lines, cables too low"},
+  {kind: "area", fill: "rgba(196,150,74,0.22)", label: "Outside the survey's depth window (while a survey is drawn)"},
+  {kind: "area", fill: "rgba(128,128,128,0.22)", label: "No chart here: a route through it is refused"},
+  {kind: "dash", fill: "rgba(150,150,150,0.30)", stroke: "rgba(200,200,200,0.8)", width: 1, dash: "4 3",
+   label: "Chart could not be read: reading it again may chart it"},
+  {kind: "dash", stroke: "rgba(255,150,30,0.95)", width: 2, dash: "5 3",
+   label: "A gap in the charted seabed, kept out as a structure: check the chart"},
+  {kind: "ink", fill: "rgba(224,64,208,0.28)", stroke: "rgba(224,64,208,0.95)",
+   label: "Read off the chart's picture, not NOAA's data: check the chart"},
+];
+
 /** THE KEEP-OUT LAYER. `D`: {show, ready, features (the model's: the extract's and the seabed's gaps), enf, floorDr, surveyDr,
  *  hasPat, airNeed, depthExcluded (chart.js's), unreadAll (the extract's and the corridor's squares), chartInk {lines, areas}}. */
 export function drawNogo(toScreen, ctx, D){

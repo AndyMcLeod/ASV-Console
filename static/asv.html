@@ -167,6 +167,14 @@
   .readout{position:absolute;left:14px;bottom:84px;z-index:5;font-family:var(--mono);font-size:11px;color:var(--ink-dim);
     background:rgba(10,17,25,.8);border:1px solid var(--line);border-radius:3px;padding:6px 10px;display:flex;gap:16px;}
   .readout b{color:var(--ink);}
+  /* THE NOGO KEY (2026-10-18): above the cursor readout while the NOGO overlay shows; its header folds it */
+  .nogokey{position:absolute;left:14px;bottom:118px;z-index:5;max-width:330px;font-family:var(--mono);font-size:10px;
+    color:var(--ink-dim);background:rgba(10,17,25,.88);border:1px solid var(--line);border-radius:3px;}
+  .nogokey .nkhead{cursor:pointer;user-select:none;padding:4px 8px;letter-spacing:.08em;color:var(--ink);font-weight:600;}
+  .nogokey .nkbody{display:flex;flex-direction:column;gap:3px;padding:0 8px 6px;}
+  .nogokey.folded .nkbody{display:none;}
+  .nogokey .nkrow{display:flex;align-items:center;gap:7px;line-height:1.25;}
+  .nogokey .nkrow svg{flex:none;border-radius:2px;}
   .attrib{position:absolute;right:8px;bottom:8px;z-index:5;font-family:var(--sans);font-size:10px;color:var(--ink-faint);
     background:rgba(5,8,12,.7);padding:2px 6px;border-radius:2px;}
   .attrib a{color:var(--ink-dim);text-decoration:none;}
@@ -853,6 +861,9 @@
     <span>track <b id="r_track">0</b></span>
     <span>wpts <b id="r_wpts">0</b></span>
   </div>
+  <!-- THE NOGO KEY (Andy, 2026-10-18: "Need a NOGO key so the user knows what color is representing what component."):
+       built from chartlayers.js NOGO_KEY (nogoKeyBuild), shown while the NOGO overlay is (updateNogoUI). -->
+  <div class="nogokey" id="nogoKey" style="display:none"></div>
 
   <!-- THE ALERTS CARD (Andy, 2026-09-28: "The pop-up alert messages are blocking each other or covering standing
        messages at the bottom center of the chart screen above the tool bar. Create a new card for this information
@@ -1089,7 +1100,7 @@
         <li><b>Survey area (optional).</b> The Survey tab's switch is on <span class="tag">Pattern</span> for the three-click survey above. When the survey must stay inside a set area, choose <span class="tag">Bounded</span>, then press <span class="tag">Draw</span> beside <b>Area</b> and drop points to draw <i>any</i> survey-area polygon (click the first point to close; drag vertices to adjust), or press <span class="tag">Import</span> and pick a <b>GeoJSON</b>, <b>KML</b> or <b>CSV</b> file of an area drawn elsewhere. The lines fill that area &mdash; concave shapes split legs correctly.</li>
         <li><b>Punch Out (optional).</b> Click <span class="tag">Punch&nbsp;Out</span> to trim the survey lines to the <b>same nogo zones every behavior avoids</b> (off land / docks, aids &amp; hazards, water below the 1&nbsp;m floor) &mdash; segments clip cyan, transits auto-route amber, unroutable flag red. The survey <b>Min / Max depth</b> is an extra <i>coverage</i> window on top of the nogo (survey only 3&ndash;10&nbsp;m, say). <b>Buffer</b> and the <b>enforce toggles</b> are <i>shared</i> &mdash; changing them re-routes Go-To / RTH / search too. Composes with the survey-area boundary. <span class="tag">CHRT</span> / <span class="tag">NOGO</span> show the chart / nogo overlays. Planning aid only &mdash; verify the plan.</li>
         <li><b>Search pattern (alternative to a survey).</b> On the <span class="tag">Search</span> tab, pick a pattern (<b>Expanding box</b> / <b>Sector</b> / <b>Parallel</b>), click the chart to set the <b>datum</b> (drag the D handle to move it), tune the params, then <span class="tag">Add&nbsp;to&nbsp;plan</span>. Legs clip to the nogo zones (cyan kept / amber routed-around / red blocked). The ASV runs it via the same Arm / Upload / Start flow.</li>
-        <li><b>NOGO zones (automatic).</b> On startup the console extracts ENC nogo boundaries for the operating area &mdash; shoreline, manmade features, and water shallower than <b>1&nbsp;m corrected</b> (charted depth + live water level). <span class="tag">NOGO</span> shows / hides the red overlay. <b>Every</b> behavior avoids them: <span class="tag">Go-To</span> and <span class="tag">RTH</span> route around them (or refuse an unreachable target), and search / survey legs clip to clear water. If there's no ENC coverage the console warns and routes direct &mdash; verify the plan.</li>
+        <li><b>NOGO zones (automatic).</b> On startup the console extracts ENC nogo boundaries for the operating area &mdash; shoreline, manmade features, and water shallower than <b>1&nbsp;m corrected</b> (charted depth + live water level). <span class="tag">NOGO</span> shows / hides the red overlay; while it shows, the <b>NOGO KEY</b> at the bottom left names each of its colors. <b>Every</b> behavior avoids them: <span class="tag">Go-To</span> and <span class="tag">RTH</span> route around them (or refuse an unreachable target), and search / survey legs clip to clear water. If there's no ENC coverage the console warns and routes direct &mdash; verify the plan.</li>
         <li>Or, on the <span class="tag">Waypoints</span> tab, press <span class="tag">Edit</span> to move, remove or add individual waypoints.</li>
         <li>Set the <b>arrival radius</b>, the <b>approach radius</b> and the <b>end of plan</b> under the Path planning card's <b>Waypoints and end of plan</b>, on every tab (the speeds are on the Survey tab and under Route rules) &mdash; <b>RTH</b> (Return-to-Home at the end, ENC-routed, then station-keep &mdash; the default), <b>Complete</b> (stop at the end), <b>Loiter</b> (station-keep at the last waypoint), or <b>Repeat</b> (loop the route until Stop). Applies on the next Upload; shown as <i>Type</i> and <i>End mode</i> in the <b>Run</b> section of the <b>Mission Status</b> card.</li>
         <li>Command a <b>survey / search</b> plan: <span class="tag">Arm</span> &rarr; <span class="tag">Upload</span> &rarr; <span class="tag">Start</span>. Use <span class="tag">Pause</span> / <span class="tag">Stop</span> / <span class="tag">E-STOP</span> as needed.</li>
@@ -1125,7 +1136,7 @@ import { bbOf, inBB, bboxContains, bboxAround, lerpLL, dSeg, segInt, pinp,
 import { V, NOGO_ENF, nogo, sea } from "/static/js/state.js";
 // THE THREE CACHED LAYERS' DRAWING (2026-10-17): moved to chartlayers.js so the chart worker draws them off this thread
 import { LAYER_PAD_PX, LAW_BAND_MIN_PX, featureBox, layerSees, tracePx, drawENC as clDrawENC, drawNogo as clDrawNogo,
-         drawLawBands as clDrawLawBands } from "/static/js/chartlayers.js";
+         drawLawBands as clDrawLawBands, NOGO_KEY } from "/static/js/chartlayers.js";
 // CPA / TCPA and the hull footprint an AIS contact broadcasts. Pure kinematics, so
 // the numbers follow a maneuver by either vessel the moment the next report lands -
 // see the module header for why nothing is cached.
@@ -1438,6 +1449,7 @@ document.body.classList.add("ui-" + UIROLE);
   // this is the same page under ?panel=controls and the card must still exist for the
   // chart window's own code to write into.
   "body.ui-controls #vcard{display:none!important;}"+
+  "body.ui-controls #nogoKey{display:none!important;}"+          // the key belongs to the chart it explains (2026-10-18)
   "body.ui-controls{overflow:hidden;}"+
   // the Path planning card in its .uicard: the card scrolls, not the panel inside it, and the grip names it
   "body.ui-controls #pathPanel{max-height:none!important;overflow:visible!important;}"+
@@ -11321,10 +11333,60 @@ function nogoReadout(){
     cls: (inkN || (sk && sk.refused) || un.length || staleL.length || partL.length) ? "warn" : "",
     title: "Chart read (ENC band " + band + bandsTxt + "): " + brk + "." + ageTxt + pastTxt + skinTxt + inkTxt + unTxt + offTxt + why};
 }
+// ── THE NOGO KEY (Andy, 2026-10-18: "Need a NOGO key so the user knows what color is representing what component.") ──
+// One row for each thing the NOGO overlay draws (chartlayers.js NOGO_KEY), its swatch in the overlay's own colors on a
+// patch the color of the chart's water: the fills are translucent, and on the dark card they would not read as they do
+// on the chart. Shown while the overlay is (updateNogoUI -> nogoKeyShow); its header folds it, and the fold is kept.
+const NOGO_KEY_FOLD_KEY = "asv_nogokey_fold_v1";
+function nogoKeySwatch(k){
+  const paper = '<rect width="26" height="14" fill="#e8eef1"/>';
+  let s = "";
+  if(k.kind === "area")
+    s = `<rect x="3" y="2.5" width="20" height="9" fill="${k.fill}"${k.edge ? ` stroke="${k.edge}" stroke-width="1.5"` : ""}/>`;
+  else if(k.kind === "line")
+    s = `<line x1="2" y1="7" x2="24" y2="7" stroke="${k.stroke}" stroke-width="${k.width || 1.4}"/>`;
+  else if(k.kind === "dash")
+    s = `<rect x="3" y="2.5" width="20" height="9" fill="${k.fill || "none"}" stroke="${k.stroke}" stroke-width="${k.width || 1}" `
+      + `stroke-dasharray="${k.dash}"/>`;
+  else if(k.kind === "ink")                         // a footprint, and a line with a tick at each end
+    s = `<rect x="2" y="2.5" width="8" height="9" fill="${k.fill}" stroke="${k.stroke}" stroke-width="1.5"/>`
+      + `<g stroke="${k.stroke}" stroke-width="2.4" stroke-linecap="round"><line x1="14" y1="7" x2="24" y2="7"/>`
+      + `<line x1="14" y1="3.5" x2="14" y2="10.5"/><line x1="24" y1="3.5" x2="24" y2="10.5"/></g>`;
+  return `<svg width="26" height="14" viewBox="0 0 26 14" aria-hidden="true">${paper}${s}</svg>`;
+}
+let nogoKeyTexts = [];                              // the rows' labels, written by nogoKeyShow
+function nogoKeyBuild(){
+  const el = $("#nogoKey"); if(!el) return;
+  const head = document.createElement("div"), mark = document.createElement("span"), body = document.createElement("div");
+  head.className = "nkhead"; head.title = "Click to fold or unfold the key"; head.textContent = "NOGO KEY ";
+  mark.className = "nkfold"; head.appendChild(mark);
+  body.className = "nkbody";
+  el.replaceChildren(head, body);
+  nogoKeyTexts = NOGO_KEY.map(k => {
+    const row = document.createElement("div"), t = document.createElement("span");
+    row.className = "nkrow"; row.innerHTML = nogoKeySwatch(k);
+    t.className = "nktext"; t.dataset.label = k.label;
+    row.appendChild(t); body.appendChild(row);
+    return t;
+  });
+  const fold = on => { el.classList.toggle("folded", on); mark.textContent = on ? "▸" : "▾"; };
+  fold(!!lsGet(NOGO_KEY_FOLD_KEY, false));
+  head.onclick = () => { const on = !el.classList.contains("folded"); fold(on); lsSet(NOGO_KEY_FOLD_KEY, on); };
+  nogoKeyShow();
+}
+/** The key shown while the NOGO overlay is, with the depth floor in force. */
+function nogoKeyShow(){
+  const el = $("#nogoKey"); if(!el) return;
+  el.style.display = nogoShow && nogo.ready ? "" : "none";
+  const floor = (typeof V.NOGO_MIN_DEPTH_M === "number" ? V.NOGO_MIN_DEPTH_M : 1).toFixed(1) + " m";
+  for(const t of nogoKeyTexts) t.textContent = t.dataset.label.replace("{floor}", floor);
+}
+nogoKeyBuild();
 let lastNogoLogged = null;
 function updateNogoUI(){
   const btn=$("#nogoBtn");
   if(btn){ btn.classList.toggle("on", nogoShow && nogo.ready); btn.disabled = false; }
+  nogoKeyShow();
   const el=$("#v_nogo"); if(!el) return;
   const r = nogoReadout();
   el.textContent = r.text; setTip(el, r.title);
