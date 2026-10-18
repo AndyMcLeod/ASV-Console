@@ -13,8 +13,12 @@
 //   * she is dead-reckoned from her last report by course and speed, capped at AIS_DR_MAX_S;
 //   * while under way her keep-out is SWEPT over the guard's look-ahead - the water she will
 //     occupy - and a stationary contact is not;
-//   * THE HULL IS THE KEEP-OUT. No perimeter buffer of its own: a point 1 m off her side reads
-//     clear at buffer 0 and blocked at buffer 2, exactly as it would beside a pier;
+//   * HER HULL GROWN BY HALF HER LENGTH (2026-10-17, Andy, of a survey 29-30 m off VICTORIA T, a 200 m ship at anchor:
+//     "the ASV should not come so close to the vessel. Perhaps scale closure range to vessel size?" - asked, "Half her
+//     length"; until then his 09-25 rule, the hull alone): 10 m round a 20 m boat, 100 m round a 200 m ship, round her
+//     swept hull while she is under way; the boat's buffer outside that as beside a pier; NOT round a boat already
+//     inside it (her bare hull then, as before); the escape still a ship-length from her hull (6-6g). The geometry
+//     checks below read her BARE hull (`bare`), which is what they are about;
 //   * contacts beyond AIS_KO_RANGE_M are not modelled, and a poll older than AIS_KO_STALE_S (or
 //     none) is STALE - an empty model with a reason, never a quiet sea.
 //
@@ -64,12 +68,16 @@ function contact(e, n, o = {}) {
 }
 // The keep-out model of one contact, as `blocked` reads it. sweepS 0 unless asked, so a check
 // about the hull is a check about the hull.
+// `ko` is her BARE (swept) hull - the geometry checks are about the hull; `full` is the keep-out as built, her clear
+// water round it (2026-10-17).
 function modelOf(v, o = {}) {
   const q = A.aisKeepout(v, ref, { now: NOW, polledAt: NOW, sweepS: 0, ...o });
-  return { q, ko: { polys: q ? [q] : [], lines: [], points: [] } };
+  return { q, ko: { polys: q ? [{ ...q, ring: q.bare }] : [], lines: [], points: [] },
+           full: { polys: q ? [q] : [], lines: [], points: [] } };
 }
 const inKo = (ko, e, n, buf = 0) => blocked({ e, n }, ko, buf);
 const KN = 0.514444;
+const distTo = (a, b) => { const p = ref.toEN(a), q = ref.toEN(b); return Math.hypot(p.e - q.e, p.n - q.n); };
 
 console.log("An AIS contact as a keep-out:");
 
@@ -156,15 +164,21 @@ console.log("An AIS contact as a keep-out:");
   const hull30 = modelOf(contact(0, 0, { heading: 90, dim: { a: 15, b: 15, c: 4, d: 4 }, length: 30, beam: 8 })).q;   // 30 x 8 m, e = -15..15
   const calm = A.aisRoundKeepout(hull30, 3, 3), M = { polys: [calm], lines: [], points: [] };
   const clr = (e, n) => clearanceM({ e, n }, M, 200);
-  check("10f. calm (standoff = the 3 m buffer): the ring is a disc of her length less the standoff (27 m) about her CENTER - so a route kept the standoff off it passes one ship-length (30 m) from her center - on the beam and ahead alike; named, and her hull inside it",
+  // (2026-10-17: her keep-out carries her clear water, 15 m round a 30 m hull - the ring takes it with the buffer)
+  check("10f. calm (standoff = the 3 m buffer): ABEAM the disc of her length less the standoff (27 m) about her CENTER still "
+        + "rules - a route kept the standoff off it passes one ship-length (30 m) from her center; AHEAD her clear water plus "
+        + "the buffer (15 + 15 + 3 = 33 m from her center) is wider and rules; named, and her hull inside it",
         () => calm.roundM === 30 && calm.stdM === 3 && /, 30 m round her$/.test(calm.kind)
-              && Math.abs(clr(0, 30) - 3) < 0.2 && Math.abs(clr(30, 0) - 3) < 0.2 && clr(0, 26.5) === 0 && clr(26.5, 0) === 0 && clr(15, 4) === 0,
-        () => "kind " + calm.kind + "; clearance 30 m abeam " + clr(0, 30).toFixed(2) + ", 30 m ahead " + clr(30, 0).toFixed(2) + ", 26.5 m abeam " + clr(0, 26.5).toFixed(2));
+              && Math.abs(clr(0, 30) - 3) < 0.2 && clr(0, 26.5) === 0 && clr(32.5, 0) === 0 && Math.abs(clr(36, 0) - 3) < 0.3 && clr(15, 4) === 0,
+        () => "kind " + calm.kind + "; clearance 30 m abeam " + clr(0, 30).toFixed(2) + ", 26.5 m abeam " + clr(0, 26.5).toFixed(2)
+            + ", 32.5 m ahead " + clr(32.5, 0).toFixed(2) + ", 36 m ahead " + clr(36, 0).toFixed(2));
   const set = A.aisRoundKeepout(hull30, 19.5, 3), MS = { polys: [set], lines: [], points: [] };
   const clrS = (e, n) => clearanceM({ e, n }, MS, 200);
-  check("10g. in a set (standoff 19.5 m) her length less the standoff is 10.5 m and the HULL grown by the buffer dominates along her length: 18 m ahead of her center is inside the ring (her 15 m half-length + 3), 19 m is outside; abeam the disc still reaches 10.5 m",
-        () => set.stdM === 19.5 && clrS(17.9, 0) === 0 && clrS(19, 0) > 0 && clrS(0, 10.4) === 0 && clrS(0, 11.5) > 0,
-        () => "18 m ahead " + clrS(17.9, 0).toFixed(2) + ", 19 m ahead " + clrS(19, 0).toFixed(2) + ", 10.4 m abeam " + clrS(0, 10.4).toFixed(2) + ", 11.5 m abeam " + clrS(0, 11.5).toFixed(2));
+  check("10g. in a set (standoff 19.5 m) her length less the standoff is 10.5 m, and her CLEAR WATER grown by the buffer "
+        + "rules all round: ahead 15 + 15 + 3 = 33 m from her center (32.5 inside, 33.5 out), abeam 4 + 15 + 3 = 22 m (21.5 "
+        + "inside, 22.5 out)",
+        () => set.stdM === 19.5 && clrS(32.5, 0) === 0 && clrS(33.5, 0) > 0 && clrS(0, 21.5) === 0 && clrS(0, 22.5) > 0,
+        () => "32.5 m ahead " + clrS(32.5, 0).toFixed(2) + ", 33.5 m ahead " + clrS(33.5, 0).toFixed(2) + ", 21.5 m abeam " + clrS(0, 21.5).toFixed(2) + ", 22.5 m abeam " + clrS(0, 22.5).toFixed(2));
   const moving = modelOf(contact(0, 0, { sog: 10, cog: 90, heading: 90, dim: { a: 15, b: 15, c: 4, d: 4 }, length: 30, beam: 8 }), { sweepS: 45 }).q;
   const mv = A.aisRoundKeepout(moving, 3, 3), MM = { polys: [mv], lines: [], points: [] };
   const endE = 10 * KN * 45;                                    // where her center is at the end of the sweep
@@ -228,31 +242,77 @@ console.log("An AIS contact as a keep-out:");
         () => swept.q && swept.q.sweepS === 45 && inKo(swept.ko, 0, 200) && inKo(swept.ko, 0, reach - 1)
               && !inKo(swept.ko, 0, reach + 1) && inKo(swept.ko, 0, 0),
         () => swept.q ? "200 m ahead " + inKo(swept.ko, 0, 200) + ", " + (reach - 1).toFixed(0) + " m " + inKo(swept.ko, 0, reach - 1)
-                        + ", " + (reach + 1).toFixed(0) + " m " + inKo(swept.ko, 0, reach + 1) + "; ring of " + swept.q.ring.length
+                        + ", " + (reach + 1).toFixed(0) + " m " + inKo(swept.ko, 0, reach + 1) + "; ring of " + swept.q.bare.length
                       : "no keep-out");
   const dflt = A.aisKeepout(v, ref, { now: NOW, polledAt: NOW });
   check("5b. ... over the GUARD'S OWN horizon by default (guard.js HORIZON_S = " + G.HORIZON_S + " s), so the two cannot disagree",
         () => dflt && dflt.sweepS === G.HORIZON_S, () => dflt && "sweepS " + dflt.sweepS);
   const still = modelOf(contact(0, 0, { heading: 0, sog: 0.2, cog: 0 }), { sweepS: 45 });
   check("5c. a stationary contact is not swept - the sweep is her motion, not a margin",
-        () => still.q && still.q.sweepS === 0 && !inKo(still.ko, 0, 30) && still.q.ring.length === 4,
-        () => still.q && "sweepS " + still.q.sweepS + ", 30 m ahead " + inKo(still.ko, 0, 30) + ", ring of " + still.q.ring.length);
+        () => still.q && still.q.sweepS === 0 && !inKo(still.ko, 0, 30) && still.q.bare.length === 4,
+        () => still.q && "sweepS " + still.q.sweepS + ", 30 m ahead " + inKo(still.ko, 0, 30) + ", ring of " + still.q.bare.length);
   check("5d. the swept ring is a convex hull of the two boxes: 4 to 8 points, every corner of both boxes inside it",
-        () => swept.q && swept.q.ring.length >= 4 && swept.q.ring.length <= 8
+        () => swept.q && swept.q.bare.length >= 4 && swept.q.bare.length <= 8
               && swept.q.hull.every(c => blocked({ e: c.e * 0.999, n: c.n }, swept.ko, 0) || blocked(c, swept.ko, 0.01)),
-        () => swept.q && "ring of " + swept.q.ring.length + " from a hull of " + swept.q.hull.length);
+        () => swept.q && "ring of " + swept.q.bare.length + " from a hull of " + swept.q.hull.length);
 }
 
-// ── 6. NO PERIMETER BUFFER (Andy: "disregard the 20m perimeter buffer") ───────────────
+// ── 6. HER CLEAR WATER: HALF HER LENGTH ROUND HER HULL (Andy, 2026-10-17: "Half her length") ─────────────────────
+// Until 2026-10-17 the hull alone ("disregard the 20m perimeter buffer", 09-25), and the boat surveyed 28.8 m off the
+// side of a 200 m ship at anchor with the guard content. Now her hull - swept, under way - grown by AIS_MARGIN_FRAC of her
+// length; the boat's own buffer outside THAT, as beside a pier.
 {
-  const { ko } = modelOf(contact(0, 0, { heading: 0 }));      // 20 x 8: her side is 4 m abeam
-  check("6. THE HULL IS THE KEEP-OUT and has no margin of its own: 1 m off her side is clear at buffer 0 and blocked at buffer 2, as beside a pier",
-        () => !inKo(ko, 5, 0, 0) && inKo(ko, 5, 0, 2) && !inKo(ko, 7, 0, 2) && inKo(ko, 7, 0, 4),
-        () => "5 m abeam: buf 0 " + inKo(ko, 5, 0, 0) + ", buf 2 " + inKo(ko, 5, 0, 2)
-            + "; 7 m abeam: buf 2 " + inKo(ko, 7, 0, 2) + ", buf 4 " + inKo(ko, 7, 0, 4));
-  check("6b. ... and clearanceM measures to her side: 50 m abeam of a 20 x 8 m hull is 46 m clear",
-        () => Math.abs(clearanceM({ e: 50, n: 0 }, ko) - 46) < 0.01,
-        () => clearanceM({ e: 50, n: 0 }, ko).toFixed(2) + " m");
+  const { q, full } = modelOf(contact(0, 0, { heading: 0 }));       // 20 x 8 assumed: her side 4 m abeam, 10 m clear
+  check("6. her keep-out is her hull grown by HALF HER LENGTH: a 20 x 8 m boat keeps 10 m - 13.5 m off her center abeam is "
+        + "inside at buffer 0, 14.5 m clear; the boat's buffer is outside it (15.5 m inside at buffer 2, 16.5 m clear)",
+        () => A.AIS_MARGIN_FRAC === 0.5 && q && q.marginM === 10 && !q.marginWaived
+              && inKo(full, 13.5, 0, 0) && !inKo(full, 14.5, 0, 0) && inKo(full, 15.5, 0, 2) && !inKo(full, 16.5, 0, 2),
+        () => q && "margin " + q.marginM + " m; 13.5 " + inKo(full, 13.5, 0, 0) + ", 14.5 " + inKo(full, 14.5, 0, 0)
+            + "; buf 2: 15.5 " + inKo(full, 15.5, 0, 2) + ", 16.5 " + inKo(full, 16.5, 0, 2));
+  check("6b. ... and clearanceM measures to her clear water: 50 m abeam of a 20 x 8 m boat is 36 m clear (her side 4, her 10)",
+        () => Math.abs(clearanceM({ e: 50, n: 0 }, full) - 36) < 0.05,
+        () => clearanceM({ e: 50, n: 0 }, full).toFixed(2) + " m");
+  // VICTORIA T as she broadcast it on 2026-10-17: 200 x 32 m, A 173 / B 27 / C 10 / D 22, heading 323 - here heading 0
+  const vic = modelOf(contact(0, 0, { name: "VICTORIA T", heading: 0, nav: 1, length: 200, beam: 32, dim: { a: 173, b: 27, c: 10, d: 22 } }));
+  const vq = vic.q, vf = vic.full;
+  check("6c. ... scaled to her size: VICTORIA T (200 x 32 m, at anchor) keeps 100 m - 99 m off her starboard side is "
+        + "inside, 101 m clear; 99 m beyond her bow inside, 101 m clear; the survey line 28.8 m off her side is inside",
+        () => vq && vq.marginM === 100 && inKo(vf, 22 + 99, 0) && !inKo(vf, 22 + 101, 0) && inKo(vf, 0, 173 + 99) && !inKo(vf, 0, 173 + 101)
+              && inKo(vf, 22 + 28.8, 50) && !inKo(vic.ko, 22 + 28.8, 50),
+        () => vq && "margin " + vq.marginM + "; 99 off her side " + inKo(vf, 121, 0) + ", 101 " + inKo(vf, 123, 0)
+            + "; 99 past her bow " + inKo(vf, 0, 272) + ", 101 " + inKo(vf, 0, 274));
+  const sw = modelOf(contact(0, 0, { heading: 0, sog: 10, cog: 0, age: 0 }), { sweepS: 45 });
+  const reach = 45 * 10 * KN + 10;
+  check("6d. ... round her SWEPT hull while she is under way: 10 m beyond where her bow will be in 45 s is inside, 11 m clear",
+        () => sw.q && sw.q.marginM === 10 && inKo(sw.full, 0, reach + 9.5) && !inKo(sw.full, 0, reach + 10.5),
+        () => sw.q && (reach + 9.5).toFixed(0) + " m " + inKo(sw.full, 0, reach + 9.5) + ", " + (reach + 10.5).toFixed(0) + " m " + inKo(sw.full, 0, reach + 10.5));
+  // the boat already in her clear water: her bare hull, said
+  const inside = A.aisKeepout(contact(0, 0, { name: "VICTORIA T", heading: 0, nav: 1, length: 200, beam: 32, dim: { a: 173, b: 27, c: 10, d: 22 } }),
+                              ref, { now: NOW, polledAt: NOW, sweepS: 0, own: { e: 22 + 60, n: 0 } });
+  const outside = A.aisKeepout(contact(0, 0, { name: "VICTORIA T", heading: 0, nav: 1, length: 200, beam: 32, dim: { a: 173, b: 27, c: 10, d: 22 } }),
+                               ref, { now: NOW, polledAt: NOW, sweepS: 0, own: { e: 22 + 140, n: 0 } });
+  const insideKo = { polys: inside ? [inside] : [], lines: [], points: [] };
+  check("6e. NOT ROUND A BOAT ALREADY IN IT: the boat 60 m off her side (inside her 100 m) gets her BARE hull - 1 m off her "
+        + "side clear at buffer 0 - and it says so (marginWaived); 140 m off, outside it, gets her clear water",
+        () => inside && inside.marginWaived && inside.marginM === 0 && !inKo(insideKo, 23, 0, 0) && inKo(insideKo, 21, 0, 0)
+              && outside && !outside.marginWaived && outside.marginM === 100,
+        () => "inside: waived " + (inside && inside.marginWaived) + ", margin " + (inside && inside.marginM)
+            + "; outside: waived " + (outside && outside.marginWaived) + ", margin " + (outside && outside.marginM));
+  // ... the guard's model, and a passage's start
+  const both = [contact(0, 0, { name: "NEAR", heading: 0, sog: 0, nav: 5, length: 100, beam: 20, dim: { a: 50, b: 50, c: 10, d: 10 } }),
+                contact(400, 0, { name: "FAR", heading: 0, sog: 0, nav: 5, length: 100, beam: 20, dim: { a: 50, b: 50, c: 10, d: 10 } })];
+  const g = A.aisKeepouts(both, ref, { now: NOW, polledAt: NOW, own: { e: 40, n: 0 }, sweepS: 0 });
+  const m0 = A.aisMooredKeepouts(both, ref, { now: NOW, polledAt: NOW });
+  const by = (r, nm) => r.polys.find((p) => p.name === nm) || {};
+  check("6f. ... the guard's model (the boat where it is) waives it for the vessel whose clear water she is in and keeps it "
+        + "for the others; a PASSAGE keeps every one (M9b: it lays her out of it the short way)",
+        () => by(g, "NEAR").marginWaived && by(g, "FAR").marginM === 50 && by(m0, "NEAR").marginM === 50 && by(m0, "FAR").marginM === 50,
+        () => JSON.stringify({ guard: [by(g, "NEAR").marginM, by(g, "FAR").marginM], passage: [by(m0, "NEAR").marginM, by(m0, "FAR").marginM] }));
+  const esc = A.aisAvoidKeepout(q), escKo = { polys: [esc], lines: [], points: [] };
+  check("6g. THE ESCAPE is still a ship-length from her HULL (his 09-27 rule), not from her clear water: a 20 x 8 m boat's "
+        + "ring reaches 24 m abeam of her center (4 + 20), not 34",
+        () => esc.avoidM === 20 && inKo(escKo, 23.5, 0) && !inKo(escKo, 24.5, 0),
+        () => "23.5 " + inKo(escKo, 23.5, 0) + ", 24.5 " + inKo(escKo, 24.5, 0));
 }
 
 // ── 7. RANGE ───────────────────────────────────────────────────────────────────────────
@@ -308,12 +368,14 @@ console.log("An AIS contact as a keep-out:");
 {
   const own = { e: 0, n: 0 };
   const hullAt = (e) => modelOf(contact(e, 0, { heading: 90 })).q;      // 20 x 8 m assumed about her antenna, heading east
-  const inside = hullAt(59.5), outside = hullAt(60.5);                    // her near end 49.5 m and 50.5 m off
+  // her near end 59.5 and 60.5 m off, her clear water (10 m) 49.5 and 50.5 m off - the keep-out the ladder reaches for
+  const inside = hullAt(69.5), outside = hullAt(70.5);
   const got = A.aisInReach(own, [inside, outside]);
   const nearM = (q) => clearanceM(own, { polys: [q], lines: [], points: [] }, 100);
-  check("11. aisInReach keeps a contact whose keep-out comes within AIS_LOOKAHEAD_M (50 m) of the boat and drops one beyond it - measured to her near end, not her antenna - and keeps nothing from nothing",
+  check("11. aisInReach keeps a contact whose keep-out comes within AIS_LOOKAHEAD_M (50 m) of the boat and drops one beyond it - measured to the edge of her clear water off her near end, not her antenna - and keeps nothing from nothing",
         () => A.AIS_LOOKAHEAD_M === 50 && got.length === 1 && got[0] === inside && A.aisInReach(own, []).length === 0
-              && A.aisInReach(null, [inside]).length === 0 && A.aisInReach(own, [inside, outside], 60).length === 2,
+              && A.aisInReach(null, [inside]).length === 0 && A.aisInReach(own, [inside, outside], 60).length === 2
+              && Math.abs(nearM(inside) - 49.5) < 0.6 && Math.abs(nearM(outside) - 50.5) < 0.6,
         () => "reach " + A.AIS_LOOKAHEAD_M + ", kept " + got.length + " of 2 (near ends " + nearM(inside).toFixed(1) + " / " + nearM(outside).toFixed(1) + " m)");
   const drix = JSON.parse(require("fs").readFileSync(path.join(__dirname, "..", "vessels", "drix08.json"), "utf8"));
   const man = drix.maneuvering, coast = man.coast, low = drix.propulsion.speeds_kn.low * KN;
@@ -396,12 +458,12 @@ console.log("An AIS contact as a keep-out:");
   // THE KEEP-OUT IS DRAWN BY THE SAME ANSWER: the red outline is the hull at that heading, or the disc
   const fr = planeFrame(at);
   const q1 = A.aisKeepout(AMAZON, fr, { now: 0, polledAt: 0 }), q2 = A.aisKeepout(CABRILLO, fr, { now: 0, polledAt: 0 });
-  const r2 = q2 && q2.ring.length ? Math.hypot(q2.ring[0].e - q2.at.e, q2.ring[0].n - q2.at.n) : null;
+  const r2 = q2 && q2.bare.length ? Math.hypot(q2.bare[0].e - q2.at.e, q2.bare[0].n - q2.at.n) : null;
   check("12e. ... and the keep-out asks the SAME function: AMAZON's outline is her hull at 251, CABRILLO's the disc of aisDiscM - so the ship the layer draws inside the red outline points the way the outline does",
-        () => !!q1 && q1.hdg === 251 && q1.ring.length === 4 && !!q2 && q2.hdg === null && q2.ring.length === 12
+        () => !!q1 && q1.hdg === 251 && q1.bare.length === 4 && !!q2 && q2.hdg === null && q2.bare.length === 12
               && Math.abs(r2 - A.aisDiscM(q2.box)) < 1e-6 && Math.abs(A.aisDiscM(q2.box) - Math.hypot(30, 10) / 2) < 1e-6,
-        () => "AMAZON hdg " + (q1 && q1.hdg) + " (" + (q1 && q1.ring.length) + " corners); CABRILLO hdg " + (q2 && q2.hdg)
-            + ", " + (q2 && q2.ring.length) + "-point disc of " + (r2 == null ? "—" : r2.toFixed(2)) + " m");
+        () => "AMAZON hdg " + (q1 && q1.hdg) + " (" + (q1 && q1.bare.length) + " corners); CABRILLO hdg " + (q2 && q2.hdg)
+            + ", " + (q2 && q2.bare.length) + "-point disc of " + (r2 == null ? "—" : r2.toFixed(2)) + " m");
 }
 
 // ── M1-M8. THE VESSELS NOT UNDER WAY, FOR A PASSAGE (Andy, 2026-10-07: "build ... Solution 2") ──────────────────
@@ -440,6 +502,8 @@ console.log("An AIS contact as a keep-out:");
   const saved = { ready: nogo.ready, frame: nogo.frame, ko: nogo.ko, buffer: nogo.buffer, bbox: nogo.bbox, ais: nogo.ais };
   Object.assign(nogo, { ready: true, frame: ref, ko: open, buffer: 3, bbox: box, ais: null });
   const A0 = ll(-700, 20), B0 = ll(700, 20);                       // 9 m off her side, straight
+  // `hull` is the moored polygon as the passage gets it - her CLEAR WATER since 2026-10-17 (66 m round her) - so M3 and
+  // M7 measure the standoff off that, and the straight route reads 0 (inside it); M9 measures to her bare hull
   const hull = one;
   const passM = (route, from) => {
     const pts = [from, ...route].map((p) => ref.toEN(p));
@@ -486,6 +550,41 @@ console.log("An AIS contact as a keep-out:");
           && pat.unroutable.length === 0,
         "the plan with the read is the plan without it (" + pat.route.length + " points); the line "
           + line.map((p) => p.e.toFixed(0) + "," + p.n.toFixed(0)).join(" -> "));
+  // M9-M9b (2026-10-17): her CLEAR WATER (half her length, 66 m round a 132 m ship) is kept by a passage too - even by one
+  // that starts inside it, which the router lays out of it the short way (waived, it ran along her side at 36-40 m)
+  nogo.ais = { vessels: [ship()], polledAt: Date.now() };
+  const far = P.planNogoRoute(A0, B0, { standoffM: 20 });
+  const IN = ll(-30, 51);                                        // 40 m north of her side (n = 11): inside her 66 m
+  const fromIn = P.planNogoRoute(IN, B0, { standoffM: 20 });
+  const endOk = (r) => r && Array.isArray(r.route) && r.route.length && distTo(r.route[r.route.length - 1], B0) < 1;
+  // measured to her BARE hull (passM measures to `one`, the moored polygon - her clear water since 2026-10-17)
+  const bareOf = { ...one, ring: one.bare };
+  const passBare = (route, from) => {
+    const pts = [from, ...route].map((p) => ref.toEN(p));
+    let m = 1e9;
+    for (let i = 1; i < pts.length; i++) for (let k = 0; k <= 50; k++) {
+      const p = { e: pts[i - 1].e + (pts[i].e - pts[i - 1].e) * k / 50, n: pts[i - 1].n + (pts[i].n - pts[i - 1].n) * k / 50 };
+      m = Math.min(m, clearanceM(p, { polys: [bareOf], lines: [], points: [] }, 500));
+    }
+    return m;
+  };
+  check("M9. a passage keeps her clear water: from 700 m off, the Go-To passes her hull no nearer than her 66 m plus the "
+        + "standoff (20 m)",
+        one.marginM === 66 && endOk(far) && passBare(far.route, A0) >= 66 + 19.5,
+        passBare(far.route, A0).toFixed(1) + " m off her hull");
+  // how far off her hull the route is, 100 m of track out from the start
+  const offAt = (route, from, atM) => { const pts = [from, ...route].map((p) => ref.toEN(p)); let s0 = 0;
+    for (let i = 1; i < pts.length; i++) { const L = Math.hypot(pts[i].e - pts[i - 1].e, pts[i].n - pts[i - 1].n);
+      if (s0 + L >= atM) { const t = (atM - s0) / L, p = { e: pts[i - 1].e + (pts[i].e - pts[i - 1].e) * t, n: pts[i - 1].n + (pts[i].n - pts[i - 1].n) * t };
+        return clearanceM(p, { polys: [bareOf], lines: [], points: [] }, 500); } s0 += L; }
+    return null; };
+  const out100 = endOk(fromIn) ? offAt(fromIn.route, IN, 100) : null;
+  check("M9b. ... and one that STARTS inside it (40 m off her side) is planned OUT of it the short way: never nearer her "
+        + "hull than it started, and 100 m of track on, outside her clear water (66 m)",
+        !fromIn.error && endOk(fromIn) && passBare(fromIn.route, IN) >= 40 - 0.5 && out100 != null && out100 >= 66,
+        (fromIn.error ? "ERROR " + fromIn.error + "; " : "") + (endOk(fromIn) ? "nearest " + passBare(fromIn.route, IN).toFixed(1)
+          + " m off her hull, " + (out100 == null ? "-" : out100.toFixed(1)) + " m off it 100 m on" : "no route to the target"));
+  nogo.ais = null;
   Object.assign(nogo, saved);
 }
 

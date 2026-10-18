@@ -1514,6 +1514,9 @@ let haveFix = false, follow = true;
 //   still does not fit keeps the NEWEST half of the trail, then a quarter - never nothing while something fits.
 const TRACK_KEY = "asv_track_v1", TRACK_STEP_M = 2, TRACK_SAVE_MS = 3000;
 let savedBootId = null, sessionBootId = null, bootChecked = false;
+// the console's clock (a frame's server_t) at the last frame this page laid the trail from, the one a restored trail was
+// stored at, and how many times the trail has been thrown away (an answer asked for before a clear is not laid after it)
+let trackFrameT = null, savedTrackT = null, trackEpoch = 0;
 // "dLat,dLon,dLat,dLon,..." in microdegrees, from 0,0: a 2 m step is a pair of two- or three-digit numbers.
 function encodeTrack(t){ const out = new Array(2*t.length); let a0 = 0, o0 = 0;
   for(let i=0;i<t.length;i++){ const a = Math.round(t[i].lat*1e6), o = Math.round(t[i].lon*1e6);
@@ -1527,18 +1530,68 @@ function decodeTrack(s){ const v = String(s).split(","), t = []; let a = 0, o = 
   return t; }
 function loadTrack(){ const raw = lsGet(TRACK_KEY, null);
   if(Array.isArray(raw)) return raw.slice(-MAX_TRACK);                 // legacy (untagged)
-  if(raw && typeof raw.d === "string"){ savedBootId=raw.bootId||null; return decodeTrack(raw.d).slice(-MAX_TRACK); }
+  if(raw && typeof raw.d === "string"){ savedBootId=raw.bootId||null; savedTrackT = Number.isFinite(raw.t) ? raw.t : null;
+    return decodeTrack(raw.d).slice(-MAX_TRACK); }
   if(raw && Array.isArray(raw.track)){ savedBootId=raw.bootId||null; return raw.track.slice(-MAX_TRACK); }  // before #21
   return []; }
 let trackSaveTimer=null;
 function writeTrack(){ clearTimeout(trackSaveTimer); trackSaveTimer=null;
   for(let n=track.length; n>0; n=Math.floor(n/2)){
-    try{ localStorage.setItem(TRACK_KEY, JSON.stringify({bootId:sessionBootId, d:encodeTrack(n < track.length ? track.slice(-n) : track)}));
+    try{ localStorage.setItem(TRACK_KEY, JSON.stringify({bootId:sessionBootId, t:trackFrameT,
+                                                         d:encodeTrack(n < track.length ? track.slice(-n) : track)}));
          return; }
     catch(e){ if(!/quota/i.test(String(e && (e.name || e.message)))) return; } } }   // storage off: once, not ~15 tries
 function saveTrack(){ if(trackSaveTimer === null) trackSaveTimer = setTimeout(writeTrack, TRACK_SAVE_MS); }
 function flushTrack(){ if(trackSaveTimer !== null) writeTrack(); }
-function clearTrack(){ track=[]; clearTimeout(trackSaveTimer); trackSaveTimer=null; lsDel(TRACK_KEY); }
+function clearTrack(){ track=[]; clearTimeout(trackSaveTimer); trackSaveTimer=null; lsDel(TRACK_KEY);
+  trackFrameT = null; savedTrackT = null; trackEpoch++; }
+// ⚠ THE TRAIL A SLEEPING PAGE MISSED IS FILLED IN FROM THE CONSOLE (Andy, 2026-10-17: "When the chart window is
+// offscreen, the path history does not load when it comes back. This is misleading to the viewer. The playback does show
+// the path generating."). The trail is laid from the frames this page handles, and a page the browser has frozen handles
+// none: on his New Castle survey the trail stopped on one line and took up again lines later, a straight chord across the
+// pattern between, the lines surveyed meanwhile drawn as if never run. The console keeps every 2 m of her this boot
+// (asv_console.py TrackHistory) and stamps each frame with its own clock (`server_t`), so a frame more than TRACK_GAP_S
+// after the last one this page laid from - or, on a page loaded again, after the trail it restored (stored with its `t`)
+// - asks for the positions between (GET /api/track) and lays them in by time. Only BETWEEN points this page has laid: a
+// trail the operator cleared is not brought back, and a new boot is a new trail (checkBoot).
+const TRACK_GAP_S = 3;
+/** One fix laid on the trail - a point once she is TRACK_STEP_M from the last - and the stretch before it asked for when
+ *  this page missed frames. `ft` is the frame's server_t (an older console sends none, and nothing is asked). */
+function layTrack(pos, ft){
+  const t = Number.isFinite(ft) ? ft : null;
+  const from = trackFrameT != null ? trackFrameT : savedTrackT;
+  if(t != null && from != null && t - from > TRACK_GAP_S && track.length && sessionBootId) trackBackfill(from, t, sessionBootId);
+  savedTrackT = null;
+  const last = track[track.length-1];
+  if(!last || distTo(last, pos) >= TRACK_STEP_M){
+    track.push(t != null ? {lat:pos.lat, lon:pos.lon, t} : {lat:pos.lat, lon:pos.lon});
+    if(track.length>MAX_TRACK) track.shift(); saveTrack();
+  }
+  if(t != null) trackFrameT = t;
+}
+/** The console's positions of boot `boot` strictly between t0 and t1 (its clock), laid into the trail where they belong:
+ *  after the points laid at or before t0, before those laid at or after t1. Nothing for a trail cleared or a boot changed
+ *  since it asked. Resolves to how many were laid. */
+async function trackBackfill(t0, t1, boot){
+  const epoch = trackEpoch;
+  try{
+    const r = await fetch("/api/track?boot=" + encodeURIComponent(boot) + "&since=" + t0 + "&until=" + t1, {cache: "no-store"});
+    const j = await r.json();
+    if(epoch !== trackEpoch || !j || j.boot_id !== boot || sessionBootId !== boot || !Array.isArray(j.points)) return 0;
+    const pts = [];
+    for(const p of j.points)
+      if(Array.isArray(p) && p[0] > t0 && p[0] < t1 && Number.isFinite(p[1]) && Number.isFinite(p[2]))
+        pts.push({lat: p[1], lon: p[2], t: p[0]});
+    if(!pts.length) return 0;
+    // from the end, past the points laid at or after t1; a restored trail's points carry no time and are older than any
+    let k = track.length;
+    while(k > 0 && track[k-1].t != null && track[k-1].t >= t1) k--;
+    track = track.slice(0, k).concat(pts, track.slice(k));
+    if(track.length > MAX_TRACK) track = track.slice(track.length - MAX_TRACK);
+    saveTrack(); render();
+    return pts.length;
+  }catch(e){ return 0; }                              // no answer: the trail keeps its chord, as before
+}
 // Drop the trail whenever the boot it belongs to is gone. `prev` is what the trail ON
 // SCREEN was drawn under: the RESTORED trail's stored id on the first frame after load,
 // and the live id on every frame after that. One comparison serves both - a page refresh
@@ -13898,15 +13951,19 @@ function drawAisKeepouts(toScreen){
     ctx.closePath(); };
   ctx.save();
   for(const q of aisKoDrawn){
+    // the keep-out: her clear water round her (swept) hull (ais_keepout.js AIS_MARGIN_FRAC, 2026-10-17), and the hull
+    // itself filled inside it - so the outline is where the boat is kept out, and the ship is still the ship
     path(q.ring);
-    ctx.fillStyle = q.moving ? "rgba(217,83,79,0.12)" : "rgba(217,83,79,0.22)"; ctx.fill();
+    ctx.fillStyle = q.moving ? "rgba(217,83,79,0.08)" : "rgba(217,83,79,0.12)"; ctx.fill();
     ctx.setLineDash(q.moving ? [6,4] : []);
     ctx.strokeStyle = "rgba(217,83,79,0.9)"; ctx.lineWidth = 1.5; ctx.stroke();
     ctx.setLineDash([]);
+    if(q.bare && q.marginM > 0){ path(q.bare); ctx.fillStyle = q.moving ? "rgba(217,83,79,0.12)" : "rgba(217,83,79,0.22)"; ctx.fill(); }
     if(q.moving){ path(q.hull); ctx.fillStyle = "rgba(217,83,79,0.30)"; ctx.fill(); }
     if(zoom >= 13){ const at = nogo.frame.fromEN(q.at.e, q.at.n); const s = toScreen(at.lat, at.lon);
       ctx.font = "10px Consolas,monospace"; ctx.fillStyle = "rgba(255,150,130,0.95)";
-      ctx.fillText(q.kind.replace(/^AIS: /, ""), s.x + 8, s.y - 6); }
+      ctx.fillText(q.kind.replace(/^AIS: /, "") + (q.marginM > 0 ? " · " + fmtDist(q.marginM) + " clear"
+                   : q.marginWaived ? " · inside her clear water" : ""), s.x + 8, s.y - 6); }
   }
   ctx.restore();
 }
@@ -20848,10 +20905,7 @@ function onState(s){
   if(st.lat_deg!=null && st.lon_deg!=null){
     asv = {lat:st.lat_deg, lon:st.lon_deg, hdg: st.heading_deg!=null?st.heading_deg:null};
     $("#p_pos").textContent = fmtLL(asv.lat, asv.lon);
-    const last = track[track.length-1];
-    if(!last || distTo(last, asv) >= TRACK_STEP_M){
-      track.push({lat:asv.lat, lon:asv.lon}); if(track.length>MAX_TRACK) track.shift(); saveTrack();
-    }
+    layTrack(asv, s.server_t);                     // the trail, and the stretch of it a sleeping page missed
     // ⚠ THE SLEW OWNS THE CENTER WHILE IT FLIES, and this is the line that would take it
     // back. A port change RESPAWNS the sim boat at the new base immediately (the server
     // reconnects the sim in the same request), so the very next telemetry frame reports a

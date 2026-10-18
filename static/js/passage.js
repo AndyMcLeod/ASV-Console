@@ -550,6 +550,9 @@ export function beyondChartSay(u, fmt){
 export function passageKo(base = nogo.ko, now = Date.now()){
   const a = nogo.ais;
   if(!base || !a || !nogo.frame) return base;
+  // each with her CLEAR WATER (ais_keepout.js AIS_MARGIN_FRAC, 2026-10-17) - kept even round a plan that starts inside it:
+  // the router lays her out of it the short way (measured: from 40 m off a 132 m ship's side, 101 m off within 81 m of
+  // track), where waiving it ran her along that side at 36-40 m - the very closeness he asked to end
   const r = aisMooredKeepouts(a.vessels, nogo.frame, {now, polledAt: a.polledAt, bbox: nogo.bbox});
   return r.polys.length ? {...base, polys: (base.polys || []).concat(r.polys), moored: r.polys} : base;
 }

@@ -44,6 +44,7 @@ opens a browser tab. See --help.
 import argparse
 import atexit
 import calendar
+import collections
 import gc
 import gzip
 import hashlib
@@ -7349,6 +7350,60 @@ class RealVcu(VcuLink):
     def set_neutral(self): pass
 
 
+# ⚠ HER TRACK THIS BOOT, KEPT HERE FOR A CHART PAGE THAT MISSED SOME OF IT (Andy, 2026-10-17: "When the chart window is
+# offscreen, the path history does not load when it comes back. This is misleading to the viewer. The playback does show
+# the path generating."). The page lays its trail from the frames it handles, and a page the browser has frozen handles
+# none - the frames it misses are dropped here (a subscriber's queue holds four). So this keeps every TRACK_HISTORY_STEP_M
+# of her - the page's own step, as many points as the page keeps - and GET /api/track hands a page the stretch it missed
+# (asv.html layTrack / trackBackfill). One boot's track: a new link session is a new trail, here as on the page (checkBoot).
+TRACK_HISTORY_STEP_M = 2.0       # the page's TRACK_STEP_M
+TRACK_HISTORY_MAX = 40000        # the page's MAX_TRACK: 80 km at that step
+
+
+class TrackHistory:
+    def __init__(self, cap=TRACK_HISTORY_MAX):
+        self._lock = threading.Lock()
+        self._boot = None
+        self._pts = collections.deque(maxlen=cap)      # (t, lat, lon), oldest first
+
+    def note(self, boot, t, lat, lon):
+        """One fix of boot `boot` at time `t` (this process's clock): kept once she is TRACK_HISTORY_STEP_M from the
+        last point kept. Another boot starts the track again."""
+        with self._lock:
+            if boot != self._boot:
+                self._boot = boot
+                self._pts.clear()
+            if self._pts:
+                _, la, lo = self._pts[-1]
+                if _haversine_km(la, lo, lat, lon) * 1000.0 < TRACK_HISTORY_STEP_M:
+                    return
+            self._pts.append((t, lat, lon))
+
+    def between(self, boot, t0, t1):
+        """(the boot this holds, its points strictly between t0 and t1, oldest first) - none for another boot."""
+        with self._lock:
+            if boot != self._boot:
+                return self._boot, []
+            return self._boot, [p for p in self._pts if t0 < p[0] < t1]
+
+
+TRACK_HISTORY = TrackHistory()
+
+
+def _track_query(path):
+    """/api/track?boot=ID&since=EPOCH[&until=EPOCH] -> (boot, since, until); ValueError in words."""
+    q = urllib.parse.parse_qs(urllib.parse.urlparse(path).query)
+    try:
+        boot = q["boot"][0]
+        since = float(q["since"][0])
+        until = float(q["until"][0]) if "until" in q else time.time() + 1.0
+    except (KeyError, ValueError, IndexError):
+        raise ValueError("usage: /api/track?boot=ID&since=EPOCH[&until=EPOCH]")
+    if not (math.isfinite(since) and math.isfinite(until) and until >= since):
+        raise ValueError("since and until epochs, until not before since")
+    return boot, since, until
+
+
 # --------------------------------------------------------------------------- #
 #  Engine: link ownership, SSE pub/sub, arming + run-control state machine     #
 # --------------------------------------------------------------------------- #
@@ -8564,6 +8619,8 @@ class Engine:
                     # feed the vessel fix to the water-level link (drives station
                     # selection + refetch); computer clock is implicit (date=latest)
                     if telem.get("lat_deg") is not None and telem.get("lon_deg") is not None:
+                        # her track this boot, for a chart page that was asleep (TrackHistory)
+                        TRACK_HISTORY.note(self.boot_id, time.time(), telem["lat_deg"], telem["lon_deg"])
                         WATER.update_position(telem["lat_deg"], telem["lon_deg"])
                         # SIM-ONLY: locate real weather near the sim vessel so SimVcu
                         # can push it around. Not fed in real mode (real boat, real wx).
@@ -8750,6 +8807,8 @@ class Engine:
         return {
             "type": "state",
             "boot_id": self.boot_id,
+            # this process's clock as the frame goes out: a page that missed frames knows from it which (TrackHistory)
+            "server_t": round(time.time(), 3),
             # the version this process started from, and the one on disk now (review #15)
             "build": BUILD.boot,
             "build_on_disk": BUILD.current(),
@@ -9076,6 +9135,14 @@ class Handler(BaseHTTPRequestHandler):
             self._serve_enc()
         elif self.path.startswith("/api/chartinfo"):
             self._serve_chartinfo()
+        elif self.path == "/api/track" or self.path.startswith("/api/track?"):   # the trail a page missed (TrackHistory)
+            try:
+                boot, since, until = _track_query(self.path)
+            except ValueError as e:
+                return self._send(400, json.dumps({"error": str(e)}))
+            held, pts = TRACK_HISTORY.between(boot, since, until)
+            self._send(200, json.dumps({"boot_id": held,
+                                        "points": [[round(t, 3), round(la, 7), round(lo, 7)] for t, la, lo in pts]}))
         elif self.path.startswith("/api/water/along"):       # a passage's section, while she sails it (step 6)
             try:
                 pts, t0, t1 = _water_along_query(self.path)

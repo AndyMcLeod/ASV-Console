@@ -57,6 +57,28 @@ import { coastLc, coastRun, slowLaw, slowRun, SLOW_LAG_RAMP_MS } from "./coast.j
 /** The hull assumed for a contact that broadcasts no size, meters. Andy's numbers. */
 export const AIS_DEFAULT_LENGTH_M = 20;
 export const AIS_DEFAULT_BEAM_M = 8;
+/**
+ * ⚠ THE CLEAR WATER KEPT ROUND A CONTACT, SCALED TO HER SIZE (Andy, 2026-10-17, of his survey past VICTORIA T, a 200 x
+ * 32 m cargo ship at anchor: "The avoidance maneuvers are very well handled. However, the ASV should not come so close to
+ * the vessel. Perhaps scale closure range to vessel size?" - and, asked, "Half her length"). With the hull alone as the
+ * keep-out (his 09-25 rule) a survey line 28.8 m off her side was flown as drawn, and the guard held the boat 30.2 m off
+ * her before going round: the buffer and the standoff are the boat's margins, the same 5 m off a 200 m ship as off a
+ * pier. So a contact's keep-out is her hull - swept, while she is under way - grown by AIS_MARGIN_FRAC of her length
+ * (aisMarginM): 100 m round a 200 m ship, 10 m round a 20 m boat or one that broadcasts no size, so the tight way round
+ * a small boat he asked for on 09-28 stays tight. Every user of the polygon takes it as it is: the guard reacts at its
+ * edge, a survey line inside it goes round her, a passage is laid outside it, the chart draws it round her hull.
+ * ⚠⚠ NOT ROUND A BOAT ALREADY INSIDE IT (`opts.own`, where the guard has her): the guard reads a boat inside a keep-out as in extremis and
+ * takes the helm, and a ship that anchors beside her, a moored one by her launch berth, or one passing close while she
+ * holds would put her there with nothing new to avoid. Such a contact is her bare (swept) hull, exactly as before this
+ * change, and says so; the margin is water not to ENTER, not water to escape from. THE GUARD'S MODEL ONLY: a PASSAGE
+ * keeps it whatever her start (aisMooredKeepouts), and the router lays her out of it the short way.
+ */
+export const AIS_MARGIN_FRAC = 0.5;
+/** The clear water kept round a contact of hull `box`, meters: `frac` (AIS_MARGIN_FRAC) of her length (the assumed one if
+ *  none). */
+export function aisMarginM(box, frac = AIS_MARGIN_FRAC) {
+  return Math.max(0, +(box && box.lengthM) || AIS_DEFAULT_LENGTH_M) * Math.max(0, +frac || 0);
+}
 /** Dead-reckon a contact from its last position report for at most this long, seconds. */
 export const AIS_DR_MAX_S = 60;
 /** Below this speed over the ground a contact is stationary: not dead-reckoned, not swept. */
@@ -299,13 +321,33 @@ export function aisKeepout(v, frame, opts = {}) {
     ? discRingEN(at, aisDiscM(box))
     : hullRingEN(at, hdg, box);
   const hull = shape(c0);
-  const ring = c1 ? convexHull(hull.concat(shape(c1))) : hull;
+  const bare = c1 ? convexHull(hull.concat(shape(c1))) : hull;
+  // her clear water (AIS_MARGIN_FRAC) - unless the boat is already in it (see AIS_MARGIN_FRAC)
+  const margin = aisMarginM(box, opts.marginFrac == null ? AIS_MARGIN_FRAC : opts.marginFrac);   // the page never sets it
+  const grown = margin > 0 ? growRingEN(bare, margin) : bare;
+  const waived = !!(opts.own && margin > 0 && inRingEN(opts.own, grown));   // the guard's model only (AIS_MARGIN_FRAC)
+  const ring = waived ? bare : grown;
   const size = Math.round(box.lengthM) + " x " + Math.round(box.beamM) + " m" + (box.assumed ? " assumed" : "");
   const name = (v.name != null && String(v.name).trim()) ? String(v.name).trim() : null;
   const kind = "AIS: " + (name || ("MMSI " + v.mmsi)) + " (" + size
     + (moving ? ", " + sog.toFixed(1) + " kn" : navStopped ? ", " + aisNavWord(+v.nav) : "") + ")";
   return { ring, bb: bbOf(ring), kind, mmsi: v.mmsi, name, moving, sweepS: c1 ? sweepS : 0,
-           at: c0, end: c1, hull, box, hdg };
+           at: c0, end: c1, hull, bare, box, hdg, marginM: waived ? 0 : margin, marginWaived: waived };
+}
+/** A convex ring grown by `m` on every side (it CONTAINS every point within m of the ring): discs about its vertices. */
+export function growRingEN(ring, m) {
+  const pts = [];
+  for (const v of ring) for (const p of discOutEN(v, m, 32)) pts.push(p);   // 32 sides: at most 0.5% outside the circle
+  return convexHull(pts);
+}
+/** Is `p` inside the ring (even-odd)? */
+export function inRingEN(p, ring) {
+  let c = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const a = ring[i], b = ring[j];
+    if ((a.n > p.n) !== (b.n > p.n) && p.e < (b.e - a.e) * (p.n - a.n) / (b.n - a.n) + a.e) c = !c;
+  }
+  return c;
 }
 
 /**
@@ -321,7 +363,8 @@ export function aisAvoidKeepout(q) {
   if (!q || !q.ring || !q.box) return q;
   const L = Math.max(0, +q.box.lengthM || AIS_DEFAULT_LENGTH_M);
   const pts = [];
-  for (const v of q.ring) for (const p of discRingEN(v, L, 16)) pts.push(p);
+  // from her (swept) hull, as his rule says: a ship-length contains her clear water (AIS_MARGIN_FRAC < 1)
+  for (const v of (q.bare || q.ring)) for (const p of discRingEN(v, L, 16)) pts.push(p);
   const ring = convexHull(pts);
   return { ...q, ring, bb: bbOf(ring), avoidM: L, kind: q.kind + ", " + Math.round(L) + " m round her" };
 }
@@ -435,6 +478,7 @@ export function aisMooredKeepouts(vessels, frame, opts = {}) {
     if (b && !(+v.lat >= b.S && +v.lat <= b.N && +v.lon >= b.W && +v.lon <= b.E)) continue;
     const m = aisMotion(v, { now, polledAt });
     if (m.moving) continue;
+    // with her clear water, always (AIS_MARGIN_FRAC): a plan that starts inside it is laid out of it the short way
     const q = aisKeepout(v, frame, { now, polledAt, sweepS: 0 });
     if (!q) continue;
     // aisKeepout names moored / at anchor / aground where she says so; a stopped ship that says nothing is "stopped"

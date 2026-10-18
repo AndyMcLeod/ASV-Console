@@ -106,9 +106,11 @@ function between(a, b) {
 // `track = []` that check 11 exists to forbid.
 function code(s) { return s.replace(/\/\/[^\n]*/g, ""); }
 
-const PUSH_HEAD   = "    const last = track[track.length-1];";
+// onState's own append: since 2026-10-17 a call to layTrack, which TRACK_BLOCK lifts (tests/trail_backfill.js holds the
+// stretch it asks the console for - these frames carry no server_t, so it asks nothing here)
+const PUSH_CALL   = "    layTrack(asv, s.server_t);";
 const TRACK_BLOCK = between("const TRACK_KEY =", "let asv = null;");
-const PUSH        = between(PUSH_HEAD, "\n    }") + "\n    }";     // onState's own append
+const PUSH        = "    layTrack(asv);";
 const MAX_TRACK   = Number(/MAX_TRACK\s*=\s*(\d+)/.exec(H)[1]);
 const TRACK_SAVE_MS = Number(/TRACK_SAVE_MS\s*=\s*(\d+)/.exec(H)[1]);
 
@@ -180,7 +182,8 @@ console.log("Respawn - the trail belongs to a boot, and the boot ended:");
 
 // --- 1-4. the reported defect --------------------------------------------- //
 check("1. the page still has the code this suite names",
-      () => TRACK_BLOCK.indexOf("function checkBoot") >= 0 && PUSH.indexOf("track.push") >= 0
+      () => TRACK_BLOCK.indexOf("function checkBoot") >= 0 && /function layTrack\([\s\S]*?track\.push/.test(TRACK_BLOCK)
+            && H.indexOf(PUSH_CALL) >= 0
             && MAX_TRACK > 0,
       () => "checkBoot+push lifted, MAX_TRACK=" + MAX_TRACK);
 

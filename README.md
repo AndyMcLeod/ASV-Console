@@ -489,6 +489,9 @@ telemetry - closed, asleep in the browser or stuck - it says so in red across it
 chart is only covered or minimized, slowed by the browser but still answering, a small amber note
 in its corner says that. (The first version put up the red banner whenever the chart was covered,
 so with the controls window maximized over the chart it stood through a whole run that went well.)
+And the chart's **trail** has no hole where its window slept (2026-10-17): the console keeps her
+track this boot, every 2 m, and a chart window that missed some of it - frozen by the browser, or
+closed and opened again - fills in the stretch from the console (`/api/track`).
 Only the **supervising** chart drives the controls window - it alone mirrors into
 it, carries out its clicks and hides its own cards; a view-only chart keeps its own, and
 TAKE OVER moves the controls window with supervision. Of two controls windows the
@@ -668,8 +671,13 @@ dashed circle when she is stopped and reports no heading (see *Two drawings of o
 
 **Contacts are keep-outs (2026-09-25).** Every AIS contact near the boat is a keep-out the
 clearance guard steers clear of, exactly as it does a pier: the **hull she broadcasts** (or
-**20 m x 8 m** about her antenna where she broadcasts none), oriented by her heading, with the
-vessel's own keep-clear buffer around it and **no other margin**. While she is under way the
+**20 m x 8 m** about her antenna where she broadcasts none), oriented by her heading, grown by
+**half her length** - her clear water (2026-10-17: 100 m round a 200 m ship, 10 m round a 20 m
+boat; until then the hull alone, and a survey line ran 28.8 m off a 200 m ship at anchor) - with
+the vessel's own keep-clear buffer outside that. A boat already inside a ship's clear water (a ship
+anchoring beside her) is guarded against that ship's bare hull, so the guard never takes the helm
+to escape water she was already in; a passage that starts inside it is laid out of it the short
+way. While she is under way the
 keep-out is **dead-reckoned** between polls and **swept** over the guard's look-ahead — the
 water she will occupy within the next 45 s — so a contact crossing ahead holds the boat
 before her track and one bearing down reads in extremis while there is still water to escape
@@ -816,8 +824,9 @@ contact near the boat is drawn twice, and the two drawings mean different things
 
 - the **ship in her type color** (green for cargo, to scale when the chart can show her) is the
   AIS target as she reports herself;
-- the **red outline** over her is the clearance guard's **keep-out** - the hull the guard steers
-  clear of, dashed ahead where she will be within the look-ahead while she is under way.
+- the **red outline** over her is the clearance guard's **keep-out** - her clear water, half her
+  length round her hull (labeled "· 100 m clear"), with the hull itself filled inside it, dashed
+  ahead where she will be within the look-ahead while she is under way.
 
 The two were turned by two different rules. The keep-out pointed the hull along her **heading**;
 the layer pointed it along her **course over the ground** first - and a moored ship's course is

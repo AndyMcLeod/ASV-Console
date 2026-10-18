@@ -419,7 +419,9 @@ function refreshNogo(ll){ __asked = ll; return Promise.resolve(); }
 // dependency in the function it drives, and that is the suite working.
 var trackSaveTimer;
 globalThis.localStorage = { getItem(){ return null; }, setItem(){}, removeItem(){} };
-eval(grabDecl("TRACK_KEY") + "\n" + grab("lsDel") + "\n" + grab("clearTrack"));
+// (2026-10-17: clearTrack also forgets the trail's frame time and counts the clear - trail_backfill.js - the page's own
+// declaration of the three, lifted, as the rule above says)
+eval(grabDecl("TRACK_KEY") + "\n" + grabDecl("trackFrameT") + "\n" + grab("lsDel") + "\n" + grab("clearTrack"));
 // AND THE SAME ARGUMENT FOR giveUpRoute, which resetForNewArea now drops the drawn route
 // through: it records the ACT, so the Intent card says "this page changed the operating area"
 // rather than telling the operator another console is flying the boat.

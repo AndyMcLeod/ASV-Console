@@ -150,8 +150,16 @@ var searchCount = 0;                                    // how many times the la
 // banner cannot land in a check that counts banners (tests/ais_avoid.js owns the stale case).
 var aisVessels = [], aisPolledAt = 0, aisShow = false, aisAvoid = null;
 var aisKoDrawn = [], aisKoNote = null, aisKoStale = false, aisKoBlindSaid = false, aisKoWantedAt = 0;
-const { aisKeepouts, aisAvoidKeepouts, aisAvoidKeepout, aisRoundKeepout, convexHull, AIS_KO_STALE_S,
-        AIS_LOOKAHEAD_M, aisInReach, aisReachM } = require("../static/js/ais_keepout.js");   // the ladder's reach (2026-09-29)
+const { aisKeepouts: AK_aisKeepouts, aisAvoidKeepouts, aisAvoidKeepout, aisRoundKeepout, convexHull, AIS_KO_STALE_S,
+        AIS_LOOKAHEAD_M, aisInReach, aisReachM, AIS_MARGIN_FRAC } = require("../static/js/ais_keepout.js");   // the ladder's reach (2026-09-29)
+// ⚠ THE LADDER'S SCENARIOS ARE THE BARE HULL'S (2026-10-17). Since then a contact's keep-out carries her clear water -
+// half her length round her hull (ais_keepout.js AIS_MARGIN_FRAC, his "Half her length") - and every scenario below 27
+// places its contacts at distances tuned to the hull alone: what they hold is the ladder (its reach, the override, the
+// return, the way round, the slow-instead-of-hold), not the margin. So this world's model is built at marginFrac 0 -
+// one wrapper, the page's aisKeepoutsNow calls it as it calls the module - and 27-27d set `aisMarginHere` to null to
+// drive the page with the module's own margin, which is what the page runs.
+let aisMarginHere = 0;
+const aisKeepouts = (v, f, o = {}) => AK_aisKeepouts(v, f, aisMarginHere == null ? o : { ...o, marginFrac: aisMarginHere });
 // the guard's model of slowing down (2026-10-03): the in-gear profile, and the console's command delay
 const { slowLaw, slowProfile } = require("../static/js/coast.js"), { SPEED_CMD_LATENCY_S } = require("../static/js/turns.js");
 const { clearanceM, blocked } = require("../static/js/keepouts.js");
@@ -2633,6 +2641,76 @@ function stationing(beh, sogKn, cogDeg, o = {}) {
   check("26i. ... and when the drift no longer reaches it, the on-station HOLD is RELEASED and said as on station - with no counterfactual at the plan's speed along her bow, which would read the very hazard she holds off and never let go",
         () => held26i === "hold" && guardLevel === "clear" && notes.some(n => /^On station \(/.test(n)) && paths().length === 0,
         () => "level " + held26i + " -> " + guardLevel + ", notes " + JSON.stringify(notes.map(n => n.slice(0, 90))) + ", sent " + JSON.stringify(paths()));
+}
+
+// ── 27. HER CLEAR WATER (Andy, 2026-10-17, of VICTORIA T, a 200 x 32 m ship at anchor: "the ASV should not come so close to
+//        the vessel. Perhaps scale closure range to vessel size?" - asked, "Half her length") ─────────────────────────────
+// His survey ran a line 28.8 m off her side with the guard content, and was held 30.2 m off her before the way round. Here
+// the page's own model, with the module's margin: her hull grown by half her length.
+{
+  // VICTORIA T as she broadcast it - antenna 173 m from her bow, 27 from her stern, 10 to port, 22 to starboard - lying
+  // north from the line (heading 0), her stern 28.8 m north of it at e = 140..172; the line run on to e = 600 past her
+  const VIC = () => contact(150, 55.8, { mmsi: 636022926, name: "VICTORIA T", sog: 0, cog: null, heading: 0, nav: 1,
+                                         dim: { a: 173, b: 27, c: 10, d: 22 }, length: 200, beam: 32 });
+  const LONG = { a: ll(-200, 0), b: ll(600, 0) };
+  const longLine = () => { mission = { ...mission, lines: [LONG], waypoints: [LONG.a, LONG.b] };
+                           runRoute = [ll(-200, 0), LONG.b, ll(600, 60), ll(-200, 60)]; };
+  aisMarginHere = 0;
+  surveying(7, [VIC()]); longLine(); frame();
+  const bare = { level: clearance.level, sent: paths().slice() };
+  aisMarginHere = null;                                        // the page as it runs: the module's own margin
+  surveying(7, [VIC()]); longLine(); frame();
+  const ko27 = aisKoDrawn[0] || {};
+  const kept = { level: clearance.level, sent: paths().slice(), said: banners.concat(notes).filter(b => /VICTORIA T/.test(b)).length };
+  check("27. THE REPORT: VICTORIA T (200 x 32 m, at anchor) with her stern 28.8 m off the line - on her bare hull the guard "
+        + "reads the line clear and sends nothing (what his survey did, 28.8 m off her); with her clear water, 100 m round "
+        + "her, it ANSWERS "
+        + "her before she is reached, naming her",
+        () => AIS_MARGIN_FRAC === 0.5 && bare.level === "clear" && bare.sent.length === 0 && ko27.marginM === 100
+              && kept.level !== "clear" && kept.sent.length > 0 && kept.said > 0,
+        () => JSON.stringify({ bare, kept, marginM: ko27.marginM }));
+
+  // the way round her, at the operator's wait: outside her clear water by the standoff, her bare hull never nearer
+  surveying(7, [VIC()]); longLine(); frame(); nowHolding(); sent = []; notes = []; banners = []; logged = []; pinCalls = []; pinNext = null;
+  clock += WAIT + 1000; aisPolledAt = clock; frame(); await settle();
+  const up = sent.find(x => x.p === "/api/cmd/upload"), rte = (up && up.route) || [];
+  const hull27 = AK_aisKeepouts([VIC()], ref, { now: clock, polledAt: clock, sweepS: 0, marginFrac: 0 }).polys[0];
+  const wayIn = wayInOf(rte, ll(0, 0));
+  const dH = rte.length ? minClearTo(wayIn, hull27) : null;
+  check("27b. ... and the way round her, at the operator's wait, keeps her clear water: the way in never within 100 m of her "
+        + "hull (her clear water) - plus the standoff - where her bare hull alone let the line pass at 28.8 m",
+        () => rte.length >= 3 && dH != null && dH >= 100 + 3 - 0.5,
+        () => rte.length + " wpts; closest to her hull " + (dH == null ? "-" : dH.toFixed(1)) + " m; sent " + JSON.stringify(paths()));
+
+  // a ship that anchors beside the boat as she holds: inside her clear water, outside her hull and the buffer
+  const BESIDE = () => contact(0, 70, { mmsi: 636000001, name: "ANCHORED BESIDE", sog: 0, cog: null, heading: 90, nav: 1,
+                                        dim: { a: 100, b: 100, c: 10, d: 10 }, length: 200, beam: 20 });   // her side 60 m north
+  // ON STATION, DRIFTING 0.4 kn TOWARD HER (the ladder judges the drift - 26): a boat with no course is blind, and a
+  // blind frame judges nothing, so this one drifts. Removing the waiver is the control: she is then inside a keep-out,
+  // which the ladder reads as in extremis (tests/../perf mutate: the waiver's mutant takes the helm here).
+  stationing("hold", 0.4, 0, { setKn: 0.4, setDeg: 0 });
+  aisVessels = [BESIDE()]; aisPolledAt = clock;
+  frame(); clock += 1000; aisPolledAt = clock; frame();
+  const besideQ = aisKoDrawn[0] || {};
+  const beside = { level: clearance.level, sent: paths().slice(), why: (clearance.why || "").slice(0, 80) };
+  check("27c. a 200 m ship anchoring 60 m off a boat holding station and drifting 0.4 kn toward her - inside her 100 m of "
+        + "clear water, well off her hull - does NOT take the helm: the boat is already in that water, so that ship is "
+        + "her bare hull (marginWaived), the drift judged against it (not blind), and the boat is not driven out of it",
+        () => besideQ.marginWaived === true && besideQ.marginM === 0 && beside.level !== "helm" && beside.level !== "blind"
+              && !beside.sent.some(p => /escape|goto|upload/.test(p)),
+        () => JSON.stringify({ waived: besideQ.marginWaived, ...beside }));
+
+  // a 20 m boat or one broadcasting no size: 10 m clear - the tight way round he asked for on 09-28 stays tight
+  surveying(7, [PARKED()]); frame(); nowHolding(); sent = []; notes = []; banners = []; logged = []; pinCalls = []; pinNext = null;
+  clock += WAIT + 1000; aisPolledAt = clock; frame(); await settle();
+  const up2 = sent.find(x => x.p === "/api/cmd/upload"), rte2 = (up2 && up2.route) || [];
+  const dC2 = rte2.length ? minDistTo(wayInOf(rte2, ll(0, 0)), PARKED_C) : null;
+  check("27d. ... and a 30 x 8 m workboat keeps 15 m: the way round her passes no nearer her center than her own length "
+        + "(30 m) and no farther than her clear water plus the standoff and the buffer allow (her half-beam 4 + 15 + 3 + 3 = "
+        + "25 m abeam is inside the ship-length disc) - still the tight way round of 09-28, within a meter and a half",
+        () => rte2.length >= 3 && dC2 != null && dC2 >= 30 - 0.05 && dC2 <= 31.5,
+        () => rte2.length + " wpts; closest to her center " + (dC2 == null ? "-" : dC2.toFixed(2)) + " m");
+  aisMarginHere = 0;
 }
 
 Date.now = realNow;

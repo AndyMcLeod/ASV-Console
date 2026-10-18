@@ -85,7 +85,11 @@ function between(a, b) {
 console.log("The trail is saved while the boat moves, and a long day of it is kept:");
 
 const TRACK_BLOCK = between("const TRACK_KEY =", "let asv = null;");
-const PUSH = between("    const last = track[track.length-1];", "\n    }") + "\n    }";   // onState's own append
+// onState's own append: since 2026-10-17 a call to layTrack, which TRACK_BLOCK lifts (and which also asks the console for
+// a stretch this page missed - never here: these frames carry no server_t; tests/trail_backfill.js holds that)
+const PUSH_CALL = "    layTrack(asv, s.server_t);";
+if (H.indexOf(PUSH_CALL) < 0) throw new Error("test setup: anchor gone: " + JSON.stringify(PUSH_CALL));
+const PUSH = "    layTrack(asv);";
 const WIRING = between("let asv = null;", "\n\n");                                          // the flush's two listeners
 const MAX_TRACK = Number(/MAX_TRACK\s*=\s*(\d+)/.exec(H)[1]);
 const TRACK_SAVE_MS = Number(/TRACK_SAVE_MS\s*=\s*(\d+)/.exec(H)[1]);
