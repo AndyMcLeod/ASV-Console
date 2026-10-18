@@ -94,7 +94,7 @@ const SRC = [grabDecl("UI_BRIDGED"), grabDecl("UI_PEER_GONE_MS"), grab("setupUIS
              grab("supervising"), grab("applySupervisor"),
              // the chart says whether it can be seen, and the controls window keeps its word (2026-10-17; status_bar 6-6c
              // hold the watch - nothing asks the console here, so it says nothing)
-             grabDecl("SUPERVISOR_BEAT_MS"), grabDecl("CHART_WATCH_MS"), grabDecl("chartWatch"), grabDecl("CHART_COVERED_SAY"),
+             grabDecl("SUPERVISOR_BEAT_MS"), grabDecl("CHART_WATCH_MS"), grabDecl("chartWatch"), grabDecl("CHART_COVERED_SAY"), grabDecl("CHART_SLEEP_SAY"),
              grab("chartStoppedSay"), grab("chartNoneSay"), grab("chartWatchVerdict"), grab("chartWatchVis"),
              grab("chartWatchRender"), grab("chartWarnShow")].join("\n");
 

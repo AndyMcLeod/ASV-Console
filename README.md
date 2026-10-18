@@ -483,7 +483,11 @@ Chrome) itself with `--new-window` for both, because Python's request for a new 
 ignores and the controls window had been opening as a tab in front of the chart - and a page behind
 another tab is one the browser throttles and then puts to sleep, while the chart page runs the
 clearance guard, the speed governor and the RTH chain (40 sessions of logs held 4.75 hours of it
-asleep). The ⏏ Controls pill reopens it as a window too. The controls window **watches the chart**
+asleep). The ⏏ Controls pill reopens it as a window too. **A page load is never refused at the door**
+(2026-10-18): the console sends every file uncached, so each load of the page asks for all its
+modules at once, and with Python's standard listen queue of 5 Windows refused the overflow - in a
+browser with nothing cached, opened as the console started, the page never started and no chart
+window took supervision. The queue is 64. The controls window **watches the chart**
 (2026-10-17): it asks the console every 2 s, and if the chart has stopped handling the console's
 telemetry - closed, asleep in the browser or stuck - it says so in red across its top. While the
 chart is only covered or minimized, slowed by the browser but still answering, a small amber note
@@ -1174,8 +1178,12 @@ session; while it held it, nothing ran the guard.) A window
 that is merely **out of sight** keeps supervising: the browser slows its timers but keeps
 delivering the telemetry stream, and the checks run on the stream. A tab the browser actually
 put to **sleep** is the lapse — when it wakes it says how long it was gone and writes
-`page_asleep` to the session log — so keep the console out of Edge's sleeping tabs
-(Settings → System and performance → "Never put these sites to sleep"). A tab that has only
+`page_asleep` to the session log — so keep the console out of Edge's sleeping tabs: add
+`127.0.0.1` under Settings → System and performance → "Never put these sites to sleep"
+(`edge://settings/system/managePerformance`), once, for every console window on any port. It is
+not a per-tab switch - Edge has none - and the console cannot set it from the page; the controls
+window's red banner names it. (Measured 2026-10-18: a chart tab behind another, Edge's sleeping
+tabs on, stopped at five minutes.) A tab that has only
 just come back from a silence of its own cannot take supervision on that report
 (`tests/supervisor.py`, `tests/supervisor_page.js`).
 

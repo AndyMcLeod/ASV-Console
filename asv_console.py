@@ -9044,6 +9044,13 @@ class Server(ThreadingHTTPServer):
     # restarted then bound beside it and served nothing either, the page commanding a stale process. Reproduced on a
     # scratch port. SO_EXCLUSIVEADDRUSE refuses the second bind (WinError 10048), and main() says so and exits.
     allow_reuse_address = False
+    # ⚠ A PAGE LOAD MUST NOT BE REFUSED AT THE DOOR (2026-10-18). Everything is sent no-store, so every load of the page
+    # asks for all its modules at once, and Windows answers a connection the full listen queue cannot hold with a RESET -
+    # ERR_CONNECTION_REFUSED in the browser, no retry - where Linux would let it wait. The stdlib's queue is 5. Measured,
+    # a fresh Edge profile (nothing cached) opened the moment the console first answered: 21 of the page's module loads
+    # refused (1 another time - one is enough, the module graph fails), the page never started and no Chart held the
+    # post, so its guard never ran; at 64, none, twice, the post held. tests/station_windows.py 36.
+    request_queue_size = 64
 
     def server_bind(self):
         if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):

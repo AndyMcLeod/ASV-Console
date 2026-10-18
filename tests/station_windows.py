@@ -603,5 +603,40 @@ check("35. THE CHART AND THE CONTROLS OPEN AS TWO WINDOWS, NOT TWO TABS: the pic
       and "opener.open(url)" in SRC and 'opener.open(url + "?panel=controls", new=1)' in SRC,
       lambda: _json.dumps(_launched))
 
+# ---- A WINDOW'S PAGE LOAD IS NEVER REFUSED AT THE DOOR (2026-10-18) ------------------------------------------------- #
+# Measured, a fresh Edge profile (nothing cached) opened the moment the console first answered: 21 of the page's module
+# loads (1, another time) came back ERR_CONNECTION_REFUSED, so the page never started and no Chart ever held the post; with
+# the listen queue at 64, none, twice, the page holding the post. The console sends everything no-store, so EVERY load
+# asks for all its modules at once, and Windows answers a connection the full listen queue cannot hold with a reset -
+# refused - rather than letting it wait. Driven: the console's own Server, bound and listening, its accept loop NOT
+# running (a start-up that holds it); 40 connections at once, the page's modules and some, must all be let in to wait.
+import socket as _sock
+_srv = C.Server(("127.0.0.1", 0), C.Handler)
+_door = {"queue": getattr(C.Server, "request_queue_size", None), "in": 0, "refused": 0, "other": []}
+_held = []
+try:
+    for _ in range(40):
+        _s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+        _s.settimeout(3)
+        try:
+            _s.connect(_srv.server_address)
+            _held.append(_s)
+            _door["in"] += 1
+        except ConnectionRefusedError:
+            _door["refused"] += 1
+            _s.close()
+        except OSError as _e:
+            _door["other"].append(str(_e)[:60])
+            _s.close()
+finally:
+    for _s in _held:
+        _s.close()
+    _srv.server_close()
+check("36. A PAGE LOAD IS NEVER REFUSED AT THE DOOR: the console's server lets 40 connections in at once while its accept "
+      "loop is held - a page loaded with nothing cached asks for every module together, and a full listen queue on "
+      "Windows REFUSES the rest (the stdlib's queue is 5; the page then never starts and its guard never runs)",
+      lambda: _door["in"] == 40 and _door["refused"] == 0 and not _door["other"],
+      lambda: _json.dumps(_door))
+
 print("%d checks, %d failed" % (ran, fails))
 sys.exit(1 if fails else 0)

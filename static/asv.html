@@ -17288,13 +17288,18 @@ const CHART_WATCH_MS = 2000, CHART_WATCH_TIMEOUT_MS = 4000, CHART_WATCH_FRESH_MS
 const chartWatch = {sup: null, at: 0, lastFresh: 0, hidden: new Map()};
 const CHART_COVERED_SAY = "Chart window covered or minimized: the browser slows it, and it is still answering the console. "
   + "This turns red if it stops.";
+// Edge puts a tab it thinks idle to sleep, and the console cannot stop that from the page; one Edge setting does, per site,
+// set once (2026-10-18: measured, a Chart tab behind another with Edge's sleeping tabs on stopped at 5 minutes) - so the
+// banner names it where the operator will be looking when it matters.
+const CHART_SLEEP_SAY = "If Edge put it to sleep: add 127.0.0.1 under \"Never put these sites to sleep\" "
+  + "(edge://settings/system/managePerformance) - once, for every console window.";
 function chartStoppedSay(s){
   // "closed" too: a window closed does not always get its release to the console (pagehide's beacon), and then its post
   // goes stale like a sleeping one's - seen live, 2026-10-17, a closed chart tab read stale 10 s later
   return "⚠ THE CHART WINDOW HAS STOPPED ANSWERING: it has not handled the console's telemetry for " + Math.round(s) + " s - "
     + "closed, asleep in the browser, or stuck. The clearance guard, the speed governor and the RTH chain run only in it, "
     + "and are not running; nothing has been stopped. Bring the Chart window back on screen or open it again, and reload it "
-    + "if this stays.";
+    + "if this stays. " + CHART_SLEEP_SAY;
 }
 function chartNoneSay(s){
   return "⚠ NO CHART WINDOW IS RUNNING: none has reported to the console for " + Math.round(s) + " s. The clearance guard, "

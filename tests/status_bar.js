@@ -188,7 +188,7 @@ check("3. THE LOWER ROW: the eleven readouts, in their order - POS, SOG, HDG, CO
               createElement: () => ({ id: "", style: {}, attrs: {}, textContent: "", setAttribute(k, v) { this.attrs[k] = v; } }) };
     const fetchStub = (url) => { w.fetched.push(url); const a = w.answers.shift();
       return a ? Promise.resolve({ json: () => Promise.resolve(a) }) : Promise.reject(new Error("the console did not answer")); };
-    const src = grabDecl("SUPERVISOR_BEAT_MS") + grabDecl("CHART_WATCH_MS") + grabDecl("chartWatch") + grabDecl("CHART_COVERED_SAY")
+    const src = grabDecl("SUPERVISOR_BEAT_MS") + grabDecl("CHART_WATCH_MS") + grabDecl("chartWatch") + grabDecl("CHART_COVERED_SAY") + grabDecl("CHART_SLEEP_SAY")
       + ["chartStoppedSay", "chartNoneSay", "chartWatchVerdict", "chartWatchNote", "chartWatchVis", "chartWatchRender",
          "chartWatchPoll", "chartWatchStart", "chartWarnShow"].map(grabFn).join("\n")
       + "\nreturn {chartWatch, chartWatchVerdict, chartWatchVis, chartWatchPoll, chartWatchStart, chartWarnShow};";
@@ -250,13 +250,17 @@ check("3. THE LOWER ROW: the eleven readouts, in their order - POS, SOG, HDG, CO
   };
   check("6b. RED ON THE CONSOLE'S WORD, AMBER FOR THE SUPERVISING CHART COVERED: no word from the console, or one older than "
         + "CHART_WATCH_FRESH_MS, says nothing; the supervising chart covered is amber, in view nothing, and another chart's "
-        + "word nothing; a stale post is red and says how long, even with the chart's word that it is covered; a post held "
+        + "word nothing; a stale post is red and says how long, even with the chart's word that it is covered, and names "
+        + "the Edge setting that keeps the console awake (\"Never put these sites to sleep\", 127.0.0.1); a post held "
         + "by a chart that is planning is not red; no chart holding the post is nothing for the stale time - a chart loading "
         + "alongside - and red after it, and still red once the console has forgotten a chart that stopped long ago",
         () => got.noWord === "none" && got.oldWord === "none" && got.covered === "amber:hidden" && got.inView === "none"
               && got.unasked === "none" && got.otherTab === "none"
               && got.stale && got.stale.level === "red" && got.stale.why === "stale" && /STOPPED ANSWERING/.test(got.stale.text)
               && /for 14 s/.test(got.stale.text) && /closed, asleep in the browser, or stuck/.test(got.stale.text)
+              // and the one Edge setting that keeps a tab from being put to sleep, and what to add to it (2026-10-18)
+              && /add 127\.0\.0\.1 under "Never put these sites to sleep"/.test(got.stale.text)
+              && /edge:\/\/settings\/system\/managePerformance/.test(got.stale.text)
               && got.planning === "none" && got.noneYet === "none"
               && got.none && got.none.level === "red" && got.none.why === "none" && /NO CHART WINDOW/.test(got.none.text)
               && /for 12 s/.test(got.none.text) && got.forgotten === "red:none",
