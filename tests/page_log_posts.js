@@ -62,6 +62,7 @@ function world() {
     let actionLog = [];
     const lsSet = () => {}; const renderHistory = () => {};
     const renderAlertRecent = () => {};   // recordAction feeds the ALERTS card's tail (2026-09-28) - the card is ui_split / action_history's subject
+    const nogoKeyShow = () => {};         // updateNogoUI shows the NOGO key with the overlay (2026-10-18) - nogo_key.js's subject
     const buildLineTable = () => [{ len_m: 100, plan_s: 60, actual_s: 30 }]; const buildTurnTable = () => []; const buildHopTable = () => [];
     ${decl(/^let lastNogoLogged = null;/m)}
     ${decl(/^let lastGuardLogged = "";/m)}

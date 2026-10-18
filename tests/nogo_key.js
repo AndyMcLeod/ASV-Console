@@ -83,17 +83,20 @@ function mkEl(tag) {
   return e;
 }
 function mkWorld(stored) {
-  const w = { key: mkEl("div"), saved: [], V: { NOGO_MIN_DEPTH_M: 2.8 }, nogo: { ready: true } };
-  const src = "let nogoShow = true;\n" + grabDecl("NOGO_KEY_FOLD_KEY") + "\n" + grabDecl("nogoKeyTexts") + "\n"
-    + ["nogoKeySwatch", "nogoKeyBuild", "nogoKeyShow"].map(grab).join("\n")
+  // the markup's parts: the key, its fold button (in the header) and its body
+  const w = { key: mkEl("div"), mark: mkEl("span"), body: mkEl("div"), saved: [], V: { NOGO_MIN_DEPTH_M: 2.8 }, nogo: { ready: true } };
+  const parts = { "#nogoKey": w.key, "#nogoKeyFold": w.mark, "#nogoKeyBody": w.body };
+  w.key.classList.contains = c => w.key.cls.has(c);               // the page's showPanel asks it whether it is a .panel
+  const src = "let nogoShow = true;\n" + grabDecl("NOGO_KEY_FOLD_KEY") + "\n" + grabDecl("NOGO_KEY_SWATCH_X") + "\n"
+    + grabDecl("nogoKeyTexts") + "\n" + ["nogoKeySwatch", "nogoKeyBuild", "nogoKeyShow", "showPanel"].map(grab).join("\n")
     + "\nreturn {nogoKeyBuild, nogoKeyShow, nogoKeySwatch, setShow: v => { nogoShow = v; }};";
   // eslint-disable-next-line no-new-func
-  w.api = new Function("$", "document", "lsGet", "lsSet", "NOGO_KEY", "V", "nogo", src)(
-    s => (s === "#nogoKey" ? w.key : null), { createElement: mkEl },
+  w.api = new Function("$", "document", "lsGet", "lsSet", "NOGO_KEY", "V", "nogo", "clampPanelPos", src)(
+    s => parts[s] || null, { createElement: mkEl },
     (k, d) => (k === "asv_nogokey_fold_v1" && stored !== undefined ? stored : d), (k, v) => w.saved.push([k, v]),
-    NOGO_KEY, w.V, w.nogo);
+    NOGO_KEY, w.V, w.nogo, (el, l, t) => ({ left: l, top: t }));
   w.api.nogoKeyBuild();
-  w.rows = () => w.key.kids[1].kids;
+  w.rows = () => w.body.kids;
   w.texts = () => w.rows().map(r => r.kids[0].textContent);
   return w;
 }
@@ -105,26 +108,31 @@ const swatchOk = rows.length === NOGO_KEY.length && rows.every((r, i) => {
          && [k.fill, k.stroke, k.edge].filter(Boolean).every(c => svg.includes(c)) && (!k.dash || svg.includes(`stroke-dasharray="${k.dash}"`));
 });
 const texts = W.texts();
-check("2. THE PAGE BUILDS ONE ROW PER ENTRY: each swatch an SVG in its entry's own colors (and dash), each label its "
-      + "entry's words with the depth floor in force (2.8 m here) and no placeholder left",
-      () => swatchOk && texts.every((t, i) => t === NOGO_KEY[i].label.replace("{floor}", "2.8 m")) && /2\.8 m/.test(texts[0])
+const sizes = rows.map(r => (r.innerHTML.match(/^<svg width="([\d.]+)" height="([\d.]+)"/) || []).slice(1).map(Number));
+const css = (H.match(/\.nogokey\{[^}]*\}/) || [""])[0];
+check("2. THE PAGE BUILDS ONE ROW PER ENTRY, BIG ENOUGH TO READ: each swatch an SVG in its entry's own colors (and dash), "
+      + "drawn 1.5x (39 x 21 px); the key's text 12 px; each label its entry's words with the depth floor in force (2.8 m "
+      + "here) and no placeholder left (Andy, the same day: \"too small to read\")",
+      () => swatchOk && sizes.every(s => s[0] === 39 && s[1] === 21) && /font-size:12px/.test(css)
+            && texts.every((t, i) => t === NOGO_KEY[i].label.replace("{floor}", "2.8 m")) && /2\.8 m/.test(texts[0])
             && !texts.some(t => t.includes("{floor}")),
-      () => JSON.stringify({ rows: rows.length, keys: NOGO_KEY.length, swatchOk, first: texts[0] }));
+      () => JSON.stringify({ rows: rows.length, keys: NOGO_KEY.length, swatchOk, size: sizes[0], css: css.slice(0, 120), first: texts[0] }));
 
 const shown = {};
 shown.ready = W.key.style.display;
 W.api.setShow(false); W.api.nogoKeyShow(); shown.overlayOff = W.key.style.display;
 W.api.setShow(true); W.nogo.ready = false; W.api.nogoKeyShow(); shown.notReady = W.key.style.display;
 W.nogo.ready = true; W.V.NOGO_MIN_DEPTH_M = 1.0; W.api.nogoKeyShow(); shown.back = W.key.style.display; shown.floor = W.texts()[0];
-const head = W.key.kids[0], mark = head.kids[0];
+const mark = W.mark;
 const fold0 = { folded: W.key.classList.contains("folded"), mark: mark.textContent };
-head.onclick();
+mark.onclick();                                              // the fold is its button: the header drags
 const fold1 = { folded: W.key.classList.contains("folded"), mark: mark.textContent, saved: JSON.stringify(W.saved) };
 const W2 = mkWorld(true);
 check("3. SHOWN EXACTLY WHILE THE OVERLAY IS: shown with the overlay on and the zones read, hidden with the overlay off or "
-      + "the zones not yet read, shown again after; a new vessel's floor reaches the label; the header folds the key and "
-      + "the fold is kept, and a key built with it kept starts folded",
-      () => shown.ready === "" && shown.overlayOff === "none" && shown.notReady === "none" && shown.back === "" && /1\.0 m/.test(shown.floor)
+      + "the zones not yet read, shown again after; a new vessel's floor reaches the label; its fold BUTTON folds the key "
+      + "(the header no longer does: it drags) and the fold is kept, and a key built with it kept starts folded",
+      () => shown.ready === "block" && shown.overlayOff === "none" && shown.notReady === "none" && shown.back === "block"
+            && /1\.0 m/.test(shown.floor) && !/nogoKeyHead/.test(grab("nogoKeyBuild"))
             && !fold0.folded && fold0.mark === "▾" && fold1.folded && fold1.mark === "▸"
             && fold1.saved === JSON.stringify([["asv_nogokey_fold_v1", true]]) && W2.key.classList.contains("folded"),
       () => JSON.stringify({ shown, fold0, fold1, startsFolded: W2.key.classList.contains("folded") }));
@@ -134,9 +142,23 @@ const upd = grab("updateNogoUI");
 check("4. IT IS THE CHART'S, WIRED: the page imports NOGO_KEY from chartlayers.js (the module that draws), has the "
       + "#nogoKey element, builds it at load, refreshes it with the NOGO button (updateNogoUI), and the controls window hides it",
       () => /drawLawBands as clDrawLawBands, NOGO_KEY \} from "\/static\/js\/chartlayers\.js";/.test(H)
-            && /<div class="nogokey" id="nogoKey" style="display:none"><\/div>/.test(H)
-            && /\nnogoKeyBuild\(\);\n/.test(H) && /nogoKeyShow\(\);/.test(upd)
+            && /<div class="nogokey" id="nogoKey" style="display:none">\s*<div class="nkhead" id="nogoKeyHead"[^>]*>NOGO KEY<span class="nkfold" id="nogoKeyFold"[^>]*><\/span><\/div>\s*<div class="nkbody" id="nogoKeyBody"><\/div>\s*<\/div>/.test(H)
+            && /\nnogoKeyBuild\(\);[^\n]*\n/.test(H) && /nogoKeyShow\(\);/.test(upd)
             && /"body\.ui-controls #nogoKey\{display:none!important;\}"/.test(H),
+      () => "");
+// 5. MOVED AND RESIZED like every chart card (Andy, the same day: "cannot be moved around"): the shared mechanisms, the key
+// built before them (they find its body and header), its place and size kept by them
+const rcards = (H.match(/const RESIZABLE_CARDS = \[[\s\S]*?\n\];/) || [""])[0];
+check("5. IT MOVES AND RESIZES LIKE EVERY CHART CARD: registered with the one drag mechanism by its header - its own "
+      + "position key, its bottom anchor released, the fold button no grip - and with the one resize mechanism (its body "
+      + "the part that grows); built before both; folded, it gives up the resize and the minimum height",
+      () => /makeDraggablePanel\(\$\("#nogoKey"\), \$\("#nogoKeyHead"\), \{key: NOGO_KEY_POS_KEY, unanchor: "bottom", ignore: "#nogoKeyFold"\}\);/.test(H)
+            && /NOGO_KEY_POS_KEY = "asv_nogokey_pos_v1"/.test(H)
+            && /\{sel:"#nogoKey",\s*body:"\.nkbody"\}/.test(rcards)
+            && /\nnogoKeyBuild\(\);[^\n]*\nmakeCardsResizable\(\);/.test(H)
+            && H.indexOf("\nnogoKeyBuild();") < H.indexOf('makeDraggablePanel($("#nogoKey")')
+            && /\.nogokey\.folded\{min-height:0;height:auto!important;resize:none;\}/.test(H)
+            && /\.nogokey \.nkhead\{cursor:move;/.test(H),
       () => "");
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");

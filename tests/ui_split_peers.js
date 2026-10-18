@@ -136,7 +136,9 @@ function makePage(role, id, born, opts) {
   const closeBlocked = !!(opts && opts.closeBlocked);    // a browser that will not let a page close a window it did not open
   const noLocks = !!(opts && opts.noLocks);              // a page with no Web Locks: one loaded before them, or a browser without
   const p = { role, id, closed: false, got: [], sent: [], clicks: [], renders: 0, listeners: {}, mo: null, dom: {}, hidden: false,
-              made: {}, swapPill: { textContent: "", title: "", onclick: null } };
+              // the markup's buttons: the chart's pill, and the controls window's own two (static since 2026-10-18)
+              made: { cardsSwapCtl: { onclick: null }, cardsHere: { onclick: null } },
+              swapPill: { textContent: "", title: "", onclick: null } };
   p.bus = { onmessage: null, postMessage: m => { if (p.closed) return; p.sent.push(m); p.lastSentAt = clock.t; deliver(p, m); } };
   const classes = new Set();
   const el = s => ({
@@ -167,7 +169,7 @@ function makePage(role, id, born, opts) {
     setTimeout: (fn, ms) => timers.push({ page: p, at: clock.t + ms, every: 0, fn }),
     MutationObserver: class { constructor(cb) { p.mo = cb; } observe() {} },
     Date: { now: () => clock.t },
-    render: () => { p.renders++; }, $: s => (s === "#cardsSwap" ? p.swapPill : null), showBanner: () => {},
+    render: () => { p.renders++; }, $: s => (s === "#cardsSwap" ? p.swapPill : p.made[s.slice(1)] || null), showBanner: () => {},
     applyAlertWhere: () => {}, alertCardTidy: () => {}, wrapUICards: () => {}, saveUILayout: () => {}, uiSaveSoon: () => {},
     syncUICards: () => {}, Event: class { constructor(t) { this.type = t; } },
   };
@@ -316,7 +318,8 @@ check("8b. ... and a word from it still on its way when it closed brings nothing
 
 const C6 = makePage("controls", "ctl-6", 40000);
 await advance(3500);
-const pill0 = { split: E.split(), peer: E.peerOn(), label: E.swapPill.textContent, btn: (C6.made.cardsSwapCtl || {}).textContent };
+const pill0 = { split: E.split(), peer: E.peerOn(), label: E.swapPill.textContent,
+                btn: (H.match(/<div class="pill" id="cardsSwapCtl"[^>]*>([^<]*)<\/div>/) || [])[1] };   // its words, in the markup
 C6.made.cardsSwapCtl.onclick();                             // the controls window's own button: the cards to the chart
 await advance(250);
 const toChart = { split: E.split(), peer: E.peerOn(), home: E.api.home(), away: C6.away(), label: E.swapPill.textContent };

@@ -392,6 +392,8 @@ async function ensureChartInk() { return true; }
 // itself is tests/page_log_posts.js's subject - here it must merely find its names.
 var lastNogoLogged = null;
 function logClient() {}
+// ... and it shows or hides the NOGO key with the overlay (2026-10-18) - the key is tests/nogo_key.js's subject
+function nogoKeyShow() {}
 // ⚠ NOGO_QUEUE_MAX_MS bounds the queue wait. READ from the page, not retyped, so a suite
 // that believes a different bound than the page uses cannot happen - and declared OUT HERE
 // as well as inside the bundle, because a `const` in a direct eval stays in the eval's own

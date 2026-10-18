@@ -2448,7 +2448,8 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    chart names each of its colors (2026-10-18): the keep-out fill and its edge, the survey's
    depth window, water no chart covers or could not be read, the seabed's gaps, and what was
    read off the chart's picture - drawn in the overlay's own colors, the depth floor in force
-   in its first line; click its title to fold it. *Every* commanded motion routes clear of it — Go-To and
+   in its first line. Drag it anywhere by its title, resize it by its corner (both kept, like
+   every chart card), and fold it with its ▾ button. *Every* commanded motion routes clear of it — Go-To and
    RTH route around it (or refuse an unreachable target), search and survey legs clip
    to clear water, and the transit **to** a survey (boat → first waypoint) plus every
    inter-line transit is routed around obstacles at **Upload** (the ENC-clear path is

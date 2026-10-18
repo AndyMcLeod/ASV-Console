@@ -167,14 +167,32 @@
   .readout{position:absolute;left:14px;bottom:84px;z-index:5;font-family:var(--mono);font-size:11px;color:var(--ink-dim);
     background:rgba(10,17,25,.8);border:1px solid var(--line);border-radius:3px;padding:6px 10px;display:flex;gap:16px;}
   .readout b{color:var(--ink);}
-  /* THE NOGO KEY (2026-10-18): above the cursor readout while the NOGO overlay shows; its header folds it */
-  .nogokey{position:absolute;left:14px;bottom:118px;z-index:5;max-width:330px;font-family:var(--mono);font-size:10px;
-    color:var(--ink-dim);background:rgba(10,17,25,.88);border:1px solid var(--line);border-radius:3px;}
-  .nogokey .nkhead{cursor:pointer;user-select:none;padding:4px 8px;letter-spacing:.08em;color:var(--ink);font-weight:600;}
-  .nogokey .nkbody{display:flex;flex-direction:column;gap:3px;padding:0 8px 6px;}
+  /* THE NOGO KEY (2026-10-18): above the cursor readout while the NOGO overlay shows. Read at a glance (Andy: "too small to
+     read and cannot be moved around"): 12 px, its swatches 1.5x; dragged by its header and resized by its corner, as every
+     chart card is (makeDraggablePanel, RESIZABLE_CARDS); folded by its button. */
+  .nogokey{position:absolute;left:14px;bottom:118px;z-index:5;width:360px;font-family:var(--mono);font-size:12px;
+    color:var(--ink);background:rgba(10,17,25,.92);border:1px solid var(--line2);border-radius:4px;
+    box-shadow:0 4px 14px rgba(0,0,0,.45);}
+  .nogokey .nkhead{cursor:move;user-select:none;padding:6px 10px;letter-spacing:.08em;font-weight:700;display:flex;
+    align-items:center;justify-content:space-between;background:linear-gradient(180deg,#182636,#101c28);
+    border-bottom:1px solid var(--line);}
+  .nogokey .nkfold{cursor:pointer;padding:0 4px;color:var(--ink-dim);font-size:14px;}
+  .nogokey .nkfold:hover{color:var(--bronze);}
+  .nogokey .nkbody{display:flex;flex-direction:column;gap:6px;padding:8px 10px 10px;}
+  .nogokey.folded{min-height:0;height:auto!important;resize:none;}
   .nogokey.folded .nkbody{display:none;}
-  .nogokey .nkrow{display:flex;align-items:center;gap:7px;line-height:1.25;}
+  .nogokey.folded .nkhead{border-bottom:0;}
+  .nogokey .nkrow{display:flex;align-items:center;gap:10px;line-height:1.3;}
   .nogokey .nkrow svg{flex:none;border-radius:2px;}
+  /* the controls window's card buttons (2026-10-18): hidden by default - the chart window never shows them, not even
+     while the page loads - shown in the controls window, the note only while the cards are on the chart (ui-away) */
+  #cardsSwapCtl,#cardsAway{display:none;}
+  body.ui-controls #cardsSwapCtl{display:flex;position:fixed;right:12px;top:8px;z-index:21;cursor:pointer;}
+  body.ui-controls.ui-away #cardsSwapCtl{display:none;}
+  body.ui-controls.ui-away #cardsAway{display:flex;position:fixed;inset:0;flex-direction:column;align-items:center;
+    justify-content:center;gap:14px;background:#0a141c;color:#e8b46a;font:600 15px var(--mono,Consolas,monospace);
+    text-align:center;padding:24px;z-index:20;}
+  #cardsHere{font:600 14px var(--mono,Consolas,monospace);padding:8px 16px;cursor:pointer;}
   .attrib{position:absolute;right:8px;bottom:8px;z-index:5;font-family:var(--sans);font-size:10px;color:var(--ink-faint);
     background:rgba(5,8,12,.7);padding:2px 6px;border-radius:2px;}
   .attrib a{color:var(--ink-dim);text-decoration:none;}
@@ -863,7 +881,15 @@
   </div>
   <!-- THE NOGO KEY (Andy, 2026-10-18: "Need a NOGO key so the user knows what color is representing what component."):
        built from chartlayers.js NOGO_KEY (nogoKeyBuild), shown while the NOGO overlay is (updateNogoUI). -->
-  <div class="nogokey" id="nogoKey" style="display:none"></div>
+  <div class="nogokey" id="nogoKey" style="display:none">
+    <div class="nkhead" id="nogoKeyHead" title="Drag to move the key; its corner resizes it">NOGO KEY<span class="nkfold" id="nogoKeyFold" title="Fold or unfold the key"></span></div>
+    <div class="nkbody" id="nogoKeyBody"></div>
+  </div>
+  <!-- THE CARDS' BUTTONS IN THE CONTROLS WINDOW (2026-10-18): hidden unless this is the controls window (the CSS beside
+       .nogokey), wired by setupUISplit. Static, so the controls-window CSS that names them names something real
+       (tests/ui_split.js 4). -->
+  <div class="pill" id="cardsSwapCtl" title="Move the toolbar and the cards to the Chart window. They stay there until you bring them back - with the button that appears here, or the ⇄ pill on the chart's top bar. (Closing this window moves them too.)">⇄ Cards to chart</div>
+  <div id="cardsAway">THE CONTROLS ARE ON THE CHART WINDOW.<button id="cardsHere">⇄ Bring the controls here</button></div>
 
   <!-- THE ALERTS CARD (Andy, 2026-09-28: "The pop-up alert messages are blocking each other or covering standing
        messages at the bottom center of the chart screen above the tool bar. Create a new card for this information
@@ -1100,7 +1126,7 @@
         <li><b>Survey area (optional).</b> The Survey tab's switch is on <span class="tag">Pattern</span> for the three-click survey above. When the survey must stay inside a set area, choose <span class="tag">Bounded</span>, then press <span class="tag">Draw</span> beside <b>Area</b> and drop points to draw <i>any</i> survey-area polygon (click the first point to close; drag vertices to adjust), or press <span class="tag">Import</span> and pick a <b>GeoJSON</b>, <b>KML</b> or <b>CSV</b> file of an area drawn elsewhere. The lines fill that area &mdash; concave shapes split legs correctly.</li>
         <li><b>Punch Out (optional).</b> Click <span class="tag">Punch&nbsp;Out</span> to trim the survey lines to the <b>same nogo zones every behavior avoids</b> (off land / docks, aids &amp; hazards, water below the 1&nbsp;m floor) &mdash; segments clip cyan, transits auto-route amber, unroutable flag red. The survey <b>Min / Max depth</b> is an extra <i>coverage</i> window on top of the nogo (survey only 3&ndash;10&nbsp;m, say). <b>Buffer</b> and the <b>enforce toggles</b> are <i>shared</i> &mdash; changing them re-routes Go-To / RTH / search too. Composes with the survey-area boundary. <span class="tag">CHRT</span> / <span class="tag">NOGO</span> show the chart / nogo overlays. Planning aid only &mdash; verify the plan.</li>
         <li><b>Search pattern (alternative to a survey).</b> On the <span class="tag">Search</span> tab, pick a pattern (<b>Expanding box</b> / <b>Sector</b> / <b>Parallel</b>), click the chart to set the <b>datum</b> (drag the D handle to move it), tune the params, then <span class="tag">Add&nbsp;to&nbsp;plan</span>. Legs clip to the nogo zones (cyan kept / amber routed-around / red blocked). The ASV runs it via the same Arm / Upload / Start flow.</li>
-        <li><b>NOGO zones (automatic).</b> On startup the console extracts ENC nogo boundaries for the operating area &mdash; shoreline, manmade features, and water shallower than <b>1&nbsp;m corrected</b> (charted depth + live water level). <span class="tag">NOGO</span> shows / hides the red overlay; while it shows, the <b>NOGO KEY</b> at the bottom left names each of its colors. <b>Every</b> behavior avoids them: <span class="tag">Go-To</span> and <span class="tag">RTH</span> route around them (or refuse an unreachable target), and search / survey legs clip to clear water. If there's no ENC coverage the console warns and routes direct &mdash; verify the plan.</li>
+        <li><b>NOGO zones (automatic).</b> On startup the console extracts ENC nogo boundaries for the operating area &mdash; shoreline, manmade features, and water shallower than <b>1&nbsp;m corrected</b> (charted depth + live water level). <span class="tag">NOGO</span> shows / hides the red overlay; while it shows, the <b>NOGO KEY</b> names each of its colors: drag it by its title, resize it by its corner, fold it with &#9662;. <b>Every</b> behavior avoids them: <span class="tag">Go-To</span> and <span class="tag">RTH</span> route around them (or refuse an unreachable target), and search / survey legs clip to clear water. If there's no ENC coverage the console warns and routes direct &mdash; verify the plan.</li>
         <li>Or, on the <span class="tag">Waypoints</span> tab, press <span class="tag">Edit</span> to move, remove or add individual waypoints.</li>
         <li>Set the <b>arrival radius</b>, the <b>approach radius</b> and the <b>end of plan</b> under the Path planning card's <b>Waypoints and end of plan</b>, on every tab (the speeds are on the Survey tab and under Route rules) &mdash; <b>RTH</b> (Return-to-Home at the end, ENC-routed, then station-keep &mdash; the default), <b>Complete</b> (stop at the end), <b>Loiter</b> (station-keep at the last waypoint), or <b>Repeat</b> (loop the route until Stop). Applies on the next Upload; shown as <i>Type</i> and <i>End mode</i> in the <b>Run</b> section of the <b>Mission Status</b> card.</li>
         <li>Command a <b>survey / search</b> plan: <span class="tag">Arm</span> &rarr; <span class="tag">Upload</span> &rarr; <span class="tag">Start</span>. Use <span class="tag">Pause</span> / <span class="tag">Stop</span> / <span class="tag">E-STOP</span> as needed.</li>
@@ -1478,8 +1504,7 @@ document.body.classList.add("ui-" + UIROLE);
   "body.ui-peer #ctlReopen{display:none!important;}"+
   "body:not(.ui-peer) #cardsSwap{display:none!important;}"+
   // the controls window while the cards are on the chart (ui-away): nothing but a note and the button that brings them back
-  "body.ui-controls.ui-away .controls,body.ui-controls.ui-away .uicard,body.ui-controls.ui-away #aisReopen,"+
-  "body.ui-controls.ui-away #cardsSwapCtl,body.ui-controls:not(.ui-away) #cardsAway{display:none!important;}"+
+  "body.ui-controls.ui-away .controls,body.ui-controls.ui-away .uicard,body.ui-controls.ui-away #aisReopen{display:none!important;}"+
   "body.ui-split .controls,body.ui-split #pathPanel,"+
   "body.ui-split #rocPanel,body.ui-split #lineTablePanel,body.ui-split #aisTablePanel,"+
   "body.ui-split #chartPanel,"+
@@ -11336,8 +11361,11 @@ function nogoReadout(){
 // ── THE NOGO KEY (Andy, 2026-10-18: "Need a NOGO key so the user knows what color is representing what component.") ──
 // One row for each thing the NOGO overlay draws (chartlayers.js NOGO_KEY), its swatch in the overlay's own colors on a
 // patch the color of the chart's water: the fills are translucent, and on the dark card they would not read as they do
-// on the chart. Shown while the overlay is (updateNogoUI -> nogoKeyShow); its header folds it, and the fold is kept.
-const NOGO_KEY_FOLD_KEY = "asv_nogokey_fold_v1";
+// on the chart. Shown while the overlay is (updateNogoUI -> nogoKeyShow). Its button folds it, and the fold is kept. Andy,
+// the same day: "too small to read and cannot be moved around" - so 12 px with its swatches drawn 1.5x (NOGO_KEY_SWATCH_X),
+// dragged by its header and resized by its corner like every chart card (makeDraggablePanel, RESIZABLE_CARDS), both kept.
+const NOGO_KEY_FOLD_KEY = "asv_nogokey_fold_v1", NOGO_KEY_POS_KEY = "asv_nogokey_pos_v1";
+const NOGO_KEY_SWATCH_X = 1.5;                       // the swatch's size over its 26 x 14 drawing
 function nogoKeySwatch(k){
   const paper = '<rect width="26" height="14" fill="#e8eef1"/>';
   let s = "";
@@ -11352,16 +11380,15 @@ function nogoKeySwatch(k){
     s = `<rect x="2" y="2.5" width="8" height="9" fill="${k.fill}" stroke="${k.stroke}" stroke-width="1.5"/>`
       + `<g stroke="${k.stroke}" stroke-width="2.4" stroke-linecap="round"><line x1="14" y1="7" x2="24" y2="7"/>`
       + `<line x1="14" y1="3.5" x2="14" y2="10.5"/><line x1="24" y1="3.5" x2="24" y2="10.5"/></g>`;
-  return `<svg width="26" height="14" viewBox="0 0 26 14" aria-hidden="true">${paper}${s}</svg>`;
+  return `<svg width="${26 * NOGO_KEY_SWATCH_X}" height="${14 * NOGO_KEY_SWATCH_X}" viewBox="0 0 26 14" aria-hidden="true">`
+    + `${paper}${s}</svg>`;
 }
 let nogoKeyTexts = [];                              // the rows' labels, written by nogoKeyShow
+// The header (#nogoKeyHead, its fold button #nogoKeyFold) and the body (#nogoKeyBody) are in the markup - the drag and
+// resize registrations find them there (tests/panel_drag.js 4); this fills the body's rows.
 function nogoKeyBuild(){
-  const el = $("#nogoKey"); if(!el) return;
-  const head = document.createElement("div"), mark = document.createElement("span"), body = document.createElement("div");
-  head.className = "nkhead"; head.title = "Click to fold or unfold the key"; head.textContent = "NOGO KEY ";
-  mark.className = "nkfold"; head.appendChild(mark);
-  body.className = "nkbody";
-  el.replaceChildren(head, body);
+  const el = $("#nogoKey"), mark = $("#nogoKeyFold"), body = $("#nogoKeyBody"); if(!el || !mark || !body) return;
+  body.replaceChildren();
   nogoKeyTexts = NOGO_KEY.map(k => {
     const row = document.createElement("div"), t = document.createElement("span");
     row.className = "nkrow"; row.innerHTML = nogoKeySwatch(k);
@@ -11371,17 +11398,18 @@ function nogoKeyBuild(){
   });
   const fold = on => { el.classList.toggle("folded", on); mark.textContent = on ? "▸" : "▾"; };
   fold(!!lsGet(NOGO_KEY_FOLD_KEY, false));
-  head.onclick = () => { const on = !el.classList.contains("folded"); fold(on); lsSet(NOGO_KEY_FOLD_KEY, on); };
+  // the header drags (makeDraggablePanel), so the fold is its own button - a click that ended a drag folded it otherwise
+  mark.onclick = () => { const on = !el.classList.contains("folded"); fold(on); lsSet(NOGO_KEY_FOLD_KEY, on); };
   nogoKeyShow();
 }
-/** The key shown while the NOGO overlay is, with the depth floor in force. */
+/** The key shown while the NOGO overlay is, with the depth floor in force. showPanel: a key placed while hidden was clamped
+ *  against nothing, so it is clamped again at its real size as it shows. */
 function nogoKeyShow(){
   const el = $("#nogoKey"); if(!el) return;
-  el.style.display = nogoShow && nogo.ready ? "" : "none";
+  showPanel(el, nogoShow && nogo.ready);
   const floor = (typeof V.NOGO_MIN_DEPTH_M === "number" ? V.NOGO_MIN_DEPTH_M : 1).toFixed(1) + " m";
   for(const t of nogoKeyTexts) t.textContent = t.dataset.label.replace("{floor}", floor);
 }
-nogoKeyBuild();
 let lastNogoLogged = null;
 function updateNogoUI(){
   const btn=$("#nogoBtn");
@@ -17285,27 +17313,13 @@ function setupUISplit(){
       // console says supervises (chartWatchVerdict) - another chart tab, hidden or not, says nothing about that one
       else if(m.t==="vis") chartWatchVis(m); };
     // THE CARDS' BUTTONS IN THIS WINDOW (2026-10-18): send them to the chart, and while they are there, bring them back.
-    // This window's own - not mirrored, outside every bridged panel, so the click is handled here: it asks the chart,
-    // which owns where they are (uiCardsTo), and the chart's next picture says so (ui-away).
+    // This window's own (#cardsSwapCtl, #cardsAway's #cardsHere - in the markup, shown by the CSS only here) - not
+    // mirrored, outside every bridged panel, so the click is handled here: it asks the chart, which owns where they are
+    // (uiCardsTo), and the chart's next picture says so (ui-away).
     const askHome = home => { if(!uiYielded) uiBus.postMessage({t: "home", home}); };
-    const swap = document.createElement("div");
-    swap.id = "cardsSwapCtl"; swap.className = "pill"; swap.textContent = "⇄ Cards to chart";
-    swap.title = "Move the toolbar and the cards to the Chart window. They stay there until you bring them back - with the "
-      + "button that appears here, or the ⇄ pill on the chart's top bar. (Closing this window moves them too.)";
-    swap.style.cssText = "position:fixed;right:12px;top:8px;z-index:21;cursor:pointer;";
-    swap.onclick = () => askHome("chart");
-    const away = document.createElement("div");
-    away.id = "cardsAway";
-    away.style.cssText = "position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;"
-      + "gap:14px;background:#0a141c;color:#e8b46a;font:600 15px var(--mono,Consolas,monospace);text-align:center;"
-      + "padding:24px;z-index:20;";
-    away.textContent = "THE CONTROLS ARE ON THE CHART WINDOW.";
-    const back = document.createElement("button");
-    back.id = "cardsHere"; back.textContent = "⇄ Bring the controls here";
-    back.style.cssText = "font:600 14px var(--mono,Consolas,monospace);padding:8px 16px;cursor:pointer;";
-    back.onclick = () => askHome("controls");
-    away.appendChild(back);
-    document.body.appendChild(swap); document.body.appendChild(away);
+    { const swap = $("#cardsSwapCtl"), back = $("#cardsHere");
+      if(swap) swap.onclick = () => askHome("chart");
+      if(back) back.onclick = () => askHome("controls"); }
     // ask main to push current state; retry so boot order (main vs controls) never matters. Presence: the chart hides
     // its toolbar/panels while this page is open. It knows this page is open by its LOCK, taken before the first hello
     // and held until the page goes (UI_LOCK) - so a page the browser has slowed or put to sleep keeps the cards; a
@@ -17835,6 +17849,7 @@ const RESIZABLE_CARDS = [
   {sel:"#chartPanel",     body:"#chartBody"},
   {sel:"#rocPanel",       body:"#roc_list"},       // one row per operations center
   {sel:"#pathPanel"},                              // the Path planning card (2026-10-13): one form, scroll whole
+  {sel:"#nogoKey",        body:".nkbody"},         // the NOGO key (2026-10-18: "too small to read and cannot be moved")
 ];
 function loadCardSizes(){ return lsGet(CARD_SIZE_KEY, {}); }
 // ONLY A SIZE THE OPERATOR SET. Several cards carry an authored inline width in the markup,
@@ -17993,6 +18008,7 @@ $("#vcardClose").addEventListener("click", e=>{ e.stopPropagation();
 vreopen.addEventListener("click", ()=>{
   saveVcardPrefs({...loadVcardPrefs(), hidden:false}); placeVcard(); });
 placeVcard();
+nogoKeyBuild();            // the NOGO key, built before the two mechanisms below find its body and its header
 makeCardsResizable();      // chart-window cards: one resize mechanism, one key
 
 // --- draggable pop-out panels: one mechanism, one registration each ------- //
@@ -18006,6 +18022,8 @@ const AISPANEL_KEY   = "asv_aispanel_pos_v1";
 const lineTableEl = $("#lineTablePanel"), lineTableHead = $("#lineTablePanelHead");
 const aisTableEl  = $("#aisTablePanel"),  aisTableHead  = $("#aisTablePanelHead");
 makeDraggablePanel($("#pathPanel"), $("#pathPanelHead"), {key: PATHPANEL_KEY, ignore: "#pp_draw,#pp_fold"});
+// the NOGO key (2026-10-18) starts bottom-anchored above the cursor readout; its fold button is not a grip
+makeDraggablePanel($("#nogoKey"), $("#nogoKeyHead"), {key: NOGO_KEY_POS_KEY, unanchor: "bottom", ignore: "#nogoKeyFold"});
 makeDraggablePanel($("#alertCard"), $("#alertHead"), {key: ALERTCARD_KEY, unanchor: "bottom", uncenter: true,
                                                     ignore: "#alertWhere"});   // 2026-09-28; uncenter 2026-09-29
 makeDraggablePanel(lineTableEl, lineTableHead, {key: LINESPANEL_KEY, unanchor: "bottom"});
