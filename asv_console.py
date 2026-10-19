@@ -92,6 +92,51 @@ COMMS_CONFIG_PATH = os.path.join(APP_DIR, "comms_config.json")
 # Session recordings: every command / setting / action + a telemetry trace, one
 # per server run, written as append-only JSONL for a future playback mode.
 LOG_DIR = os.path.join(APP_DIR, "logs")
+# THE FOUR DOCUMENTS ON THE CHART'S COMMAND BAR (Andy, 2026-10-19: "In the chart window lower toolbar add 4 buttons - each
+# button opens one of the 4 asv simulator word documents"). By ID, never by a path from the browser: GET /docs/<id> serves
+# the file as a download, POST /api/open_doc {doc} opens it in Word (whatever .docx is bound to) on the console's OWN
+# machine when the asking browser is on it - a loopback address - and answers the download's URL otherwise, which the page
+# then opens itself. ASV_DOC_OPEN=off makes every answer the download (the suites: a test must never open Word).
+DOCS_DIR = os.path.join(APP_DIR, "docs")
+DOC_FILES = {"quick": "asv-simulator-quick-start.docx", "ops": "asv-simulator-operations-manual.docx",
+             "tech": "asv-simulator-technical-manual.docx", "dev": "asv-simulator-development-guide.docx"}
+DOC_NAMES = {"quick": "Quick Start", "ops": "Operations Manual", "tech": "Technical Manual", "dev": "Development Guide"}
+DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+DOC_OPEN = getattr(os, "startfile", None) if os.environ.get("ASV_DOC_OPEN", "os") != "off" else None
+LOOPBACK = ("127.0.0.1", "::1", "::ffff:127.0.0.1")
+
+
+def doc_path(doc):
+    """The document's file for an id the bar knows (DOC_FILES), or None: the id picks the file, never the caller."""
+    name = DOC_FILES.get(str(doc or ""))
+    return os.path.join(DOCS_DIR, name) if name else None
+
+
+def open_doc(doc, client_ip):
+    """(code, obj) for POST /api/open_doc. `opened` says what happened: "word" - the console's own machine opened the file
+    (DOC_OPEN, os.startfile: Word, or whatever .docx is bound to) because the asking browser is on it; "download" - the
+    page is to open `url` itself: the browser is elsewhere, this machine has no opener, or the opener failed (the
+    `note` says which). An id the bar does not know is a 400; a file not on disk a 404 naming the rebuild."""
+    p = doc_path(doc)
+    if not p:
+        return 400, {"error": "no such document: %r - one of %s" % (doc, ", ".join(sorted(DOC_FILES)))}
+    name = DOC_FILES[doc]
+    if not os.path.isfile(p):
+        return 404, {"error": "the %s is not on the console's disk (docs/%s): rebuild the documents - cd tools && "
+                              "node build_docs.js" % (DOC_NAMES[doc], name)}
+    down = {"ok": True, "opened": "download", "doc": doc, "file": name, "url": "/docs/" + doc}
+    if client_ip not in LOOPBACK:
+        down["note"] = "the browser is not on the console's machine"
+        return 200, down
+    if not DOC_OPEN:
+        down["note"] = "the console's machine has no opener for it"
+        return 200, down
+    try:
+        DOC_OPEN(p)
+    except OSError as e:
+        down["note"] = "the console could not open it on its machine (%s)" % e
+        return 200, down
+    return 200, {"ok": True, "opened": "word", "doc": doc, "file": name}
 # Per-vessel configuration files (one self-contained JSON per modeled ASV). The
 # active vessel supplies every hull/propulsion/maneuvering/power parameter the
 # simulator and the UI use, so those values live in ONE place (the vessel file)
@@ -9229,6 +9274,25 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, json.JSONDecodeError):
             return {}
 
+    def _serve_doc(self, doc):
+        """GET /docs/<id>: one of the four Word documents as a download (the command bar's buttons, 2026-10-19), with its
+        own type and its file name; an id the bar does not know is a 404 in words, as is a file not on disk."""
+        p = doc_path(doc)
+        if not p:
+            return self._send(404, json.dumps({"error": "no such document: one of %s" % ", ".join(sorted(DOC_FILES))}))
+        try:
+            with open(p, "rb") as f:
+                data = f.read()
+        except OSError as e:
+            return self._send(404, json.dumps({"error": "the document is not on the console's disk: %s" % e}))
+        self.send_response(200)
+        self.send_header("Content-Type", DOCX_MIME)
+        self.send_header("Content-Disposition", 'attachment; filename="%s"' % DOC_FILES[doc])
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
     def do_GET(self):
         root = self.path.split("?", 1)[0]            # tolerate a ?cb= cache-buster on the page URL
         if root == "/" or root.startswith("/index"):
@@ -9256,6 +9320,8 @@ class Handler(BaseHTTPRequestHandler):
                         self._send(200, f.read(), "text/javascript; charset=utf-8")
                 except OSError:
                     self._send(404, json.dumps({"error": "no such module"}))
+        elif root.startswith("/docs/"):              # one of the four Word documents, as a download (the bar's buttons)
+            self._serve_doc(root[len("/docs/"):])
         elif self.path == "/playback" or self.path.startswith("/playback?"):
             try:
                 html = load_static("playback.html")
@@ -9885,6 +9951,9 @@ class Handler(BaseHTTPRequestHandler):
                 ENGINE.amend(body.get("route"), body.get("note"))
             elif path == "/api/cmd/sethome":           # home = the chosen point, or the present fix
                 ENGINE.set_home(body.get("lat"), body.get("lon"))
+            elif path == "/api/open_doc":              # a command-bar document button (2026-10-19): open it here, or say download
+                code, obj = open_doc(body.get("doc"), self.client_address[0] if self.client_address else "")
+                return code, obj
             elif path == "/api/cmd/approach":          # live-tune waypoint approach radius
                 # ⚠ NOT `float(...)` HERE. That raised ValueError on a non-numeric body and the
                 # handler answered 500; the Engine validates it and refuses in words, like

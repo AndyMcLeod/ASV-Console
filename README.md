@@ -466,7 +466,10 @@ the controls window the buttons become a vertical column on the left and each pa
 table becomes a **draggable, resizable card**; the layout is saved to `localStorage`
 (the chart's own buttons - `+`, `−`, `BOAT`, `CHRT`, `NOGO` - are on the command bar, left of
 ARM, since 2026-10-15, Andy: "They are used for the chart so they should live there"; they stay
-with the chart in either layout, and the column carries the rest)
+with the chart in either layout, and the column carries the rest; and since 2026-10-19 four more at
+the bar's left end - `QUICK`, `OPS`, `TECH`, `DEV` - open the four Word documents in `docs/`: on the
+console's own machine Word opens the document itself, from another machine the browser downloads
+it from `/docs/<id>`, and either way a note says which happened)
 and restored next session. **The ALERTS card lives in the controls window** (2026-09-28, Andy:
 "the pop-up alert messages are blocking each other or covering standing messages at the bottom
 center of the chart screen"): the guard's bar with its buttons (PROCEED, CONTINUE AT LOW, RESUME,

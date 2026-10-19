@@ -296,7 +296,8 @@ GET_FN = FNS.get("do_GET")
 SENDERS = {"_send", "end_headers", "_serve_events", "_serve_tile", "_serve_log",
            "_serve_enc", "_serve_chartinfo", "_serve_ais",
            "_serve_corridor",          # the chart read along a route (2026-10-11) - itself judged below
-           "_serve_grid"}              # a tile's planning grid (2026-10-12, the passage planner) - judged below too
+           "_serve_grid",              # a tile's planning grid (2026-10-12, the passage planner) - judged below too
+           "_serve_doc"}               # one of the four Word documents as a download (2026-10-19) - judged below too
 
 
 def is_send_call(n):

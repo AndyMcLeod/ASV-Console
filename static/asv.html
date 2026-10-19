@@ -979,6 +979,15 @@
          there"). They zoom, center and draw the CHART, which only this window shows, so they sit on its bar - not in the
          control column, which goes to the controls window. Ids kept: their handlers find them by id. They command nothing,
          so a VIEW ONLY tab keeps them live. -->
+    <!-- THE FOUR DOCUMENTS (Andy, 2026-10-19: "In the chart window lower toolbar add 4 buttons - each button opens one of
+         the 4 asv simulator word documents"). Each asks the console to open its Word document (openDoc): on the
+         console's own machine Word opens it there; from another machine the browser downloads it. At the bar's left end,
+         well away from E-STOP, and live in a VIEW ONLY tab: they command nothing. -->
+    <button class="ctl small doc" id="doc_quick" data-doc="quick" title="Open the Quick Start (Word document)">QUICK</button>
+    <button class="ctl small doc" id="doc_ops" data-doc="ops" title="Open the Operations Manual (Word document)">OPS</button>
+    <button class="ctl small doc" id="doc_tech" data-doc="tech" title="Open the Technical Manual (Word document)">TECH</button>
+    <button class="ctl small doc" id="doc_dev" data-doc="dev" title="Open the Development Guide (Word document)">DEV</button>
+    <span class="cdiv"></span>
     <button class="ctl" id="zin" title="Zoom in">+</button>
     <button class="ctl" id="zout" title="Zoom out">&minus;</button>
     <button class="ctl small on" id="follow" title="Keep the boat centered">BOAT</button>
@@ -17094,6 +17103,28 @@ $("#enf_openwater").onchange = ()=>{ V.OPEN_WATER = $("#enf_openwater").value !=
 // queues behind that rebuild instead of being dropped by `punchBusy`.
 $("#sp_punch").onclick = punchNow;
 $("#chrtBtn").onclick = ()=>{ encShow=!encShow; $("#chrtBtn").classList.toggle("on", encShow); render(); };
+// THE FOUR DOCUMENTS ON THE COMMAND BAR (Andy, 2026-10-19). A button asks the console (POST /api/open_doc) to open its
+// Word document: "word" - the console's own machine opened it (the browser is on it); "download" - the browser is to
+// take the file itself (another machine, no Word there, or the opener failed), so the page opens /docs/<id>, which the
+// console serves as a download. A console that does not answer gets the same: the download is the console's too, so
+// nothing is lost but the note. Not through cmd(): a VIEW ONLY tab may read the manuals.
+const DOC_NAMES = {quick: "Quick Start", ops: "Operations Manual", tech: "Technical Manual", dev: "Development Guide"};
+async function openDoc(id){
+  const name = "the " + (DOC_NAMES[id] || id);
+  let r = null;
+  try{
+    const resp = await fetch("/api/open_doc", {method: "POST", headers: {"Content-Type": "application/json", "X-ASV-Client": CLIENT_ID},
+                                               body: JSON.stringify({doc: id})});
+    r = await resp.json();
+  } catch(e){ r = null; }
+  // the one test of an answer (took): an answer that did not land, read whole, is a refusal in the console's words
+  if(took(r) && r.opened === "word"){ flashNote("Opened " + name + " in Word on the console's machine."); return "word"; }
+  if(r && !took(r)){ flashNote("The console could not open " + name + ": " + (r.error || "it gave no reason")); return "refused"; }
+  window.open((r && r.url) || ("/docs/" + id), "_blank");
+  flashNote("Downloading " + name + " (a Word document)" + (r && r.note ? " - " + r.note : "") + ": open it from the browser's downloads.");
+  return "download";
+}
+for(const b of document.querySelectorAll(".cmdbar button.doc")) b.onclick = () => { openDoc(b.dataset.doc); };
 $("#nogoBtn").onclick = ()=>{                     // toggle overlay; if nogo never loaded, extract it now
   if(!nogo.ready && !nogo.busy){ refreshNogo(); return; }
   nogoShow=!nogoShow; updateNogoUI(); render();
