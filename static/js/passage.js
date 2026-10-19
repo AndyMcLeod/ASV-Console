@@ -348,8 +348,19 @@ export function pruneJunctionKnots(lineIn, Ap, via, Bp, lineOut, ref, ko, buf){
 // disc is clear), beyond it the boat takes the way off and the console supplies a routed
 // re-approach (reapproachIfSetOff in asv.html). `opts.holdR` is the hold radius the disc
 // must cover; the page passes the mission's approach radius, floored at the sim's own 2 m.
+/** ⚠⚠ NO MODEL BECAUSE THE READ FAILED IS NOT NO CHART (2026-10-18, A3 - Andy, at the Canaveral lock: "goto path planning
+ *  is driving over land"). With no model the planners answer `degraded`, a straight line, and the command goes out
+ *  "verify the plan manually" - right for a sea no chart covers, wrong for a chart NOAA did not serve: there the water is
+ *  charted and the line may cross its land. `nogo.failed` (refreshNogo) is that case; the plan is refused in words and
+ *  the page reads the chart again every NOGO_RETRY_MS. null when the model is merely absent for want of a chart. */
+export function chartFailedRefusal(){
+  if(nogo.ready || !nogo.failed) return null;
+  return {error: "the chart here could not be read (" + (nogo.failed.why || "the read failed") + "), so nothing is routed - "
+                 + "not even straight; the console is reading it again",
+          reason: {mode: "chart_failed"}};
+}
 export function holdTarget(to, opts){
-  if(!nogo.ready) return {to:{lat:to.lat,lon:to.lon}, heldOff:null, holdClear:null, degraded:true};
+  if(!nogo.ready) return chartFailedRefusal() || {to:{lat:to.lat,lon:to.lon}, heldOff:null, holdClear:null, degraded:true};
   // `opts.ko` (2026-09-27): a model in place of the charted one - the page routes a way in round the
   // AIS contacts as well, and those live in the guard's model, never in nogo.ko.
   const ref=nogo.frame, ko=(opts && opts.ko) || nogo.ko, buf=nogo.buffer;
@@ -472,9 +483,12 @@ export function insideBoxM(p, box){
 // wider cannot help (the page's planInsideChart refuses at once). Every leg is SAMPLED, at most edgeM / 2 apart: a
 // square is not convex to a route the way the box is - unless `opts.points`, which judges the points alone (a
 // command's own points, before any route exists: the straight line between them is not the route).
-// ⚠ THE SQUARES SHE IS IN, OR BESIDE, DO NOT COUNT: a route starts where she is, and refusing every command from a
-// boat that has drifted into, or up to, water no chart covers would strand her there - RTH included. Squares within
-// `edgeM` of the route's first point are let be; a square anywhere else is not.
+// ⚠⚠ ONLY HER OWN FIRST `edgeM` IS LET BE - NOT THE SQUARE SHE IS IN (Andy, 2026-10-18, A2: "Excuse only her own short
+// way out, not the whole unread square"). Until then every square within `edgeM` of the route's first point was let be,
+// so as not to strand a boat that had drifted into unread water - and a square is a whole tile of the chart, 25 km a
+// side: spawned in the unread tile round the Canaveral lock, the Go-To ran 6.6 km through it, over 856 m of land the
+// model never had. Now every square counts, and the route's points within `edgeM` of where she is are not judged: her
+// short way out of where she stands. A boat in unread water is refused onward until the chart there is read.
 export function beyondChart(pts, box, edgeM = CHART_EDGE_M, unread = null, opts = {}){
   if(!box || !pts || !pts.length) return null;
   let near = null, out = null, outM = 0;
@@ -492,7 +506,7 @@ export function beyondChart(pts, box, edgeM = CHART_EDGE_M, unread = null, opts 
              : null;
 }
 /** Where `pts` (legs sampled at most edgeM / 2 apart, or the points alone with `opts.points`) stands in, or within
- *  `edgeM` of, an unread square - the squares within `edgeM` of its first point aside: {at (its first point INSIDE a
+ *  `edgeM` of, an unread square - its points within `edgeM` of its first point aside: {at (its first point INSIDE a
  *  square, else its first within the margin), inM (the farthest any point stands inside one, 0 when it only reaches
  *  the margin), failed} - or null. */
 export function unreadAlong(pts, unread, edgeM = CHART_EDGE_M, opts = {}){
@@ -500,11 +514,13 @@ export function unreadAlong(pts, unread, edgeM = CHART_EDGE_M, opts = {}){
   let W = Infinity, S = Infinity, E = -Infinity, N = -Infinity;
   for(const p of pts){ W = Math.min(W, p.lon); E = Math.max(E, p.lon); S = Math.min(S, p.lat); N = Math.max(N, p.lat); }
   const padLat = edgeM / M_PER_DEG_LAT, padLon = edgeM / (M_PER_DEG_LAT * Math.cos((S + N) / 2 * Math.PI / 180));
-  const near = unread.filter(r => r.W <= E + padLon && r.E >= W - padLon && r.S <= N + padLat && r.N >= S - padLat
-                                  && !(insideBoxM(pts[0], r) > -edgeM));
+  const near = unread.filter(r => r.W <= E + padLon && r.E >= W - padLon && r.S <= N + padLat && r.N >= S - padLat);
   if(!near.length) return null;
   let first = null, firstIn = null, inM = 0;
+  const p0 = pts[0], k0 = M_PER_DEG_LAT * Math.cos(p0.lat * Math.PI / 180);
+  const herWayOut = (p) => Math.hypot((p.lat - p0.lat) * M_PER_DEG_LAT, (p.lon - p0.lon) * k0) <= edgeM;
   const judge = (p) => {
+    if(herWayOut(p)) return;                            // her own first edgeM, wherever she stands (A2)
     for(const r of near){
       const d = insideBoxM(p, r);                       // >0 inside the square, <0 outside: its depth, or distance, in m
       if(!(d > -edgeM)) continue;
@@ -894,7 +910,7 @@ export function buoysOutrankOpenWater(from, to, ref, ko, buf, routerLeg, owLeg, 
 }
 
 export function planNogoRoute(from, to, opts){
-  if(!nogo.ready) return {route:[{lat:to.lat,lon:to.lon}], direct:true, degraded:true};
+  if(!nogo.ready) return chartFailedRefusal() || {route:[{lat:to.lat,lon:to.lon}], direct:true, degraded:true};
   const ref=nogo.frame, ko=(opts && opts.ko) || passageKo(nogo.ko), buf=nogo.buffer;   // opts.ko: see holdTarget (2026-09-27)
   const ht = holdTarget(to, ko === nogo.ko ? opts : {...(opts || {}), ko});
   if(ht.error) return ht;
@@ -1103,6 +1119,8 @@ export function keepStandoff(kr, fallback, ref, ko, want){
  * the water allows, keeping right in a buoyed channel (Rule 9, Andy's call). Absent, nothing changes.
  */
 export function routePlan(start, wps, keepRightAll, standoffM, transitAt, ropts){
+  const failedRead = chartFailedRefusal();             // a FAILED read routes nothing, not even straight (A3)
+  if(failedRead) return {route: [], unroutable: [], ...failedRead};
   if(!nogo.ready || !start) return {route: wps.map(p=>({lat:p.lat,lon:p.lon})), unroutable:[], degraded:true};
   const ref=nogo.frame, ko=nogo.ko, buf=nogo.buffer;
   // THE TRANSIT LEGS ARE LAID ROUND THE VESSELS NOT UNDER WAY (passageKo, 2026-10-07); a pattern's own legs - its

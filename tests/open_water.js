@@ -605,6 +605,22 @@ const BA = gll(0, 11000), BB = gll(0, -11000);
           () => spine.length + " points: " + JSON.stringify(spine.map((q) => [Math.round(q.lon), Math.round(q.lat)])));
   }
 
+  // 6c. HER OWN FIRST 100 m, NOT THE SQUARE SHE IS IN (2026-10-18, A2 - Andy: "Excuse only her own short way out, not
+  // the whole unread square"). The field blocked every unread square but the ones within edgeM of `from`, so a boat in a
+  // failed chart tile - 25 km a side, the Canaveral lock - had the whole tile open to the search. Now only her own cells
+  // within edgeM are let be: the square she is in is blocked beyond them.
+  {
+    const ko = world([]), FROM = gll(0, 0), SQ = boxOf(-3000, -3000, 3000, 3000);
+    const fld = OW.openWaterField(-2000, -2000, 2000, 2000, ko, 5, undefined,
+                                  { F: GF, box: boxOf(-20000, -20000, 20000, 20000), unread: [{ ...SQ, failed: true }], edgeM: 100, from: FROM });
+    const at = (e, n) => fld.blk[Math.floor((n - fld.y0) / fld.cell) * fld.W + Math.floor((e - fld.x0) / fld.cell)];
+    const mine = at(0, 0), near = at(60, 0), beyond = at(400, 0), far = at(1500, 1500);
+    check("6c. a boat IN an unread square: the field lets be only her own cells within 100 m (open), and blocks the rest "
+          + "of the square she is in (A2) - 400 m and 2 km off her",
+          () => mine === 0 && near === 0 && beyond === 2 && far === 2,
+          () => JSON.stringify({ mine, near, beyond, far, cell: fld.cell }));
+  }
+
   console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
   process.exit(fails ? 1 : 0);
 })().catch(__crash);

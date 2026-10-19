@@ -366,6 +366,13 @@
   .alertcard .guardbar,.alertcard .encbanner,.alertcard .note{position:static;left:auto;bottom:auto;transform:none;
     max-width:none;margin:0;box-shadow:none;}
   .alertcard .guardbar .gb-why{max-width:none;}
+  /* THE LOCK TRANSIT'S BAR (2026-10-18): a stage it waits at says so, with the one button that moves it on - a blue of its
+     own, not the guard's amber: it is the operator's procedure, not the console intervening */
+  .lockbar{font-family:var(--mono);font-size:10px;color:#04121c;background:#7cc3e8;border-radius:3px;padding:5px 10px;}
+  .lockbar .lk-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+  .lockbar .lk-row + .lk-row{margin-top:4px;}
+  .lockbar .lk-rung{font-weight:700;letter-spacing:.08em;}
+  .lockbar .ctl.small{background:#04121c;color:#e6f3fa;border-color:#04121c;}
   .alertnone{font-family:var(--mono);font-size:10px;color:var(--ink-faint);padding:2px 4px;}
   .alertrecent{display:flex;flex-direction:column;gap:1px;font-family:var(--mono);font-size:10px;color:var(--ink-dim);
     border-top:1px solid var(--line);padding-top:3px;margin-top:2px;}
@@ -925,6 +932,15 @@
           <button class="ctl small" id="gb_drop" style="display:none" title="Leave the boat station-keeping and forget the unflown remainder. The survey would then have to be run again from waypoint one.">LEAVE IT HOLDING</button>
         </div>
       </div>
+      <!-- THE LOCK TRANSIT (Andy, 2026-10-18): offered when a Go-To is refused with a lock between her and the point, and
+           moved on, one gate at a time, only by the button here - see lockOffer / renderLockBar. -->
+      <div class="lockbar" id="lockBar" style="display:none">
+        <div class="lk-row"><span class="lk-rung" id="lk_rung">LOCK</span><span class="lk-why" id="lk_why"></span></div>
+        <div class="lk-row">
+          <button class="ctl small" id="lk_go" title="The next stage of the lock transit - taken only on your word.">TRANSIT THE LOCK</button>
+          <button class="ctl small" id="lk_cancel" title="End the lock transit. She is not stopped (STOP and HOLD are where they always are); a lock's gates come back into the keep-out model once she is out of it.">NO</button>
+        </div>
+      </div>
       <div class="encbanner" id="encbanner"></div>
       <!-- Transient alerts only (flashNote). Starts EMPTY and hidden: it used to open with
            "Not connected." and was then overwritten by the server's standing note, which is
@@ -1213,7 +1229,8 @@ import { CHART_EDGE_M, LANE_FRAC, SEG_LEN_M, beyondChart, beyondChartSay, buoyCh
          channelSpanKeepouts, channelTurnKeepouts, deepNote, deepWhy, dilateGrid, gateLegClear, marginRunsAfter, offshoreNote,
          holdTarget, junctionKnot, legPath, narrowChannelLane, passageJoinVia, planNogoRoute, pruneJunctionKnots,
          pruneStitch, rasterKeepouts, regionOrder,
-         routeAround, routeAroundSeg, routePlan, smoothTrack, stampSeg } from "/static/js/passage.js";
+         routeAround, routeAroundSeg, routePlan, smoothTrack, stampSeg, chartFailedRefusal } from "/static/js/passage.js";
+import { LOCK, findLocks, lockOnTheWay, lockWay, insideLock, featureKey as lockFeatureKey } from "/static/js/locks.js";
 // THE ROUTE SEARCH OFF THIS PAGE'S THREAD (2026-10-12): the model's feature count, which the worker checks the model it
 // holds against on every search (route_job.js; planOffThread).
 import { koCount as routeKoCount, packKo as routePackKo } from "/static/js/route_job.js";
@@ -1316,7 +1333,7 @@ function setAlertWhere(w){ lsSet(ALERT_WHERE_KEY, w === "chart" ? "chart" : "con
 // "Nothing standing" shows only while all three surfaces are down - the card is never an empty box.
 function alertCardTidy(){
   const none = $("#alertNone"); if(!none) return;
-  const up = ["#guardBar", "#encbanner", "#note"].some(s => { const e = $(s); return e && e.style.display && e.style.display !== "none"; });
+  const up = ["#guardBar", "#lockBar", "#encbanner", "#note"].some(s => { const e = $(s); return e && e.style.display && e.style.display !== "none"; });
   none.style.display = up ? "none" : "";
 }
 // The last few banners and notes, newest first, so a flash that faded is still there to read.
@@ -1446,6 +1463,10 @@ const uiClosed = new Set();        // chart window: controls pages whose lock wa
 let uiYielded = false;             // controls window: it stepped aside for an older one
 let uiLockFree = null;             // controls window: frees its lock (it steps aside)
 let uiCardsHome = "controls";      // where the cards are while a controls window is alive: "controls" or "chart"
+// THE LOCK TRANSIT (2026-10-18; see lockOffer): `lockTransit` the one under way, or offered - {stage, lock, target, way,
+// why}; `lockWaiver` {keys, id}: the two gates of the lock she is being taken through, out of the keep-out model
+// (modelFeatures) from the operator's GATE OPEN until she is out of the lock - null otherwise.
+let lockTransit = null, lockWaiver = null;
 // Every pop-out this console has. There is no Mission entry: the Mission readout is a
 // section of #vcard, so it rides across on that card's mirror.
 const UI_BRIDGED = [".controls", "#pathPanel", "#rocPanel", "#lineTablePanel", "#aisTablePanel",
@@ -10984,8 +11005,15 @@ function featuresBboxRef(feats){                // ENU reference = centroid of t
     eachRing(g,r=>r.forEach(scan)); eachPath(g,p=>p.forEach(scan)); eachPoint(g,scan); }
   return any ? {lat:(s0+n0)/2, lon:(w0+e0)/2} : null;
 }
+/** The features the keep-out model is built from: the chart's, less the gates of the lock she is being taken through
+ *  (lockWaiver - the operator's word at each gate, 2026-10-18). Every builder of the guard's and the planner's model
+ *  reads them here, so the two cannot disagree about a gate. */
+function modelFeatures(){
+  const all = nogo.features || sea.enc.features || [];
+  return lockWaiver ? all.filter(f => !lockWaiver.keys.has(lockFeatureKey(f))) : all;
+}
 function rebuildNogo(){                         // (re)build the keep-out model from nogo.features + shared config
-  const feats = nogo.features || sea.enc.features || [];
+  const feats = modelFeatures();                  // less a waived lock's gates (2026-10-18)
   // A FRAME, not a bare point (Andy, 2026-08-20: "use frame"). It still carries lat/lon,
   // so every function below that takes a `ref` keeps working unchanged -- and it now also
   // satisfies WorldView's `{toEN, fromEN}` interface, which is what lets the shared
@@ -11062,6 +11090,21 @@ let nogoPending = null;
 // resetForNewArea bounds ITS wait at, and for the same reason: /api/enc is fetched with no
 // timeout, so an extract that never returns must not take the console's planning with it.
 const NOGO_QUEUE_MAX_MS = 8000;
+// A READ THAT FAILED IS ASKED AGAIN this often while it stays failed (2026-10-18, A3: nothing is routed meanwhile).
+const NOGO_RETRY_MS = 30000;
+// what a command refused for a failed read is told to do (chartFailedRefusal, passage.js)
+const CHART_FAILED_TIP = "Nothing was sent: she carries on as she was. Command it again once the NOGO row shows zones.";
+/** A `keep` read that arrived without some layers (`failed`, their classes): the EARLIER read's features of those classes
+ *  added to it (`enc`, as fetchENCBbox wrote it), none twice (class + object id). Returns how many were kept (2026-10-18,
+ *  A1 - see refreshNogo). */
+function keepEarlierClasses(enc, was, failed){
+  const lost = new Set(failed || []);
+  if(!enc || !was || !Array.isArray(was.features) || !lost.size) return 0;
+  const have = new Set((enc.features || []).map(f => f.cls + "|" + f.oid));
+  const kept = was.features.filter(f => lost.has(f.cls) && !have.has(f.cls + "|" + f.oid));
+  if(kept.length) enc.features = [...(enc.features || []), ...kept];
+  return kept.length;
+}
 // THE MOST THE SERVER EXTRACTS ON A SIDE - asv_console.py's ENC_MAX_SPAN_DEG, which refuses a wider box with a 400.
 // tests/chart_box.js reads both files and holds them equal. (2.0 since 2026-10-14, 1.5 before: see the server's note.)
 const ENC_MAX_SPAN_DEG = 2.0;
@@ -11139,14 +11182,29 @@ async function refreshNogo(centerLL, bbox, ask){     // extract ENC for the oper
   try{
     const d = await fetchENCBbox(b, V.NOGO_MIN_DEPTH_M);
     if(keep && (!d || !d.band)){ keptOn((d&&(d.note || d.error)) || "no ENC coverage / offline"); return; }
-    // ... and one that arrived WITHOUT SOME OF ITS LAYERS (the server serves such an extract once): a missing depth
-    // layer reads as deep water, and the extract it would replace covers the boat's own water whole.
-    if(keep && d.partial && d.partial.length){ keptOn("the extract arrived without " + d.partial.join(", ")); return; }
+    // ⚠⚠ ... AND ONE THAT ARRIVED WITHOUT SOME OF ITS LAYERS IS USED, NOT THROWN AWAY (Andy, 2026-10-18, at the
+    // Canaveral lock: "goto path planning is driving over land"). Such a read was discarded WHOLE and the model it would
+    // have replaced kept - and there the Go-To's read had brought the land, the lock's gates, the piers and the depths,
+    // missing 29 other layers (magnetic anomalies, kelp, the canal area...), while the model kept had none of that land:
+    // the route ran 856 m over it. Now the read is taken, and for each class that did not arrive the EARLIER model's
+    // features of that class are kept (keepEarlierClasses) - nothing the old read had is lost, everything the new one
+    // brought is used; the server has already made each tile that lacks a layer the model acts on unread water
+    // (fetch_enc_layered), which the planners refuse to route through.
+    const keptN = (keep && d.partial && d.partial.length) ? keepEarlierClasses(sea.enc, encWas, d.partial) : 0;
     if(!d || !d.band){
       nogo.ready=false; nogo.busy=false;
       // The server's own refusal, when it gave one (a 400 or a 502 answers {error}), not a guess at it.
       nogo.note = (d&&(d.note || d.error)) || "no ENC coverage / offline";
-      updateNogoUI(); nogoStatus("Nogo: "+nogo.note+" — behaviors will route DIRECT (verify the plan manually).");
+      // ⚠⚠ A READ THAT FAILED IS NOT A SEA WITH NO CHART (2026-10-18, A3). "No chart covers this water" and "NOAA did
+      // not answer" both reached here, and both said "behaviors will route DIRECT" - at Canaveral the coastal service
+      // answered "Could not find service". Failed (`unread_failed` squares, or the server's {error}): the planners
+      // REFUSE (passage.js chartFailedRefusal) and the read is asked again every NOGO_RETRY_MS (onState). No chart at
+      // any scale: direct, said, as before.
+      nogo.failed = (d && ((d.unread_failed || []).length || d.error)) ? {at: Date.now(), why: nogo.note} : null;
+      updateNogoUI();
+      nogoStatus(nogo.failed ? "Nogo: the chart here could NOT be read (" + nogo.note + ") - nothing is routed until it is: "
+                               + "reading it again every " + Math.round(NOGO_RETRY_MS / 1000) + " s."
+                             : "Nogo: "+nogo.note+" — behaviors will route DIRECT (verify the plan manually).");
       render(); return;
     }
     // ⚠⚠ THE SEABED'S OWN GAPS, CARRIED AS FEATURES (Andy, 2026-09-30, at Pepperrell Cove: the chart routine
@@ -11179,7 +11237,9 @@ async function refreshNogo(centerLL, bbox, ask){     // extract ENC for the oper
     if(!wider){ chartReads = []; inkRefused = null; }
     nogo.features = feats;                              // shared feature snapshot (behaviors + survey build from this)
     // the extract the worker holds these from (the seabed's gaps its own, the same walk): the keep-out layer is drawn there
-    nogo.featuresFrom = enc.workerState === "ok" ? enc.workerId : null;
+    // ... but not when the earlier read's classes were kept in (keepEarlierClasses): the worker holds the new read alone
+    nogo.featuresFrom = enc.workerState === "ok" && !keptN ? enc.workerId : null;
+    nogo.failed = null;                                // read: the planners route again (A3)
     nogo.skin = skin;
     nogo.band = enc.band; nogo.bbox = b; nogo.center = {lat:ll.lat, lon:ll.lon};
     nogo.unread = enc.unread || [];                    // the same extract's: set with the box, never apart from it
@@ -11198,13 +11258,16 @@ async function refreshNogo(centerLL, bbox, ask){     // extract ENC for the oper
     nogoStatus("Nogo established ("+nogo.note+"). Go-To / RTH / search / survey all clip to these zones."
                + (encP.length ? " CHART INCOMPLETE: " + encP.slice(0, 4).join(", ") + (encP.length > 4 ? " and " + (encP.length - 4) + " more" : "")
                                 + " did not arrive - that water is unread until it is read again." : "")
+               + (keptN ? " The earlier read's " + keptN + " feature(s) of those layers are kept." : "")
                + (encS.length ? " OLDER CHART IN USE: " + encS[0] : ""));
     render();
   }catch(e){
     if(keep) keptOn("chart read failed: " + e);
     else { nogo.busy=false; nogo.ready=false;
       nogo.note = "chart read failed: "+e;          // say WHY, don't leave the previous note standing
-      updateNogoUI(); nogoStatus("Nogo extraction failed: "+e); } }
+      nogo.failed = {at: Date.now(), why: nogo.note};   // a read that threw is a failed read, not a sea with no chart (A3)
+      updateNogoUI(); nogoStatus("Nogo extraction failed: "+e+" - nothing is routed until the chart is read: reading it "
+                                 + "again every " + Math.round(NOGO_RETRY_MS / 1000) + " s."); } }
   // EVERY path releases the waiters - the early no-coverage return, the throw and the
   // success - because a FAILED extract must end a waiting Go-To in the ordinary refusal,
   // never in an await that never returns.
@@ -11447,8 +11510,21 @@ async function goToOrPassage(ll){
   if(why){ showBanner("Go-To NOT sent as a passage: " + why + ". The plan is on the Passage tab."); return; }
   await sailPassage();
 }
-async function doGoTo(target){
-  if(!asv){ flashNote("No position fix yet — can't Go-To."); return; }
+/** The Go-To planner's leg, from `from` to `target`: the chart read over both, the route planned inside the water it was
+ *  read over (planInsideChart) in the route worker. `what` names it in the planner's words. */
+async function planGoToLeg(from, target, what){
+  await ensureNogoCovers([from, target]);          // model obstacles near a distant target
+  return planInsideChart([from, target], undefined, () => {
+    const o = {...holdOpts(), standoffM: transitStandoffM()};
+    return planOffThread({op: "nogo", args: {from, to: target, opts: o}}, () => planNogoRoute(from, target, o));   // the route worker
+  }, what);
+}
+/** GO-TO `target`. `how` (2026-10-18, the lock transit): {from - plan from here, not from her (the far end of a lead-in);
+ *  lead - points she runs first, along a lock's axis, before the planned route; noLockOffer - a refusal offers no lock}.
+ *  True when the vessel took it. */
+async function doGoTo(target, how){
+  how = how || {};                                   // (no `= {}` in the signature: the suites lift functions by their braces)
+  if(!asv){ flashNote("No position fix yet — can't Go-To."); return false; }
   const missionAt = Date.now();                  // a new mission's history opens here (newMission)
   // ⚠ SNAPSHOT BEFORE THE ROUTING, NOT BEFORE THE POST. The operator pressed this seconds
   // ago: the chart extract can run to several seconds and the clearance guard commands the boat
@@ -11456,23 +11532,24 @@ async function doGoTo(target){
   // fresh escape in this window moves it and the deviation rung does not - which is the only
   // question the release below has to ask.
   const wasGen = planGen;
-  await ensureNogoCovers([{lat:asv.lat,lon:asv.lon}, target]);   // model obstacles near a distant target
   showBanner("Routing to the point… a long transit around obstacles can take several seconds.");
   await new Promise(r=>setTimeout(r,50));
   // Planned INSIDE THE WATER THE CHART WAS READ OVER: a route that runs past it is read over and planned again.
-  const plan = await planInsideChart([{lat:asv.lat,lon:asv.lon}, target], undefined, () => {
-    const from = {lat:asv.lat,lon:asv.lon}, o = {...holdOpts(), standoffM: transitStandoffM()};
-    return planOffThread({op: "nogo", args: {from, to: target, opts: o}}, () => planNogoRoute(from, target, o));   // the route worker
-  }, "Go-To");
-  if(plan.withdrawn) return;                        // a Stop pressed while it planned (planInsideChart says so)
+  const plan = await planGoToLeg(how.from || {lat:asv.lat,lon:asv.lon}, target, "Go-To");
+  if(plan.withdrawn) return false;                  // a Stop pressed while it planned (planInsideChart says so)
   if(plan.error){
     setViolation(plan.reason);
     const mode = plan.reason && plan.reason.mode;
     const tip = mode==="target" ? "Pick a point nearer open water."
       : mode==="uncharted" ? unchartedTip(plan.uncharted, "Go-To a point part of the way there first.")
+      : mode==="chart_failed" ? CHART_FAILED_TIP
       : "Try a point on the near side of it, or lower the Buf m / relax the nogo enforce toggles.";
     showBanner("Go-To refused: "+plan.error+" — highlighted on the chart. "+tip);
-    flashNote("Go-To refused: "+plan.error); render(); return;
+    flashNote("Go-To refused: "+plan.error);
+    // a lock between her and the point: offered, never taken (2026-10-18) - not for a refusal about the chart or the target,
+    // which a transit would only meet again on its way on
+    if(!how.noLockOffer && !plan.uncharted && !/^(chart_failed|uncharted|target)$/.test(mode || "")) lockOffer(target);
+    render(); return false;
   }
   clearViolation();
   // The route ends at the HOLD POINT - the target itself, or the nearest clear water to it
@@ -11482,13 +11559,15 @@ async function doGoTo(target){
   const gCoast = solveCoastFor(plan);
   // The same rule doRTH carries, for the same reason: the button's gate was read off an
   // earlier state frame, and this function has spent the extract since. See doRTH.
+  // A LEAD-IN (the lock transit's legs along the axis): run first, then the planned route from its far end.
+  if(how.lead && how.lead.length) plan.route = [...how.lead.map(p => ({lat: p.lat, lon: p.lon})), ...plan.route];
   const r = await routeCmd("/api/cmd/goto", {lat:hp.lat, lon:hp.lon, route:plan.route, hold_clear_m:plan.holdClear,
                         coast_from_m: gCoast ? gCoast.groundM : null});
   if(!took(r)){
     const say = notTookSay(r, "GO-TO");
     if(!say) takeDownBanner(/^Routing to the point/);
     else showBanner(say + " - the boat is still on her previous plan.");
-    render(); return;
+    render(); return false;
   }
   // ⚠⚠ THE ESCAPE'S CLAIM ENDS ON A MOTION THE VESSEL TOOK - AND ONLY IF IT IS STILL THE
   // CLAIM THAT WAS THERE WHEN THEY PRESSED. The same discipline #b_hold and #b_stop apply to the
@@ -11507,7 +11586,135 @@ async function doGoTo(target){
   else if(plan.routed || note || plan.insideStandoff) showBanner("Go-To: "+(plan.routed?("routed around nogo zone(s) via "+plan.route.length+" waypoints"):"direct")+(note?" \u00b7 "+note:"")+(plan.insideStandoff?" ⚠ inside the "+(+plan.standoffM).toFixed(1)+" m transit standoff (no route at that clearance) — expect the guard to slow or hold her there":"")+".");
   else if(plan.degraded) flashNote("Go-To: nogo not loaded — driving direct. Verify the path manually.");
   render();
+  return true;
 }
+// ── THE LOCK TRANSIT (Andy, 2026-10-18, at the Canaveral lock: "The ASV does not seem to understand locks" - offered "an
+// explicit lock transit you opt into. She holds short of the first gate. You confirm the lock is ready, and she goes in
+// slowly and holds in the chamber. You confirm the far gate is open, and she continues", he chose it) ───────────────
+// A LOCK'S GATES STAY KEEP-OUTS: no route runs through one by itself (static/js/locks.js). When a Go-To is refused and a
+// lock lies between her and the point (lockOnTheWay), the alerts card OFFERS the transit - nothing more. Taken, it runs
+// in stages, and NOTHING passes a gate but on the operator's word:
+//   offer     -> TRANSIT THE LOCK: the way on from beyond the far gate is planned FIRST (a lock she could not be taken out
+//                of is not one to take her into), then a Go-To to hold short of the near gate;
+//   approach  -> held there (`holding`, within LOCK_ARRIVE_M): wait_near;
+//   wait_near -> GATE OPEN - GO IN: the two gates out of the model (lockWaiver - the guard's and the planner's alike), the
+//                speed held low (resumeSlow, as CONTINUE AT LOW), and a Go-To along the axis to the chamber;
+//   enter     -> held there: wait_far;
+//   wait_far  -> FAR GATE OPEN - GO ON: along the axis out past the far gate, then the route planned on to the point;
+//   exit      -> she is past the way out's end: the gates back in the model, the speed released, done.
+// CANCEL TRANSIT at any stage ends it; a waiver ends only once she is out of the lock (lockTick), so a boat in the chamber
+// is never left between two keep-outs. STOP, HOLD and the RC are untouched by any of this. Not kept across a reload:
+// the gates come back, and the guard holds her if a gate is ahead.
+const LOCK_ARRIVE_M = 25;
+const lockDesc = (L) => (L.name ? L.name + ": " : "the lock here: ") + "two lock gates " + fmtDist(L.lengthM)
+  + " apart" + (L.widthM ? ", " + L.widthM.toFixed(1) + " m wide" : "") + (L.note ? " (\u201c" + L.note + "\u201d)" : "");
+/** A refused Go-To with a lock between her and `target`: the transit OFFERED on the alerts card (lockOnTheWay). */
+function lockOffer(target){
+  if(lockTransit || !asv || !nogo.ready || !supervising()) return;
+  const from = {lat: asv.lat, lon: asv.lon};
+  const lock = lockOnTheWay(findLocks(nogo.features || []), from, target);
+  if(!lock) return;
+  lockTransit = {stage: "offer", lock, target: {lat: target.lat, lon: target.lon}, way: lockWay(lock, from), why: null};
+  renderLockBar();
+}
+async function lockStart(){
+  const T = lockTransit; if(!T || T.stage !== "offer") return;
+  T.stage = "planning"; T.why = null; renderLockBar();
+  // THE WAY ON FROM BEYOND THE FAR GATE, FIRST: a lock she cannot be taken out of is not one to take her into
+  const on = await planGoToLeg(T.way.exit, T.target, "Lock transit");
+  if(lockTransit !== T) return;
+  if(on.withdrawn || on.error){
+    T.stage = "offer"; T.why = "the way on from beyond the far gate cannot be routed: " + (planWhy(on) || on.error || "withdrawn");
+    renderLockBar(); return;
+  }
+  T.stage = "approach"; renderLockBar();
+  const sent = await doGoTo(T.way.approach, {noLockOffer: true});
+  if(lockTransit !== T) return;
+  if(!sent){ T.stage = "offer"; T.why = "she could not be routed to hold short of the near gate - see the banner"; renderLockBar(); }
+}
+/** The two gates of `L` out of the keep-out model (modelFeatures), and the model rebuilt - or back in (null). */
+function lockWaive(L){
+  lockWaiver = L ? {id: L.id, keys: new Set(L.gates.map(lockFeatureKey)), lock: L} : null;
+  if(nogo.features) rebuildNogo();
+  logClient("lock", {what: L ? "gates_waived" : "gates_back", lock: L ? L.id : null});
+}
+async function lockGoIn(){
+  const T = lockTransit; if(!T || T.stage !== "wait_near") return;
+  lockWaive(T.lock);
+  resumeSlow = true; commandedSpeed = null; T.low = true;   // the transit's own low hold: only it releases it
+  commandSpeed(slowestMakingWayKey(setMsNow()) || "low");   // held low, as CONTINUE AT LOW holds it (releaseLow ends it)
+  T.stage = "enter"; T.why = null; renderLockBar();
+  const sent = await doGoTo(T.way.chamber, {from: T.way.chamber, lead: T.way.inLeg, noLockOffer: true});
+  if(lockTransit !== T) return;
+  if(!sent){                                       // still held short: the gates back, the low hold let go
+    lockWaive(null); T.low = false; releaseLow("the way into the lock was not taken");
+    T.stage = "wait_near"; T.why = "the way into the chamber was not taken - see the banner"; renderLockBar();
+  }
+}
+async function lockGoOn(){
+  const T = lockTransit; if(!T || T.stage !== "wait_far") return;
+  T.stage = "exit"; T.why = null; renderLockBar();
+  const sent = await doGoTo(T.target, {from: T.way.exit, lead: T.way.outLeg, noLockOffer: true});
+  if(lockTransit !== T) return;
+  if(!sent){ T.stage = "wait_far"; T.why = "the way out was not taken - see the banner"; renderLockBar(); }
+}
+/** Ends the transit (`why` said). The gates come back only once she is out of the lock: lockTick does it then. */
+function lockEnd(why){
+  const T = lockTransit; if(!T) return;
+  lockTransit = null;
+  const inside = asv && lockWaiver && insideLock(lockWaiver.lock, {lat: asv.lat, lon: asv.lon}, LOCK.STANDOFF_M / 2);
+  if(lockWaiver && !inside) lockWaive(null);
+  if(T.low) releaseLow(why);                      // the transit's own low hold, never the guard's
+  logClient("lock", {what: "ended", lock: T.lock.id, stage: T.stage, why});
+  flashNote("Lock transit: " + why + (inside ? " - she is in the lock: its gates stay out of the model until she is out of it." : "."));
+  renderLockBar();
+}
+/** Every frame (the supervising chart): a stage she has reached moves on; a waiver ends once she is out of the lock. */
+function lockTick(st){
+  if(lockWaiver && !lockTransit && asv && !insideLock(lockWaiver.lock, {lat: asv.lat, lon: asv.lon}, LOCK.STANDOFF_M / 2)) lockWaive(null);
+  const T = lockTransit; if(!T || !asv) return;
+  const here = {lat: asv.lat, lon: asv.lon}, holding = !!(S && S.run === "running" && st && st.holding);
+  if(T.stage === "approach" && holding && distTo(here, T.way.approach) <= LOCK_ARRIVE_M){ T.stage = "wait_near"; renderLockBar(); }
+  else if(T.stage === "enter" && holding && distTo(here, T.way.chamber) <= LOCK_ARRIVE_M){ T.stage = "wait_far"; renderLockBar(); }
+  else if(T.stage === "exit" && distTo(here, T.way.far) >= LOCK.STANDOFF_M * 0.8 && distTo(here, T.way.exit) < distTo(here, T.way.near)){
+    lockTransit = null; lockWaive(null); if(T.low) releaseLow("the lock transit is done");
+    logClient("lock", {what: "done", lock: T.lock.id});
+    flashNote("Lock transit done: she is out past the far gate and on her way; the gates are keep-outs again.");
+    renderLockBar();
+  }
+}
+const LOCK_SAY = {
+  offer: "The way to that point passes {lock}. The console does not open locks. TRANSIT THE LOCK takes her to hold short "
+       + "of the near gate - and through it, and the far gate, only on your word at each.",
+  planning: "Planning the way on from beyond the far gate first: a lock she cannot be taken out of is not one to take her into.",
+  approach: "On her way to hold short of the near gate of {lock}.",
+  wait_near: "HOLDING SHORT of the near gate of {lock}. Call the lock. When the gate is OPEN and the lock is ready for her, "
+           + "press GATE OPEN - GO IN: she goes in slowly, along the chamber's axis, and holds in the chamber.",
+  enter: "Going in slowly along the axis to hold in the chamber. The gates are out of the keep-out model for this.",
+  wait_far: "HOLDING IN THE CHAMBER. When the far gate is OPEN, press FAR GATE OPEN - GO ON: she goes out slowly along "
+          + "the axis and on to the point.",
+  exit: "Going out slowly past the far gate, then on to the point. The gates come back once she is out of the lock.",
+};
+const LOCK_GO = {offer: "TRANSIT THE LOCK", wait_near: "GATE OPEN - GO IN", wait_far: "FAR GATE OPEN - GO ON"};
+/** The lock bar on the alerts card: the stage in words, the one button that moves it on, and CANCEL. */
+function renderLockBar(){
+  const bar = $("#lockBar"); if(!bar) return;
+  const T = lockTransit;
+  bar.style.display = T ? "" : "none";
+  if(T){
+    $("#lk_rung").textContent = T.stage === "offer" ? "LOCK" : "LOCK TRANSIT";
+    $("#lk_why").textContent = LOCK_SAY[T.stage].replace("{lock}", lockDesc(T.lock)) + (T.why ? " - " + T.why + "." : "");
+    const go = $("#lk_go"), g = LOCK_GO[T.stage];
+    go.style.display = g ? "" : "none"; if(g) go.textContent = g;
+    $("#lk_cancel").textContent = T.stage === "offer" ? "NO" : "CANCEL TRANSIT";
+  }
+  alertCardTidy();
+}
+$("#lk_go").onclick = () => {
+  const T = lockTransit; if(!T) return;
+  if(T.stage === "offer") lockStart(); else if(T.stage === "wait_near") lockGoIn(); else if(T.stage === "wait_far") lockGoOn();
+};
+$("#lk_cancel").onclick = () => { if(lockTransit) lockEnd(lockTransit.stage === "offer" ? "not taken" : "canceled by the operator"); };
 // SET HOME AT THE CLICKED POINT (Andy's call, 2026-08-08 — the row read "at vessel" for one
 // commit, while the server still discarded a supplied position).
 //
@@ -11624,6 +11831,7 @@ async function doRTH(opts){
     setViolation(plan.reason);
     showBanner("RTH refused: "+plan.error+" — highlighted on the chart. "
       + (plan.reason && plan.reason.mode==="uncharted" ? unchartedTip(plan.uncharted, "Go-To a point on the way home first, or set Home nearer.")
+         : plan.reason && plan.reason.mode==="chart_failed" ? CHART_FAILED_TIP
                                                       : "Reposition Home to clear water, or relax the nogo (Buf m / enforce toggles)."));
     flashNote("RTH refused: "+plan.error); render(); return;
   }
@@ -13060,7 +13268,7 @@ async function sectionWater(P, from, pts, append){
 /** The guard's chart built at another water level (chart.js buildKeepouts' `waterOffsetM`: the live level keeps its
  *  one writer), the structures read off the chart image folded in as rebuildNogo folds them, and Punch Out its own. */
 function nogoModelAt(m){
-  const feats = nogo.features || sea.enc.features || [];
+  const feats = modelFeatures();                  // less a waived lock's gates, as rebuildNogo (2026-10-18)
   const ko = buildKeepouts(nogo.frame, nogo.enf, nogoDR(), feats, m);
   ko.margin = buildMargin(nogo.frame, nogo.enf, nogoDR(), feats, m, ko);   // (deep water first's, at the same water)
   foldChartInk(ko, nogo.frame);
@@ -18687,6 +18895,10 @@ async function doUpload(opts){
   if(!asv){ flashNote("No position fix yet — Upload routes the approach from the boat, so it needs one."); return; }
   if(routeTooLong(wps.length)) return;                // the saved plan itself - and before the question below
   if(!nogo.ready){
+    // ... AND A READ THAT FAILED IS NOT ASKED ABOUT: REFUSED (2026-10-18, A3). The question below is for a sea no chart
+    // covers; a chart NOAA did not serve is charted water whose land a straight line may cross (the Canaveral lock).
+    const chartFailed = chartFailedRefusal();
+    if(chartFailed){ showBanner("Upload refused: " + chartFailed.error + ". " + CHART_FAILED_TIP); render(); return; }
     // ⚠ WITHOUT THE CHART MODEL NOTHING IS CHECKED, AND THAT USED TO GO OUT SILENTLY (review #4,
     // 2026-09-14). The raw survey waypoints were sent with no routed approach and no detours, and
     // the clearance guard - which reads the same model - stood down, with no word to the operator.
@@ -21128,6 +21340,12 @@ function onState(s){
             distTo({lat:asv.lat,lon:asv.lon}, nogo.center) > NOGO_RADIUS_M*0.6){
       refreshNogo({lat:asv.lat,lon:asv.lon});
     }
+    // ... and a read that FAILED is asked again while it stays failed (2026-10-18, A3): the planners refuse meanwhile
+    else if(!nogo.ready && !nogo.busy && nogo.failed && Date.now() - nogo.failed.at > NOGO_RETRY_MS){
+      nogo.failed.at = Date.now();
+      refreshNogo({lat:asv.lat,lon:asv.lon});
+    }
+    if(supervising()) lockTick(st);                  // the lock transit's stages, and its waiver's end (2026-10-18)
     // ⚠⚠ R1 - THE LATCH, AND IT IS ABOVE THE GUARD DELIBERATELY. This is the one line that
     // makes the launch grant exist at all: without it `S.berth` stays null, berthAt() returns
     // null, certifyDeparture() answers {none:true} at its first line, and every frame below

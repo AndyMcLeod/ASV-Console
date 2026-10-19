@@ -2453,8 +2453,31 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    RTH route around it (or refuse an unreachable target), search and survey legs clip
    to clear water, and the transit **to** a survey (boat → first waypoint) plus every
    inter-line transit is routed around obstacles at **Upload** (the ENC-clear path is
-   drawn green from the boat, shrinking as it goes). If there's no ENC coverage the
-   console warns and routes direct — verify the plan.
+   drawn green from the boat, shrinking as it goes). Where no chart covers the water at
+   any scale the console warns and routes direct — verify the plan. Where a chart
+   exists but NOAA did not serve it (2026-10-18, after a Go-To at the Canaveral lock
+   ran over land), nothing is routed, not even straight: the command is refused saying
+   so, and the chart is read again every 30 s.
+
+   **Locks (2026-10-18).** A lock's gates are keep-outs like any structure, so no route
+   runs through a lock by itself. When a Go-To is refused and a lock lies between the
+   boat and the point (two lock gates facing across a chamber, found on the chart), the
+   alerts card offers **TRANSIT THE LOCK**. Taken: the way on from beyond the far gate is
+   planned first (a lock she could not be taken out of is not one to take her into); she
+   goes to hold 60 m short of the near gate; **GATE OPEN - GO IN** takes her slowly along
+   the chamber's axis to hold in the chamber, the lock's two gates taken out of the
+   keep-out model for this, for the guard and the planner alike; **FAR GATE OPEN - GO ON**
+   takes her out slowly along the axis and on to the point; once she is past the far
+   gate the gates are keep-outs again and the speed is released. Nothing passes a gate
+   but on your word. **CANCEL TRANSIT** ends it at any stage; inside the lock the gates
+   stay out of the model until she is out of it. The console does not talk to the lock:
+   calling it is yours. A reload ends a transit (the gates come back, and the guard holds
+   her if one is ahead). Seen live on a scratch console at Canaveral, with NOAA serving
+   that chart only in part all evening (17 reads, never whole): a Go-To through the lock
+   was refused, "the target lies in water whose chart could not be read", where the
+   evening's had gone over land, and the lock was found as charted - two lock gates 200 m
+   apart, 27.4 m wide. A whole transit has not yet been run live: it needs that chart
+   served whole; tests/lock_transit.js drives every stage through the page's own code.
 
    **Speed zones: the law's limit holds her speed** (Andy, 2026-10-16: "Build a bounded area that
    overrides commanded speed and lowers to legal speed. this releases once the ASV is clear of the
@@ -2641,10 +2664,14 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    **unread**: drawn gray with the NOGO zones, named on the Nogo row (*unread*), and a route through
    it, or within 100 m of it, is refused at once ("the route runs through water no chart covers"),
    because no wider read can chart it. A square whose chart could not be read is outlined as well,
-   and the refusal says to command it again once it can be read. Squares within 100 m of the boat
-   herself don't count, so a boat that has drifted into or up to unread water is never stranded by
-   them, RTH included. A tile whose coverage could not be read is unread, never empty water; a tile
-   with a failed layer is served once and not cached. The seabed-gap check runs on the harbour chart
+   and the refusal says to command it again once it can be read. Only the boat's own first 100 m is
+   excused (2026-10-18): a route that runs on through unread water, the square she is in included,
+   is refused until the chart there is read - RTH as well. (The whole square she was in used to be
+   excused, and at the Canaveral lock that square was a 25 km chart tile: the Go-To ran 856 m over
+   land the model never had.) A tile whose coverage could not be read is unread, never empty water; a
+   tile with a failed layer is served once and not cached. A read asked to plan a route further that
+   arrives without some of its layers is USED (2026-10-18), with the earlier read's features of those
+   layers kept; it used to be thrown away whole, with the land it had brought. The seabed-gap check runs on the harbour chart
    alone, which is served whole, and a hole a coarser chart's seabed fills is where the harbour chart
    ends, not a float. A coarser chart's piece is drawn with no outline along its cut, and the
    chart-image read doesn't take the cut for charted ink. The first read of the Portsmouth operating

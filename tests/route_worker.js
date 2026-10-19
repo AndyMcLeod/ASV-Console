@@ -471,9 +471,15 @@ const goto = (from, to, o) => ({ op: "nogo", args: { from, to, opts: o } });
   const CALLERS = { doGoTo: "Go-To", doRTH: "RTH", sailSend: "section", doTransit: "Transit", doUpload: "Upload",
                     continueSurvey: "Continue", resumeFromHere: "Resume from here" };
   // (the caller's closure: from its `await planInsideChart(` to the `withdrawn` it checks straight after)
+  // (a caller that searches through planGoToLeg - the Go-To since 2026-10-18, its lock transit's legs beside it - is held
+  // to that function's own search through planOffThread, and to its own `withdrawn` straight after the call)
+  const legSrc = grab("planGoToLeg"), legThrough = /return planInsideChart\([\s\S]*planOffThread\(/.test(legSrc);
   const wiring = Object.keys(CALLERS).map((fn) => {
-    const src = grab(fn), i = src.indexOf("await planInsideChart("), j = i < 0 ? -1 : src.indexOf(".withdrawn", i);
-    return { fn, through: i >= 0 && j > i && /planOffThread\(/.test(src.slice(i, j)), checks: i >= 0 && j > i };
+    const src = grab(fn);
+    let i = src.indexOf("await planInsideChart("), viaLeg = false;
+    if (i < 0) { i = src.indexOf("await planGoToLeg("); viaLeg = i >= 0; }
+    const j = i < 0 ? -1 : src.indexOf(".withdrawn", i);
+    return { fn, through: i >= 0 && j > i && (viaLeg ? legThrough : /planOffThread\(/.test(src.slice(i, j))), checks: i >= 0 && j > i };
   });
   const tec = grab("transitEstCompute");
   const handler = (id) => { const i = H.indexOf('$("#' + id + '").onclick'); return H.slice(i, H.indexOf("\n$(", i + 10)); };

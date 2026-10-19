@@ -138,7 +138,10 @@ export const NOGO_ENF = {land:true, depth:true, haz:true, area:false, wreck:true
 // clear water, so passage.js beyondChart refuses a route through them as it refuses one past the box.
 export const nogo = {ready:false, busy:false, frame:null, ko:null, band:null, note:"nogo not loaded",
             buffer:V.NOGO_BUFFER_M, enf:{...NOGO_ENF}, features:null, bbox:null, center:null,
-            builtOffset:null, ais:null, unread:null};
+            builtOffset:null, ais:null, unread:null,
+            // a read that FAILED (2026-10-18): {at, why}, or null - the planners refuse rather than route direct
+            // (passage.js chartFailedRefusal); a sea no chart covers is `ready` false with this null, routed direct
+            failed:null};
 
 // --- live chart state ------------------------------------------------------------------
 // These three ARE reassigned, so they are fields on an object rather than exported bindings

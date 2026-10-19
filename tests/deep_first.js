@@ -485,7 +485,10 @@ const w = { calls: [] };
 const modelAt = new Function("w", ["const nogo = {frame: 'F', enf: 'E', features: ['f']}, sea = {enc: {features: []}}, nogoDR = () => ({min: 4, max: 0});",
   "const buildKeepouts = (frame, enf, dr, feats, m) => ({builtAt: m, polys: ['p']});",
   "const buildMargin = (frame, enf, dr, feats, m, ko) => { w.calls.push({m, ko, feats}); return {at: m}; };",
-  "const foldChartInk = () => {};", grabFn("nogoModelAt"), "return nogoModelAt;"].join("\n"))(w);
+  "const foldChartInk = () => {};",
+  // the model's features less a waived lock's gates (2026-10-18): the real modelFeatures, no lock waived
+  "let lockWaiver = null; const lockFeatureKey = (f) => String(f);", grabFn("modelFeatures"),
+  grabFn("nogoModelAt"), "return nogoModelAt;"].join("\n"))(w);
 const kAt = modelAt(0.7);
 // setPlanIntent itself, driven with the real deepWhy
 const SPI = new Function("deepWhy", "fmtDist", ["let planGen = 0, planIntent = null, guardOverride, edgeSpentM, edgeCount, guardActedAt, holdWant, edgeSearchAt;",

@@ -105,17 +105,44 @@ console.log("Water no chart covers:");
         () => JSON.stringify({ through: through && [through.where, Math.round(through.outM)], across: across && Math.round(across.outM),
                                margin: margin && margin.outM, clear, none }));
   const failed = P.beyondChart([at(0, 0), at(1200, 0)], box, undefined, [sqr(1000, -200, 1400, 200, true)]);
-  // she is IN an unread square (drifted there): the route out of it stands - a second square further on does not
+  // she is IN an unread square (2026-10-18, A2 - Andy: "Excuse only her own short way out, not the whole unread
+  // square"): her own first 100 m is let be, and nothing further - not the rest of the square she is in
   const U2 = [sqr(-200, -200, 200, 200), sqr(1000, -200, 1400, 200)];
-  const out = P.beyondChart([at(0, 0), at(800, -600)], box, undefined, U2);
+  const BIG = [sqr(-12000, -12000, 12000, 12000, true)];                           // a whole chart tile, failed
+  const out = P.beyondChart([at(0, 0), at(800, -600)], box, undefined, U2);        // ~250 m inside her square first
+  const shortOut = P.beyondChart([at(0, 0), at(80, 0)], box, undefined, U2);       // within her own first 100 m
+  const throughTile = P.beyondChart([at(0, 0), at(3000, 200)], box, undefined, BIG);   // the Canaveral case
   const onward = P.beyondChart([at(0, 0), at(3000, 0)], box, undefined, U2);
   const pointsOnly = P.beyondChart([at(0, 0), at(3000, 0)], box, undefined, U, {points: true});
-  check("1b. a square whose chart could not be READ is said as one (`failed`); a boat IN an unread square is not "
-        + "stranded - the route out of it stands - while a second square further on is still refused; and a command's "
-        + "own POINTS (`points`) are judged without the straight line between them",
-        () => failed && failed.where === "unread" && failed.failed === true && out === null
+  check("1b. a square whose chart could not be READ is said as one (`failed`); a boat IN an unread square has her own "
+        + "first 100 m let be and NOTHING MORE (A2): a route that runs on inside her square is refused, as is one through "
+        + "the whole failed tile she was spawned in, while one that stays within her first 100 m stands; a second square "
+        + "further on is refused; and a command's own POINTS (`points`) are judged without the straight line between them",
+        () => failed && failed.where === "unread" && failed.failed === true
+              && out && out.where === "unread" && shortOut === null
+              && throughTile && throughTile.where === "unread" && throughTile.failed === true && throughTile.outM > 1000
               && onward && onward.where === "unread" && onward.outM > 150 && pointsOnly === null,
-        () => JSON.stringify({ f: failed && failed.failed, out, onward: onward && Math.round(onward.outM), pointsOnly }));
+        () => JSON.stringify({ f: failed && failed.failed, out: out && out.where, shortOut, tile: throughTile && Math.round(throughTile.outM),
+                               onward: onward && Math.round(onward.outM), pointsOnly }));
+  // 1d. A READ THAT FAILED IS REFUSED BY THE PLANNERS, NOT ROUTED STRAIGHT (2026-10-18, A3): with no model and
+  // `nogo.failed`, holdTarget, planNogoRoute and routePlan answer the refusal (mode chart_failed); with no model and
+  // no failure - no chart at any scale - they answer `degraded` as before
+  {
+    const S = require(path.join(APP, "static", "js", "state.js")), was = { ...S.nogo };
+    S.nogo.ready = false; S.nogo.failed = { at: 0, why: "ENC enc_coastal/158: Could not find service" };
+    const ht = P.holdTarget(at(500, 0)), pr = P.planNogoRoute(at(0, 0), at(500, 0)), rp = P.routePlan(at(0, 0), [at(500, 0)]);
+    S.nogo.failed = null;
+    const ht0 = P.holdTarget(at(500, 0)), pr0 = P.planNogoRoute(at(0, 0), at(500, 0)), rp0 = P.routePlan(at(0, 0), [at(500, 0)]);
+    Object.assign(S.nogo, was);
+    const refused = (x) => x && /could not be read \(ENC enc_coastal\/158: Could not find service\)/.test(x.error || "")
+                           && x.reason && x.reason.mode === "chart_failed" && !x.degraded;
+    check("1d. a READ THAT FAILED is refused by every planner (holdTarget, planNogoRoute, routePlan: the failure named, "
+          + "mode chart_failed, routePlan with no route at all) - never routed straight; with no model and no failure (no "
+          + "chart at any scale) they answer degraded, straight, as before",
+          () => refused(ht) && refused(pr) && refused(rp) && Array.isArray(rp.route) && rp.route.length === 0
+                && ht0.degraded && !ht0.error && pr0.degraded && pr0.direct && rp0.degraded && rp0.route.length === 1,
+          () => JSON.stringify({ ht: ht && ht.error, pr: pr && pr.reason, rp: rp && rp.route, ht0: ht0.degraded, pr0: pr0.degraded, rp0: rp0.degraded }));
+  }
   const both = P.beyondChart([at(0, 0), at(1200, 0), at(0, 30000)], box, undefined, U);
   check("1c. the BOX comes first: a route that leaves the box and crosses unread water is refused for the box (a wider "
         + "read may answer that; nothing answers the other)",

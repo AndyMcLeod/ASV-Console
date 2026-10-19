@@ -2269,9 +2269,13 @@ ENC_ROLES = {
 #           static/js/speedzones.js): what a shoreline construction is (a "ramp" from a "pier"), a small-craft facility
 #           and a harbor facility ("yacht harbor" from "ferry terminal") - text, as ENCDirect publishes them. A tile read
 #           before carries none of the three; it is read again within ENC_TILE_FRESH_S.
+#   CATGAT (2026-10-18, the lock transit - static/js/locks.js): what a gate is - "lock gate" at Canaveral, whose two are
+#           the lock's only charted trace (no Lock_Basin_area); text. A gate that says it is no lock gate is never paired
+#           into a lock; a tile read before carries none, and its gates may still pair (the operator's opt-in checks it).
 ENC_KEEP_PROPS = ("DRVAL1", "DRVAL2", "VALSOU", "VALDCO", "OBJNAM", "CATLAM", "COLOUR",
                   "CATREA", "INFORM", "RESTRN", "WATLEV", "QUASOU", "EXPSOU", "CATWRK", "CATOBS", "CATCAM",
-                  "CONDTN", "TRAFIC", "VERCLR", "VERCCL", "VERCOP", "HORCLR", "CATBRG", "CATSLC", "CATSCF", "CATHAF")
+                  "CONDTN", "TRAFIC", "VERCLR", "VERCCL", "VERCOP", "HORCLR", "CATBRG", "CATSLC", "CATSCF", "CATHAF",
+                  "CATGAT")
 # ...and the ones the nogo model does ARITHMETIC or comparison on, which have to be NUMBERS.
 ENC_NUMERIC_PROPS = frozenset(("DRVAL1", "DRVAL2", "VALSOU", "VALDCO", "WATLEV",
                                "VERCLR", "VERCCL", "VERCOP", "HORCLR"))

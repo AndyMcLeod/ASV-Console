@@ -406,9 +406,14 @@ const ENC_MAX_SPAN_DEG = +(H.match(/const ENC_MAX_SPAN_DEG = ([\d.]+);/) || [])[
 // own refoldInk and inkNote merge them back into `chartInk` (the real mergeReads), so they must resolve here.
 const { mergeReads } = require("../static/js/inkreads.js");
 var chartReads = [], inkRefused = null;
+// ⚠ AND A FAILED READ'S RETRY (2026-10-18, A3) and the partial `keep` read's merge (A1): read from the page too.
+const NOGO_RETRY_MS = +(H.match(/const NOGO_RETRY_MS = (\d+)/) || [])[1];
 eval("const NOGO_QUEUE_MAX_MS = " + NOGO_QUEUE_MAX_MS + ";" + "\n" +
+     "const NOGO_RETRY_MS = " + NOGO_RETRY_MS + ";" + "\n" + grab("keepEarlierClasses") + "\n" +
      "const ENC_MAX_SPAN_DEG = " + ENC_MAX_SPAN_DEG + ";" + "\n" + grab("encSpanRefusal") + "\n" +
      grab("refoldInk") + "\n" + grab("inkNote") + "\n" +
+     // rebuildNogo builds from modelFeatures since 2026-10-18 (less a waived lock's gates - tests/lock_transit.js): the real one
+     "var lockWaiver = null; function lockFeatureKey(f){ return String(f); }" + "\n" + grab("modelFeatures") + "\n" +
      grab("foldChartInk") + "\n" + grab("rebuildNogo") + "\n" + grab("nogoStatus") + "\n" +
      grab("updateNogoUI") + "\n" + grab("refreshNogo") + "\n" +
      "const featLLBoxes = new WeakMap(), eachRingF = _eR;\n" +
@@ -842,7 +847,7 @@ async function drive(fetchResult) {
       ["no band (offline)", async () => { sea.enc = { features: [], band: undefined }; return { band: null, note: "ENC offline (no cache for this area)" }; },
        /^ENC offline \(no cache for this area\)$/],
       ["a throw", async () => { throw new Error("connection reset"); }, /^chart read failed: Error: connection reset$/],
-      ["a partial extract", async () => ({ band: "enc_5", partial: ["Depth_Area"] }), /^the extract arrived without Depth_Area$/],
+      // (an extract missing a layer is no longer a failure here - 27e, A1)
     ];
     const got = [];
     for (const [name, fetch, failedRe] of ways) {
@@ -854,7 +859,7 @@ async function drive(fetchResult) {
       got.push({ name, answer, kept: same(had), failed: ask.failed, ok: answer === false && same(had) && failedRe.test(ask.failed || "")
                  && banners.some((t) => t === "Chart NOT read over that water: " + ask.failed + ". The model of the water already read is kept.") });
     }
-    check("27. a `keep` read that FAILS - no band (offline), a throw, or an extract missing a layer - leaves the model "
+    check("27. a `keep` read that FAILS - no band (offline) or a throw - leaves the model "
           + "of the water already read exactly as it was (ready, features, box, keep-outs, frame, sea.enc), answers false, "
           + "says why in `failed`, and says the model was kept",
           got.every((g) => g.ok),
@@ -865,6 +870,71 @@ async function drive(fetchResult) {
     check("27b. ... and WITHOUT `keep` the same failure still drops the model, as the operating area's own read always has",
           plain === false && had.ready === true && nogo.ready === false,
           "answered " + plain + ", ready " + nogo.ready);
+    // 27e. A PARTIAL `keep` READ IS USED, NOT THROWN AWAY (2026-10-18, A1 - Andy, at the Canaveral lock: "goto path
+    // planning is driving over land"). The Go-To's read there brought the land, the gates, the piers and the depths and
+    // missed 29 other layers; it was discarded whole and the model kept had none of that land. Now it is taken, with the
+    // EARLIER read's features of each class that did not arrive kept in (keepEarlierClasses), none twice.
+    {
+      const OLD_LAND = { cls: "Land_Area", oid: 2, role: "land" }, OLD_DEPTH = { cls: "Depth_Area", oid: 1, role: "depth_area" };
+      const NEW_LAND = { cls: "Land_Area", oid: 3, role: "land" }, NEW_DUP = { cls: "Depth_Area", oid: 1, role: "depth_area" };
+      setNogo({ ready: false, busy: false, frame: null, ko: null, band: null,
+                note: "nogo not loaded", enf: {}, features: null, bbox: null, center: null });
+      sea.enc = { features: [OLD_LAND, OLD_DEPTH], band: "enc_5" };
+      FETCH = async () => ({ band: "enc_5" });
+      await refreshNogo(null, { W: -70.90, S: 43.00, E: -70.50, N: 43.20 });
+      banners = [];
+      FETCH = async () => { sea.enc = { features: [NEW_LAND], band: "enc_5", partial: ["Depth_Area"] };
+                            return { band: "enc_5", partial: ["Depth_Area"], features: [NEW_LAND] }; };
+      const ask = { keep: true };
+      await ensureNogoCovers(far, 300, ask);
+      const f = nogo.features || [];
+      const used = { failed: ask.failed || null, ready: nogo.ready, newLand: f.includes(NEW_LAND), oldDepth: f.includes(OLD_DEPTH),
+                     oldLand: f.includes(OLD_LAND), said: banners.some((t) => /The earlier read's 1 feature\(s\) of those layers are kept\./.test(t)),
+                     kept: banners.some((t) => /The model of the water already read is kept/.test(t)) };
+      // ... and the merge alone: a class that arrived is not doubled, one that did not is kept once
+      const enc = { features: [NEW_LAND, NEW_DUP] }, n = keepEarlierClasses(enc, { features: [OLD_LAND, OLD_DEPTH] }, ["Depth_Area"]);
+      check("27e. a `keep` read that arrived WITHOUT A LAYER is USED: the new land is in the model, the earlier read's depth "
+            + "area (the class that did not arrive) is kept in, the earlier land (a class that did arrive) is not, it is no "
+            + "failure, and the banner says what was kept; the merge keeps a missing class's features once, by class and id",
+            used.failed === null && used.ready === true && used.newLand && used.oldDepth && !used.oldLand && used.said && !used.kept
+            && n === 0 && enc.features.length === 2,
+            JSON.stringify({ used, merged: n }));
+    }
+    // 27f. A READ THAT FAILED IS NOT A SEA WITH NO CHART (2026-10-18, A3): the operating area's own read answering no band
+    // because NOAA failed (`unread_failed`, or a throw) sets nogo.failed - the planners refuse on it (unread_water 1d) - and
+    // says it is read again; one answering no band because no chart covers the water routes direct, as before; a read
+    // that lands clears it. And the wiring: onState asks a failed read again every NOGO_RETRY_MS, and the Upload refuses.
+    {
+      const run = async (fetch) => {
+        setNogo({ ready: false, busy: false, frame: null, ko: null, band: null, note: "nogo not loaded", enf: {}, features: null,
+                  bbox: null, center: null, failed: null });
+        banners = []; FETCH = fetch;
+        await refreshNogo(null, { W: -80.75, S: 28.25, E: -80.50, N: 28.50 });
+        return { failed: nogo.failed && nogo.failed.why, ready: nogo.ready, said: banners.slice(-1)[0] || "" };
+      };
+      const svc = await run(async () => { sea.enc = { features: [], band: null };
+        return { band: null, note: "ENC enc_coastal/158: Could not find service", unread_failed: [[-80.75, 28.25, -80.5, 28.5]] }; });
+      const threw = await run(async () => { throw new Error("connection reset"); });
+      const none = await run(async () => { sea.enc = { features: [], band: null };
+        return { band: null, note: "no ENC coverage here", unread: [[-80.75, 28.25, -80.5, 28.5]] }; });
+      const after = await (async () => { const f = await run(async () => { sea.enc = { features: [], band: null };
+        return { band: null, note: "x", unread_failed: [[0, 0, 1, 1]] }; });
+        FETCH = async () => { sea.enc = { features: [{}], band: "enc_5" }; return { band: "enc_5" }; };
+        await refreshNogo(null, { W: -80.75, S: 28.25, E: -80.50, N: 28.50 });
+        return { before: f.failed, after: nogo.failed, ready: nogo.ready }; })();
+      const onState = grab("onState");
+      const retried = /else if\(!nogo\.ready && !nogo\.busy && nogo\.failed && Date\.now\(\) - nogo\.failed\.at > NOGO_RETRY_MS\)\{\s*nogo\.failed\.at = Date\.now\(\);\s*refreshNogo\(/.test(onState);
+      const upload = /if\(!nogo\.ready\)\{[\s\S]{0,400}const chartFailed = chartFailedRefusal\(\);\s*if\(chartFailed\)\{ showBanner\("Upload refused: "/.test(H);
+      check("27f. a read that FAILED (NOAA's error, or a throw) sets nogo.failed and says the chart could NOT be read and is "
+            + "read again every 30 s - never 'route DIRECT'; no chart at any scale routes direct as before; a read that lands "
+            + "clears it; onState asks a failed read again every NOGO_RETRY_MS, and the Upload refuses one",
+            svc.failed === "ENC enc_coastal/158: Could not find service" && !svc.ready && /could NOT be read/.test(svc.said)
+            && /reading it again every 30 s/.test(svc.said) && !/DIRECT/.test(svc.said)
+            && /^chart read failed: Error: connection reset$/.test(threw.failed || "") && /reading it\s+again every 30 s/.test(threw.said)
+            && none.failed === null && /route DIRECT/.test(none.said)
+            && after.before === "x" && after.after === null && after.ready === true && NOGO_RETRY_MS === 30000 && retried && upload,
+            JSON.stringify({ svc, threw, none, after, retried, upload }));
+    }
   }
 
   // 28-28b. A WIDER EXTRACT OF THE SAME CHART KEEPS ITS CHART READS (2026-10-03, found by the review). Every read lies in

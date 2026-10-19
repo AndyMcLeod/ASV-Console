@@ -284,7 +284,7 @@ import(${JSON.stringify(pathToFileURL(WPATH).href)}).then(() => parentPort.postM
         () => /drawLayerOff\(encLayer, "enc", encLayerKeyNow\(\), \[sea\.enc\], drawENC, toScreen, w, h, o, encIdForWorker\(\), encDrawData\);/.test(H)
               && /drawLayerOff\(nogoLayer, "nogo", nogoLayerKeyNow\(\),[^;]*nogoIdForWorker\(\), nogoDrawData\);/.test(H)
               && /drawLayerOff\(lawLayer, "law", String\(zoom\), \[zonesList\],[^;]*encIdForWorker\(\), null\);/.test(H)
-              && /workerId: skinJob \? skinJob\.id : null/.test(H) && /nogo\.featuresFrom = enc\.workerState === "ok" \? enc\.workerId : null;/.test(H)
+              && /workerId: skinJob \? skinJob\.id : null/.test(H) && /nogo\.featuresFrom = enc\.workerState === "ok" && !keptN \? enc\.workerId : null;/.test(H)
               && /if\(m\.type === "drawn"\)\{ layerAnswer\(m\); return; \}/.test(H)
               && /clDrawENC\(toScreen, ctx, \{\.\.\.encDrawData\(\), features: sea\.enc\.features, hazExtent\}\)/.test(grab("drawENC"))
               && /clDrawNogo\(toScreen, ctx, \{\.\.\.nogoDrawData\(\), features: nogo\.features, depthExcluded\}\)/.test(grab("drawNogo"))

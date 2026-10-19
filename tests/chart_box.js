@@ -489,8 +489,10 @@ const fresh = () => { banners = []; downs = []; covers = []; aisTaken = 0; cover
   const go = body("doGoTo"), rth = body("doRTH"), tr = body("doTransit"), up = body("doUpload");
   check("6. Go-To and RTH plan through planInsideChart, each over its own boat-and-target points",
         // (the search from her to the target in the route worker since 2026-10-12, and here beside it: tests/route_worker.js)
-        () => /const plan = await planInsideChart\(\[\{lat:asv\.lat,lon:asv\.lon\}, target\], undefined, \(\) => \{\s*\n\s*const from = \{lat:asv\.lat,lon:asv\.lon\}, o = /.test(go)
-              && /planOffThread\(\{op: "nogo", args: \{from, to: target, opts: o\}\}, \(\) => planNogoRoute\(from, target, o\)\)/.test(go)
+        // (since 2026-10-18 the Go-To plans through planGoToLeg, from her unless a lock transit's leg names its own start)
+        () => /const plan = await planGoToLeg\(how\.from \|\| \{lat:asv\.lat,lon:asv\.lon\}, target, "Go-To"\);/.test(go)
+              && /return planInsideChart\(\[from, target\], undefined, \(\) => \{\s*\n\s*const o = /.test(grab("planGoToLeg"))
+              && /planOffThread\(\{op: "nogo", args: \{from, to: target, opts: o\}\}, \(\) => planNogoRoute\(from, target, o\)\)/.test(grab("planGoToLeg"))
               && /const plan = await planInsideChart\(\[\{lat:asv\.lat,lon:asv\.lon\}, \{lat:S\.home\.lat,lon:S\.home\.lon\}\], undefined, \(\) => \{[^\n]*\n\s*const from = \{lat:asv\.lat,lon:asv\.lon\}, to = \{lat:S\.home\.lat,lon:S\.home\.lon\}, o = /.test(rth)
               && /planOffThread\(\{op: "nogo", args: \{from, to, opts: o\}\}, \(\) => planNogoRoute\(from, to, o\)\)/.test(rth),
         "doGoTo / doRTH");

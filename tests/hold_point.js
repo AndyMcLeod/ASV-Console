@@ -340,8 +340,10 @@ check("5. holdClearM is the water round a point LESS the buffer: 12 m off the fa
               && !/\{lat:target\.lat, lon:target\.lon, route/.test(goTo)
               // the hold options plus the transit standoff (2026-09-26; the turn radius at the plan speed, 2026-10-06), to the
               // route worker and to the page's own search beside it (2026-10-12, tests/route_worker.js)
-              && /const from = \{lat:asv\.lat,lon:asv\.lon\}, o = \{\.\.\.holdOpts\(\), standoffM: transitStandoffM\(\)\};/.test(goTo)
-              && /planOffThread\(\{op: "nogo", args: \{from, to: target, opts: o\}\}, \(\) => planNogoRoute\(from, target, o\)\)/.test(goTo),
+              // (in planGoToLeg since 2026-10-18 - the lock transit plans its legs there - which doGoTo plans through)
+              && /const plan = await planGoToLeg\(how\.from \|\| \{lat:asv\.lat,lon:asv\.lon\}, target, "Go-To"\);/.test(goTo)
+              && /const o = \{\.\.\.holdOpts\(\), standoffM: transitStandoffM\(\)\};/.test(noComments(grab(PAGE, "planGoToLeg")))
+              && /planOffThread\(\{op: "nogo", args: \{from, to: target, opts: o\}\}, \(\) => planNogoRoute\(from, target, o\)\)/.test(noComments(grab(PAGE, "planGoToLeg"))),
         "a Go-To that names the pier as its target would hold ON the pier");
   // The #b_hold handler in full, so the check reads the property rather than a distance.
   const BH = PAGE.indexOf('$("#b_hold").onclick');

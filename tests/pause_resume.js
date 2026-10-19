@@ -774,6 +774,9 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     const surveyById = (id) => (mission.surveys || []).find((x) => x.id === id) || null;
     // (doUpload plans through planInsideChart since 2026-10-03 - the page's own, in this world's bundle above.)
     // eslint-disable-next-line no-eval
+    // the Upload refuses a read that FAILED (2026-10-18): the planners' own refusal - passage.js's text - on this world's nogo
+    const PSG = fs.readFileSync(path.join(path.dirname(require.resolve("../static/js/passage.js")), "passage.js"), "utf8");
+    const chartFailedRefusal = eval("(" + PSG.slice(PSG.indexOf("function chartFailedRefusal("), PSG.indexOf("\nexport function holdTarget(")) + ")");
     const doUpload = eval("(" + grab("doUpload") + ")");
     const up = async (setup) => { calls.length = 0; unotes.length = 0; banners.length = 0; asked = null;
                                   runRoute = null;

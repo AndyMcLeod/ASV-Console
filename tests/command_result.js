@@ -477,6 +477,9 @@ function world(opts) {
                            + grabDecl("STALL_TICK_MS") + "\n" + grabDecl("ENC_MAX_SPAN_DEG") + "\n" + grab("encSpanRefusal") + "\n" + grabDecl("bbUnion") + "\n"
                            + grab("sizeWhy") + "\n" + grab("unchartedTip") + "\n" + grab("planWhy") + "\n"
                            + grab("planInsideChart") + "\n"
+                           // doGoTo plans through planGoToLeg since 2026-10-18 (the lock transit's legs); a refused Go-To
+                           // offers a lock - none here (tests/lock_transit.js)
+                           + grab("planGoToLeg") + "\n" + "const lockOffer = () => {};" + "\n"
                            + grab("doRTH") + "\n" + grab("doGoTo") + "\n" + grab("doTransit")
                            + EPILOGUE)(W, setTimeout, clearTimeout, AbortController);
   W.api = api;              // so a fetch stub can act INSIDE the bundle mid-round-trip

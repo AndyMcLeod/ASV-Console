@@ -95,8 +95,8 @@ export function nearCost(d, O = OPEN_WATER) { const x = Math.max(0, 1 - d / O.CL
  * CHART_EDGE_M). The model holds nothing past the box the chart was read over, or in a square no chart covers - and
  * nothing is exactly what this search prizes most: open water at no cost. Unchecked, it drew the route OUT of the read
  * water on every long leg, to be refused as uncharted and read again round after round. So a cell less than `edgeM`
- * inside the box, or within `edgeM` of an unread square (beyondChart's own rule, the squares within `edgeM` of `from`
- * - where she is - aside), is BLOCKED for the search and the pull - but it is no danger: the clearance is measured
+ * inside the box, or within `edgeM` of an unread square (beyondChart's own rule, the cells within `edgeM` of `from`
+ * - her own way out of where she is - aside, since 2026-10-18), is BLOCKED for the search and the pull - but it is no danger: the clearance is measured
  * from the chart's keep-outs alone, so the route is not pushed off the box's edge for being an edge. The page reads
  * the chart over the water this searches before it plans a long leg (asv.html planInsideChart, openWaterBox). With
  * no box - the suites' own worlds - nothing is cut.
@@ -189,14 +189,21 @@ export function openWaterField(x0, y0, x1, y1, ko, buf, O = OPEN_WATER, chart = 
       const k = M * Math.cos(q.lat * Math.PI / 180);
       return Math.max((r.S - q.lat) * M, (q.lat - r.N) * M, (r.W - q.lon) * k, (q.lon - r.E) * k);   // <= 0 inside
     };
+    // ONLY HER OWN FIRST edgeM IS LET BE, NOT THE SQUARE SHE IS IN (2026-10-18, A2 - passage.js unreadAlong's note): the
+    // square round the Canaveral lock was a whole chart tile, and letting it be let a route run 6.6 km through it.
     const from = chart.from || null;
-    const unread = (chart.unread || []).filter((r) => !(from && near(from, r) < edgeM));
+    const unread = chart.unread || [];
+    const herWayOut = (q) => {
+      if (!from) return false;
+      const k = M * Math.cos(from.lat * Math.PI / 180);
+      return Math.hypot((q.lat - from.lat) * M, (q.lon - from.lon) * k) <= edgeM;
+    };
     for (let gy = 0; gy < H; gy++) {
       for (let gx = 0; gx < W; gx++) {
         const i = gy * W + gx;
         if (blk[i]) continue;
         const q = F.fromEN(x0 + gx * cell, y0 + gy * cell);
-        if ((box && inside(q) < edgeM) || unread.some((r) => near(q, r) < edgeM)) { blk[i] = 2; offChart++; }
+        if ((box && inside(q) < edgeM) || (!herWayOut(q) && unread.some((r) => near(q, r) < edgeM))) { blk[i] = 2; offChart++; }
       }
     }
   }
