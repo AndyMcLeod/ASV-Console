@@ -52,7 +52,11 @@ const BRITISH = ["behaviour", "colour", "centre", "metre", "kilometre", "centime
                  // suite had run clean. A word list built from what a grep turned up is a list
                  // of the mistakes already made, not of the ones available to make.
                  "artefact", "litre", "defence", "offence", "draught", "aluminium",
-                 "sceptic", "storey", "kerb", "plough", "tyre", "whilst", "amongst"];
+                 "sceptic", "storey", "kerb", "plough", "tyre", "whilst", "amongst",
+                 // ⚠ ADDED 2026-10-18: `harbour` sat in SHIPPED manual prose (both builders) and
+                 // in the README with this suite green, because it was never on the list. NOAA's
+                 // own name for its finest band IS spelled that way and stays - NOAA_NAME below.
+                 "harbour"];
 // ⚠⚠ NOT `programme`. Every apparent hit in this tree is `programmer` or
 // `non-programmer`, which is correct American English - a stem match with no right edge would
 // have "corrected" a word that was already right. The lookahead refuses a stem carried on by
@@ -85,18 +89,50 @@ const S57 = /"COLOUR"|CATLAM\/COLOUR|COLOUR for the buoy|ENC_KEEP_PROPS/;
 // different field entirely. Checked rather than taken.
 const AIS_FIELD = /v\.draught|"draught"|'draught'|STATIC_KEYS|draught, IMO number/;
 
+// ⚠⚠ AND NOAA'S OWN NAME FOR ITS FINEST BAND, which is spelled `harbour` and is not ours to
+// respell. ENCDirect serves the band as `enc_harbour` (asv_console.py ENC_BANDS, the service
+// path every chart read asks for), and the console keys a corridor read's bands by that name with
+// `enc_` cut off (the page's CORRIDOR_SCALES, "harbour"). Renaming either breaks the chart read.
+// The prose around them - "the harbor chart", "harbor scale" - is ours, and American.
+// ⚠ THIS ONE IS SCOPED TO THE NAME, NOT THE LINE. The three above exempt a whole line; this
+// cuts the name out of the line and judges what is left, so a line that names `enc_harbour` and
+// says "the harbour chart" in the same breath is still caught. `skinOverHarbour` needs nothing:
+// the leading letter-boundary already keeps a longer identifier from matching. Check 6 pins where
+// it applies, and 6b proves the hole is no wider than the name.
+// ... AND S-57'S OWN CLASS NAME Harbour_Facility (the chart's marina / harbor-facility objects, as NOAA's ENCDirect serves
+// them - asv_console.py _ENC_RULE_CLASSES, the 2026-10-18 review): the server matches layers by it, so it is not respelled.
+const NOAA_NAME = /\benc_harbour\b|"harbour"|\bHarbour_Facility\w*/g;
+
+// One line's verdict: null when it carries no British spelling, else the spellings on it and
+// why they are exempt (`why` null = a hit).
+function judge(ln) {
+  const all = ln.match(RE);
+  if (!all) return null;
+  const m = ln.replace(NOAA_NAME, "").match(RE);
+  if (!m) return { m: all, why: "noaa-name" };
+  const why = QUOTED.test(ln) ? "quotation" : S57.test(ln) ? "s57"
+            : AIS_FIELD.test(ln) ? "ais-field" : null;
+  return { m, why };
+}
+
 function scan(rel) {
   const txt = fs.readFileSync(path.join(ROOT, rel), "utf8");
-  const hits = [], exempt = [];
+  const hits = [], exempt = [], lines = {};
   txt.split(/\r?\n/).forEach((ln, i) => {
-    const m = ln.match(RE);
-    if (!m) return;
-    const why = QUOTED.test(ln) ? "quotation" : S57.test(ln) ? "s57"
-              : AIS_FIELD.test(ln) ? "ais-field" : null;
-    (why ? exempt : hits).push(rel + ":" + (i + 1) + " " + m.join(",") + (why ? " [" + why + "]" : ""));
+    const j = judge(ln);
+    if (!j) return;
+    const at = rel + ":" + (i + 1);
+    lines[at] = ln;
+    (j.why ? exempt : hits).push(at + " " + j.m.join(",") + (j.why ? " [" + j.why + "]" : ""));
   });
-  return { hits, exempt };
+  return { hits, exempt, lines };
 }
+// How many exempt lines of each kind - a total alone cannot say which exemption grew (check 4).
+const kinds = (exempt) => {
+  const n = {};
+  exempt.forEach(s => { const k = /\[([a-z0-9-]+)\]$/.exec(s)[1]; n[k] = (n[k] || 0) + 1; });
+  return Object.keys(n).map(k => n[k] + " " + k).join(", ") || "none";
+};
 
 console.log("American spellings, everywhere the console speaks in its own voice:");
 
@@ -124,7 +160,7 @@ console.log("American spellings, everywhere the console speaks in its own voice:
         () => page.hits.length === 0,
         () => page.hits.length
                 ? page.hits.length + " hit(s): " + page.hits.slice(0, 6).join(" | ")
-                : "clean, with " + page.exempt.length + " line(s) exempt as quotation");
+                : "clean, with " + page.exempt.length + " line(s) exempt (" + kinds(page.exempt) + ")");
 
   const srv = scan("asv_console.py");
   check("3. ... and neither does the server, whose refusals are read in words",
@@ -170,12 +206,61 @@ console.log("American spellings, everywhere the console speaks in its own voice:
 {
   const srv = scan("asv_console.py");
   const s57 = srv.exempt.filter(s => /\[s57\]/.test(s));
+  // ⚠ "AND NOTHING ELSE IN THE SERVER" was `srv.exempt.length === 3` until NOAA's band name
+  // (check 6) became a second kind there. Counted by kind now, as check 4 learned: the S-57
+  // lines are three, and every other server exemption must be NOAA's name, which 6 pins.
   check("5. ... and the S-57 attribute exemption covers exactly the three lines that name the "
         + "chart standard's own field, nothing wider",
-        () => s57.length === 3 && srv.exempt.length === 3,
+        () => s57.length === 3 && srv.exempt.every(s => /\[(s57|noaa-name)\]$/.test(s)),
         () => "exempt in the server: " + (srv.exempt.join(" | ") || "NOTHING")
             + ". COLOUR is an ENC attribute key, not a word - renaming it would stop every "
             + "channel mark carrying its symbol color through, silently");
+}
+
+// -- 6. NOAA'S BAND NAME IS EXEMPT WHERE IT IS A NAME, AND NOWHERE ELSE --------------------
+// ⚠ THE SAME PAIRING AGAIN. Pinned to the two lines that carry the key: the server's band
+// list and the page's corridor scales. No builder has any business carrying NOAA's key in a
+// manual, so a builder line exempt here fails too.
+{
+  const files = ["asv_console.py", "static/asv.html", "tools/build_tech_manual.js",
+                 "tools/build_ops_manual.js", "tools/build_dev_guide.js", "tools/build_quickstart.js",
+                 "tools/build_deck.js"];
+  const noaa = files.flatMap(f => { const s = scan(f);
+    return s.exempt.filter(e => /\[noaa-name\]$/.test(e)).map(e => ({ e, ln: s.lines[e.split(" ")[0]] })); });
+  const isKey = (x) => (/^asv_console\.py:\d+ /.test(x.e) && /^ENC_BANDS = \[/.test(x.ln.trim()))
+                    || (/^static\/asv\.html:\d+ /.test(x.e) && /^const CORRIDOR_SCALES = \[/.test(x.ln.trim()));
+  // S-57's Harbour_Facility class, named in the server alone (_ENC_RULE_CLASSES and its note, the 2026-10-18 review)
+  const isClass = (x) => /^asv_console\.py:\d+ /.test(x.e) && /\bHarbour_Facility/.test(x.ln) && !/^ENC_BANDS/.test(x.ln.trim());
+  check("6. ... and NOAA's name exemption covers exactly the lines that carry its names - the server's ENC_BANDS and the page's "
+        + "CORRIDOR_SCALES (its band key), and the server's lines naming S-57's Harbour_Facility class - nothing wider",
+        () => noaa.filter(isKey).length === 2 && noaa.some(isClass) && noaa.every(x => isKey(x) || isClass(x)),
+        () => "noaa-name-exempt: " + (noaa.map(x => x.e).join(" | ") || "NOTHING")
+            + ". enc_harbour is ENCDirect's band name; renaming it would break every chart read");
+
+  // ⚠⚠ AND THE RULE HAS TEETH BOTH WAYS. Check 6 counts what the tree holds today; these lines
+  // are judged by the same verdict the scan uses, so a stem dropped from BRITISH, an exemption
+  // widened to the whole line, or one widened to the word itself each fails here, whatever the
+  // tree happens to carry.
+  const P = (ln) => { const j = judge(ln); return !j ? "clean" : (j.why || "HIT"); };
+  const probe = [
+    ["the harbour chart is served whole", "HIT"],
+    ["THE SEABED'S GAPS, OVER THE HARBOUR CHART", "HIT"],
+    ["the Harbour band", "HIT"],
+    ["two harbours apart", "HIT"],
+    ['ENC_BANDS = ["enc_harbour", "enc_approach", "enc_coastal"]', "noaa-name"],
+    ['const CORRIDOR_SCALES = ["harbour", "approach", "coastal", "general"];', "noaa-name"],
+    ['"enc_harbour" is read whole beside the harbour chart', "HIT"],
+    ["return skinOverHarbour(feats, b, enc);", "clean"],
+    ['_ENC_RULE_CLASSES = ("Small_Craft_Facility_area", "Harbour_Facility_area", "Harbour_Facility_point")', "noaa-name"],
+    ["the harbour facility's class, Harbour_Facility_area", "HIT"],
+    ["the harbor chart is served whole", "clean"],
+  ];
+  const wrong = probe.filter(([ln, want]) => P(ln) !== want);
+  check("6b. ... and the rule has teeth: prose `harbour` is caught in every case, and beside "
+        + "NOAA's name on the same line; NOAA's name alone passes; the American spelling is clean",
+        () => wrong.length === 0,
+        () => wrong.length ? wrong.map(([ln, w]) => JSON.stringify(ln) + " -> " + P(ln) + ", want " + w).join(" | ")
+                           : probe.length + " lines judged as intended");
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED" : "\nall checks passed (" + ran + ")");

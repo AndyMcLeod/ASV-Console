@@ -259,7 +259,7 @@ check("7c. ... and within one band they sort by name (the four band-5 Lewes cell
       () => rowsOf(one).join(",") === "US5DE1DF,US5DE1DG,US5DE1EF,US5DE1EG",
       () => rowsOf(one).join(","));
 check("7b. the usage band is spelled out per row, not left as a digit",
-      () => ov.includes("Coastal") && ov.includes("Approach") && ov.includes("Harbour"));
+      () => ov.includes("Coastal") && ov.includes("Approach") && ov.includes("Harbor"));
 
 // 8/9. the marker is explained, and the vessel-outside case says so plainly
 check("8. the bullet is explained in words (a bare green dot is a guess)",

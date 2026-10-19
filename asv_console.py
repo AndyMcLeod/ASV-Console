@@ -2095,9 +2095,9 @@ def prefetch_charts(lat, lon, radius_km, zmin, zmax, max_tiles=6000):
 ENC_BASE = "https://gis.charttools.noaa.gov/arcgis/rest/services/encdirect/%s/MapServer"
 # ⚠ SIX BANDS ARE PUBLISHED AND FOUR WERE READ UNTIL 2026-10-12. The OVERVIEW band (usage 1) is the coarsest and is now
 # the last fill: water charted only at that scale read as UNREAD and the planners refused it. The BERTHING band (usage
-# 6, 65 cells - one of them at Eastport, US6ME56M) is finer than harbour and is read as a SUPPLEMENT where it reaches
-# (ENC_BERTHING, _enc_tile_build): added whole, never displacing the harbour chart, so the seabed-gap check keeps the
-# harbour chart's exact topology and both charts' hazards apply - more chart, never less.
+# 6, 65 cells - one of them at Eastport, US6ME56M) is finer than harbor and is read as a SUPPLEMENT where it reaches
+# (ENC_BERTHING, _enc_tile_build): added whole, never displacing the harbor chart, so the seabed-gap check keeps the
+# harbor chart's exact topology and both charts' hazards apply - more chart, never less.
 ENC_BANDS = ["enc_harbour", "enc_approach", "enc_coastal", "enc_general", "enc_overview"]  # finest first
 ENC_BERTHING = "enc_berthing"
 ENC_LAYER_MAP_MAX_AGE_S = 30 * 86400    # a band's layer list is asked for again after this (_enc_layer_map)
@@ -2122,7 +2122,7 @@ ENC_ROLES = {
     # ... and the same structures as LINES - finger piers are typically charted as
     # Shoreline_Construction_line / Mooring_Warping_Facility_line.
     # ⚠ PONTOON IS PUBLISHED IN ONE BAND ONLY - THE COASTAL ONE - AND THIS SAID "IN NO BAND" FOR SIX WEEKS. It was
-    # dropped from this list because the harbour and approach maps carry no such layer, and the comment generalized
+    # dropped from this list because the harbor and approach maps carry no such layer, and the comment generalized
     # that to every band; the live service lists `Pontoon_line` in enc_coastal (measured 2026-10-12, all six bands'
     # layer lists in tests/fixtures/enc_layer_maps.json). A class is resolved PER BAND - and checked in every band.
     "dock_line":     ["Shoreline_Construction_line",
@@ -2219,7 +2219,7 @@ ENC_ROLES = {
     # ever enforced the dredged half of what it says.
     # ⚠⚠ AND IN THE COASTAL, GENERAL AND OVERVIEW BANDS IT IS "Restricted_Area" (measured 2026-10-12). The fix above
     # was right for the two bands it was checked in and wrong for the other three, so the layered read - which fills
-    # from the coarse bands wherever there is no harbour chart - fetched no restricted area there: 45 coastal and 13
+    # from the coarse bands wherever there is no harbor chart - fetched no restricted area there: 45 coastal and 13
     # general polygons in the Gulf of Maine alone. BOTH names: each band resolves the one it publishes.
     "restricted":    ["Restricted_Area_area", "Restricted_Area"],
     # ── WHERE COLREGS RULE 9 APPLIES, READ OFF THE CHART ────────────────────
@@ -2641,7 +2641,7 @@ def fetch_enc_features(bbox, min_depth=0.0, band=None, extras=True, use_cache=Tr
         # ── EVERY OTHER PUBLISHED LAYER, FETCHED AND CACHED (Andy, 2026-08-31: "download
         # all layers when entering a new area") ──────────────────────────────────────────
         #
-        # 203 layers are published for the harbour band and the roles above name 43. The
+        # 203 layers are published for the harbor band and the roles above name 43. The
         # rest come down too, tagged `extra` - and the reason is the defect that prompted
         # this: a role added later cannot see an area already cached, so `fairway` shipped
         # and would never have applied anywhere the console had already been. Holding the
@@ -2767,7 +2767,7 @@ def fetch_enc_features(bbox, min_depth=0.0, band=None, extras=True, use_cache=Tr
 # ⚠⚠ WHY. fetch_enc_features serves the FINEST band with ANY coverage in the box, and only that band - so inside the
 # box, wherever that band has no cell, there is nothing at all: no land, no depth, no hazard, which every planner and
 # the guard read as open water. Measured on his own cache: an extract from Portsmouth to Cape Cod (1.33 deg tall)
-# served at harbour band has depth or land under 43% of its box; two other wide reads 81% and 88%. NOAA's harbour
+# served at harbor band has depth or land under 43% of its box; two other wide reads 81% and 88%. NOAA's harbor
 # cells are a 0.075 deg grid, and each one's data covers an irregular part of it.
 #
 # HOW, with the standard library alone (his choice - no geometry library):
@@ -2783,7 +2783,7 @@ def fetch_enc_features(bbox, min_depth=0.0, band=None, extras=True, use_cache=Tr
 #   it no chart covers); one no band touches is UNREAD outright. So a coarser chart appears inside a finer one's
 #   coverage only in the squares that chart's edge runs through - a strip at most one square wide where BOTH charts'
 #   hazards apply - and nowhere is a chart left out that covers the water.
-#   CLIPPING. The finest band (harbour) is served WHOLE: nothing finer exists to give way to, and the seabed-gap check
+#   CLIPPING. The finest band (harbor) is served WHOLE: nothing finer exists to give way to, and the seabed-gap check
 #   (static/js/skin.js) reads its exact topology. A coarser band's feature is cut to the squares its band applies in
 #   (Sutherland-Hodgman against each rectangle, lines by Liang-Barsky), and kept whole when it lies inside one; a cut
 #   piece carries `clip`, its rectangle, so the page draws no outline along the cut and the chart-image check does not
@@ -2792,7 +2792,7 @@ def fetch_enc_features(bbox, min_depth=0.0, band=None, extras=True, use_cache=Tr
 #   overlapping reads share them and a corridor (the next step) is a list of tiles. A read is the union of its tiles'
 #   features that reach into its box, a whole feature two tiles both fetched kept once (band, class, object id).
 #   EVERY LAYER OF EVERY BAND (2026-10-12). A coarser band filling in was asked for its NAMED roles only, so wherever
-#   no harbour chart exists some 70-200 published layers per band never came down at all - and a role given to one of
+#   no harbor chart exists some 70-200 published layers per band never came down at all - and a role given to one of
 #   them later could not see that water without a re-read. Every band now reads every layer it publishes.
 #   HOW OLD A TILE IS (2026-10-12). A tile carries `read_at` and `reader` (_ENC_TILE_READER). NOAA corrects its cells
 #   week by week, and a tile was kept for ever: one older than ENC_TILE_FRESH_S is served and read again behind it
@@ -3170,7 +3170,7 @@ def _enc_tile_build(tile):
         return dict(fail, note="the chart's coverage could not be read here (%s)" % e)
     leaves = _enc_leaves(tile, idx)
     feats, failed, present = [], set(), []
-    # THE BERTHING CHART, WHERE IT REACHES (ENC_BANDS' note): every layer, whole, beside the harbour chart.
+    # THE BERTHING CHART, WHERE IT REACHES (ENC_BANDS' note): every layer, whole, beside the harbor chart.
     bb = [_geom_bbox({"type": "Polygon", "coordinates": rings}) for rings in berth if rings]
     bb = [b for b in bb if b and b[0] < tile[2] and b[2] > tile[0] and b[1] < tile[3] and b[3] > tile[1]]
     if bb:
@@ -4187,7 +4187,7 @@ def _read_tile_head(path):
 
 # --- CHART SOURCE (the S-57 META objects = an ENC's answer to a paper title block)
 # M_COVR ("Coverage_area") carries the cell identity - DSNM "US5PA1CF.000", whose
-# 3rd character is the usage band (5 = harbour). M_QUAL ("Quality_of_Data_area")
+# 3rd character is the usage band (5 = harbor). M_QUAL ("Quality_of_Data_area")
 # carries the zone of confidence and the survey dates as POLYGONS, which is the
 # part a paper title block cannot express: confidence varies WITHIN a sheet, so
 # serving the polygons lets the client report the ZOC under the VESSEL.
@@ -4200,7 +4200,7 @@ META_KEEP_PROPS = ("DSNM", "TITLE", "CATCOV", "CATZOC", "SURSTA", "SUREND",
                    "SORDAT", "SORIND", "POSACC", "SOUACC", "TECSOU", "VERDAT")
 # ENC usage band from the cell name's 3rd character (S-57 dataset naming).
 ENC_USAGE = {"1": "Overview", "2": "General", "3": "Coastal",
-             "4": "Approach", "5": "Harbour", "6": "Berthing"}
+             "4": "Approach", "5": "Harbor", "6": "Berthing"}
 
 
 def fetch_chart_info(bbox):

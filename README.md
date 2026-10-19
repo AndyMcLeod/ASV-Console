@@ -155,7 +155,7 @@ rows, and the distinction between them is a paradigm the rest of the system foll
 * **Mode** — the behaviour the *run* is in (`survey`, `goto`, `rth`, `transit`). It stays
   the same for the whole run.
 * **Doing** — what the vessel is doing *at this moment*. **SURVEYING means it is on a
-  coverage line, and nothing else does.** The approach out of the harbour, every reversal
+  coverage line, and nothing else does.** The approach out of the harbor, every reversal
   between lines, a hop between separated coverage regions, a Go-To, a Return-to-Home —
   all **TRANSITING**: under way, but not acquiring coverage. Holding and idle are their
   own states, and a boat holding station *on* a line is holding, not surveying.
@@ -2570,11 +2570,11 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    **Entering a new area downloads *every* published layer.** The extract used to fetch
    only the ~45 classes the keep-out roles named, and that was the wrong trade: a cache
    cannot know what it doesn't contain, so a role added later was invisible to every area
-   already cached. The extract now holds all 203 layers the harbour band publishes — the
+   already cached. The extract now holds all 203 layers the harbor band publishes — the
    named ones role-tagged as before, the rest carried as `extra` — which makes
    classifying a new class a decision about data already on disk rather than a refetch of
    every operating area. `extra` is chart *context* and reaches the keep-out model as
-   nothing; `tests/enc_roles.js` check 7 is what keeps it that way, since a harbour where
+   nothing; `tests/enc_roles.js` check 7 is what keeps it that way, since a harbor where
    those 1,556 features became obstacles would be one solid keep-out. Pre-warm the cache
    for every port in the registry with:
 
@@ -2584,7 +2584,7 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
 
    It reports **per role, not just a total**, and that is deliberate: ENCDirect reports
    failure as a normal-looking *empty* layer, so a bare feature count cannot tell a quiet
-   harbour from a fetch that half-failed. A coastal extract with soundings but no
+   harbor from a fetch that half-failed. A coastal extract with soundings but no
    shoreline is flagged rather than reported as open water. `--list` inventories what is
    cached and at which version; `--base <id>` warms one port.
 
@@ -2603,7 +2603,7 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    **Floats the vector service leaves out are read off the seabed's own gaps.** At
    Pepperrell Cove (Kittery Point), survey lines and transits ran straight across the
    floats off the town piers. They are **pontoons**, and NOAA's vector service publishes no
-   pontoon layer at harbour scale (only the coastal band lists one), so the extract held nothing there. The chart-image read
+   pontoon layer at harbor scale (only the coastal band lists one), so the extract held nothing there. The chart-image read
    didn't catch them either: their outlines lay exactly under the depth areas' own
    boundaries, which counted as "already charted". But S-57 tiles the seabed with depth
    areas, land, dredged areas, floating docks, hulks, pontoons and unsurveyed areas, with
@@ -2679,15 +2679,15 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    box at ONE scale: NOAA's most detailed usage band with any data anywhere in the box. Inside the
    box, wherever that band has no chart, the extract held nothing at all (no land, no depths, no
    hazards), and every planner and the clearance guard read that as open water. Measured on the
-   operator's own cache: an extract from Portsmouth to Cape Cod, read at harbour scale, had depth or
+   operator's own cache: an extract from Portsmouth to Cape Cod, read at harbor scale, had depth or
    land under 43% of its box; two other wide reads, 81% and 88%; the 10 km operating box at
    Portsmouth, 99%. Now the chart is read in fixed **0.25° tiles**, each cached once complete. Each
    band's coverage outline (NOAA's M_COVR) says where its data is, and within a tile every square
    (down to 0.25/128°, about 217 m north-south) takes the most detailed band that covers it whole:
-   harbour, then approach, coastal and general. The harbour chart is served whole; a coarser chart
+   harbor, then approach, coastal and general. The harbor chart is served whole; a coarser chart
    is cut to the squares it applies in. In the squares a finer chart's outline runs through, both
    charts' hazards apply: a strip at most one square wide with a few extra keep-outs, never one
-   missing. The edges two cells of one chart share cancel, so the seams of NOAA's harbour-cell grid
+   missing. The edges two cells of one chart share cancel, so the seams of NOAA's harbor-cell grid
    cost nothing (checked on the six real Portsmouth cells). Water no chart covers at any scale is
    **unread**: drawn gray with the NOGO zones, named on the Nogo row (*unread*), and a route through
    it, or within 100 m of it, is refused at once ("the route runs through water no chart covers"),
@@ -2699,12 +2699,12 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    land the model never had.) A tile whose coverage could not be read is unread, never empty water; a
    tile with a failed layer is served once and not cached. A read asked to plan a route further that
    arrives without some of its layers is USED (2026-10-18), with the earlier read's features of those
-   layers kept; it used to be thrown away whole, with the land it had brought. The seabed-gap check runs on the harbour chart
-   alone, which is served whole, and a hole a coarser chart's seabed fills is where the harbour chart
+   layers kept; it used to be thrown away whole, with the land it had brought. The seabed-gap check runs on the harbor chart
+   alone, which is served whole, and a hole a coarser chart's seabed fills is where the harbor chart
    ends, not a float. A coarser chart's piece is drawn with no outline along its cut, and the
    chart-image read doesn't take the cut for charted ink. The first read of the Portsmouth operating
-   box took 59 s (two tiles, every layer of the harbour chart); a box offshore toward the Isles of
-   Shoals (six tiles) took 57 s more and filled the water past the harbour cells from the coastal
+   box took 59 s (two tiles, every layer of the harbor chart); a box offshore toward the Isles of
+   Shoals (six tiles) took 57 s more and filled the water past the harbor cells from the coastal
    chart. Read again, both come from the tile cache. The older per-box caches (`features_v5_*`) are
    no longer read, so an area visited only before this change has no chart offline until it has been
    read online once.
@@ -2971,7 +2971,7 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    - **Every layer of every band.** A coarser chart filling in was asked for its named layers only;
      every band now reads everything it publishes. The **overview** band is read as the last fill
      (water charted only at that scale was refused as unread), and the **berthing** band (65 cells,
-     one at Eastport) is read whole beside the harbour chart where it reaches. Restricted areas are
+     one at Eastport) is read whole beside the harbor chart where it reaches. Restricted areas are
      read under both of NOAA's names - the coastal, general and overview bands call the layer
      `Restricted_Area`, which left 58 polygons in the Gulf of Maine unread - and the coastal band's
      pontoon layer is read too.

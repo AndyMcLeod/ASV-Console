@@ -6616,7 +6616,7 @@ function drawSlewLeg(toScreen){
   ctx.fillStyle = "#c8862b";
   ctx.beginPath(); ctx.arc(b.x, b.y, 3.5, 0, 2*Math.PI); ctx.fill();
   // Labels haloed the way every other chart label here is - the ground under them is
-  // whatever the tile layer managed to fetch, which may be nothing or may be a harbour.
+  // whatever the tile layer managed to fetch, which may be nothing or may be a harbor.
   ctx.font = "11px Consolas,monospace"; ctx.textAlign = "center"; ctx.textBaseline = "bottom";
   ctx.lineWidth = 3; ctx.strokeStyle = "rgba(5,8,12,0.85)";
   const lab = (t,p,dy)=>{ if(!t) return; ctx.strokeText(t, p.x, p.y+dy); ctx.fillText(t, p.x, p.y+dy); };
@@ -7936,7 +7936,7 @@ function surveyProgress(id){
 //
 // He is right, and the console was reporting the WRONG THING. `behavior` is the MODE the
 // run is in - survey / goto / rth / transit - and it stays "survey" for the whole run,
-// including the approach out of the harbour and every reversal between lines. So the card
+// including the approach out of the harbor and every reversal between lines. So the card
 // said SURVEY while the boat was an hour from the first line. Mode is not activity.
 //
 // TWO LEVELS, and the top one is the paradigm:
@@ -11283,12 +11283,12 @@ async function refreshNogo(centerLL, bbox, ask){     // extract ENC for the oper
   // never in an await that never returns.
   finally { settle(); nogoPending = null; }
 }
-// ⚠ THE SEABED'S GAPS, OVER THE HARBOUR CHART ALONE IN A LAYERED EXTRACT (2026-10-11). The seabed's topology is exact
+// ⚠ THE SEABED'S GAPS, OVER THE HARBOR CHART ALONE IN A LAYERED EXTRACT (2026-10-11). The seabed's topology is exact
 // only within one chart: a coarser chart is cut to the squares it applies in (asv_console.py fetch_enc_layered), and
-// its cuts are not seabed edges. Floats are charted at harbour scale, and the harbour chart is served whole. A hole in
-// it that a coarser chart's seabed fills is where the harbour chart ENDS (a cell's coverage with a gap in it), not a
+// its cuts are not seabed edges. Floats are charted at harbor scale, and the harbor chart is served whole. A hole in
+// it that a coarser chart's seabed fills is where the harbor chart ENDS (a cell's coverage with a gap in it), not a
 // float, and is not taken for one. An extract that is not layered is read whole, as it always was.
-// skinOverHarbour - the seabed's gaps over the harbour chart alone - is skin.js's since 2026-10-17 (one copy for this page
+// skinOverHarbour - the seabed's gaps over the harbor chart alone - is skin.js's since 2026-10-17 (one copy for this page
 // and skin_worker.js, which walks it off this page's thread: skinOffThread).
 function nogoStatus(t){ showBanner(t); }
 function nogoReadout(){
@@ -14309,7 +14309,7 @@ function drawAIS(toScreen){
     // THE SAME GLYPH AS THE VESSEL UNDER COMMAND, smaller. An AIS contact is a boat and
     // points the way it points for the same reason ours does; drawing it as a different
     // shape would have said the two were different KINDS of thing. Scaled down so the
-    // operator's own vessel stays the salient one on a crowded harbour.
+    // operator's own vessel stays the salient one on a crowded harbor.
     // No direction at all (stopped, no heading) is a disc and no speed stalk: that is what
     // says the contact has not told us which way she lies.
     // ⚠ DRAWN TO ITS REAL SIZE WHEN THE CHART CAN SHOW IT, AND ONLY THEN. Andy asked
@@ -14459,7 +14459,7 @@ function drawViolation(toScreen){
 //     AREA (depth, quality-of-data, restricted, sea-area). No structure, no line, nothing;
 //   * `enc_berthing` - usage band 6, the finest S-57 defines, and one this console has never
 //     asked for - has NO COVERAGE at New Castle. Even its Coverage_area comes back empty.
-// The harbour band is the finest cell that exists here and the feature is not in it. NOAA's
+// The harbor band is the finest cell that exists here and the feature is not in it. NOAA's
 // RENDERER draws it; NOAA's VECTOR service does not carry it.
 //
 // So the chart image is a source of navigational fact the vector extract does not contain.
@@ -15372,7 +15372,7 @@ async function punchOut(){
     const koClip = chanExcl.length ? {...koCov, polys:[...koCov.polys, ...chanExcl]} : koCov;
     // ⚠ THE ENC CLIP IS MEMOISED, AND STRIKING A RUN IS THE WHOLE REASON.
     //
-    // MEASURED on a 10-line, 949 m-wide plan over New Castle harbour (1,318 keep-out
+    // MEASURED on a 10-line, 949 m-wide plan over New Castle harbor (1,318 keep-out
     // zones), with the chart already cached: clipLine 4,354 ms of a 15,978 ms punch —
     // the single largest phase, and the tab is blocked solid for every millisecond of it.
     // Re-punching after a strike used to pay that again for a byte-identical answer.
@@ -15646,7 +15646,7 @@ async function punchOut(){
       // it is geometrically the purer answer, but the crossing is ALWAYS ≤ the distance, so
       // it admits pairs the old gate excluded — and the chart clip leaves adjacent runs
       // with different extents routinely, long before any lead existed. MEASURED on a
-      // 7-line harbour plan with NO lead: it pulled two pairs into the reversal branch that
+      // 7-line harbor plan with NO lead: it pulled two pairs into the reversal branch that
       // used to be routed around, where a refusal is flagged red, and the punch went from
       // 0 unroutable to 2. A threshold that carries the allowance is a no-op when the
       // allowance is zero, which is every plan that does not use the feature.
@@ -15686,7 +15686,7 @@ async function punchOut(){
       // it cost a measurement to learn. The crossing is ALWAYS <= the distance, so on its own
       // it admits pairs whose ends NO TURN CAN SPAN; the ladder then refuses them as
       // `degenerate`, a refused reversal is RED, and red refuses Add to plan. That note
-      // measured 0 -> 2 unroutable on a harbour plan doing exactly this.
+      // measured 0 -> 2 unroutable on a harbor plan doing exactly this.
       //
       // So the span is bounded by the LADDER'S OWN cap. `turnMaxHalf` is what every turn
       // builder refuses past (`half > maxHalf`, half being these two ends halved), so a pair
@@ -16074,7 +16074,7 @@ async function punchOut(){
     //
     // It went unnoticed because a refused reversal used to be rare. Building the turn from
     // the two poses (2026-09-08) makes the console honest about the water a turn really
-    // needs, so it is not rare any more — MEASURED on a 7-line harbour plan with no lead at
+    // needs, so it is not rare any more — MEASURED on a 7-line harbor plan with no lead at
     // all: two pairs the chart had clipped to different extents, offset 53.9 m and 22 m
     // along track, whose old chord arc reached 60.5 m past the line end while any shape
     // actually tangent to both lines needs 68-74 m. That water is foul. The old plan was
@@ -18359,7 +18359,7 @@ const CATZOC_LBL = {1:["ZOC A1","\u00b15 m + 5% depth"], 2:["ZOC A2","\u00b120 m
   3:["ZOC B","\u00b150 m"], 4:["ZOC C","\u00b1500 m"],
   5:["ZOC D","worse than ZOC C"], 6:["ZOC U","unassessed"]};
 const ENC_USAGE_LBL = {"1":"Overview","2":"General","3":"Coastal","4":"Approach",
-  "5":"Harbour","6":"Berthing"};
+  "5":"Harbor","6":"Berthing"};
 let chartInfoBox = null, chartBusy = false, chartRetryAt = 0;
 // ⚠ AN ANSWER NOAA DID NOT GIVE WHOLE IS SHOWN, NOT KEPT (Andy, 2026-10-17: "The SRC chip is not updating. Chart source
 // card is not getting data"). The console serves an answer with a failed query ONCE and never keeps it (asv_console.py
