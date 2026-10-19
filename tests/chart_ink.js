@@ -492,15 +492,19 @@ check("15. what was read off a picture is DRAWN DIFFERENTLY from what the ENC pu
         // colour mutated back to the ENC's red, because the FOOTPRINT fill still carried the
         // magenta a few lines above - one colour standing in for the other's check.
         // THE DRAWING IS chartlayers.js's since 2026-10-17 (the page and the chart worker both draw with it): its drawNogo,
-        // up to the next layer's drawing.
-        const CLS = fs.readFileSync(path.join(__dirname, "..", "static", "js", "chartlayers.js"), "utf8");
+        // up to the next layer's drawing. Since 2026-10-19 every color it draws is a NAME in chartlayers.js INK (the one
+        // palette the NOGO key is built from): the ink's two names are the magenta, and the line block names no keep-out
+        // (the red) - the same mutation, caught by name.
+        const CLP = path.join(__dirname, "..", "static", "js", "chartlayers.js");
+        const CLS = fs.readFileSync(CLP, "utf8"), { INK } = require(CLP);
         const dn = CLS.slice(CLS.indexOf("export function drawNogo("), CLS.indexOf("export function drawLawBands("));
         const areaBlk = dn.slice(dn.indexOf("chartInk.areas"), dn.indexOf("chartInk.lines"));
         const lineBlk = dn.slice(dn.indexOf("chartInk.lines"));
         return areaBlk.length > 100 && lineBlk.length > 100
-            && /rgba\(224,64,208,0\.28\)/.test(areaBlk)
-            && /rgba\(224,64,208,0\.95\)/.test(lineBlk)
-            && !/rgba\(217,83,79/.test(lineBlk);
+            && INK.inkFill === "rgba(224,64,208,0.28)" && INK.inkEdge === "rgba(224,64,208,0.95)"
+            && /fillStyle=INK\.inkFill/.test(areaBlk) && /strokeStyle=INK\.inkEdge/.test(areaBlk)
+            && /strokeStyle=INK\.inkEdge/.test(lineBlk)
+            && !/INK\.keep|rgba\(217,83,79/.test(lineBlk) && !/rgba\(/.test(areaBlk + lineBlk);
       },
       "drawing them in the ENC's own red would claim a warrant the console does not have");
 // 16. WHETHER THE CHART WAS COMPARED is said on the Nogo readout, and it is checked in

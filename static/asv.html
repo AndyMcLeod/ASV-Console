@@ -1178,7 +1178,7 @@ import { bbOf, inBB, bboxContains, bboxAround, lerpLL, dSeg, segInt, pinp,
 import { V, NOGO_ENF, nogo, sea } from "/static/js/state.js";
 // THE THREE CACHED LAYERS' DRAWING (2026-10-17): moved to chartlayers.js so the chart worker draws them off this thread
 import { LAYER_PAD_PX, LAW_BAND_MIN_PX, featureBox, layerSees, tracePx, drawENC as clDrawENC, drawNogo as clDrawNogo,
-         drawLawBands as clDrawLawBands, NOGO_KEY } from "/static/js/chartlayers.js";
+         INK, HATCH, hatch, drawLawBands as clDrawLawBands, NOGO_KEY } from "/static/js/chartlayers.js";
 // CPA / TCPA and the hull footprint an AIS contact broadcasts. Pure kinematics, so
 // the numbers follow a maneuver by either vessel the moment the next report lands -
 // see the module header for why nothing is cached.
@@ -9481,14 +9481,16 @@ function drawSpeedZones(toScreen){
       rg.forEach((c, i) => { const s = toScreen(c[1], c[0]); i ? ctx.lineTo(s.x, s.y) : ctx.moveTo(s.x, s.y);
                              sx += s.x; sy += s.y; n++; minX = Math.min(minX, s.x); maxX = Math.max(maxX, s.x); });
       ctx.closePath();
-      ctx.fillStyle = binds ? (active ? "rgba(232,180,106,0.16)" : "rgba(232,180,106,0.07)") : "rgba(160,170,180,0.05)";
-      ctx.fill();
+      // a zone that binds her: the speed rules' wash and 135-degree hatch (chartlayers.js INK, the symbology note there),
+      // the same symbol as a state's shore band; one that does not: the gray wash alone
+      ctx.fillStyle = binds ? INK.speedFill : INK.zoneOffFill; ctx.fill();
+      if(binds){ ctx.fillStyle = hatch(ctx, INK.speedHatch, HATCH.speed); ctx.fill(); }
       ctx.setLineDash([6, 4]); ctx.lineWidth = active ? 2 : 1.3;
-      ctx.strokeStyle = binds ? "rgba(232,180,106,0.9)" : "rgba(160,170,180,0.6)"; ctx.stroke(); ctx.setLineDash([]);
+      ctx.strokeStyle = binds ? INK.speedEdge : INK.zoneOffEdge; ctx.stroke(); ctx.setLineDash([]);
     });
     if(n && maxX - minX > 40){                     // a label only where the zone is big enough on screen to carry one
       const t = zoneRuleTxt(z) + (binds ? "" : " (" + (z.props.min_length_m ? Math.round(z.props.min_length_m / 0.3048) + " ft+" : "not this hull") + ")");
-      ctx.fillStyle = binds ? "#e8b46a" : "rgba(160,170,180,0.8)";
+      ctx.fillStyle = binds ? INK.speedEdge : INK.zoneOffEdge;
       fillHaloed(t, sx / n - ctx.measureText(t).width / 2, sy / n);
     }
   }
@@ -11446,7 +11448,14 @@ const NOGO_KEY_SWATCH_X = 1.5;                       // the swatch's size over i
 function nogoKeySwatch(k){
   const paper = '<rect width="26" height="14" fill="#e8eef1"/>';
   let s = "";
-  if(k.kind === "area")
+  if(k.kind === "hatch"){                          // the wash, the hatch at the chart's own spacing and width, the edge
+    const id = "nkh" + k.deg + "_" + k.hatch.replace(/\W/g, ""), sp = HATCH.spacingPx / NOGO_KEY_SWATCH_X;
+    s = `<defs><pattern id="${id}" patternUnits="userSpaceOnUse" width="${sp}" height="${sp}" patternTransform="rotate(${k.deg})">`
+      + `<line x1="0" y1="0" x2="0" y2="${sp}" stroke="${k.hatch}" stroke-width="${HATCH.widthPx / NOGO_KEY_SWATCH_X}"/></pattern></defs>`
+      + `<rect x="3" y="2.5" width="20" height="9" fill="${k.fill}"/>`
+      + `<rect x="3" y="2.5" width="20" height="9" fill="url(#${id})"${k.edge ? ` stroke="${k.edge}" stroke-width="1.5"` : ""}/>`;
+  }
+  else if(k.kind === "area")
     s = `<rect x="3" y="2.5" width="20" height="9" fill="${k.fill}"${k.edge ? ` stroke="${k.edge}" stroke-width="1.5"` : ""}/>`;
   else if(k.kind === "line")
     s = `<line x1="2" y1="7" x2="24" y2="7" stroke="${k.stroke}" stroke-width="${k.width || 1.4}"/>`;

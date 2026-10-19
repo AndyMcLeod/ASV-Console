@@ -115,22 +115,99 @@ export function drawENC(toScreen, ctx, D){
   ctx.restore();
 }
 
+// ⚠ THE OVERLAY'S SYMBOLOGY (2026-10-19; Andy: "the nogo key reveals user interpretation limits with the current color
+// pattern versus the ENC. Try changing NOGO imposed bounded areas and speed limited areas with hatched lines or brighter
+// colors or both. Review visualization research for maximized user interpretation."). What the operator must tell apart at
+// a glance: the CHART'S OWN features (the ENC layer: land tan, docks orange, water white, depth contours blue) from what the
+// CONSOLE IMPOSES on them - the keep-outs it refuses to route through, and the water a speed rule holds her slow in. Until
+// now both impositions were flat translucent washes (a 20 percent red over the chart's own tan land read as mud; the speed
+// rules' amber was the survey window's amber too), and the key had no row for speed-limited water at all. The design, and
+// what it rests on:
+//   TEXTURE FOR THE IMPOSITION, HUE FOR THE CHART. Bertin's visual variables (Semiology of Graphics): a thematic overlay
+//   should use a variable the base map does not - texture (a hatch) stays legible over any fill under it, where a second
+//   wash merely muddies the first. The chart's fills keep their hues; the console's rules are HATCHED.
+//   ORIENTATION TELLS THE TWO RULES APART BEFORE COLOR DOES. Orientation and color are separable pre-attentive features
+//   (Treisman and Gelade's feature-integration theory; Ware, Information Visualization: Perception for Design, on texture
+//   segmentation by orientation): the keep-outs' hatch runs at 45 degrees, the speed rules' at 135 - an operator who cannot
+//   tell red from amber (a tenth of men) still reads two different textures, and a keep-out inside a speed band reads as a
+//   cross-hatch, both rules at once.
+//   THE HATCH LINES CARRY LUMINANCE, NOT JUST HUE. Fine lines need luminance contrast against their ground to be seen
+//   (Ware: the chromatic channels are blind to detail); the lines are near-opaque, 1.3 px, 7 px apart - a period a chart
+//   reader resolves as texture at arm's length - over a faint wash of the same hue, so the region still reads as a region.
+//   THE COLORS ARE THE ONES CHART USERS ALREADY HOLD. Red for what she must not enter (the safety color of ISO 3864 and the
+//   S-52 ENC presentation's danger), amber for caution - a rule that slows her, not one that stops her. IHO S-52 itself draws
+//   a regulated area as a hatched, bounded region, so a hatch is what a mariner already reads as "an area with a rule".
+//   The survey window, a planning aid and not a rule, leaves the amber it shared with the speed rules for a teal wash.
+//   OVERLAPS, BY RANK. The ENC layer is drawn first, the speed rules over it, the keep-outs over those: where both rules
+//   apply the cross-hatch shows both, and a keep-out's edge is never hidden by a band.
+// Every color the overlays draw is in INK, the key names every one of them, and tests/nogo_key.js holds the two together:
+// drawNogo and drawLawBands may use no color but INK's.
+export const INK = {
+  keepFill: "rgba(217,83,79,0.10)", keepHatch: "rgba(217,83,79,0.95)", keepEdge: "rgba(217,83,79,0.85)",
+  speedFill: "rgba(232,180,106,0.10)", speedHatch: "rgba(232,180,106,0.95)",
+  speedEdge: "#e8b46a",                              // a zone's dashed outline; the solid line AT a shore rule's distance
+  zoneOffFill: "rgba(160,170,180,0.05)", zoneOffEdge: "rgba(160,170,180,0.6)",   // a charted zone this hull is not bound by
+  surveyFill: "rgba(70,150,170,0.22)",
+  unreadFill: "rgba(128,128,128,0.22)", failedFill: "rgba(150,150,150,0.30)", failedEdge: "rgba(200,200,200,0.8)",
+  gapEdge: "rgba(255,150,30,0.95)",
+  inkFill: "rgba(224,64,208,0.28)", inkEdge: "rgba(224,64,208,0.95)",
+  mask: "#000",                                      // drawLawBands' state mask, composited away: never on screen
+};
+/** The two hatches: the keep-outs' runs at 45 degrees, the speed rules' at 135; lines `widthPx` wide, `spacingPx` apart. */
+export const HATCH = {keep: 45, speed: 135, spacingPx: 7, widthPx: 1.3};
+
+const hatchTiles = new WeakMap();                    // ctx -> {key: CanvasPattern}
+/** A hatch pattern for `ctx`: `color` lines at `deg` (45 or 135). The tile is an OffscreenCanvas (the worker, or the page)
+ *  or a page canvas; where neither can be made, or `ctx` cannot take a pattern (the suites' recording contexts), the color
+ *  itself - the fill then reads as a wash, the drawing's calls unchanged. Cached per context. */
+export function hatch(ctx, color, deg){
+  if(!ctx || typeof ctx.createPattern !== "function") return color;
+  let m = hatchTiles.get(ctx);
+  if(!m){ m = {}; hatchTiles.set(ctx, m); }
+  const key = color + "|" + deg;
+  if(m[key]) return m[key];
+  const S = Math.round(HATCH.spacingPx * Math.SQRT2);  // a square tile: a diagonal every S along each axis is a line every spacingPx across
+  let tile = null;
+  if(typeof OffscreenCanvas !== "undefined") tile = new OffscreenCanvas(S, S);
+  else if(typeof document !== "undefined"){ tile = document.createElement("canvas"); tile.width = S; tile.height = S; }
+  if(!tile) return color;
+  const t = tile.getContext("2d");
+  t.strokeStyle = color; t.lineWidth = HATCH.widthPx; t.lineCap = "square";
+  t.beginPath();
+  if(deg === 45){                                    // bottom-left to top-right, and the two corner pieces that make the tiling seamless
+    t.moveTo(-1, S + 1); t.lineTo(S + 1, -1);
+    t.moveTo(-1, 1); t.lineTo(1, -1);
+    t.moveTo(S - 1, S + 1); t.lineTo(S + 1, S - 1);
+  } else {                                           // top-left to bottom-right
+    t.moveTo(-1, -1); t.lineTo(S + 1, S + 1);
+    t.moveTo(S - 1, -1); t.lineTo(S + 1, 1);
+    t.moveTo(-1, S - 1); t.lineTo(1, S + 1);
+  }
+  t.stroke();
+  m[key] = ctx.createPattern(tile, "repeat") || color;
+  return m[key];
+}
+
 /** THE NOGO KEY (Andy, 2026-10-18: "Need a NOGO key so the user knows what color is representing what component."): what
- *  drawNogo below draws, one row each, in the colors it draws them in. The page builds the key from this (nogoKeyBuild);
- *  tests/nogo_key.js holds every color here to drawNogo's own, so a color changed there and not here fails. `kind`: area
- *  (a fill, `edge` its outline), line, dash (a dashed outline, `fill` under it), ink (a footprint and a line with a tick at
- *  each end). `{floor}` in a label is the depth floor, filled in by the page. */
+ *  the overlays draw, one row each, in INK's own colors. The page builds the key from this (nogoKeyBuild); tests/nogo_key.js
+ *  holds INK, the drawing and the key together. `kind`: hatch (a wash `fill`, `hatch` lines at `deg`, `edge` its outline),
+ *  area (a fill, `edge` its outline), line, dash (a dashed outline, `fill` under it), ink (a footprint and a line with a tick
+ *  at each end). `{floor}` in a label is the depth floor, filled in by the page. */
 export const NOGO_KEY = [
-  {kind: "area", fill: "rgba(217,83,79,0.20)",
+  {kind: "hatch", fill: INK.keepFill, hatch: INK.keepHatch, deg: HATCH.keep, edge: INK.keepEdge,
    label: "Keep-out: land, docks, hazards, bridges and spans too low for her, and water shallower than {floor}"},
-  {kind: "line", stroke: "rgba(217,83,79,0.85)", width: 1.4, label: "Keep-out edge: shoreline, piers, hazard lines, cables too low"},
-  {kind: "area", fill: "rgba(196,150,74,0.22)", label: "Outside the survey's depth window (while a survey is drawn)"},
-  {kind: "area", fill: "rgba(128,128,128,0.22)", label: "No chart here: a route through it is refused"},
-  {kind: "dash", fill: "rgba(150,150,150,0.30)", stroke: "rgba(200,200,200,0.8)", width: 1, dash: "4 3",
+  {kind: "line", stroke: INK.keepEdge, width: 1.4, label: "Keep-out edge: shoreline, piers, hazard lines, cables too low"},
+  {kind: "hatch", fill: INK.speedFill, hatch: INK.speedHatch, deg: HATCH.speed, edge: INK.speedEdge,
+   label: "Speed-limited water: a state's shore rule (its line at the rule's distance) or a charted zone - she is held to the law's limit in it"},
+  {kind: "dash", fill: INK.zoneOffFill, stroke: INK.zoneOffEdge, width: 1.3, dash: "6 4",
+   label: "A charted speed zone that does not bind this hull"},
+  {kind: "area", fill: INK.surveyFill, label: "Outside the survey's depth window (while a survey is drawn)"},
+  {kind: "area", fill: INK.unreadFill, label: "No chart here: a route through it is refused"},
+  {kind: "dash", fill: INK.failedFill, stroke: INK.failedEdge, width: 1, dash: "4 3",
    label: "Chart could not be read: reading it again may chart it"},
-  {kind: "dash", stroke: "rgba(255,150,30,0.95)", width: 2, dash: "5 3",
+  {kind: "dash", stroke: INK.gapEdge, width: 2, dash: "5 3",
    label: "A gap in the charted seabed, kept out as a structure: check the chart"},
-  {kind: "ink", fill: "rgba(224,64,208,0.28)", stroke: "rgba(224,64,208,0.95)",
+  {kind: "ink", fill: INK.inkFill, stroke: INK.inkEdge,
    label: "Read off the chart's picture, not NOAA's data: check the chart"},
 ];
 
@@ -144,9 +221,13 @@ export function drawNogo(toScreen, ctx, D){
   const enf = D.enf || {}, chartInk = D.chartInk || {lines: [], areas: []};
   ctx.save();
   const sees = layerSees(ctx, toScreen);            // only what this layer shows, no finer than a pixel (drawLayer's note)
-  const fill=(g,c)=>{ ctx.beginPath(); let any=false;
+  // the rings traced ONCE (tracing is the cost: 3.36 million vertices in a wide read) and filled with each color in turn -
+  // a fill leaves the path standing
+  const fill=(g,...cs)=>{ ctx.beginPath(); let any=false;
     eachRing(g,r=>{ any=true; tracePx(ctx, toScreen, r); ctx.closePath(); });
-    if(any){ ctx.fillStyle=c; ctx.fill("evenodd"); } };
+    if(any) for(const c of cs){ ctx.fillStyle=c; ctx.fill("evenodd"); } };
+  // a keep-out: the faint wash, then the 45-degree hatch over it (the symbology note at INK)
+  const keep=(g)=>fill(g, INK.keepFill, hatch(ctx, INK.keepHatch, HATCH.keep));
   // WHAT IS OVERHEAD AND TOO LOW FOR HER (2026-10-12) is a keep-out like a pier, drawn as one: the span's water filled,
   // a cable stroked - the same test the model takes it by (overheadBlocks at airNeedM), so the drawing cannot disagree.
   const airNeed = D.airNeed;
@@ -155,13 +236,13 @@ export function drawNogo(toScreen, ctx, D){
     if(!sees(f)) continue;
     // A wreck AREA the operator disregards (Shipwrecks unchecked) is not a keep-out, so it is not drawn as one.
     if(f.cls==="Wreck_area" && enf.wreck===false) continue;
-    if(enf.land && (r==="land"||r==="dock"||r==="hazard_area"||r==="bridge"||lowOver(f))){ fill(g,"rgba(217,83,79,0.20)"); continue; }
+    if(enf.land && (r==="land"||r==="dock"||r==="hazard_area"||r==="bridge"||lowOver(f))){ keep(g); continue; }
     // The seabed's other Group 1 objects (2026-10-12): a dredged channel by its maintained depth, unsurveyed water always.
     if(r==="depth_area"||r==="dredged"||r==="unsurveyed"){
-      if(enf.depth && D.depthExcluded(f,floorDr)) fill(g,"rgba(217,83,79,0.20)");           // hard nogo (red)
-      else if(hasPat && D.depthExcluded(f,surveyDr)) fill(g,"rgba(196,150,74,0.22)"); }          // outside survey window (amber)
+      if(enf.depth && D.depthExcluded(f,floorDr)) keep(g);                                      // hard nogo (red hatch)
+      else if(hasPat && D.depthExcluded(f,surveyDr)) fill(g, INK.surveyFill); }                 // outside survey window (teal)
   }
-  ctx.strokeStyle="rgba(217,83,79,0.85)"; ctx.lineWidth=1.4;
+  ctx.strokeStyle=INK.keepEdge; ctx.lineWidth=1.4;
   for(const f of D.features){ const r=f.role;
     if(enf.land && (r==="shore_line"||r==="dock_line"||r==="hazard_line"||r==="land_line"||lowOver(f)) && sees(f))
       eachPath(f.geometry,p=>{ ctx.beginPath(); tracePx(ctx, toScreen, p); ctx.stroke(); }); }
@@ -173,9 +254,9 @@ export function drawNogo(toScreen, ctx, D){
     ctx.save();
     for(const r of unreadAll){
       const a=toScreen(r.N,r.W), c=toScreen(r.S,r.E);
-      ctx.fillStyle=r.failed?"rgba(150,150,150,0.30)":"rgba(128,128,128,0.22)";
+      ctx.fillStyle=r.failed?INK.failedFill:INK.unreadFill;
       ctx.fillRect(a.x,a.y,c.x-a.x,c.y-a.y);
-      if(r.failed){ ctx.strokeStyle="rgba(200,200,200,0.8)"; ctx.lineWidth=1; ctx.setLineDash([4,3]);
+      if(r.failed){ ctx.strokeStyle=INK.failedEdge; ctx.lineWidth=1; ctx.setLineDash([4,3]);
         ctx.strokeRect(a.x,a.y,c.x-a.x,c.y-a.y); ctx.setLineDash([]); }
     }
     ctx.restore();
@@ -184,7 +265,7 @@ export function drawNogo(toScreen, ctx, D){
   // that is what they are to the router; but no NOAA layer served them - the console read them off the depth areas'
   // own holes - and the operator must be able to see which floats those are and look at the chart to check them.
   if(enf.land){
-    ctx.save(); ctx.strokeStyle="rgba(255,150,30,0.95)"; ctx.lineWidth=2; ctx.setLineDash([5,3]);
+    ctx.save(); ctx.strokeStyle=INK.gapEdge; ctx.lineWidth=2; ctx.setLineDash([5,3]);
     for(const f of D.features){ if(f.derived!=="skin_gap") continue;
       eachRing(f.geometry,r=>{ ctx.beginPath(); r.forEach((p,i)=>{ const s=toScreen(p[1],p[0]); i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y); }); ctx.closePath(); ctx.stroke(); }); }
     ctx.restore();
@@ -197,7 +278,7 @@ export function drawNogo(toScreen, ctx, D){
   // at a zoom where 10 m is ten pixels.
   // The FOOTPRINTS first, so the lines draw over them rather than under.
   if(enf.land && chartInk.areas && chartInk.areas.length){
-    ctx.fillStyle="rgba(224,64,208,0.28)"; ctx.strokeStyle="rgba(224,64,208,0.95)";
+    ctx.fillStyle=INK.inkFill; ctx.strokeStyle=INK.inkEdge;
     ctx.lineWidth=2;
     for(const A of chartInk.areas){
       if(!A.ring || A.ring.length < 3) continue;
@@ -207,7 +288,7 @@ export function drawNogo(toScreen, ctx, D){
     }
   }
   if(enf.land && chartInk.lines && chartInk.lines.length){
-    ctx.strokeStyle="rgba(224,64,208,0.95)"; ctx.lineWidth=3.2; ctx.lineCap="round";
+    ctx.strokeStyle=INK.inkEdge; ctx.lineWidth=3.2; ctx.lineCap="round";
     for(const L of chartInk.lines){
       const a=toScreen(L.a.lat,L.a.lon), b=toScreen(L.b.lat,L.b.lon);
       ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
@@ -234,7 +315,6 @@ export function drawLawBands(zs, toScreen, lctx, D){
     if(band < LAW_BAND_MIN_PX) continue;
     const rings = (rs) => { sx.beginPath(); for(const r of rs){ r.ring.forEach((p, i) => { const s = scr(p); i ? sx.lineTo(s.x, s.y) : sx.moveTo(s.x, s.y); }); sx.closePath(); } };
     sx.globalCompositeOperation = "source-over"; sx.clearRect(0, 0, cw, ch);
-    if(z.law.state){ rings(z.law.state); sx.fillStyle = "#000"; sx.fill(); sx.globalCompositeOperation = "source-in"; }
     sx.beginPath();
     const trace = (pts) => {
       let lx = 0, ly = 0;
@@ -253,16 +333,26 @@ export function drawLawBands(zs, toScreen, lctx, D){
       eachRing(f.geometry, trace); eachPath(f.geometry, trace);
       eachPoint(f.geometry, (c) => { const q = toScreen(c[1], c[0]); sx.moveTo(q.x, q.y); sx.lineTo(q.x + 0.01, q.y); });
     }
-    // the band 3 px wider than the rule's, solid; then the rule's own width taken down to a tint - which leaves a solid
-    // edge line AT the rule's distance (measured live: a 20% tint alone did not show on the chart's white water)
-    sx.lineCap = "round"; sx.lineJoin = "round"; sx.strokeStyle = "#e8b46a";
+    // the band 3 px wider than the rule's, solid; then the rule's own width cleared and laid again as a faint wash with
+    // the 135-degree hatch over it (the symbology note at INK; 2026-10-19 - it was a 45 percent tint, the survey window's
+    // amber too) - which leaves a solid edge line AT the rule's distance (measured live: a tint alone did not show on the
+    // chart's white water)
+    sx.lineCap = "round"; sx.lineJoin = "round"; sx.strokeStyle = INK.speedEdge;
     sx.lineWidth = band + 3; sx.stroke();
     sx.globalCompositeOperation = "destination-out";
-    sx.globalAlpha = 0.55; sx.lineWidth = band; sx.stroke(); sx.globalAlpha = 1;
-    if(areas.length){                               // the areas themselves at the band's tint
-      sx.globalCompositeOperation = "source-over"; sx.globalAlpha = 0.45; sx.fillStyle = "#e8b46a";
-      for(const f of areas){ sx.beginPath(); eachRing(f.geometry, (rg) => tracePx(sx, toScreen, rg)); sx.fill("evenodd"); }
-      sx.globalAlpha = 1; sx.globalCompositeOperation = "destination-out";
+    sx.globalAlpha = 1; sx.lineWidth = band; sx.stroke();
+    sx.globalCompositeOperation = "source-over";
+    sx.strokeStyle = INK.speedFill; sx.stroke();
+    sx.strokeStyle = hatch(sx, INK.speedHatch, HATCH.speed); sx.stroke();
+    sx.globalCompositeOperation = "destination-out";
+    if(areas.length){                               // the areas themselves: the wash and the hatch
+      sx.globalCompositeOperation = "source-over";
+      for(const f of areas){
+        sx.beginPath(); eachRing(f.geometry, (rg) => tracePx(sx, toScreen, rg));
+        sx.fillStyle = INK.speedFill; sx.fill("evenodd");
+        sx.fillStyle = hatch(sx, INK.speedHatch, HATCH.speed); sx.fill("evenodd");
+      }
+      sx.globalCompositeOperation = "destination-out";
     }
     if(z.law.exempt && z.law.exempt.length){ rings(z.law.exempt); sx.fill(); }
     for(const f of land){                           // each its own fill, so a lake in it stays and two that overlap still cut
@@ -271,6 +361,9 @@ export function drawLawBands(zs, toScreen, lctx, D){
       eachRing(f.geometry, (rg) => tracePx(sx, toScreen, rg));
       sx.fill("evenodd");
     }
+    // the state's own waters only: the mask LAST (destination-in), after the band is drawn whole - it was a source-in mask
+    // laid first, which the wash and hatch (source-over strokes) would have spilled past
+    if(z.law.state){ sx.globalCompositeOperation = "destination-in"; rings(z.law.state); sx.fillStyle = INK.mask; sx.fill(); }
     sx.globalCompositeOperation = "source-over";
     lctx.save(); lctx.globalAlpha = 0.8; lctx.drawImage(lawScratch, 0, 0); lctx.restore();
   }

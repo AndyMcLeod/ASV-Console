@@ -2460,10 +2460,26 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    shoreline + manmade structures (piers, docks, dolphins, breakwaters, locks…) +
    water shallower than **1 m corrected** (charted depth + live water level). `NOGO`
    toggles the red overlay, and while it shows, a **NOGO KEY** at the bottom left of the
-   chart names each of its colors (2026-10-18): the keep-out fill and its edge, the survey's
-   depth window, water no chart covers or could not be read, the seabed's gaps, and what was
-   read off the chart's picture - drawn in the overlay's own colors, the depth floor in force
-   in its first line. Drag it anywhere by its title, resize it by its corner (both kept, like
+   chart names each of its symbols (2026-10-18): the keep-out and its edge, speed-limited water
+   and a charted zone that does not bind this hull, the survey's depth window, water no chart
+   covers or could not be read, the seabed's gaps, and what was read off the chart's picture -
+   drawn in the overlay's own colors, the depth floor in force in its first line. **Since
+   2026-10-19 the console's two rules are hatched, not washed** (Andy: the key "reveals user
+   interpretation limits with the current color pattern versus the ENC"): a keep-out is a faint
+   red wash under near-opaque red lines at 45 degrees, and speed-limited water - a state's shore
+   band or a charted zone - the same in amber at 135 degrees, so the two read as two textures
+   before they read as two colors, a keep-out inside a speed band shows as a cross-hatch, and
+   either stays legible over any fill of the chart's own (land's tan, a dock's orange, the white
+   of the water) where a second wash only muddied the first. The survey window, a planning aid
+   and not a rule, is a teal wash (it shared the rules' amber). Why hatching: a thematic overlay
+   reads best in a visual variable the base map does not use (Bertin, *Semiology of Graphics*);
+   orientation and hue are separable pre-attentive features, so the two rules stay apart for an
+   operator who cannot tell red from amber (Treisman and Gelade; Ware, *Information
+   Visualization: Perception for Design*); fine lines need luminance contrast to be seen at all,
+   so the lines are near-opaque over a faint wash (Ware); and the ENC presentation standard
+   itself (IHO S-52) draws a regulated area as a hatched, bounded region, the symbol a mariner
+   already reads as "an area with a rule". Checked in simulation: the hatch survives
+   deuteranopia, protanopia and a luminance-only rendering. Drag it anywhere by its title, resize it by its corner (both kept, like
    every chart card), and fold it with its ▾ button. *Every* commanded motion routes clear of it — Go-To and
    RTH route around it (or refuse an unreachable target), search and survey legs clip
    to clear water, and the transit **to** a survey (boat → first waypoint) plus every
@@ -2547,9 +2563,11 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
      states' rules. Not modeled, because the chart does not say where they are: rafts, swimmers,
      swimming areas, mooring fields and other vessels in New Hampshire; marinas and approved
      anchorages in Maine; rafts, swimmers, shorelines used for swimming, bends and blind turns in
-     Massachusetts. On the chart each shore or facility band is tinted amber in its state's own
-     water, with a solid amber line at the rule's distance; the exempt channel is left clear.
-     Massachusetts' channels and bridges are drawn as amber dashed areas. The ramp and marina
+     Massachusetts. On the chart each shore or facility band is hatched amber (a faint wash under
+     amber lines at 135 degrees - the speed rules' own texture since 2026-10-19, the keep-outs'
+     red runs the other way) in its state's own water, with a solid amber line at the rule's
+     distance; the exempt channel is left clear. Massachusetts' channels and bridges are drawn
+     as amber dashed areas, hatched the same. The ramp and marina
      categories are new to the chart reader, so a chart area cached before today gets them when
      it is re-read, within a week.
 
@@ -2565,7 +2583,9 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    comes first). A page that cannot say which leg she is on still caps her by position and puts her
    speed back when she is clear. The zone taking her speed and letting it go are each said in a
    banner and logged (`speed_zone`). The Mission Status card's "for" row says which zone and until
-   when. Zones are drawn in amber with their rule; one that does not bind this hull is drawn gray.
+   when. Zones are drawn in amber with their rule - hatched at 135 degrees since 2026-10-19, the
+   one texture for every water a speed rule holds her slow in, the shore bands too; one that does
+   not bind this hull is drawn gray, a wash with no hatch.
 
    **Entering a new area downloads *every* published layer.** The extract used to fetch
    only the ~45 classes the keep-out roles named, and that was the wrong trade: a cache
