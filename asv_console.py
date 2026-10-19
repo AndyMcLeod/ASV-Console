@@ -2100,7 +2100,9 @@ ENC_BASE = "https://gis.charttools.noaa.gov/arcgis/rest/services/encdirect/%s/Ma
 # harbor chart's exact topology and both charts' hazards apply - more chart, never less.
 ENC_BANDS = ["enc_harbour", "enc_approach", "enc_coastal", "enc_general", "enc_overview"]  # finest first
 ENC_BERTHING = "enc_berthing"
-ENC_LAYER_MAP_MAX_AGE_S = 30 * 86400    # a band's layer list is asked for again after this (_enc_layer_map)
+ENC_LAYER_MAP_MAX_AGE_S = 86400         # a band's layer list is asked for again after this (_enc_layer_map): a day - the
+                                         # listing is one 0.2 s request, and a republished service numbers its layers anew
+                                         # (NOAA republished every band with group layers and prefixed names, 2026-10-19)
 ENC_DIR = os.path.join(CHART_DIR, "enc")
 
 # S-57 object classes we fetch, grouped by the punch-out ROLE they play. Layer ids
@@ -2397,8 +2399,22 @@ def _enc_ssl():
         return _enc_ssl_ctx
 
 
+def _enc_listing(band, timeout=20.0):
+    """The band's MapServer listing (?f=json) - raising on NOAA's HTTP-200 fault, or a listing without layers, so that
+    _enc_retry asks again (2026-10-19: the fault came on every other request, and one answer decided a day's map)."""
+    req = urllib.request.Request(ENC_BASE % band + "?f=json", headers={"User-Agent": "ASV-Console/1.0"})
+    with urllib.request.urlopen(req, timeout=timeout, context=_enc_ssl()) as r:
+        info = json.loads(r.read())
+    if not isinstance(info, dict) or not info.get("layers"):
+        err = (info.get("error") or {}) if isinstance(info, dict) else {}
+        raise ValueError("ENC %s: %s" % (band, (err.get("message") if isinstance(err, dict) else None) or "a listing without layers"))
+    return info
+
+
 def _enc_layer_map(band, timeout=20.0):
-    """Return {className: layerId} for a band, cached in memory + on disk."""
+    """Return {className: layerId} for a band, cached in memory + on disk. A class is the layer's name past any group
+    prefix ("Harbor.Depth_Area" is Depth_Area: NOAA's 2026-10-19 republish put every layer under a group), group layers
+    (no geometryType) skipped."""
     with _enc_layermap_lock:
         if band in _enc_layermaps:
             return _enc_layermaps[band]
@@ -2418,10 +2434,7 @@ def _enc_layer_map(band, timeout=20.0):
         old = None
     if m is None:
         try:
-            req = urllib.request.Request(ENC_BASE % band + "?f=json",
-                                         headers={"User-Agent": "ASV-Console/1.0"})
-            with urllib.request.urlopen(req, timeout=timeout, context=_enc_ssl()) as r:
-                info = json.loads(r.read())
+            info = _enc_retry(_enc_listing, band, timeout)
         except (OSError, ValueError, http.client.HTTPException):
             info = None
         m = {}
@@ -2471,7 +2484,12 @@ def _enc_query(band, layer_id, bbox, timeout=25.0, count_only=False, max_records
     url = ENC_BASE % band + "/%d/query?" % layer_id + urllib.parse.urlencode(params)
     req = urllib.request.Request(url, headers={"User-Agent": "ASV-Console/1.0"})
     with urllib.request.urlopen(req, timeout=timeout, context=_enc_ssl()) as r:
-        return json.loads(r.read())
+        d = json.loads(r.read())
+    # ⚠ THE SAME HTTP-200 FAULT _enc_query_ids REFUSES (2026-10-19): on the count probe a fault has no `count`, which read
+    # as 0 - "no coverage here" - and the band pick fell to the coarser band for water the finer chart covers.
+    if isinstance(d, dict) and isinstance(d.get("error"), dict):
+        raise ValueError("ENC %s/%d: %s" % (band, layer_id, d["error"].get("message") or "service error"))
+    return d
 
 
 def _enc_query_ids(band, layer_id, bbox, timeout=25.0):
@@ -2527,12 +2545,29 @@ def _enc_query_by_ids(band, layer_id, ids, timeout=30.0, batch=200):
     return feats
 
 
-# ⚠ A READ IS TRIED THREE TIMES BEFORE A LAYER IS CALLED FAILED (2026-10-12). Measured 2026-08-16: at 8 queries in flight
-# a 39-layer extract lost 1-4 random layers on every run, while 4 in flight with 4 attempts came back whole. A failed
-# layer is never cached - but a tile read fails WHOLE for one (fetch_enc_layered: its squares are unread), so a retry
-# here is what keeps one bad answer in two hundred from refusing the water.
-ENC_QUERY_ATTEMPTS = 3
-ENC_QUERY_BACKOFF_S = (0.5, 1.5)
+# ⚠ A READ IS TRIED TWELVE TIMES BEFORE A LAYER IS CALLED FAILED (2026-10-19; three since 2026-10-12). Measured
+# 2026-08-16: at 8 queries in flight a 39-layer extract lost 1-4 random layers on every run, while 4 in flight with 4
+# attempts came back whole. Measured 2026-10-19, with NOAA mid-republish: 47 of 94 sequential requests answered the
+# "Could not find service" fault, each in 0.14 s, at random - and at 2, 4 or 8 in flight alike, so it is no rate limit
+# and no node to stick to. A tile is some six hundred queries and fails WHOLE for one acted-on layer (fetch_enc_layered:
+# its squares are unread), so three tries at a 45 percent loss left a tenth of its layers failed; twelve, each
+# independent, leave 0.45^12 - one query in fourteen thousand. The waits grow, so a service that is truly overloaded is
+# not hammered; a dead link (OSError) is not tried again at all (_enc_retry). A failed layer is never cached.
+ENC_QUERY_ATTEMPTS = 12
+ENC_QUERY_BACKOFF_S = (0.2, 0.3, 0.5, 0.8, 1.2, 1.5, 2.0)
+
+
+def _enc_fault_say(e):
+    """NOAA's fault in words the operator can act on. ENCDirect answers a stopped or restarting instance of a service with
+    HTTP 200 and {"error": {"code": 500, "message": "Error handling service request :Could not find service. Service may
+    be stopped or it may not be configured."}} - measured 2026-10-19 on 47 of 94 requests over 75 s, at random (not in
+    bursts; 2, 4 and 8 in flight lost alike; a kept connection no better), while the folder listed six new enc_gp_*
+    services: a server mid-republish. The raw sentence reached the page's banner."""
+    s = str(e)
+    if "Could not find service" in s:
+        return ("NOAA's chart service answered 'Could not find service' - a stopped or restarting service on its server; "
+                "each query is tried again, up to %d times" % ENC_QUERY_ATTEMPTS)
+    return s[:200]
 
 
 def _enc_retry(fn, *args):
@@ -2553,22 +2588,35 @@ def _enc_retry(fn, *args):
             time.sleep(ENC_QUERY_BACKOFF_S[min(k, len(ENC_QUERY_BACKOFF_S) - 1)])
 
 
+def _enc_count(band, layer_id, bbox):
+    return int(_enc_query(band, layer_id, bbox, count_only=True).get("count", 0))
+
+
 def _enc_pick_band(bbox, errors=None):
-    """Finest ENC band with Depth_Area or Land_Area coverage in the bbox. `errors`, a list when given: every band query
-    that FAILED is noted in it (band: error), so a caller can tell "no chart here" from "the service did not answer" - the
-    two read the same, None, and the SRC card kept the second for good (the 2026-10-18 review, finding 7)."""
+    """Finest ENC band with Depth_Area or Land_Area coverage in the bbox - or None: no band reaches it, OR a band's probe
+    FAILED (noted in `errors`, a list, when given: band and fault), so a caller can tell "no chart here" from "the
+    service did not answer" (the 2026-10-18 review, finding 7).
+    ⚠ A FAILED PROBE NEVER FALLS TO A COARSER BAND (2026-10-19). A harbor probe NOAA refused read as "the harbor chart
+    does not reach here" and the pick went on to the approach band: the same water on a coarser chart, its piers and
+    dredged edges gone from the model - and with the fault on every other request, half the picks. Each probe is tried
+    again (_enc_retry); a band that still fails ends the pick, and so does a band whose layer list cannot be had."""
     for band in ENC_BANDS:
         lm = _enc_layer_map(band)
+        if not lm:
+            if errors is not None:
+                errors.append("%s: its layer list could not be read" % band)
+            return None
         for cls in ("Depth_Area", "Land_Area"):
             lid = lm.get(cls)
             if lid is None:
                 continue
             try:
-                if int(_enc_query(band, lid, bbox, count_only=True).get("count", 0)) > 0:
+                if _enc_retry(_enc_count, band, lid, bbox) > 0:
                     return band
             except (OSError, ValueError, http.client.HTTPException) as e:
                 if errors is not None:
-                    errors.append("%s: %s" % (band, str(e)[:120]))
+                    errors.append("%s: %s" % (band, _enc_fault_say(e)))
+                return None
     return None
 
 
@@ -2882,6 +2930,17 @@ def _enc_coverage(band, tile):
     return polys
 
 
+def _enc_coverage_old(band, tile):
+    """The band's cached coverage for `tile`, whatever its age - None when there is none. The fallback when the live read
+    fails (2026-10-19): a band's cells change rarely, and last month's coverage beats refusing the tile."""
+    path = os.path.join(ENC_DIR, "cov_v1_%s_%s.json" % (band, _bbox_key(tile)))
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
 def _cov_index(polys):
     """A band's coverage as {"polys": [(bbox, rings)], "edges": [(x1, y1, x2, y2)]}: `edges` bound the band's union -
     every coverage edge not shared by two of its cells, canceled vertex for vertex or, on an axis-aligned line, by
@@ -2958,9 +3017,13 @@ def _seg_crosses_rect(x1, y1, x2, y2, W, S, E, N):
 
 
 def _enc_leaves(tile, idx, depth_max=ENC_LEAF_DEPTH):
-    """The tile cut into squares, each (rect, bands, read): `bands` the ranks (ENC_BANDS order) whose features apply
-    there, `read` False where some or all of it no chart covers. See the block header."""
+    """The tile cut into squares, each (rect, bands, read[, why]): `bands` the ranks (ENC_BANDS order) whose features
+    apply there, `read` False where some or all of it no chart covers - `why` "none" then, or "unknown" (2026-10-19)
+    where a band whose coverage is UNKNOWN (idx[j] None: its coverage could not be read, no copy) might cover it: such a
+    square is never read from a coarser band in that band's place; it is water that failed to read. See the header."""
     leaves, nb = [], len(idx)
+    unknown = [j for j in range(nb) if idx[j] is None]
+    why_none = "unknown" if unknown else "none"
 
     def near(b, r):
         return b[0] <= r[2] and b[2] >= r[0] and b[1] <= r[3] and b[3] >= r[1]
@@ -2984,23 +3047,30 @@ def _enc_leaves(tile, idx, depth_max=ENC_LEAF_DEPTH):
         full = [j for j in range(nb) if st[j] == "full"]
         part = [j for j in range(nb) if st[j] == "partial"]
         if not full and not part:
-            leaves.append((rect, (), False))
+            leaves.append((rect, (), False, why_none))
             return
         js = full[0] if full else None
+        # settled on band js (no finer band partial here, or the walk at its depth): a finer band UNKNOWN means this is
+        # not js's water to read - it failed; a finer band still partial subdivides first, as before
         if js is not None and not any(j < js for j in part):
-            leaves.append((rect, (js,), True))
+            if any(u < js for u in unknown):
+                leaves.append((rect, (), False, "unknown"))
+            else:
+                leaves.append((rect, (js,), True))
             return
         if depth >= depth_max:
-            if js is not None:
+            if js is not None and any(u < js for u in unknown):
+                leaves.append((rect, (), False, "unknown"))
+            elif js is not None:
                 leaves.append((rect, tuple(j for j in part if j < js) + (js,), True))
             else:
-                leaves.append((rect, tuple(part), False))
+                leaves.append((rect, tuple(part), False, why_none))
             return
         mx, my = (W + Ea) / 2.0, (S + N) / 2.0
         for sub in ((W, S, mx, my), (mx, S, Ea, my), (W, my, mx, N), (mx, my, Ea, N)):
             walk(sub, depth + 1, E2, P2)
 
-    walk(tuple(tile), 0, [ix["edges"] for ix in idx], [ix["polys"] for ix in idx])
+    walk(tuple(tile), 0, [ix["edges"] if ix else [] for ix in idx], [ix["polys"] if ix else [] for ix in idx])
     return leaves
 
 
@@ -3161,17 +3231,34 @@ def _enc_tile_build(tile):
     fail = {"tile": tile, "features": [], "unread": [], "unread_failed": [tile], "bands": [], "partial": []}
     if time.monotonic() < _enc_down_until:
         return dict(fail, note="ENC offline (no cache for this tile)")
-    try:
-        idx = [_cov_index(_enc_coverage(b, tile)) for b in ENC_BANDS]
-        berth = _enc_coverage(ENC_BERTHING, tile)
-    except (OSError, ValueError, http.client.HTTPException) as e:
-        if isinstance(e, OSError):
-            _enc_down_until = time.monotonic() + 30.0
-        return dict(fail, note="the chart's coverage could not be read here (%s)" % e)
+    # EVERY BAND'S COVERAGE, OR WHAT IS KNOWN OF IT (2026-10-19). A tile failed WHOLE when any one band's coverage could
+    # not be read - the overview band's, for a harbor tile - and NOAA was answering every other request with its fault.
+    # Now a band whose live read fails serves its cached coverage of any age (`coverage_stale`); one with no copy is
+    # UNKNOWN (`coverage_failed`): the squares a finer, known band covers are read as before, a square an unknown band
+    # might cover is water that FAILED to read (never read from a coarser band in its place), and the tile is served but
+    # not kept. The finest band unknown with no copy is the one case nothing can be read.
+    covs, cov_failed, cov_stale = [], {}, []
+    for b in ENC_BANDS + [ENC_BERTHING]:
+        try:
+            covs.append(_enc_coverage(b, tile))
+        except (OSError, ValueError, http.client.HTTPException) as e:
+            if isinstance(e, OSError):
+                _enc_down_until = time.monotonic() + 30.0
+            old = _enc_coverage_old(b, tile)
+            if old is not None:
+                covs.append(old)
+                cov_stale.append(b)
+            else:
+                covs.append(None)
+                cov_failed[b] = _enc_fault_say(e)
+    berth = covs.pop()
+    if covs[0] is None:
+        return dict(fail, note="the chart's coverage could not be read here (%s: %s)" % (ENC_BANDS[0], cov_failed[ENC_BANDS[0]]))
+    idx = [_cov_index(c) if c is not None else None for c in covs]
     leaves = _enc_leaves(tile, idx)
     feats, failed, present = [], set(), []
     # THE BERTHING CHART, WHERE IT REACHES (ENC_BANDS' note): every layer, whole, beside the harbor chart.
-    bb = [_geom_bbox({"type": "Polygon", "coordinates": rings}) for rings in berth if rings]
+    bb = [_geom_bbox({"type": "Polygon", "coordinates": rings}) for rings in (berth or []) if rings]
     bb = [b for b in bb if b and b[0] < tile[2] and b[2] > tile[0] and b[1] < tile[3] and b[3] > tile[1]]
     if bb:
         region = [max(tile[0], min(b[0] for b in bb)), max(tile[1], min(b[1] for b in bb)),
@@ -3205,12 +3292,22 @@ def _enc_tile_build(tile):
                 feats.append(ft)
             else:
                 feats.extend(_clip_feature(ft, rects))
-    out = {"tile": tile, "features": feats, "bands": present, "partial": sorted(failed), "unread_failed": [],
-           "unread": [list(x) for x in _merge_rects([lf[0] for lf in leaves if not lf[2]])], "leaves": len(leaves),
-           "read_at": time.time(), "reader": _ENC_TILE_READER}
-    if failed:
-        print("[enc] REFUSING TO CACHE tile %s: %d layer(s) failed (%s) - served once and re-read next time"
-              % (_bbox_key(tile), len(failed), ", ".join(sorted(failed)[:6])), flush=True)
+    not_read = [lf for lf in leaves if not lf[2]]
+    out = {"tile": tile, "features": feats, "bands": present, "partial": sorted(failed),
+           "unread_failed": [list(x) for x in _merge_rects([lf[0] for lf in not_read if len(lf) > 3 and lf[3] == "unknown"])],
+           "unread": [list(x) for x in _merge_rects([lf[0] for lf in not_read if len(lf) < 4 or lf[3] == "none"])],
+           "leaves": len(leaves), "read_at": time.time(), "reader": _ENC_TILE_READER,
+           "coverage_failed": sorted(cov_failed), "coverage_stale": sorted(cov_stale)}
+    if cov_failed:
+        out["note"] = "read without the %s chart's coverage (%s): what it would cover is unread" % (
+            " / ".join(b.replace("enc_", "") for b in sorted(cov_failed)), next(iter(cov_failed.values())))
+    elif cov_stale:
+        out["note"] = "the %s chart's coverage from an older read (its live read failed)" % " / ".join(b.replace("enc_", "") for b in cov_stale)
+    if failed or cov_failed or cov_stale:
+        print("[enc] REFUSING TO CACHE tile %s: %d layer(s) failed (%s)%s%s - served once and re-read next time"
+              % (_bbox_key(tile), len(failed), ", ".join(sorted(failed)[:6]),
+                 ("; coverage unknown: " + ", ".join(sorted(cov_failed))) if cov_failed else "",
+                 ("; coverage from an older read: " + ", ".join(cov_stale)) if cov_stale else ""), flush=True)
     else:
         out["complete"] = True
     return out
@@ -3592,7 +3689,7 @@ def fetch_enc_layered(bbox, min_depth=0.0):
         got = list(ex.map(fetch_enc_tile, tiles))
     md = float(min_depth or 0.0)
     feats, seen, unread, unread_failed, partial, bands, notes = [], set(), [], [], set(), set(), []
-    stale, read_at, aged = set(), [], 0
+    stale, read_at, aged, cov_failed, cov_stale = set(), [], 0, set(), set()
 
     def into(rs, dst):
         for r in rs:
@@ -3617,6 +3714,8 @@ def fetch_enc_layered(bbox, min_depth=0.0):
             into([d["tile"]], unread_failed)
         if d.get("stale"):
             stale.add(d["stale"])
+        cov_failed.update(d.get("coverage_failed") or [])
+        cov_stale.update(d.get("coverage_stale") or [])
         if isinstance(d.get("read_at"), (int, float)):
             read_at.append(d["read_at"])
             if now - d["read_at"] > ENC_TILE_FRESH_S:
@@ -3648,9 +3747,13 @@ def fetch_enc_layered(bbox, min_depth=0.0):
            "read_at": min(read_at) if read_at else None, "aged": aged, "stale": sorted(stale),
            "supplement": [ENC_BERTHING] if ENC_BERTHING in bands else [],
            # the failed layers the model ACTS ON - the ones that made their tiles unread water
-           "partial_named": sorted(c for c in partial if c in _ENC_ACTED_ON)}
+           "partial_named": sorted(c for c in partial if c in _ENC_ACTED_ON),
+           # the bands whose coverage could not be read (their squares unread_failed) or came from an older read (2026-10-19)
+           "coverage_failed": sorted(cov_failed), "coverage_stale": sorted(cov_stale)}
     if finest is None:
         out["note"] = notes[0] if notes else "no ENC coverage here"
+    elif cov_failed:
+        out["note"] = next((n for n in notes if n.startswith("read without")), notes[0] if notes else "")
     if not partial and not unread_failed and not stale:
         out["complete"] = True
     return out
@@ -4226,7 +4329,7 @@ def fetch_chart_info(bbox):
     band = _enc_pick_band(bbox, errs)
     if band is None:
         if errs:
-            return {"band": None, "cells": [], "quality": [], "note": "the chart service did not answer (%s)" % errs[0],
+            return {"band": None, "cells": [], "quality": [], "note": "the chart service did not answer (%s)" % errs[0][:220],
                     "failed": True}
         return {"band": None, "cells": [], "quality": [], "note": "no ENC coverage here"}
     lm = _enc_layer_map(band)

@@ -209,7 +209,7 @@ check("2b. A REFUSAL BY THE SERVICE is tried again: an error payload twice, then
       "refused three times falls to the direct query, which, short (4 of 5) or itself an error payload, fails the layer; "
       "an HTTP 503 is tried again too",
       lambda: flaky["complete"] and flaky["by"] == 3 and flaky["n"] == 5
-              and dead_by["by"] == 3 and dead_by["direct"] == 1 and dead_by["partial"] == ["Depth_Area"]
+              and dead_by["by"] == A.ENC_QUERY_ATTEMPTS and dead_by["direct"] == 1 and dead_by["partial"] == ["Depth_Area"]
               and dead_err["partial"] == ["Depth_Area"] and dead_err["n"] == 0
               and busy["complete"] and busy["ids"] == 2,
       lambda: "flaky %s; dead %s; dead+error %s; 503 %s" % (json.dumps(flaky), json.dumps(dead_by), json.dumps(dead_err), json.dumps(busy)))
@@ -217,13 +217,48 @@ check("2d. A BODY CUT MID-READ (IncompleteRead) is tried again like a refusal - 
       "cut every time, with the direct query an error payload too, the LAYER fails (partial) and the read goes on - it "
       "used to unwind the whole tile build",
       lambda: cut["complete"] and cut["by"] == 3 and cut["n"] == 5
-              and cut_always["partial"] == ["Depth_Area"] and not cut_always["complete"] and cut_always["by"] == 3 and cut_always["n"] == 0,
+              and cut_always["partial"] == ["Depth_Area"] and not cut_always["complete"] and cut_always["by"] == A.ENC_QUERY_ATTEMPTS and cut_always["n"] == 0,
       lambda: "cut %s; always %s" % (json.dumps(cut), json.dumps(cut_always)))
 check("2c. ... and a DEAD LINK (no route, a timeout) is NOT tried again - the layer fails on the first try",
       lambda: dead_link["ids"] == 1 and dead_link["partial"] == ["Depth_Area"],
       lambda: json.dumps(dead_link))
 
 # ── 3. a band's layer list, renewed ──────────────────────────────────────────────────────────────────────────────────
+# -- 2e. twelve tries (2026-10-19) --------------------------------------------------------------
+# NOAA mid-republish answered 47 of 94 requests with its "Could not find service" fault - each request on its own, at
+# random, at 2, 4 or 8 in flight alike. Three tries at that rate left a tenth of a tile's layers failed; twelve, each
+# independent, one query in fourteen thousand. The waits are short and grow (the suite zeroes them above).
+saved = (A._enc_layer_map, A._enc_query_ids, A._enc_query_by_ids, A._enc_query, A.ENC_ROLES)
+A._enc_layer_map = lambda band, timeout=20.0: {"Depth_Area": 1}
+A.ENC_ROLES = {"depth_area": ["Depth_Area"]}
+
+
+def by_nine(band, lid, ids, timeout=30.0, batch=200):
+    tries["by"] += 1
+    if tries["by"] < 10:
+        raise ValueError("ENC by id: Could not find service")
+    return F5
+
+
+def by_always(band, lid, ids, timeout=30.0, batch=200):
+    tries["by"] += 1
+    raise ValueError("ENC by id: Could not find service")
+
+
+try:
+    nine = run(by_nine)
+    always = run(by_always, direct={"error": {"code": 500}})
+finally:
+    A._enc_layer_map, A._enc_query_ids, A._enc_query_by_ids, A._enc_query, A.ENC_ROLES = saved
+_src_py = open(A.__file__, encoding="utf-8").read()
+check("2e. A REFUSAL NINE TIMES OVER, whole on the tenth, is a layer read WHOLE (twelve tries, 2026-10-19 - NOAA's fault on "
+      "every other request); refused every time it falls to the direct query and fails; the shipped waits are seven, short, "
+      "and grow",
+      lambda: nine["complete"] and nine["by"] == 10 and nine["n"] == 5 and always["by"] == A.ENC_QUERY_ATTEMPTS == 12
+              and always["partial"] == ["Depth_Area"]
+              and "ENC_QUERY_BACKOFF_S = (0.2, 0.3, 0.5, 0.8, 1.2, 1.5, 2.0)" in _src_py,
+      lambda: "nine %s; always %s" % (json.dumps(nine), json.dumps(always)))
+
 lm_dir = os.path.join(TMP, "enc_test_band")
 os.makedirs(lm_dir, exist_ok=True)
 lm_path = os.path.join(lm_dir, "_layers.json")
@@ -254,6 +289,28 @@ check("3. A BAND'S LAYER LIST is asked for again once a month old - the new numb
               % (m_fresh, len(c_fresh), m_kept, len(c_fail), m_new, new_file))
 
 # ── 4. the chart-source card ─────────────────────────────────────────────────────────────────────────────────────────
+# -- 3b. the listing renewed DAILY, and asked again through NOAA's fault (2026-10-19) ---------------------------
+fault = {"error": {"code": 500, "message": "Error handling service request :Could not find service. Service may be stopped or it may not be configured."}}
+try:
+    A._enc_layermaps.clear()
+    os.utime(lm_path, (old_t, old_t))
+    A.urllib.request.urlopen, c_fault = answering([fault, fault, {"layers": [{"id": 0, "name": "DepthsA", "type": "Group Layer", "subLayerIds": [1]},
+                                                                             {"id": 1, "name": "Harbor.Depth_Area", "type": "Feature Layer", "geometryType": "esriGeometryPolygon"}]}])
+    m_retried = A._enc_layer_map("enc_test_band")                   # the fault twice, the listing on the third try: renewed
+    A._enc_layermaps.clear()
+    os.utime(lm_path, (old_t, old_t))
+    A.urllib.request.urlopen, c_only = answering([fault])
+    m_faulted = A._enc_layer_map("enc_test_band")                   # the fault every time: the old list kept
+finally:
+    A.urllib.request.urlopen = _urlopen
+    A._enc_layermaps.clear()
+check("3b. THE LISTING IS RENEWED DAILY, not monthly, and asked again through NOAA's fault: faulted twice and listed on the "
+      "third try, the new numbering is taken - a group layer skipped, 'Harbor.' cut from the name; faulted every time "
+      "(ENC_QUERY_ATTEMPTS requests), the old list is kept",
+      lambda: A.ENC_LAYER_MAP_MAX_AGE_S == 86400 and m_retried == {"Depth_Area": 1} and len(c_fault) == 3
+              and m_faulted == {"Depth_Area": 1} and len(c_only) == A.ENC_QUERY_ATTEMPTS,
+      lambda: "retried %s after %d requests; faulted %s after %d" % (m_retried, len(c_fault), m_faulted, len(c_only)))
+
 saved = (A._enc_pick_band, A._enc_layer_map, A._enc_query_ids, A._enc_query_by_ids)
 A._enc_pick_band = lambda bbox, errors=None: "enc_harbour"
 A._enc_layer_map = lambda band, timeout=20.0: {"Coverage_area": 1, "Quality_of_Data_area": 2}
@@ -517,6 +574,138 @@ check("10. EVERY CHART QUERY shares ONE TLS context - the layer list, the id que
       "made once (a context per request was 22.5 s of a tile's 36 s of CPU)",
       lambda: len(ctxs) == 5 and all(c is not None and c is A._enc_ssl() for c in ctxs) and A._enc_ssl() is A._enc_ssl(),
       lambda: "%d queries, contexts %s" % (len(ctxs), sorted({id(c) for c in ctxs})))
+
+# ── 11. the band pick never falls to a coarser band (2026-10-19) ───────────────────────────────────────────
+NOAA_FAULT = "Error handling service request :Could not find service. Service may be stopped or it may not be configured."
+Q11 = {"answers": {}}
+LM11 = {"empty": False}
+probes11 = []
+
+
+def lm11(band, timeout=20.0):
+    return {} if (band == "enc_general" and LM11["empty"]) else {"Depth_Area": 1, "Land_Area": 2}
+
+
+def q11(band, lid, bbox, timeout=25.0, count_only=False, max_records=2000):
+    probes11.append((band, lid))
+    a = Q11["answers"].get(band)
+    if a == "fault":                                   # as the real _enc_query answers the fault (2026-10-19): raised
+        raise ValueError("ENC %s/%d: %s" % (band, lid, NOAA_FAULT))
+    return {"count": a if a is not None else 0}
+
+
+saved11 = (A._enc_layer_map, A._enc_query)
+A._enc_layer_map, A._enc_query = lm11, q11
+box11 = [-70.8, 43.0, -70.7, 43.1]
+try:
+    Q11["answers"] = {"enc_harbour": "fault", "enc_approach": 5}
+    e1 = []
+    b1 = A._enc_pick_band(box11, e1)
+    p1 = list(probes11)
+    del probes11[:]
+    Q11["answers"] = {"enc_harbour": 0, "enc_approach": 5}
+    e2 = []
+    b2 = A._enc_pick_band(box11, e2)
+    # the REAL count query, answered the fault by the service: raises
+    A.urllib.request.urlopen, _ = answering([{"error": {"code": 500, "message": NOAA_FAULT}}])
+    try:
+        saved11[1]("enc_harbour", 1, box11, count_only=True)
+        raised = False
+    except ValueError as e:
+        raised = "Could not find service" in str(e)
+    finally:
+        A.urllib.request.urlopen = _urlopen
+    del probes11[:]
+    LM11["empty"] = True
+    Q11["answers"] = {"enc_harbour": 0, "enc_approach": 0, "enc_coastal": 0}
+    e3 = []
+    b3 = A._enc_pick_band(box11, e3)
+finally:
+    A._enc_layer_map, A._enc_query = saved11
+    LM11["empty"] = False
+check("11. THE BAND PICK NEVER FALLS TO A COARSER BAND: a harbour probe NOAA refused (tried ENC_QUERY_ATTEMPTS times) ends the "
+      "pick - None, the fault said in words, the approach band never asked; a harbour honestly EMPTY (count 0) goes on to "
+      "approach; the count probe raises on the fault; a band whose layer list cannot be had ends the pick too, said",
+      lambda: b1 is None and len(p1) == A.ENC_QUERY_ATTEMPTS and all(b == "enc_harbour" for b, _ in p1)
+              and e1 and "Could not find service" in e1[0] and "tried again" in e1[0]
+              and b2 == "enc_approach" and not e2 and raised is True
+              and b3 is None and e3 and "layer list" in e3[0],
+      lambda: "refused: %s, probes %d of %s, said %r; empty: %s; raised %s; no list: %s %r" % (b1, len(p1), sorted({b for b, _ in p1}), (e1 or [""])[0][:90], b2, raised, b3, (e3 or [""])[0]))
+
+# ── 12. a tile read with what is known of its bands' coverage (2026-10-19) ─────────────────────────────────
+TILE12 = [-70.5, 43.0, -70.25, 43.25]
+WEST = [[[-70.5, 43.0], [-70.375, 43.0], [-70.375, 43.25], [-70.5, 43.25], [-70.5, 43.0]]]
+WHOLE = [[[-70.5, 43.0], [-70.25, 43.0], [-70.25, 43.25], [-70.5, 43.25], [-70.5, 43.0]]]
+COV12 = {}
+
+
+def cov12(band, tile):
+    a = COV12.get(band, [])
+    if a == "fault":
+        raise ValueError("ENC %s/158: %s" % (band, NOAA_FAULT))
+    return a
+
+
+def feats12(region, md=0.0, band=None, extras=True, use_cache=True):
+    return {"band": band, "features": [{"role": "land", "cls": "Land_Area", "oid": 1, "geometry": {"type": "Polygon", "coordinates": WHOLE}}],
+            "partial": []}
+
+
+def area(rects):
+    return sum((r[2] - r[0]) * (r[3] - r[1]) for r in rects)
+
+
+saved12 = (A._enc_coverage, A.fetch_enc_features)
+A._enc_coverage, A.fetch_enc_features = cov12, feats12
+tile_area = (TILE12[2] - TILE12[0]) * (TILE12[3] - TILE12[1])
+try:
+    # coastal's coverage FAILS, no copy: the harbour half read, the rest water that failed (never read from general)
+    COV12.update({"enc_harbour": [WEST], "enc_coastal": "fault", "enc_general": [WHOLE]})
+    t1 = A._enc_tile_build(TILE12)
+    # the same with a copy of coastal's coverage from an older read on disk: read from it, said, not kept
+    cov_path = os.path.join(TMP, "cov_v1_enc_coastal_%s.json" % A._bbox_key(TILE12))
+    json.dump([WHOLE], open(cov_path, "w", encoding="utf-8"))
+    os.utime(cov_path, (time.time() - 40 * 86400,) * 2)
+    t2 = A._enc_tile_build(TILE12)
+    os.remove(cov_path)
+    # the HARBOUR coverage fails with no copy: nothing can be read
+    COV12.update({"enc_harbour": "fault", "enc_coastal": [WHOLE]})
+    t3 = A._enc_tile_build(TILE12)
+    # no band unknown, the east half covered by no band at all: honestly unread, and the tile complete
+    COV12.clear()
+    COV12.update({"enc_harbour": [WEST]})
+    t4 = A._enc_tile_build(TILE12)
+finally:
+    A._enc_coverage, A.fetch_enc_features = saved12
+half = tile_area / 2
+check("12. A TILE IS READ WITH WHAT IS KNOWN OF ITS BANDS' COVERAGE: coastal's coverage failing with no copy, the half the "
+      "harbour chart covers is read and the other half is water that FAILED (unread_failed, never read from the general "
+      "chart in coastal's place), the band named with the fault in words, the tile not kept; with coastal's coverage from an "
+      "older read on disk that half is read from it, said, not kept; the harbour chart's coverage failing with no copy, "
+      "nothing is read (the whole tile failed, the band and the fault named); no band unknown, water no band covers is "
+      "honestly unread and the tile is complete",
+      lambda: t1.get("coverage_failed") == ["enc_coastal"] and not t1.get("complete") and t1.get("unread") == []
+              and abs(area(t1["unread_failed"]) - half) < 0.02 * tile_area and len(t1["features"]) == 1
+              and t1["note"].startswith("read without the coastal chart's coverage (NOAA's chart service answered 'Could not find service'")
+              and t2.get("coverage_stale") == ["enc_coastal"] and not t2.get("coverage_failed") and not t2.get("complete")
+              and t2.get("unread_failed") == [] and t2.get("unread") == [] and len(t2["features"]) >= 2
+              and "older read" in t2["note"]
+              and t3.get("unread_failed") == [TILE12] and "enc_harbour" in t3["note"] and "Could not find service" in t3["note"]
+              and t4.get("complete") is True and t4.get("coverage_failed") == [] and t4.get("unread_failed") == []
+              and abs(area(t4["unread"]) - half) < 0.02 * tile_area,
+      lambda: json.dumps({"t1": {k: t1.get(k) for k in ("coverage_failed", "complete", "note")}, "t1_failed_area": round(area(t1["unread_failed"]) / tile_area, 3),
+                          "t2": {k: t2.get(k) for k in ("coverage_stale", "complete", "note")}, "t3": t3.get("note"),
+                          "t4": {k: t4.get(k) for k in ("complete", "coverage_failed")}, "t4_unread_area": round(area(t4["unread"]) / tile_area, 3),
+                          "features": [len(t1["features"]), len(t2["features"])], "t1_unread": t1.get("unread"), "t2_failed": t2.get("unread_failed")}))
+
+# ── 13. NOAA's fault in words ───────────────────────────────────────────────────────────────────────────
+said13 = A._enc_fault_say(ValueError("ENC enc_coastal/158: " + NOAA_FAULT))
+other13 = A._enc_fault_say(ValueError("ENC enc_coastal/158: the service cut the answer short"))
+check("13. NOAA's 'Could not find service' fault reaches the operator in words - a stopped or restarting service on its server, "
+      "each query tried again up to twelve times - and any other fault as itself",
+      lambda: said13.startswith("NOAA's chart service answered 'Could not find service'") and "12 times" in said13
+              and other13 == "ENC enc_coastal/158: the service cut the answer short",
+      lambda: said13 + " | " + other13)
 
 after = set(os.listdir(APP_ENC)) if os.path.isdir(APP_ENC) else set()
 shutil.rmtree(TMP, ignore_errors=True)

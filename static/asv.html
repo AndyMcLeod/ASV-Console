@@ -10979,6 +10979,7 @@ async function fetchENCBbox(b, minDepth){
            unread: [...sq(d && d.unread, false), ...sq(d && d.unread_failed, true)],
            readAt: (d && typeof d.read_at === "number") ? d.read_at : null, aged: (d && d.aged) || 0,
            stale: (d && d.stale) || [], supplement: (d && d.supplement) || [], partialNamed: (d && d.partial_named) || [],
+           coverageFailed: (d && d.coverage_failed) || [], note: (d && d.note) || null,   // a band's coverage not read (2026-10-19)
            skinJob,                                 // the worker's walk of this extract's seabed, or null (skinOffThread)
            workerId: skinJob ? skinJob.id : null,   // ... and the extract it holds to draw from, under this id (drawLayerOff)
            workerState: skinJob ? "pending" : null};
@@ -11264,11 +11265,14 @@ async function refreshNogo(centerLL, bbox, ask){     // extract ENC for the oper
     encShow=true; $("#chrtBtn").classList.add("on");
     // ⚠ AN EXTRACT THAT DID NOT ARRIVE WHOLE SAYS SO HERE (2026-10-12): this banner said "established" over a chart whose
     // depth layer had failed. The server makes such a tile unread water; the banner names what is missing.
-    const encP = enc.partialNamed || [], encS = enc.stale || [];
+    const encP = enc.partialNamed || [], encS = enc.stale || [], encC = enc.coverageFailed || [];
     nogoStatus("Nogo established ("+nogo.note+"). Go-To / RTH / search / survey all clip to these zones."
                + (encP.length ? " CHART INCOMPLETE: " + encP.slice(0, 4).join(", ") + (encP.length > 4 ? " and " + (encP.length - 4) + " more" : "")
                                 + " did not arrive - that water is unread until it is read again." : "")
                + (keptN ? " The earlier read's " + keptN + " feature(s) of those layers are kept." : "")
+               // a band whose COVERAGE could not be read (2026-10-19): the server names it; its squares are unread_failed
+               + (encC.length ? " COVERAGE NOT READ: " + (enc.note || "the " + encC.map(b => b.replace("enc_", "")).join(" / ")
+                                                           + " chart's coverage could not be read") + "." : "")
                + (encS.length ? " OLDER CHART IN USE: " + encS[0] : ""));
     render();
   }catch(e){

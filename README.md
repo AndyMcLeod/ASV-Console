@@ -2696,8 +2696,11 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    excused (2026-10-18): a route that runs on through unread water, the square she is in included,
    is refused until the chart there is read - RTH as well. (The whole square she was in used to be
    excused, and at the Canaveral lock that square was a 25 km chart tile: the Go-To ran 856 m over
-   land the model never had.) A tile whose coverage could not be read is unread, never empty water; a
-   tile with a failed layer is served once and not cached. A read asked to plan a route further that
+   land the model never had.) A band whose coverage could not be read (2026-10-19) makes the water
+   it might cover unread water that FAILED - the tile is read with the bands whose coverage is known,
+   and never from a coarser band in the unknown one's place; its cached coverage of any age stands
+   in first; the finest band's coverage unknown with no copy fails the tile whole. A tile with a
+   failed layer is served once and not cached. A read asked to plan a route further that
    arrives without some of its layers is USED (2026-10-18), with the earlier read's features of those
    layers kept; it used to be thrown away whole, with the land it had brought. The seabed-gap check runs on the harbor chart
    alone, which is served whole, and a hole a coarser chart's seabed fills is where the harbor chart
@@ -2981,13 +2984,19 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
      Naval Shipyard's restricted area, "33 CFR 334.50").
    - **Read whole, or said not to be.** A layer whose geometry came back as an error, or short of the
      objects asked for, was taken as whole and kept for good; now it fails, and a refusal by the
-     service is tried three times (a dead link is not). A tile missing a layer the model acts on is
+     service is tried up to twelve times, the waits short and growing (a dead link is not tried
+     again). Twelve since 2026-10-19: NOAA, republishing its services, answered every other request
+     with "Could not find service" - each request on its own, at random, at any number in flight -
+     and three tries left a tenth of a tile's layers failed; twelve, each independent, leave one
+     query in fourteen thousand. The fault reaches the Nogo row in words. A probe NOAA refuses never
+     falls to a coarser chart band for the same water. A tile missing a layer the model acts on is
      **unread water** - the planners refuse it, the guard keeps everything that did arrive - and the
      Nogo row says **incomplete** and the banner names the layers.
    - **The chart's age.** A tile carries when it was read. One past a week is served and read again
      behind it (NOAA corrects its charts week by week); one written by an older reader is read again
      first, and only if that fails is the older copy served, the row saying **old chart**. The layer
-     lists are asked for again monthly, the chart-source card weekly, and a card answer with a failed
+     lists are asked for again daily (2026-10-19; NOAA republished every band with group layers and
+     prefixed names - the class is the name past the prefix), the chart-source card weekly, and a card answer with a failed
      query is never kept. The row's tooltip gives the oldest tile's date. **On an old chart, nothing
      overhead is judged**: the older reader kept no clearances, so its bridges are not treated as too low
      (they were, for a few hours on 12 October, and every bridge on the Piscataqua was a wall to the DriX

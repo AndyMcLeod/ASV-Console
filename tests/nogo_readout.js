@@ -958,6 +958,18 @@ async function drive(fetchResult) {
       check("27h. a clipped piece is its own object: the piece that arrived keeps its sibling piece (same oid, another clip) and the "
             + "earlier read's other objects; itself not twice",
             pieces.n === 2 && pieces.kept.join() === "1:0011,1:1021,2", JSON.stringify(pieces));
+      // 27i. A BAND WHOSE COVERAGE COULD NOT BE READ (2026-10-19): the server reads the tile with what it knows, names the band
+      //      and NOAA's fault, and makes that band's water unread_failed; the page's banner says so beside the model it built
+      const covSay = "read without the coastal chart's coverage (NOAA's chart service answered 'Could not find service' - a stopped or "
+                   + "restarting service on its server; each query is tried again, up to 12 times): what it would cover is unread";
+      const covFail = await run(async () => {
+        sea.enc = { features: [{}], band: "enc_harbour", coverageFailed: ["enc_coastal"], note: covSay };
+        return { band: "enc_harbour", features: [{}], coverage_failed: ["enc_coastal"], note: covSay, unread_failed: [[-80.6, 28.25, -80.5, 28.5]] }; });
+      check("27i. a band whose COVERAGE could not be read: the model is built from the bands that answered (ready, not failed), "
+            + "and the banner says COVERAGE NOT READ with the server's words - the band, NOAA's fault, that its water is unread",
+            covFail.ready === true && covFail.failed === null && /COVERAGE NOT READ: read without the coastal chart's coverage/.test(covFail.said)
+            && /Could not find service/.test(covFail.said) && /what it would cover is unread/.test(covFail.said),
+            JSON.stringify(covFail));
     }
   }
 
