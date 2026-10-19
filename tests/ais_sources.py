@@ -569,6 +569,26 @@ check("11. A CONNECTED BUT QUIET TCP STREAM IS NOT A DEAD ONE: a second of silen
       lambda: landed_q and accepts_q == 1 and status_q.get("state") == "ok",
       lambda: "landed %s; accepts %d; status %s" % (landed_q, accepts_q, json.dumps(status_q)))
 
+# ---- 11b. a peer that died without a FIN ends the read: TCP keepalive on the receiver's socket (the 2026-10-18 review) --- #
+# Since finding 18 a read timeout on a connected socket is silence (`continue`), so nothing else ended a dead connection:
+# a host that vanished (power, a NAT mapping dropped, Wi-Fi) read as a quiet receiver, status ok, for ever.
+import inspect as _inspect
+import re as _re
+ka_srv = socket.socket()
+ka_srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+ka_srv.bind(("127.0.0.1", 0))
+ka_srv.listen(1)
+ka_cli = socket.create_connection(ka_srv.getsockname(), timeout=2)
+m._tcp_keepalive(ka_cli)
+ka_on = ka_cli.getsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE)
+ka_cli.close()
+ka_srv.close()
+ka_src = _inspect.getsource(m.NmeaSource._run_tcp)
+check("11b. A PEER THAT DIES WITHOUT A FIN is not silence for ever: the receiver's socket has TCP keepalive on (Windows' own "
+      "probe timing where it has it), set right after the connect and before the first read",
+      lambda: ka_on != 0 and _re.search(r"create_connection\([^\n]*\n\s*_tcp_keepalive\(s\)", ka_src) is not None,
+      lambda: "SO_KEEPALIVE %r; wired %s" % (ka_on, "_tcp_keepalive(s)" in ka_src))
+
 print()
 if fails:
     print("FAILED: %d of %d checks" % (fails, ran))

@@ -395,6 +395,21 @@ on behind it, said), and an unreadable cycle is set aside and fetched again; an 
 but released only from the supervising one; a session log that cannot be written says so once and stops
 rather than silently; and a sleeping laptop no longer moves the simulated boat an hour's way in one tick.
 
+**Review of the updates (2026-10-18).** Six area reviews of every change since the 2026-10-16 review
+(26 commits: the chart read's partial handling, the lock transit, the planner changes, the page's
+workers and windows, the server, the tests and documents), every finding re-verified, 33 of its
+34 findings repaired the same day with checks that fail on the code before them (the 34th, a spelling rule's
+gaps, handed to a parallel session); the report is
+[docs/review-2026-10-18.md](docs/review-2026-10-18.md). What an operator can see of it: a lock transit
+ends only once she is past the far gate, is ended by any other command, waives one gate at a time and
+takes its points exactly or not at all; nothing is commanded while the link is LOST, and LINK RESTORED
+says where she stands; a chart answer that came from a failure is asked again, not kept as "no chart
+here"; a read that lost a marina's layer is unread water, not a whole chart; the NOGO row keeps saying
+a failed read while the earlier zones stand, and its retry no longer dies on a tide tick; the NOGO key
+names the floor the overlay is drawn at; every long distance follows the UNITS pill; the controls
+window does not read red while the console restarts; a ship anchored just outside the chart box is in
+the plan's model; a dead NMEA peer is noticed within a minute.
+
 ## Run
 
 ```
@@ -2457,27 +2472,40 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    any scale the console warns and routes direct — verify the plan. Where a chart
    exists but NOAA did not serve it (2026-10-18, after a Go-To at the Canaveral lock
    ran over land), nothing is routed, not even straight: the command is refused saying
-   so, and the chart is read again every 30 s.
+   so, and the chart is read again every 30 s; the earlier read's zones stand for their
+   own water, the NOGO row saying beside them that the chart over her could not be read.
 
    **Locks (2026-10-18).** A lock's gates are keep-outs like any structure, so no route
    runs through a lock by itself. When a Go-To is refused and a lock lies between the
-   boat and the point (two lock gates facing across a chamber, found on the chart), the
-   alerts card offers **TRANSIT THE LOCK**. Taken: the way on from beyond the far gate is
-   planned first (a lock she could not be taken out of is not one to take her into); she
-   goes to hold 60 m short of the near gate; **GATE OPEN - GO IN** takes her slowly along
-   the chamber's axis to hold in the chamber, the lock's two gates taken out of the
-   keep-out model for this, for the guard and the planner alike; **FAR GATE OPEN - GO ON**
-   takes her out slowly along the axis and on to the point; once she is past the far
-   gate the gates are keep-outs again and the speed is released. Nothing passes a gate
-   but on your word. **CANCEL TRANSIT** ends it at any stage; inside the lock the gates
-   stay out of the model until she is out of it. The console does not talk to the lock:
-   calling it is yours. A reload ends a transit (the gates come back, and the guard holds
-   her if one is ahead). Seen live on a scratch console at Canaveral, with NOAA serving
-   that chart only in part all evening (17 reads, never whole): a Go-To through the lock
-   was refused, "the target lies in water whose chart could not be read", where the
-   evening's had gone over land, and the lock was found as charted - two lock gates 200 m
-   apart, 27.4 m wide. A whole transit has not yet been run live: it needs that chart
-   served whole; tests/lock_transit.js drives every stage through the page's own code.
+   boat and the point (two lock gates facing across a chamber, found on the chart; not
+   for a refusal about depth, nor for a way that merely passes beside the lock), the
+   alerts card offers **TRANSIT THE LOCK** (**NO** declines it). Taken: the way on from
+   beyond the far gate is planned first (a lock she could not be taken out of is not one
+   to take her into); she goes to hold 60 m short of the near gate; **GATE OPEN - GO IN**
+   takes her slowly along the chamber's axis to hold in the chamber, the NEAR gate alone
+   taken out of the keep-out model for this - the guard's and the planner's alike; the
+   closed far gate stays a wall; **FAR GATE OPEN - GO ON** takes the far gate out and the
+   near one back, and sends her out slowly along the axis and on to the point; once she
+   is past the far gate the gates are keep-outs again and the speed is released. Nothing
+   passes a gate but on your word, and the transit's own points are taken exactly or not
+   at all: a hold point the planner would move is a refusal, never a run through a waived
+   gate. The transit owns no run but its own leg: Stop, Pause, Hold, E-STOP, a Go-To, an
+   RTH, an Upload or a passage ends it, the gates coming back unless she is inside the
+   lock, and the end-of-plan RTH chain and a passage's rejoin stand down while it holds
+   her. **CANCEL TRANSIT** ends a taken transit at any stage (on her way at a gate, she is
+   held first); inside the lock the gates stay out of the model until she is out of it.
+   The console does not talk to the lock: calling it is yours. A reload ends a transit
+   (the gates come back, and the guard holds her if one is ahead), and a boat found INSIDE
+   a lock is offered GO ON from where she is. Seen live on a scratch console at Canaveral,
+   with NOAA serving that chart only in part all evening (17 reads, never whole): a Go-To
+   through the lock was refused, "the target lies in water whose chart could not be
+   read", where the evening's had gone over land, and the lock was found as charted - two
+   lock gates 200 m apart, 27.4 m wide. A whole transit has not yet been run live: it
+   needs that chart served whole; tests/lock_transit.js drives every stage through the
+   page's own code. The 2026-10-18 review found three defects in the first build and
+   repaired them the same day (done declared inside the chamber; nothing ending a transit
+   another command replaced; a moved hold point run to through a waived gate):
+   docs/review-2026-10-18.md.
 
    **Speed zones: the law's limit holds her speed** (Andy, 2026-10-16: "Build a bounded area that
    overrides commanded speed and lowers to legal speed. this releases once the ASV is clear of the
@@ -3898,8 +3926,9 @@ node tests/spelling.js
 python tests/sanitization.py
 ```
 
-**Review reports** are dated Markdown files beside the set — `docs/review-2026-10-16.md` is the
-2026-10-16 bug and reliability review — each with a Word rendering made from it:
+**Review reports** are dated Markdown files beside the set - `docs/review-2026-10-16.md` is the
+2026-10-16 bug and reliability review, `docs/review-2026-10-18.md` the 2026-10-18 review of the updates
+since it - each with a Word rendering made from it:
 
 ```
 node tools/review_to_docx.js docs/review-2026-10-16.md

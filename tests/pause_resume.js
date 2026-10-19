@@ -777,6 +777,7 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     // the Upload refuses a read that FAILED (2026-10-18): the planners' own refusal - passage.js's text - on this world's nogo
     const PSG = fs.readFileSync(path.join(path.dirname(require.resolve("../static/js/passage.js")), "passage.js"), "utf8");
     const chartFailedRefusal = eval("(" + PSG.slice(PSG.indexOf("function chartFailedRefusal("), PSG.indexOf("\nexport function holdTarget(")) + ")");
+    var lockTransit = null; const lockEnd = () => {};   // an Upload ends a lock transit before it plans (2026-10-18): none here
     const doUpload = eval("(" + grab("doUpload") + ")");
     const up = async (setup) => { calls.length = 0; unotes.length = 0; banners.length = 0; asked = null;
                                   runRoute = null;

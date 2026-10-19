@@ -576,7 +576,7 @@ try:
     # "no cache was written" was true because nothing had been fetched. Stub everything the
     # path touches, then assert - and reset the circuit breaker between phases, because a
     # failed fetch arms a 30 s cooldown that would silently skip the next one.
-    A._enc_pick_band = lambda bbox: "enc_harbour"
+    A._enc_pick_band = lambda bbox, errors=None: "enc_harbour"
     A._enc_layer_map = lambda band, timeout=20.0: {"LNDARE": 1, "DEPARE": 2}
     A._enc_query_by_ids = lambda b, lid, ids, **k: [
         {"geometry": {"type": "Point", "coordinates": [0, 0]}, "properties": {}}]
@@ -636,7 +636,7 @@ try:
     (A.ENC_DIR, A._enc_layer_map, A._enc_query_ids,
      A._enc_query_by_ids, A._enc_query, A._enc_pick_band) = _sav
     A.ENC_DIR = _d
-    A._enc_pick_band = lambda bbox: "enc_harbour"
+    A._enc_pick_band = lambda bbox, errors=None: "enc_harbour"
     A._enc_layer_map = lambda band, timeout=20.0: {"LNDARE": 1, "DEPARE": 2}
     A._enc_query_by_ids = lambda b, lid, ids, **k: [
         {"geometry": {"type": "Point", "coordinates": [0, 0]}, "properties": {}}]

@@ -54,7 +54,7 @@ const path = require("path");
 // and the checks below exercise the shipped function rather than an eval of its text.
 // Top-level so the suite's DIRECT eval() of page functions still resolves them.
 const { distTo, llEN } = require("../static/js/geodesy.js");
-const { distUnit, fmtDist, fmtDur, fmtNm, setDistUnit, unitLabel, fmtVol, L_PER_GAL } = require("../static/js/units.js");
+const { distUnit, fmtDist, fmtDur, fmtNm, setDistUnit, unitLabel, fmtVol, L_PER_GAL, M_PER_NM } = require("../static/js/units.js");
 
 
 
@@ -125,7 +125,7 @@ check("3. nm mode converts the VALUE, both directions — not just the label",
           const b = fmtDist(5556) === "3.00 nm";        // NOT "5.56 nm" - the mislabelled-km trap
           setDistUnit("km");
           const c = fmtDist(1852) === "1.85 km";        // and back
-          return a && b && c; },
+          return a && b && c && M_PER_NM === 1852; },   // the factor itself: two decimals absorb a metre's drift (2026-10-18 review)
   () => { setDistUnit("nm"); const s = fmtDist(1852) + " / " + fmtDist(5556);
           setDistUnit("km"); return s + " / " + fmtDist(1852); });
 
@@ -218,6 +218,21 @@ check("9. NO hand-rolled km conversion remains beside the formatter",
 // own tooltip names "tide-station distance" in its scope.
 // A guard written against ONE fingerprint says nothing about a second shape of the same
 // mistake, and it reads like coverage either way.
+check("9c. NOR a `.km` field, a rounded `.km`, or a `_KM` constant printed with \" km\" beside the pill (the 2026-10-18 review: the "
+      + "passage-ends banner, the surge tooltip's two distances and WATER_REMOTE_KM read kilometers whatever the pill said)",
+  () => {
+    const code = H.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+    const a = code.match(/\.km\.toFixed\(\d\)\s*\+\s*"\s*km/g) || [], b = code.match(/Math\.round\(\w+\.km\)\s*\+\s*"\s*km/g) || [];
+    const c = code.match(/_KM\s*\+\s*"\s*km"/g) || [], d = code.match(/_km\.toFixed\(\d\)\s*\+\s*"\s*km/g) || [];
+    return a.length + b.length + c.length + d.length === 0;
+  },
+  () => {
+    const code = H.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+    const hits = [].concat(code.match(/\.km\.toFixed\(\d\)\s*\+\s*"\s*km/g) || [], code.match(/Math\.round\(\w+\.km\)\s*\+\s*"\s*km/g) || [],
+                           code.match(/_KM\s*\+\s*"\s*km"/g) || [], code.match(/_km\.toFixed\(\d\)\s*\+\s*"\s*km/g) || []);
+    return hits.length + " raw km site(s)" + (hits.length ? ": " + hits.join(" | ").slice(0, 160) : "");
+  });
+
 check("9b. NO readout prints a raw `_km` field either - the shape check 9 cannot see",
   () => {
     // Comment-stripped: the note above records the old shape verbatim, and an absence check

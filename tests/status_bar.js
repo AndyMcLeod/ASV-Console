@@ -305,6 +305,21 @@ check("3. THE LOWER ROW: the eleven readouts, in their order - POS, SOG, HDG, CO
         () => first.fetched.length === 1 && first.fetched[0] === "/api/state" && first.asked === 1 && !first.el && first.every
               && first.onShow && amberNow && askedAgain === 1 && redNow && lapsed && askedOnShow && noneAtOnce && noneRed,
         () => JSON.stringify({ first, amberNow, askedAgain, redNow, lapsed, askedOnShow, noneAtOnce, noneRed }));
+  // 6d. A CONSOLE RESTART (the 2026-10-18 review): its word lapses - no answer for a minute - then comes back with NO holder while
+  //     the chart's stream reconnects seconds behind it. Not red at once (it read RED, counting from a freshness noted before the
+  //     lapse); the chart back, nothing; red only once no chart has held it for the stale time FROM the return
+  const W4 = mkWorld(), A4 = W4.api;
+  W4.answers.push({ supervisor: { ...fresh } }); A4.chartWatchStart(); await new Promise((r) => setImmediate(r));
+  W4.now += 60000; await A4.chartWatchPoll();                           // the console down: no answer
+  W4.now += 2000; W4.answers.push({ supervisor: { holder: null, stale: false, stale_s: 10 } }); await A4.chartWatchPoll();
+  const backQuiet = !W4.els.chartWarn || W4.els.chartWarn.style.display === "none";
+  W4.now += 3000; W4.answers.push({ supervisor: { ...fresh } }); await A4.chartWatchPoll();   // the chart's stream reconnected
+  const chartBack = !W4.els.chartWarn || W4.els.chartWarn.style.display === "none";
+  for (let i = 0; i < 6; i++) { W4.now += 2000; W4.answers.push({ supervisor: { holder: null, stale: false, stale_s: 10 } }); await A4.chartWatchPoll(); }
+  const redFromReturn = W4.els.chartWarn && W4.els.chartWarn.style.display === "" && /NO CHART WINDOW/.test(W4.els.chartWarn.textContent);
+  check("6d. A CONSOLE RESTART: the console's word lapses for a minute and comes back with no holder - nothing said (the chart's "
+        + "stream is reconnecting); the chart back - nothing; the chart gone for the stale time FROM the return - red",
+        () => backQuiet && chartBack && redFromReturn, () => JSON.stringify({ backQuiet, chartBack, redFromReturn }));
 
   console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
   process.exit(fails ? 1 : 0);

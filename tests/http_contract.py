@@ -473,6 +473,11 @@ try:
     # it - tide_series holds its series 300 s, fetch_tile writes the tile to disk (measured:
     # an abandoned cold chart extract answered in 1.30 s on the next call). Only a SECOND
     # timeout is a hang, and check 14 says in its own detail line when it needed the retry.
+    # 9c. a NaN floor is refused in words, never sent out as bare NaN (the 2026-10-18 review, finding 5): float("nan")
+    # parses, and the encoder serving /api/enc writes NaN, which the page's JSON.parse throws on - the whole chart lost
+    nan_code, _nan_n = getp(port, "/api/enc?bbox=-70.75,43.05,-70.74,43.06&min_depth=nan", timeout=25)
+    check("9c. /api/enc?min_depth=nan is a 400 in words, not a chart with NaN in it", nan_code == 400, "code %r" % (nan_code,))
+
     NET_GETS = {"/api/tide": 60, "/tiles/12/1/1.png": 30}
 
     def probe_get(p):

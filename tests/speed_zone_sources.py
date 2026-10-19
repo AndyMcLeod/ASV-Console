@@ -350,7 +350,7 @@ try:
           and abs(min(xs(by["NH"])) + 70.82) < 1e-9 and abs(max(xs(by["NH"])) + 70.73) < 1e-9
           and abs(min(xs(by["ME"])) + 70.73) < 1e-9 and abs(max(xs(by["ME"])) + 70.68) < 1e-9
           and by["NH"]["props"]["unread"] == [] and srep["ok"] and srep["count"] == 2 and srep["id"] == "tiger_states"
-          and sorted(TIGER_HITS) == ["ME", "NH"],
+          and srep["cached"] == 0 and sorted(TIGER_HITS) == ["ME", "NH"],
           json.dumps(srep))
     n0 = len(TIGER_HITS)
     sw2, srep2 = SZ.state_waters_for_bbox(BOXS, CACHE2, now=1000.0 + 86400)
@@ -412,6 +412,38 @@ try:
           and [f["props"]["state"] for f in sb] == ["NH"] and all(f["props"]["unread"] == ["MA"] for f in sb)
           and sorted(sb[0]["props"]["asked"]) == ["MA", "ME", "NH"],
           json.dumps({"gl_hits": gl_hits, "gl": [f["props"] for f in gl], "sb_hits": sb_hits, "sb": [f["props"] for f in sb]}))
+    # 5g. THE FETCH THAT FINISHES BEFORE THE READ REACHES IT (the 2026-10-18 review, finding 2): _start made synchronous, so
+    # every fetch is done - and gone from _inflight - before the read looks for it. The read kept no handle to the fetch it
+    # started and looked it up in _inflight again: a refusal read as "did not answer a few minutes ago" (the service's own
+    # error lost), a fetch that landed read back from the cache as `cached`, and 5c was red one run in two. The handle is
+    # kept now (state_waters_for_bbox -> _state_rings' pending).
+    real_start = SZ._start
+
+    def start_now(key, work):
+        p = SZ._Pending()
+        try:
+            p.result = work()
+        except Exception as e:                                        # noqa: BLE001 - the read reports it
+            p.error = e
+        p.done.set()
+        return p
+    SZ._start = start_now
+    try:
+        SZ._failed.clear()
+        del TIGER_HITS[:]
+        TIGER["down"] = {"NH", "ME"}
+        g1, grep1 = SZ.state_waters_for_bbox(BOXS, os.path.join(CACHE2, "sync"), now=30000.0)
+        TIGER["down"] = set()
+        SZ._failed.clear()
+        g2, grep2 = SZ.state_waters_for_bbox(BOXS, os.path.join(CACHE2, "sync2"), now=30000.0)
+    finally:
+        SZ._start = real_start
+        TIGER["down"] = set()
+    check("5g. A FETCH THAT FINISHED BEFORE THE READ REACHED IT is still THIS read's answer: the service's refusal is what is "
+          "said - never 'did not answer a few minutes ago' - and a state fetched this read is not counted `cached`",
+          lambda: not grep1["ok"] and "stub down" in (grep1["error"] or "") and "minutes ago" not in (grep1["error"] or "")
+          and grep2["ok"] and grep2["cached"] == 0 and grep2["count"] == 2 and len(TIGER_HITS) == 4,
+          json.dumps({"rep1": grep1, "rep2": grep2, "hits": TIGER_HITS}))
 finally:
     SZ.TIGER_STATES_URL = real_url
     tsrv.shutdown()

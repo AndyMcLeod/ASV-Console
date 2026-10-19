@@ -22,6 +22,7 @@ export const LOCK = {
   AXIS_DEG: 50,         // each gate across the line between them (90 is square across)
   STANDOFF_M: 60,       // where she holds short of a gate, and where the way out ends, along the axis
   OFFER_M: 3000,        // a lock is offered only for a boat this near its nearer gate
+  ASIDE_M: 200,         // the straight way to the point must cross the near gate's line within the chamber's half-width + this
   STEP_M: 20,           // the centerline legs, a point this often
 };
 
@@ -104,11 +105,26 @@ export function alongLock(lock, p) {
   const b = EN(lock.A, lock.B), q = EN(lock.A, p), L = Math.hypot(b.e, b.n) || 1;
   return { t: (q.e * b.e + q.n * b.n) / L, off: Math.abs(q.e * b.n - q.n * b.e) / L };
 }
-/** Are `from` and `to` on OPPOSITE sides of the lock's gates (each beyond a gate, along its axis)? */
-export function lockBetween(lock, from, to) {
+/** Are `from` and `to` on OPPOSITE sides of the lock's gates (each beyond a gate, along its axis) - AND does the straight
+ *  way between them cross the near gate's line at the gate (within the chamber's half-width + LOCK.ASIDE_M of the axis)?
+ *  The projection alone called a way 2 km BESIDE a lock, parallel to its axis, "between" (the 2026-10-18 review). */
+export function lockBetween(lock, from, to, asideM = LOCK.ASIDE_M) {
   const a = alongLock(lock, from), b = alongLock(lock, to);
-  return (a.t < 0 && b.t > lock.lengthM) || (a.t > lock.lengthM && b.t < 0);
+  const opposite = (a.t < 0 && b.t > lock.lengthM) || (a.t > lock.lengthM && b.t < 0);
+  if (!opposite) return false;
+  const tGate = a.t < 0 ? 0 : lock.lengthM, s = (tGate - a.t) / (b.t - a.t);
+  const at = { lat: from.lat + (to.lat - from.lat) * s, lon: from.lon + (to.lon - from.lon) * s };
+  return alongLock(lock, at).off <= (lock.widthM || 40) / 2 + asideM;
 }
+/** Is `f` a gate feature standing where one of `mids` (waived gates' middles) stands, within `tolM`? A re-read that
+ *  renumbers the chart's objects, or a gate charted twice (Gate_area and Gate_line), is the same gate to a waiver. */
+export function waivedGate(f, mids, tolM = 5) {
+  if (!isGate(f) || !mids || !mids.length) return false;
+  const g = gateGeom(f);
+  return !!g && mids.some((m) => dist(m, g.mid) <= tolM);
+}
+/** A gate feature's middle, or null. */
+export function gateMiddle(f) { const g = isGate(f) ? gateGeom(f) : null; return g ? g.mid : null; }
 /** Is `p` inside the lock - between its gates, within the chamber's half-width (HORCLR, else 40 m) and `margin`? */
 export function insideLock(lock, p, margin = 0) {
   const a = alongLock(lock, p), half = (lock.widthM || 40) / 2 + margin;
@@ -119,22 +135,23 @@ export function insideLock(lock, p, margin = 0) {
  *  features), approach (held short of the near gate), chamber (between the gates), exit (beyond the far gate), inLeg
  *  (approach -> near gate -> chamber), outLeg (chamber -> far gate -> exit) - the legs along the axis, a point every
  *  LOCK.STEP_M}. */
-export function lockWay(lock, from, standoffM = LOCK.STANDOFF_M) {
-  const nearIsA = dist(from, lock.A) <= dist(from, lock.B);
+export function lockLeg(pts) {
+  const out = [];
+  for (let k = 1; k < pts.length; k++) {
+    const a = pts[k - 1], b = pts[k], d = dist(a, b), n = Math.max(1, Math.ceil(d / LOCK.STEP_M));
+    for (let i = 1; i <= n; i++) out.push({ lat: a.lat + (b.lat - a.lat) * i / n, lon: a.lon + (b.lon - a.lon) * i / n });
+  }
+  return out;
+}
+/** ... `toward`, when given (a boat INSIDE the chamber): the FAR gate is the one nearer `toward`, whatever `from` is near. */
+export function lockWay(lock, from, standoffM = LOCK.STANDOFF_M, toward = null) {
+  const nearIsA = toward ? dist(toward, lock.B) <= dist(toward, lock.A) : dist(from, lock.A) <= dist(from, lock.B);
   const near = nearIsA ? lock.A : lock.B, far = nearIsA ? lock.B : lock.A;
   const v = EN(near, far), L = Math.hypot(v.e, v.n) || 1, u = { e: v.e / L, n: v.n / L };
   const along = (o, m) => LL(o, { e: u.e * m, n: u.n * m });
   const approach = along(near, -standoffM), chamber = along(near, L / 2), exit = along(far, standoffM);
-  const leg = (pts) => {
-    const out = [];
-    for (let k = 1; k < pts.length; k++) {
-      const a = pts[k - 1], b = pts[k], d = dist(a, b), n = Math.max(1, Math.ceil(d / LOCK.STEP_M));
-      for (let i = 1; i <= n; i++) out.push({ lat: a.lat + (b.lat - a.lat) * i / n, lon: a.lon + (b.lon - a.lon) * i / n });
-    }
-    return out;
-  };
-  return { near, far, nearGate: nearIsA ? lock.gates[0] : lock.gates[1], farGate: nearIsA ? lock.gates[1] : lock.gates[0],
-           approach, chamber, exit, inLeg: leg([approach, near, chamber]), outLeg: leg([chamber, far, exit]) };
+  return { near, far, nearIsA, nearGate: nearIsA ? lock.gates[0] : lock.gates[1], farGate: nearIsA ? lock.gates[1] : lock.gates[0],
+           approach, chamber, exit, inLeg: lockLeg([approach, near, chamber]), outLeg: lockLeg([chamber, far, exit]) };
 }
 
 /** The lock a Go-To from `from` to `to` would have to pass: the nearest lock whose nearer gate is within LOCK.OFFER_M of

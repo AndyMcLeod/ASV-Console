@@ -23,7 +23,8 @@ process.on("unhandledRejection", __crash);
 
 const fs = require("fs");
 const path = require("path");
-// ASV_HTML / ASV_CL point this at SIDECAR copies for a mutation run, never the real files.
+// ASV_HTML / ASV_CL point this at SIDECAR copies for a mutation run, never the real files. The chartlayers.js sidecar must
+// live IN static/js (it imports geodesy.js, geometry.js and keepouts.js by relative path): a copy elsewhere cannot load.
 const H = fs.readFileSync(process.env.ASV_HTML || path.join(__dirname, "..", "static", "asv.html"), "utf8").split("\r\n").join("\n");
 const CL_PATH = process.env.ASV_CL || path.join(__dirname, "..", "static", "js", "chartlayers.js");
 const CLS = fs.readFileSync(CL_PATH, "utf8");
@@ -91,10 +92,12 @@ function mkWorld(stored) {
     + grabDecl("nogoKeyTexts") + "\n" + ["nogoKeySwatch", "nogoKeyBuild", "nogoKeyShow", "showPanel"].map(grab).join("\n")
     + "\nreturn {nogoKeyBuild, nogoKeyShow, nogoKeySwatch, setShow: v => { nogoShow = v; }};";
   // eslint-disable-next-line no-new-func
-  w.api = new Function("$", "document", "lsGet", "lsSet", "NOGO_KEY", "V", "nogo", "clampPanelPos", src)(
+  // nogoDR as chart.js has it: the hull's floor or the operator's Min depth, whichever is deeper (the floor drawNogo fills at)
+  w.api = new Function("$", "document", "lsGet", "lsSet", "NOGO_KEY", "V", "nogo", "clampPanelPos", "nogoDR", src)(
     s => parts[s] || null, { createElement: mkEl },
     (k, d) => (k === "asv_nogokey_fold_v1" && stored !== undefined ? stored : d), (k, v) => w.saved.push([k, v]),
-    NOGO_KEY, w.V, w.nogo, (el, l, t) => ({ left: l, top: t }));
+    NOGO_KEY, w.V, w.nogo, (el, l, t) => ({ left: l, top: t }),
+    () => ({ min: Math.max(w.V.NOGO_MIN_DEPTH_M, typeof w.V.OPER_MIN_DEPTH_M === "number" ? w.V.OPER_MIN_DEPTH_M : 0), max: 0 }));
   w.api.nogoKeyBuild();
   w.rows = () => w.body.kids;
   w.texts = () => w.rows().map(r => r.kids[0].textContent);
@@ -117,6 +120,12 @@ check("2. THE PAGE BUILDS ONE ROW PER ENTRY, BIG ENOUGH TO READ: each swatch an 
             && texts.every((t, i) => t === NOGO_KEY[i].label.replace("{floor}", "2.8 m")) && /2\.8 m/.test(texts[0])
             && !texts.some(t => t.includes("{floor}")),
       () => JSON.stringify({ rows: rows.length, keys: NOGO_KEY.length, swatchOk, size: sizes[0], css: css.slice(0, 120), first: texts[0] }));
+// 2b. THE FLOOR NAMED IS THE FLOOR DRAWN (the 2026-10-18 review): the key read the hull's constant while the overlay filled to the
+//     operator's Min depth where that is deeper - "floor 8.0 m" on the NOGO row, "shallower than 2.8 m" on the key
+W.V.OPER_MIN_DEPTH_M = 8; W.api.nogoKeyShow(); const deeper = W.texts()[0]; delete W.V.OPER_MIN_DEPTH_M; W.api.nogoKeyShow();
+check("2b. with the operator's Min depth raised to 8 m over a 2.8 m hull the key's first row says 8.0 m - the floor the overlay is "
+      + "drawn at (nogoDR) - not the hull's 2.8",
+      () => /8\.0 m/.test(deeper) && !/2\.8 m/.test(deeper) && /2\.8 m/.test(W.texts()[0]), () => deeper + " | back: " + W.texts()[0]);
 
 const shown = {};
 shown.ready = W.key.style.display;

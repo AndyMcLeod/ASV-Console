@@ -2287,7 +2287,13 @@ _ENC_ROLE_OF = {c: r for r, cs in ENC_ROLES.items() for c in cs}
 # THE LAYERS THE MODEL ACTS ON: every named class but the two that are only ever drawn (soundings and contours reach no
 # keep-out, lane or rule). One of these failing makes its tile water not read (fetch_enc_layered, _corridor_one).
 _ENC_DRAWN_ONLY_ROLES = ("sounding", "depth_contour")
-_ENC_ACTED_ON = frozenset(c for r, cs in ENC_ROLES.items() if r not in _ENC_DRAWN_ONLY_ROLES for c in cs)
+# ... AND THE CLASSES A RULE READS WITHOUT A ROLE (the 2026-10-18 review, finding 6). Massachusetts' 150-ft band stands off a
+# marina or a launch: static/js/speedzones.js maFacility reads Small_Craft_Facility_* and Harbour_Facility_*, which no role
+# names (they ride as `extra`). A read that lost one of them was served, used and said to be whole - the band not built and
+# nothing saying so. tests/enc_acquire.py holds this list to what speedzones.js reads.
+_ENC_RULE_CLASSES = ("Small_Craft_Facility_area", "Small_Craft_Facility_point", "Harbour_Facility_area", "Harbour_Facility_point")
+_ENC_ACTED_ON = (frozenset(c for r, cs in ENC_ROLES.items() if r not in _ENC_DRAWN_ONLY_ROLES for c in cs)
+                 | frozenset(_ENC_RULE_CLASSES))
 
 
 def _enc_retag(ft):
@@ -2547,8 +2553,10 @@ def _enc_retry(fn, *args):
             time.sleep(ENC_QUERY_BACKOFF_S[min(k, len(ENC_QUERY_BACKOFF_S) - 1)])
 
 
-def _enc_pick_band(bbox):
-    """Finest ENC band with Depth_Area or Land_Area coverage in the bbox."""
+def _enc_pick_band(bbox, errors=None):
+    """Finest ENC band with Depth_Area or Land_Area coverage in the bbox. `errors`, a list when given: every band query
+    that FAILED is noted in it (band: error), so a caller can tell "no chart here" from "the service did not answer" - the
+    two read the same, None, and the SRC card kept the second for good (the 2026-10-18 review, finding 7)."""
     for band in ENC_BANDS:
         lm = _enc_layer_map(band)
         for cls in ("Depth_Area", "Land_Area"):
@@ -2558,8 +2566,9 @@ def _enc_pick_band(bbox):
             try:
                 if int(_enc_query(band, lid, bbox, count_only=True).get("count", 0)) > 0:
                     return band
-            except (OSError, ValueError, http.client.HTTPException):
-                pass
+            except (OSError, ValueError, http.client.HTTPException) as e:
+                if errors is not None:
+                    errors.append("%s: %s" % (band, str(e)[:120]))
     return None
 
 
@@ -4208,10 +4217,17 @@ def fetch_chart_info(bbox):
                 return json.load(f)
     except (OSError, ValueError, http.client.HTTPException):
         pass
+    # ⚠ A FAILURE IS NOT "NO CHART HERE" (the 2026-10-18 review, finding 7): the breaker's "ENC offline" and a band pick
+    # whose every query raised both answered band None like an honest empty, and the page kept either for as long as she
+    # stayed in the box. `failed` says which it was; the SRC card shows a failed answer and asks again (CHART_RETRY_MS).
     if time.monotonic() < _enc_down_until:
-        return {"band": None, "cells": [], "quality": [], "note": "ENC offline"}
-    band = _enc_pick_band(bbox)
+        return {"band": None, "cells": [], "quality": [], "note": "ENC offline", "failed": True}
+    errs = []
+    band = _enc_pick_band(bbox, errs)
     if band is None:
+        if errs:
+            return {"band": None, "cells": [], "quality": [], "note": "the chart service did not answer (%s)" % errs[0],
+                    "failed": True}
         return {"band": None, "cells": [], "quality": [], "note": "no ENC coverage here"}
     lm = _enc_layer_map(band)
     out = {"band": band, "cells": [], "quality": [], "note": ""}
@@ -7419,6 +7435,12 @@ class Engine:
     LINK_IDLE = "idle"
     LINK_OK = "ok"
     LINK_LOST = "lost"
+    # ⚠ NOTHING IS COMMANDED WHILE THE LINK IS LOST (the 2026-10-18 review, finding 1). set_armed checked `link is not
+    # None` and `not estop` alone, so ARM and START were ACCEPTED twelve ticks after the last frame - a RealVcu that never
+    # spoke read ARMED (autonomy "failsafe"), a sim under way was restarted - and _link_back then told the operator "she is
+    # disarmed" while the same frame carried armed and running. Every command that arms her, loads a plan or moves her asks
+    # this first; Stop, Pause, disarm and E-STOP never do.
+    LINK_LOST_REFUSAL = "LINK LOST: no frame from the vessel - nothing is commanded until one is seen (check her first)"
 
     TICK_HZ = 4.0
     DT_MAX_S = 1.0                       # the most one tick may advance her (clamp_dt)
@@ -7643,6 +7665,7 @@ class Engine:
             self._require(link is not None, "not connected")
             if on:
                 self._require(not self.estop, "clear E-STOP before arming")
+                self._require(self.link != self.LINK_LOST, self.LINK_LOST_REFUSAL)
                 self.armed = True
                 self.note = "ARMED. Confirm the RC Autonomy switch (Sw A) is forward."
             else:
@@ -7698,6 +7721,7 @@ class Engine:
         with self._lock:
             link = self._link
             self._require(link is not None, "not connected")
+            self._require(self.link != self.LINK_LOST, self.LINK_LOST_REFUSAL)
             self._require(self.armed, "ARM before uploading a plan")
             self._require(not self.estop, "clear E-STOP first")
             # ⚠ AN UPLOAD NEVER CHANGES WHAT THE BOAT IS DOING (review #3, 2026-09-14). Under
@@ -7870,6 +7894,7 @@ class Engine:
         with self._lock:
             link = self._link
             self._require(link is not None, "not connected")
+            self._require(self.link != self.LINK_LOST, self.LINK_LOST_REFUSAL)
             self._require(self.armed, "ARM before starting")
             self._require(self.plan_uploaded, "upload a run plan first")
             self._require(not self.estop, "clear E-STOP first")
@@ -7948,6 +7973,7 @@ class Engine:
         with self._lock:
             link = self._link
             self._require(link is not None, "not connected")
+            self._require(self.link != self.LINK_LOST, self.LINK_LOST_REFUSAL)   # every motion: goto, rth, hold, transit, escape, reapproach
             self._require(self.armed, "ARM before commanding the boat")
             self._require(not self.estop, "clear E-STOP first")
             self._require(not continuing or self.run == "running",
@@ -8117,6 +8143,7 @@ class Engine:
         with self._lock:
             link = self._link
             self._require(link is not None, "not connected")
+            self._require(self.link != self.LINK_LOST, self.LINK_LOST_REFUSAL)
             self._require(self.armed, "ARM before commanding the boat")
             self._require(not self.estop, "clear E-STOP first")
             self._require(self.run == "running", "the run is not under way (%s)" % self.run)
@@ -8755,7 +8782,10 @@ class Engine:
         stopped her, and arming is the operator's - and the note says so, in place of the loss (or the fault that caused
         it), which stood for ever."""
         if self.link == self.LINK_LOST:
-            self.note = ("LINK RESTORED. She was stopped by the failsafe and is disarmed: check her, then ARM to continue.")
+            if not self.armed and self.run != "running":
+                self.note = ("LINK RESTORED. She was stopped by the failsafe and is disarmed: check her, then ARM to continue.")
+            else:                                 # not by a command (each refuses while lost) - said as she stands, not as she should be
+                self.note = ("LINK RESTORED. She reads %s, run %s: check her." % ("ARMED" if self.armed else "disarmed", self.run))
         elif self.link == self.LINK_OK and str(self.note or "").startswith("link error: "):
             self.note = "Link OK again."
         self.link = self.LINK_OK
@@ -9367,6 +9397,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             bbox, q = self._bbox_from_query()
             min_depth = float(q.get("min_depth", ["0"])[0])
+            if not math.isfinite(min_depth):      # float("nan") parses: a NaN floor went out as bare NaN, which the page cannot parse
+                raise ValueError("min_depth is not finite")
         except (KeyError, ValueError, IndexError):
             return self._send(400, json.dumps({"error": "usage: /api/enc?bbox=W,S,E,N&min_depth=X"}))
         # ⚠⚠ A BOX THE SIZE OF A STATE IS REFUSED, NOT EXTRACTED. The page asked for
@@ -10856,19 +10888,25 @@ def use_mission_path(path):
 
 
 LEFTOVER_MIN_AGE_S = max(3600.0, 2.0 * ENC_TILE_BUILD_TIMEOUT_S)
-_LEFTOVER_RE = re.compile(r"(\.\d+\.\d+\.(part|build)|\.part\.\d+|\.gz\.part|^comms_config\.json\.part|^ports\.json\.tmp)$")
+# ⚠ EVERY WRITER'S TEMP NAME (the 2026-10-18 review, finding 8): speed_zones._write_json names its temp <file>.<pid>.<tid>.tmp
+# and stream_fusion._write_json_atomic <file>.<pid>.part - neither matched, so a killed read left them under charts/ for
+# good; and CurrentsMonitor._set_aside renames an unreadable cycle's two files .unreadable (tens of MB a cycle) under
+# ofs_cache, which nothing removed. All three swept once old.
+_LEFTOVER_RE = re.compile(r"(\.\d+\.\d+\.(part|build|tmp)|\.\d+\.part|\.part\.\d+|\.gz\.part|\.unreadable"
+                          r"|^comms_config\.json\.part|^ports\.json\.tmp)$")
 
 
 def _sweep_leftovers(dirs=None, min_age_s=None, now=None):
-    """The temp files a KILLED process leaves - <file>.<pid>.<tid>.part and .build, <file>.part.<tid>, the compressor's
-    .gz.part, the old comms_config.json.part and ports.json.tmp - removed at startup once they are older than
+    """The temp files a KILLED process leaves - <file>.<pid>.<tid>.part, .build and .tmp, <file>.<pid>.part, <file>.part.<tid>,
+    the compressor's .gz.part, the old comms_config.json.part and ports.json.tmp, and a currents cycle set aside as
+    .unreadable (ofs_cache, its top level) - removed at startup once they are older than
     `min_age_s` (the 2026-10-16 review, finding 28: nothing swept them). The age is what keeps another console's LIVE
     temp: two consoles share charts/, a .build lives at most ENC_TILE_BUILD_TIMEOUT_S, a .part seconds. The state folder
     is swept at its top level only (by default it is the app folder); charts/ and logs/ throughout. The paths removed."""
     now = time.time() if now is None else now
     min_age_s = LEFTOVER_MIN_AGE_S if min_age_s is None else min_age_s
     if dirs is None:
-        dirs = ((os.path.dirname(MISSION_PATH), False), (CHART_DIR, True), (LOG_DIR, True))
+        dirs = ((os.path.dirname(MISSION_PATH), False), (CHART_DIR, True), (LOG_DIR, True), (str(currents.CACHE), False))
     gone = []
     for d, recurse in dirs:
         if not d or not os.path.isdir(d):

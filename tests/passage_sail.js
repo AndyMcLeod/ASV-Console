@@ -170,6 +170,7 @@ console.log("The passage, sailed:");
       "let S = w.S, asv = w.asv, mission = w.mission, passage = w.passage, runRoute = w.runRoute, runUnsafe = [], planIntent = w.planIntent, planGen = w.planGen;",
       "const window = {get _wpIndex(){ return w.wpIndex; }};",
       "let routeCmdsInFlight = 0, escapeThrottle = !w.quiet, guardActedAt = 0, guardEdgeAt = 0, aisAroundBusy = false, heldResuming = false;",
+      "let lockTransit = null; const lockEnd = () => {};",     // a passage ends a lock transit before its sections plan (2026-10-18): none here
       "const clearance = {slowed: false}, EDGE_REASSESS_MS = 2000, M_PER_DEG_LAT = 111320;",
       "const distTo = w.distTo, FUEL_RESERVE_FRAC = w.F.FUEL_RESERVE_FRAC, passageFuel = w.F.passageFuel, energyLevel = w.F.energyLevel;",
       "const fuelModel = () => w.model, V = {SPEED_KN: {transit: 7}}, roleSpeed = () => 'transit';",
@@ -936,7 +937,8 @@ console.log("The passage, sailed:");
 
   // ── 14. the water a section is planned at ───────────────────────────────────────────────────────────────────────
   const lv = (() => {
-    const src = ["const WATER_REMOTE_KM = 75;", grab("sectionLevel"), "return sectionLevel;"].join("\n");
+    const src = ["const WATER_REMOTE_KM = 75;", "const fmtDist = (m, dp) => m < 1000 ? Math.round(m) + ' m' : (m / 1000).toFixed(dp == null ? 2 : dp) + ' km';",
+                 grab("sectionLevel"), "return sectionLevel;"].join("\n");
     return new Function(src)();
   })();
   const pt = (low_m, km, o) => Object.assign({ low_m, km, kind: "predicted", name: "Stn " + km, stations: ["s" + km] }, o || {});
@@ -979,6 +981,7 @@ console.log("The passage, sailed:");
       "const sailLeftM = () => w.left;",
       "const fetch = async (u) => { w.urls.push(u); return {ok: true, json: async () => w.reply}; };",
       decl("WATER_SAMPLE_M"), decl("WATER_ALONG_MAX_PTS"), decl("WATER_ETA_SLACK"), decl("WATER_WINDOW_PAD_S"), decl("WATER_ALONG_TIMEOUT_MS"),
+      "const fmtDist = (m, dp) => m < 1000 ? Math.round(m) + ' m' : (m / 1000).toFixed(dp == null ? 2 : dp) + ' km';",
       grab("samplePts"), grab("sectionLevel"), grab("sectionWater"), "return sectionWater;"].join("\n");
     w.distTo = distTo; w.left = left;
     const t = Date.now() / 1000;

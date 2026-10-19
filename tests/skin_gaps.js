@@ -304,6 +304,32 @@ import(${JSON.stringify(pathToFileURL(WPATH).href)}).then(() => parentPort.postM
   };
   const ok = await run("ok"), count = await run("count"), silent = await run("silent"), err = await run("error"),
         none = await run("ok", { noWorker: true }), nob = await run("ok", { noBytes: true });
+  // 10d. (the 2026-10-18 review) a `keep` read that KEPT an earlier read's classes hands skinOffThread more features than the
+  //      extract has; the worker walked the extract alone and names ITS count - judged against that (`ownN`), its answer is taken
+  const kept = await (async () => {
+    const r = await (async () => {
+      const w2 = { posts: [], logged: [] };
+      class Worker2 { constructor() {} postMessage(m) { w2.posts.push(m); setTimeout(() => this.onmessage({ data: { id: m.id, ok: true, skin: { gaps: [], marker: "worker" }, n: 1, ms: 5 } }), 0); } terminate() {} }
+      const sea2 = { enc: null };
+      const src2 = "const SKIN_WORKER_TIMEOUT_MS = 60;\nlet skinWorker = null, skinWorkerOff = false, skinJobSeq = 0;\nconst skinJobWaiting = new Map();\n"
+        + "const encLayer = {}, nogoLayer = {}, lawLayer = {};\n"
+        + ["skinWorkerUsable", "skinWorkerDown", "skinWorkerGet", "skinJobStart", "skinOffThread", "fetchENCBbox"].map(grabFn).join("\n")
+        + "\nreturn {fetchENCBbox, skinOffThread};";
+      const api2 = new Function("Worker", "TextDecoder", "fetch", "sea", "skinOverHarbour", "logClient", "JSON", src2)(
+        Worker2, TextDecoder, async () => ({ json: async () => JSON.parse(JSON.stringify(PLAIN)), arrayBuffer: async () => bytes(PLAIN) }),
+        sea2, S.skinOverHarbour, (k, d) => w2.logged.push([k, d]), JSON);
+      await api2.fetchENCBbox(BOX, 3);
+      const own = sea2.enc.features.length;
+      sea2.enc.features = [...sea2.enc.features, { cls: "Land_Area", oid: 777, role: "land", geometry: { type: "Polygon", coordinates: [[[0, 0], [0, 1], [1, 1], [0, 0]]] } }];   // a kept class
+      const skin = await api2.skinOffThread(sea2.enc, BOX, sea2.enc.features.slice(), own);
+      return { marker: skin && skin.marker, state: sea2.enc.workerState, logged: w2.logged.map(([, d]) => d) };
+    })();
+    return r;
+  })();
+  check("10d. with an earlier read's classes KEPT beside the extract, the worker's answer (for the extract's own count) is still taken "
+        + "- the worker not marked failed, no page walk",
+        () => kept.marker === "worker" && kept.state === "ok" && !kept.logged.some((d) => d.fallback),
+        () => JSON.stringify(kept));
   const walked = (r) => r.skin && !r.skin.marker && JSON.stringify(r.skin) === JSON.stringify(direct(PLAIN));
   const p0 = ok.w.posts[0] || {};
   check("10b. THE PAGE HANDS THE BYTES OVER AND TAKES ONLY AN ANSWER FOR ITS OWN EXTRACT: the bytes go to the worker "
@@ -329,7 +355,7 @@ import(${JSON.stringify(pathToFileURL(WPATH).href)}).then(() => parentPort.postM
   check("10c. THE WIRING: refreshNogo takes the gaps from skinOffThread where it walked them itself; the chart window makes "
         + "the worker as it loads (made at the first read, it loaded its modules first: 1,169 ms of waiting against 631 ms "
         + "warm); and the page has no copy of skinOverHarbour of its own - it imports skin.js's",
-        () => /const skin = await skinOffThread\(enc, b, feats\);/.test(grabFn("refreshNogo"))
+        () => /const skin = await skinOffThread\(enc, b, feats, feats\.length - keptN\);/.test(grabFn("refreshNogo"))
               && /\nif\(UIROLE === "main"\) skinWorkerGet\(\);\n/.test(H)          // made as the chart window loads
               && !/\nfunction skinOverHarbour\(/.test(H)
               && /import \{[^}]*\bskinOverHarbour\b[^}]*\} from "\/static\/js\/skin\.js";/.test(H),

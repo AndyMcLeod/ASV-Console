@@ -923,7 +923,7 @@ async function drive(fetchResult) {
         await refreshNogo(null, { W: -80.75, S: 28.25, E: -80.50, N: 28.50 });
         return { before: f.failed, after: nogo.failed, ready: nogo.ready }; })();
       const onState = grab("onState");
-      const retried = /else if\(!nogo\.ready && !nogo\.busy && nogo\.failed && Date\.now\(\) - nogo\.failed\.at > NOGO_RETRY_MS\)\{\s*nogo\.failed\.at = Date\.now\(\);\s*refreshNogo\(/.test(onState);
+      const retried = /else if\(!nogo\.busy && nogo\.failed && Date\.now\(\) - nogo\.failed\.at > NOGO_RETRY_MS\)\{\s*nogo\.failed\.at = Date\.now\(\);\s*refreshNogo\(/.test(onState);
       const upload = /if\(!nogo\.ready\)\{[\s\S]{0,400}const chartFailed = chartFailedRefusal\(\);\s*if\(chartFailed\)\{ showBanner\("Upload refused: "/.test(H);
       check("27f. a read that FAILED (NOAA's error, or a throw) sets nogo.failed and says the chart could NOT be read and is "
             + "read again every 30 s - never 'route DIRECT'; no chart at any scale routes direct as before; a read that lands "
@@ -934,6 +934,30 @@ async function drive(fetchResult) {
             && none.failed === null && /route DIRECT/.test(none.said)
             && after.before === "x" && after.after === null && after.ready === true && NOGO_RETRY_MS === 30000 && retried && upload,
             JSON.stringify({ svc, threw, none, after, retried, upload }));
+      // 27g. THE EARLIER MODEL REBUILT (a tide tick, an enforce toggle) does not END the retry (the 2026-10-18 review): `ready`
+      //      comes back true from the standing zones - they are the earlier read's, valid for their own water - the row says
+      //      beside them that the chart over her could NOT be read, and the retry clause is keyed on `failed` alone (its
+      //      `!nogo.ready` is what killed it)
+      await run(async () => { sea.enc = { features: [], band: null }; return { band: null, note: "x", unread_failed: [[0, 0, 1, 1]] }; });
+      nogo.features = [{}]; rebuildNogo();
+      const rebuilt = { ready: nogo.ready, note: nogo.note, failed: nogo.failed && nogo.failed.why };
+      check("27g. the EARLIER model rebuilt after a failed read: ready again (its zones are its own water's), the row saying beside "
+            + "them that the chart over her could NOT be read and is read again every 30 s, `failed` standing - and the retry "
+            + "clause reads `failed` alone, not `!ready`",
+            rebuilt.ready === true && /could NOT be read \(x\)/.test(rebuilt.note) && /reading it again every 30 s/.test(rebuilt.note)
+            && rebuilt.failed === "x" && retried && !/!nogo\.ready && !nogo\.busy && nogo\.failed/.test(onState),
+            JSON.stringify(rebuilt));
+      // 27h. A CLIPPED PIECE IS ITS OWN OBJECT to keepEarlierClasses (the 2026-10-18 review): a coarse-band feature the server cut
+      //      across tiles is several pieces of one oid, each with its `clip`; the piece that arrived must not remove its siblings
+      const pieces = (() => {
+        const encP = { features: [{ cls: "Land_Area", oid: 1, clip: [0, 0, 1, 1] }] };
+        const n = keepEarlierClasses(encP, { features: [{ cls: "Land_Area", oid: 1, clip: [0, 0, 1, 1] }, { cls: "Land_Area", oid: 1, clip: [1, 0, 2, 1] },
+                                                        { cls: "Land_Area", oid: 2 }] }, ["Land_Area"]);
+        return { n, kept: encP.features.map((f) => f.oid + (f.clip ? ":" + f.clip.join("") : "")) };
+      })();
+      check("27h. a clipped piece is its own object: the piece that arrived keeps its sibling piece (same oid, another clip) and the "
+            + "earlier read's other objects; itself not twice",
+            pieces.n === 2 && pieces.kept.join() === "1:0011,1:1021,2", JSON.stringify(pieces));
     }
   }
 

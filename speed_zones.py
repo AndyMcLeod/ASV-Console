@@ -487,19 +487,27 @@ def _state_fetch(st, cache_dir, ssl_ctx, timeout, now):
     return rings
 
 
-def _state_rings(st, cache_dir, ssl_ctx, timeout, now, deadline=None):
+def _state_rings(st, cache_dir, ssl_ctx, timeout, now, deadline=None, pending=None):
     """A state's boundary rings: (rings, cached, error) - from the cache while it is a month old, else TIGERweb, waited
-    for until `deadline` (the old copy, and a word, when it fails or has not answered yet)."""
+    for until `deadline` (the old copy, and a word, when it fails or has not answered yet). `pending`: the fetch
+    state_waters_for_bbox started for this state (the _Pending _start returned), read as THIS read's answer.
+    ⚠ IT WAS LOOKED UP AGAIN in _inflight instead (the 2026-10-18 review, finding 2): a fetch that finished before the read
+    reached its state - a refusal answers at once - was gone from there, and the read took the memo branch: "did not answer a
+    few minutes ago" for a service that refused just now, the service's own error lost; one that SUCCEEDED read back from
+    the cache as `cached`; a narrow window started the fetch twice. tests/speed_zone_sources 5c was red one run in two."""
     rings, fresh = _state_cached(st, cache_dir, now)
-    if fresh:
-        return rings, True, None
-    with _lock:
-        p = _inflight.get(("tiger", st, cache_dir))           # the fetch state_waters_for_bbox started for it
-        failed_at = _failed.get(("tiger", st))
-    if p is None and failed_at and now - failed_at < SPEED_FAIL_RETRY_S:
-        return rings, False, "the state boundary service did not answer a few minutes ago"
-    if p is None:
-        p = _start(("tiger", st, cache_dir), lambda: _state_fetch(st, cache_dir, ssl_ctx, timeout, now))
+    if pending is not None:
+        p = pending
+    else:
+        if fresh:
+            return rings, True, None
+        with _lock:
+            p = _inflight.get(("tiger", st, cache_dir))
+            failed_at = _failed.get(("tiger", st))
+        if p is None and failed_at and now - failed_at < SPEED_FAIL_RETRY_S:
+            return rings, False, "the state boundary service did not answer a few minutes ago"
+        if p is None:
+            p = _start(("tiger", st, cache_dir), lambda: _state_fetch(st, cache_dir, ssl_ctx, timeout, now))
     done, got, err = _await(p, time.monotonic() + SPEED_DEADLINE_S if deadline is None else deadline)
     if done and err is None:
         return got, False, None
@@ -523,15 +531,17 @@ def state_waters_for_bbox(bbox, cache_dir, ssl_ctx=None, timeout=SPEED_TIMEOUT_S
     box = (bbox[0] - STATE_PAD_DEG, bbox[1] - STATE_PAD_DEG, bbox[2] + STATE_PAD_DEG, bbox[3] + STATE_PAD_DEG)
     feats, errs, cached, unread = [], [], 0, []
     deadline = time.monotonic() + (SPEED_DEADLINE_S if deadline_s is None else deadline_s)
-    # every state's fetch started before any is waited for (a state already cached starts none)
+    # every state's fetch started before any is waited for (a state already cached starts none) - and KEPT, so each is
+    # read as this read's own answer whenever it finishes (_state_rings' pending)
+    started = {}
     for st in asked:
         rings, fresh = _state_cached(st, cache_dir, now)
         with _lock:
             failed_at = _failed.get(("tiger", st))
         if not fresh and not (failed_at and now - failed_at < SPEED_FAIL_RETRY_S):
-            _start(("tiger", st, cache_dir), lambda st=st: _state_fetch(st, cache_dir, ssl_ctx, timeout, now))
+            started[st] = _start(("tiger", st, cache_dir), lambda st=st: _state_fetch(st, cache_dir, ssl_ctx, timeout, now))
     for st in asked:
-        rings, hit, err = _state_rings(st, cache_dir, ssl_ctx, timeout, now, deadline)
+        rings, hit, err = _state_rings(st, cache_dir, ssl_ctx, timeout, now, deadline, pending=started.get(st))
         cached += 1 if hit else 0
         if err:
             errs.append("%s: %s" % (st, err))

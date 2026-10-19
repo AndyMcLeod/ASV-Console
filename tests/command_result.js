@@ -479,7 +479,7 @@ function world(opts) {
                            + grab("planInsideChart") + "\n"
                            // doGoTo plans through planGoToLeg since 2026-10-18 (the lock transit's legs); a refused Go-To
                            // offers a lock - none here (tests/lock_transit.js)
-                           + grab("planGoToLeg") + "\n" + "const lockOffer = () => {};" + "\n"
+                           + grab("planGoToLeg") + "\n" + "const lockOffer = () => {}; let lockTransit = null; const lockEnd = () => {};" + "\n"
                            + grab("doRTH") + "\n" + grab("doGoTo") + "\n" + grab("doTransit")
                            + EPILOGUE)(W, setTimeout, clearTimeout, AbortController);
   W.api = api;              // so a fetch stub can act INSIDE the bundle mid-round-trip
@@ -1678,6 +1678,22 @@ const PAST = () => ({ route: [{ lat: 43.0, lon: -70.5 }, { lat: 43.01, lon: -70.
         && w.out.violation && w.out.violation.mode === "uncharted"
         && /^RTH refused: the route runs 429 m beyond the water the chart was read over - it still did after the chart was read over the route 3 times - plan it in shorter legs — highlighted on the chart\. Go-To a point on the way home first, or set Home nearer\.$/.test(w.banner()),
         w.out.posts.length + " post(s), chain retracted " + a.rthChainFailed + "; banner: " + w.banner());
+}
+
+{ // 54. A LOCK TRANSIT'S OWN POINT IS TAKEN EXACTLY OR NOT AT ALL (the 2026-10-18 review): holdTarget moves a hold point the water
+  //     is too tight for to the nearest clear water - along a lock's axis, through a waived gate. `exact` refuses a moved point:
+  //     nothing posted, said; the same plan without `exact` (the operator's own Go-To) is held off as before
+  const moved = () => ({ route: [{ lat: 43.0, lon: -70.5 }, { lat: 43.0105, lon: -70.489 }], holdClear: 12, routed: true, lane: null, partial: false,
+                         heldOff: { m: 110, kind: "a dock / pier" }, degraded: false, error: null, reason: null, unroutable: [] });
+  const ex = world({ plan: moved() });
+  const tookEx = await ex.doGoTo({ lat: 43.01, lon: -70.49 }, { exact: true, noLockOffer: true });
+  const plain = world({ plan: moved() });
+  const tookPlain = await plain.doGoTo({ lat: 43.01, lon: -70.49 });
+  check("54. an `exact` Go-To (a lock transit's own point) whose hold point the planner MOVED is refused - nothing posted, the banner "
+        + "saying the point is taken exactly or not at all - while the same moved plan as an ordinary Go-To is sent, held off, as before",
+        tookEx === false && ex.out.posts.length === 0 && /taken exactly or not at all/.test(ex.banner())
+        && tookPlain === true && plain.out.posts.length === 1 && /holding 110 m off it/.test(plain.banner()),
+        "exact: took " + tookEx + ", " + ex.out.posts.length + " post(s), banner: " + ex.banner().slice(0, 120) + " | plain: took " + tookPlain + ", " + plain.out.posts.length + " post(s)");
 }
 
 finished = true;

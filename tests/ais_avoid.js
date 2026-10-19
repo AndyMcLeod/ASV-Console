@@ -111,7 +111,7 @@ var cornerSlowFor = -1;
 var cornerUnanswered = [];
 var cornerPlanKey = "survey";
 var S = null, asv = null, runRoute = null, runUnsafe = [], pauseMark = null;
-var resumeSlow = false, commandedSpeed = null, guardOverride = null, guardHeld = null;
+var resumeSlow = false, commandedSpeed = null, guardOverride = null, guardHeld = null, lockTransit = null;   // (releaseLow reads lockTransit, 2026-10-18)
 // ⚠ MODULE SCOPE, NOT THE EVAL BUNDLE. A `let` inside the bundle makes a SECOND
 // global that the fixtures below write and the subject never reads - which is how 12g once
 // passed while reporting on a set nothing referred to. resumeHeldSurvey owns this record

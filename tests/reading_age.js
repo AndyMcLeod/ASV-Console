@@ -258,6 +258,7 @@ check("9. the chart rose's SET arrow is fed the SET row's own value, frame by fr
 const sEl = el();
 // eslint-disable-next-line no-new-func
 const surgePage = new Function("sEl", "setTip", "\"use strict\"; const $ = (s) => (s === \"#v_surge\" ? sEl : null);\n"
+  + "const fmtDist = (m, dp) => m < 1000 ? Math.round(m) + ' m' : (m / 1000).toFixed(dp == null ? 2 : dp) + ' km';\n"   // the tooltip's distances (2026-10-18)
   + decl("^const SURGE_SHOW_M = [^;]*;") + "\n" + decl("^const SURGE_WARN_M = [^;]*;") + "\n"
   + ["surgeWhen", "surgeText", "updateSurgeUI"].map(grab).join("\n") + "\nreturn { surgeWhen, updateSurgeUI };")(sEl, setTip);
 const T10 = Date.UTC(2026, 9, 14, 2, 0, 0) / 1000, T10b = T10 + 9 * 3600;
@@ -274,7 +275,7 @@ check("10. THE SURGE ROW: under the tide it reads the lowest and when, in the ca
       + "the cycle and how it was tied (NOAA's datums where the gauge is down); within 5 cm it reads 'with the tide', tied "
       + "to the gauge (to the fit); over the tide only, the highest; with no forecast, '--' and why",
       () => s10.under.txt === "-0.28 m · " + at10(T10) && s10.under.col === "var(--warn)" && /Fort Point/.test(s10.under.tip)
-            && /Fort Point, 0 km from her/.test(s10.under.tip) && /Cycle 20261013 12Z, 10 h old/.test(s10.under.tip) && /NOAA's datums \(its gauge is not reporting\)/.test(s10.under.tip)
+            && /Fort Point, 100 m from her/.test(s10.under.tip) && /Cycle 20261013 12Z, 10 h old/.test(s10.under.tip) && /NOAA's datums \(its gauge is not reporting\)/.test(s10.under.tip)
             && s10.flat.txt === "with the tide" && s10.flat.col === "" && /tied to its gauge's observations \(to 0\.06 m\)/.test(s10.flat.tip)
             && s10.over.txt === "+0.33 m · " + at10(T10b) && s10.over.col === ""
             && s10.none.txt === "--" && /not loaded yet/.test(s10.none.tip),
@@ -284,9 +285,9 @@ check("10. THE SURGE ROW: under the tide it reads the lowest and when, in the ca
 surgePage.updateSurgeUI(sOk({ station: "8419870", name: "Seavey Island", km: 0.1, from_id: "8423898", from_name: "Fort Point", from_km: 2.6 }));
 s10.lent = { txt: sEl.textContent, tip: sEl.title };
 surgePage.updateSurgeUI(sOk()); s10.own = { tip: sEl.title };
-check("10b. A BORROWED SURGE IS SAID: 'NOAA STOFS-3D at Fort Point, 0 km from her (for Seavey Island, her tide station, which "
+check("10b. A BORROWED SURGE IS SAID: 'NOAA STOFS-3D at Fort Point, 100 m from her (for Seavey Island, her tide station, which "
       + "STOFS has no point at; 2.6 km from it)' - the reading as before; a station's own surge says nothing of borrowing",
-      () => s10.lent.txt === s10.under.txt && /^NOAA STOFS-3D at Fort Point, 0 km from her \(for Seavey Island, her tide station, which STOFS has no point at; 2\.6 km from it\) against/.test(s10.lent.tip)
+      () => s10.lent.txt === s10.under.txt && /^NOAA STOFS-3D at Fort Point, 100 m from her \(for Seavey Island, her tide station, which STOFS has no point at; 2\.6 km from it\) against/.test(s10.lent.tip)
             && !/for |has no point/.test(s10.own.tip) && s10.own.tip === s10.under.tip,
       () => JSON.stringify({ lent: s10.lent, own: s10.own }));
 

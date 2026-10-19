@@ -339,6 +339,8 @@ check("7. A SESSION LOG THAT CANNOT BE WRITTEN (the disk full) SAYS SO ONCE and 
 # 8. the temp files a killed process left are swept at startup, the live ones kept (finding 28)
 _sw = os.path.join(TMP, "sweep")
 os.makedirs(os.path.join(_sw, "enc"), exist_ok=True)
+os.makedirs(os.path.join(_sw, "speed"), exist_ok=True)
+os.makedirs(os.path.join(_sw, "coops_currents"), exist_ok=True)
 _old_t = time.time() - 2 * 3600
 
 
@@ -353,13 +355,18 @@ def _plant(rel, old):
 
 _gone_expected = [_plant("mission.json.1234.5678.part", True), _plant("enc/tile_v3_t.jsonl.12.34.build", True),
                   _plant("ports.json.tmp", True), _plant("comms_config.json.part", True),
-                  _plant("enc/asv_x.jsonl.9.9.gz.part", True), _plant("enc/water_v1.json.part.77", True)]
+                  _plant("enc/asv_x.jsonl.9.9.gz.part", True), _plant("enc/water_v1.json.part.77", True),
+                  # the 2026-10-18 review, finding 8: speed_zones' .tmp, stream_fusion's .<pid>.part, a currents cycle set aside
+                  _plant("speed/state_NH.json.4242.9999.tmp", True), _plant("coops_currents/stations.json.4242.part", True),
+                  _plant("gomofs_20261018_t00z_meta.json.unreadable", True), _plant("gomofs_20261018_t00z_uv.bin.gz.unreadable", True)]
 _kept_expected = [_plant("mission.json.9.9.part", False), _plant("enc/tile_v3_t.jsonl", True),
-                  _plant("enc/features_v5.json", True), _plant("notes.part", True)]
+                  _plant("enc/features_v5.json", True), _plant("notes.part", True),
+                  _plant("speed/state_NH.json", True), _plant("speed/state_ME.json.1.2.tmp", False)]
 _gone = _C._sweep_leftovers([(_sw, True)], min_age_s=3600.0)
-check("8. THE TEMP FILES A KILLED PROCESS LEFT - <file>.<pid>.<tid>.part and .build, .part.<tid>, .gz.part, the old "
-      "comms_config.json.part and ports.json.tmp - older than an hour are swept at startup; a fresh temp (another "
-      "console's live write), the real files and a name that only ends in .part are kept",
+check("8. THE TEMP FILES A KILLED PROCESS LEFT - <file>.<pid>.<tid>.part, .build and .tmp (speed_zones'), <file>.<pid>.part "
+      "(stream_fusion's), .part.<tid>, .gz.part, the old comms_config.json.part and ports.json.tmp, and a currents cycle "
+      "set aside .unreadable - older than an hour are swept at startup; a fresh temp (another console's live write), the "
+      "real files and a name that only ends in .part are kept",
       lambda: sorted(map(os.path.normpath, _gone)) == sorted(map(os.path.normpath, _gone_expected))
       and not any(os.path.exists(p) for p in _gone_expected)
       and all(os.path.exists(p) for p in _kept_expected),

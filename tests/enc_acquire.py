@@ -255,7 +255,7 @@ check("3. A BAND'S LAYER LIST is asked for again once a month old - the new numb
 
 # ── 4. the chart-source card ─────────────────────────────────────────────────────────────────────────────────────────
 saved = (A._enc_pick_band, A._enc_layer_map, A._enc_query_ids, A._enc_query_by_ids)
-A._enc_pick_band = lambda bbox: "enc_harbour"
+A._enc_pick_band = lambda bbox, errors=None: "enc_harbour"
 A._enc_layer_map = lambda band, timeout=20.0: {"Coverage_area": 1, "Quality_of_Data_area": 2}
 QF = {"on": True}
 asked = []
@@ -522,6 +522,21 @@ after = set(os.listdir(APP_ENC)) if os.path.isdir(APP_ENC) else set()
 shutil.rmtree(TMP, ignore_errors=True)
 check("7. nothing here wrote to the app's own chart cache (everything went to a temp folder)",
       lambda: after == before, lambda: "new files %s" % sorted(after - before)[:5])
+
+# 8. THE CLASSES A RULE READS WITHOUT A ROLE ARE ACTED ON (the 2026-10-18 review, finding 6): Massachusetts' 150-ft band
+# stands off a marina or a launch - static/js/speedzones.js maFacility reads Small_Craft_Facility_* and Harbour_Facility_*,
+# which no ENC_ROLES entry names. _ENC_ACTED_ON was built from ENC_ROLES alone, so a read that lost one of them was served,
+# used and said to be whole: the band not built, nothing saying so.
+_sz_js = open(os.path.join(os.path.dirname(os.path.abspath(A.__file__)), "static", "js", "speedzones.js"), encoding="utf-8").read()
+_mf = _sz_js[_sz_js.index("export function maFacility"):]
+_mf = _mf[:_mf.index("\n}") + 2]
+_prefixes = sorted(set(__import__("re").findall(r"/\^([A-Za-z_]+)", _mf)))
+check("8. every chart class Massachusetts' facility rule reads is ACTED ON by the reader (a tile that lost one is unread "
+      "water, not a whole chart): the four facility classes by name, and every class prefix maFacility tests has an acted-on class",
+      lambda: set(A._ENC_RULE_CLASSES) <= A._ENC_ACTED_ON
+      and set(A._ENC_RULE_CLASSES) == {"Small_Craft_Facility_area", "Small_Craft_Facility_point", "Harbour_Facility_area", "Harbour_Facility_point"}
+      and len(_prefixes) >= 4 and all(any(c.startswith(p) for c in A._ENC_ACTED_ON) for p in _prefixes),
+      lambda: "prefixes %s; rule classes %s" % (_prefixes, sorted(A._ENC_RULE_CLASSES)))
 
 print("\n" + ("%d CHECK(S) FAILED (%d ran)" % (fails, ran) if fails else "all checks passed (%d)" % ran))
 sys.exit(1 if fails else 0)

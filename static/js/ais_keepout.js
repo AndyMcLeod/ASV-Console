@@ -463,6 +463,15 @@ export function aisKeepouts(vessels, frame, opts = {}) {
  * Returns {polys, stale, note}: `stale` as aisKeepouts says it - an empty model with its reason, never a quiet sea.
  * opts: now (ms), polledAt (ms the contacts were read), staleS (default AIS_KO_STALE_S), bbox ({W,S,E,N} degrees).
  */
+// A SHIP JUST OUTSIDE THE CHART BOX REACHES INTO IT (the 2026-10-18 review): her hull and her clear water run her length and a
+// half from her antenna (233 m for a 200 m ship), so a filter on the antenna alone laid a passage through a ship anchored 40 m
+// past the box's edge, bow in. Contacts are taken within this pad of the box, then kept by their keep-out's own reach into it.
+const AIS_BOX_PAD_DEG = 0.005;
+function reachesBox(q, b, frame) {
+  if (!q || !q.bb) return true;
+  const sw = frame.toEN({ lat: b.S, lon: b.W }), ne = frame.toEN({ lat: b.N, lon: b.E });
+  return !(q.bb.x1 < sw.e || q.bb.x0 > ne.e || q.bb.y1 < sw.n || q.bb.y0 > ne.n);
+}
 export function aisMooredKeepouts(vessels, frame, opts = {}) {
   const now = +opts.now || 0;
   if (!frame) return { polys: [], stale: false, note: "no chart frame" };
@@ -475,12 +484,14 @@ export function aisMooredKeepouts(vessels, frame, opts = {}) {
   const polys = [];
   for (const v of (vessels || [])) {
     if (!v || v.lat == null || v.lon == null) continue;
-    if (b && !(+v.lat >= b.S && +v.lat <= b.N && +v.lon >= b.W && +v.lon <= b.E)) continue;
+    if (b && !(+v.lat >= b.S - AIS_BOX_PAD_DEG && +v.lat <= b.N + AIS_BOX_PAD_DEG
+               && +v.lon >= b.W - AIS_BOX_PAD_DEG && +v.lon <= b.E + AIS_BOX_PAD_DEG)) continue;
     const m = aisMotion(v, { now, polledAt });
     if (m.moving) continue;
     // with her clear water, always (AIS_MARGIN_FRAC): a plan that starts inside it is laid out of it the short way
     const q = aisKeepout(v, frame, { now, polledAt, sweepS: 0 });
     if (!q) continue;
+    if (b && !reachesBox(q, b, frame)) continue;           // her antenna beside the box, her keep-out not in it: not the model's
     // aisKeepout names moored / at anchor / aground where she says so; a stopped ship that says nothing is "stopped"
     polys.push({ ...q, moored: true, kind: m.navStopped ? q.kind : q.kind.replace(/\)$/, ", stopped)") });
   }

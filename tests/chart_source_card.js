@@ -330,6 +330,19 @@ check("11. no ENC coverage still reads as a note, not an empty list",
     check("12d. an answer that is WHOLE and empty (no ENC coverage here) is kept as before - not asked again while she stays in it",
           () => W3.st().box && !W3.st().info.retrying && asked.length === n3,
           () => JSON.stringify({ box: !!W3.st().box, asked: asked.length - n3 }));
+    // 12e. a band-null answer that came from a FAILURE (`failed`: the breaker's "ENC offline", or a band pick whose every query
+    //      raised) is shown and asked again - never kept as "no chart here" for as long as she stays in the box (2026-10-18 review)
+    const W4 = eval(code2);
+    answers.push({ band: null, cells: [], quality: [], note: "ENC offline", failed: true });
+    const t4 = clock; await W4.ensure(); const q4 = W4.st(), n4 = asked.length;
+    clock += 10000; await W4.ensure(); const at10e = asked.length;
+    clock += 21000; answers.push({ band: "enc_harbour", cells: CELLS, quality: QZ, note: "" }); await W4.ensure();
+    const q4b = W4.st();
+    check("12e. a FAILURE answered as band null (ENC offline; the service not answering) is shown, NOT kept: its box not adopted, "
+          + "its words carried as a retry, asked again past CHART_RETRY_MS - and the whole answer that comes then is kept",
+          () => q4.box === null && q4.info.retrying && /^!ENC offline/.test(q4.info.retrying[0]) && q4.retryAt === t4 + 30000
+                && at10e === n4 && q4b.box && !q4b.info.retrying && asked.length === n4 + 1,
+          () => JSON.stringify({ box: q4.box, retrying: q4.info && q4.info.retrying, retryAt: q4.retryAt - t4, asked: [n4, at10e, asked.length], kept: !!q4b.box }));
   } finally {
     globalThis.fetch = realFetch; Date.now = realNow;
   }

@@ -384,7 +384,7 @@ const FLOOR = 30;
 
   // ── the page's block, lifted ────────────────────────────────────────────────────────────────────────────────────
   const fuelSrc = [grab("fuelFmt"), grab("fuelPct")].join("\n");
-  const fmtDist = (m) => m < 1000 ? Math.round(m) + " m" : (m / 1852).toFixed(2) + " nm";
+  const fmtDist = (m, dp) => m < 1000 ? Math.round(m) + " m" : (m / 1852).toFixed(dp == null ? 2 : dp) + " nm";   // units.js's SAE shape, `dp` honored
   const fmtDur = (s) => Math.floor(s / 3600) + "h " + String(Math.round((s % 3600) / 60)).padStart(2, "0") + "m";
   const world = (o) => {
     const w = Object.assign({ posts: [], gets: [], fetches: [], banners: [], notes: [], logs: [], renders: 0, workerMsgs: [],
@@ -518,7 +518,7 @@ const FLOOR = 30;
   const pl16g = W16g.api.state().passage, b16g = W16g.banners[W16g.banners.length - 1] || "";
   check("16g. ENDS FIRST: the coarse plan's two ends planned in detail once it is in - asked once, kept with the plan - "
         + "both planned said with their lengths; one that could not be said NOT SAILABLE, with why",
-        () => W16.endsAsked === 1 && pl && pl.ends && pl.ends.dep.km === 2.5 && /Both ends planned in detail \(leaving 2\.5 km, arriving 3\.1 km\)\.$/.test(banner16)
+        () => W16.endsAsked === 1 && pl && pl.ends && pl.ends.dep.km === 2.5 && /Both ends planned in detail \(leaving 1\.3 nm, arriving 1\.7 nm\)\.$/.test(banner16)
               && W16g.endsAsked === 1 && pl16g && pl16g.ends && pl16g.ends.arr.ok === false
               && /⚠ NOT SAILABLE - its ends could not be planned in detail: arriving: its end is not clear water to hold at\.$/.test(b16g),
         () => JSON.stringify({ asked: [W16.endsAsked, W16g.endsAsked], b16: banner16.slice(-90), b16g: b16g.slice(-120) }));

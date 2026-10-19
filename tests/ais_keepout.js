@@ -492,6 +492,19 @@ console.log("An AIS contact as a keep-out:");
         names === "TESTSHIP,MOORED,SLOWOLD,FAR" && one && JSON.stringify(one.ring) === JSON.stringify(ref1.ring)
           && /132 x 22 m, stopped\)$/.test(one.kind) && /moored\)$/.test(got.polys[1].kind) && got.polys.every((q) => q.moored),
         names + " | " + (one && one.kind) + " | " + (got.polys[1] && got.polys[1].kind));
+  // M1b. A SHIP JUST OUTSIDE THE BOX REACHES INTO IT (the 2026-10-18 review): a 200 m ship at anchor with her antenna 40 m past the
+  //      box's north edge, bow south - her hull 60 m into the box, her clear water 160 m - is in the model; one 2 km past it is not;
+  //      one beside the box, bow along the edge, whose keep-out never enters it, is not
+  const edge = A.aisMooredKeepouts([ship({ mmsi: 11, name: "BOWIN", heading: 180, length: 200, lat: ll(0, 4040).lat }),
+                                    ship({ mmsi: 12, name: "FAROUT", heading: 180, length: 200, lat: ll(0, 6000).lat }),
+                                    ship({ mmsi: 13, name: "ALONG", heading: 90, length: 200, lat: ll(0, 4400).lat })],
+                                   ref, { now: T0, polledAt: T0, bbox: box });
+  const bowIn = edge.polys.find((q) => q.name === "BOWIN");
+  const reach = bowIn ? Math.min(...bowIn.ring.map((p) => p.n)) : null;         // how far south her keep-out reaches (the edge is n = 4000)
+  check("M1b. a ship anchored just OUTSIDE the chart box, bow in, is in the planner's model - her keep-out reaches well inside it; "
+        + "one 2 km out, and one beside the edge whose keep-out never enters, are not",
+        edge.polys.map((q) => q.name).join() === "BOWIN" && reach != null && reach < 4000 - 100,
+        edge.polys.map((q) => q.name).join() + "; BOWIN reaches to n = " + (reach == null ? "-" : reach.toFixed(0)) + " (edge 4000)");
   const stale = A.aisMooredKeepouts([ship()], ref, { now: T0, polledAt: T0 - 60000, bbox: box });
   const none = A.aisMooredKeepouts([ship()], ref, { now: T0, polledAt: 0, bbox: box });
   check("M2. a read older than AIS_KO_STALE_S, or none at all, is no model - with its reason, never a quiet sea",

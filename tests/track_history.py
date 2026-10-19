@@ -121,14 +121,15 @@ t_before = time.time()
 q_now = A._track_query("/api/track?boot=x1&since=10")
 refused = []
 for bad in ("/api/track?since=1", "/api/track?boot=x", "/api/track?boot=x&since=abc", "/api/track?boot=x&since=nan",
-            "/api/track?boot=x&since=inf", "/api/track?boot=x&since=5&until=4"):
+            "/api/track?boot=x&since=inf", "/api/track?boot=x&since=5&until=4",
+            "/api/track?boot=x&since=inf&until=inf", "/api/track?boot=x&since=nan&until=5"):   # since alone (2026-10-18 review)
     try:
         A._track_query(bad)
     except ValueError as e:
         refused.append(str(e))
 check("3. the query: boot and since, until defaulting to now; a missing field, a time that is not a finite number, or until "
       "before since refused in words",
-      lambda: q_ok == ("x1", 10.5, 20.0) and q_now[0] == "x1" and q_now[2] >= t_before and len(refused) == 6
+      lambda: q_ok == ("x1", 10.5, 20.0) and q_now[0] == "x1" and q_now[2] >= t_before and len(refused) == 8
       and all(r for r in refused),
       lambda: "%r; %d refused, e.g. %r" % (q_ok, len(refused), refused[:1]))
 

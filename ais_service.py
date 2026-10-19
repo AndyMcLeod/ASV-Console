@@ -418,9 +418,6 @@ class Source(threading.Thread):
     def _ok(self, note=""):
         self.status.update(state="ok", note=note, updated=time.time())
 
-    def _ok(self, note=""):
-        self.status.update(state="ok", note=note, updated=time.time())
-
     def _err(self, note):
         self.status.update(state="error", note=str(note)[:200], updated=time.time())
 
@@ -817,6 +814,25 @@ class NmeaAivdmDecoder:
         return None
 
 
+def _tcp_keepalive(s):
+    """TCP keepalive on a receiver's socket, so a peer that vanished without a FIN (power, a NAT mapping dropped, Wi-Fi)
+    raises on the read within about a minute instead of reading as silence for ever. A connected socket's read timeout
+    is `continue` - silence is not failure (the 2026-10-16 review, finding 18) - so nothing else ended a dead connection
+    (the 2026-10-18 review, finding 9). Windows takes its own probe timing (SIO_KEEPALIVE_VALS: idle 30 s, probes 5 s
+    apart, ten of them); elsewhere the TCP_KEEP* options where the platform has them. Best effort: a socket that refuses
+    an option keeps working without it."""
+    try:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        if hasattr(socket, "SIO_KEEPALIVE_VALS"):
+            s.ioctl(socket.SIO_KEEPALIVE_VALS, (1, 30000, 5000))
+        else:
+            for opt, val in (("TCP_KEEPIDLE", 30), ("TCP_KEEPINTVL", 5), ("TCP_KEEPCNT", 10)):
+                if hasattr(socket, opt):
+                    s.setsockopt(socket.IPPROTO_TCP, getattr(socket, opt), val)
+    except OSError:
+        pass
+
+
 class NmeaSource(Source):
     name = "nmea"
     TCP_CONNECT_S = 15.0
@@ -865,6 +881,7 @@ class NmeaSource(Source):
         while True:
             try:
                 s = socket.create_connection((self.host, self.port), timeout=self.TCP_CONNECT_S)
+                _tcp_keepalive(s)                       # a peer that died without a FIN ends the read within a minute
                 # ⚠ THE CONNECT TIMEOUT STAYED ON THE SOCKET (the 2026-10-16 review, finding 18): a connected receiver with
                 # nothing to say for 15 s read as "error: timed out" and was reconnected every 18 s or so. A read that times
                 # out on a connected socket is silence, not failure; EOF is the end of the stream.

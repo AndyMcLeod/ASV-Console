@@ -850,6 +850,58 @@ try:
           and "failsafe" not in quiet["note"] and quiet["armed"] is False and quiet["run"] == "idle",
           "lost after %s s: %s" % (quiet_lost, quiet))
 
+    # ── 17j. NOTHING IS COMMANDED WHILE THE LINK IS LOST (the 2026-10-18 review, finding 1) ──
+    # set_armed checked `link is not None` and `not estop` alone: ARM and START were ACCEPTED twelve ticks after the last
+    # frame - a RealVcu that never spoke read ARMED (autonomy "failsafe"), a sim under way was restarted - and the restore
+    # then said "she was stopped by the failsafe and is disarmed" over a frame that carried armed and running.
+    E.connect("sim", "", _C.DEFAULT_VCU_PORT, "tcp")
+    _until(lambda: E.status.get("lat_deg") is not None, 10.0)
+    if not E.armed:
+        E.set_armed(True)
+    E.go_to(*far)
+    _until(lambda: E.status.get("running") and (E.status.get("sog_kn") or 0) > 1.0, 10.0)
+    link17j = E._link
+    real_tick_j = link17j.tick
+    link17j.tick = _tick_fell_over
+    lost_j = _until(lambda: E.link == E.LINK_LOST, 10.0)
+    refused = {}
+    for name, fn in (("arm", lambda: E.set_armed(True)), ("upload", lambda: E.upload([{"lat": far[0], "lon": far[1]}])),
+                     ("start", E.start), ("goto", lambda: E.go_to(*far)), ("rth", lambda: E.return_home())):
+        try:
+            fn()
+            refused[name] = "ACCEPTED"
+        except Exception as e:                                        # noqa: BLE001 - the refusal is the point
+            refused[name] = str(e)[:90]
+    while_lost = {"armed": E.armed, "run": E.run}
+    link17j.tick = real_tick_j
+    back_j = _until(lambda: E.link == E.LINK_OK, 10.0)
+    try:
+        E.set_armed(True)
+        armed_after = E.armed
+    except Exception as e:                                            # noqa: BLE001
+        armed_after = str(e)[:90]
+    check("17j. NOTHING IS COMMANDED WHILE THE LINK IS LOST: ARM, Upload, Start, Go-To and Return-to-Home are each refused "
+          "saying so (LINK LOST: no frame ... nothing is commanded until one is seen) - she stays disarmed and stopped - and "
+          "once frames are back, ARM is accepted again",
+          lambda: lost_j is not None and refused and all("LINK LOST" in v for v in refused.values())
+          and while_lost == {"armed": False, "run": "stopped"} and back_j is not None and armed_after is True,
+          "lost after %s s; refused %s; while lost %s; back after %s s; ARM after: %s" % (lost_j, refused, while_lost, back_j, armed_after))
+    # 17k. the restore says where she STANDS. Never armed-and-running by a command now (17j) - but if she were, the note
+    # must not claim she is disarmed over a frame that says otherwise.
+    with E._lock:
+        E.link = E.LINK_LOST; E.armed = True; E.run = "running"
+        E._link_back()
+        said_running = E.note or ""
+        E.link = E.LINK_LOST; E.armed = False; E.run = "stopped"
+        E._link_back()
+        said_stopped = E.note or ""
+    check("17k. LINK RESTORED says where she stands: disarmed and stopped - 'stopped by the failsafe and is disarmed: check "
+          "her, then ARM'; armed and running - ARMED, running, 'check her', and NOT 'is disarmed'",
+          lambda: "is disarmed" in said_stopped and "ARM" in said_stopped and "ARMED" in said_running and "running" in said_running
+          and "is disarmed" not in said_running,
+          "running: %r; stopped: %r" % (said_running, said_stopped))
+    E.set_armed(False)
+
     # ── 18. A SPAWN THAT LANDS WHILE THE OLD BOAT'S FRAME IS STILL IN FLIGHT (Andy, 2026-10-13: "spawn means reseting
     #        home. review that process") ──
     # connect() waits 2 s for the old link's loop to finish the frame it is on, and a frame can take longer: this
