@@ -416,6 +416,8 @@ eval([
   grab("resumeHereAt"), grab("legOfLine"), grab("lineOfLeg"), grab("alongAsRun"), grab("gateResumeHere"), grab("resumeFromHere"),
   grab("patClipBufM"), "const guardStandoffM = G.guardStandoffM;",
   grab("aisWanted"), grab("pollAIS"), grab("setAIS"),
+  // a feed connected but not populating (2026-10-20): the poll says it, once (tests/ais_stall.js is its subject)
+  grabDecl("AIS_STALL_BANNER"), grab("aisStallSay"), "const fmtDur = (s) => Math.round(s / 60) + 'm';",
   // the poll rides the stream (2026-10-13): the frame's tick, its period and the limit on one that never answers
   grabDecl("AIS_POLL_MS"), grabDecl("AIS_POLL_TIMEOUT_MS"), grab("aisPollTick"),
   "function __aisPollConsts(){ return { AIS_POLL_MS, AIS_POLL_TIMEOUT_MS }; }",
@@ -481,6 +483,7 @@ const LINE_E = { a: ll(-200, 0), b: ll(200, 0) };
 const { blockedInfo } = require("../static/js/keepouts.js");
 var AIS_KEY = "asv_ais_show_v1";
 var aisArea = null, aisState = "idle", aisSrc = null, aisSrcName = null, aisNote = "", aisBusy = false;
+var aisStall = null, aisStallSaid = false;
 var aisPollBegun = 0, aisPollCtl = null;   // the poll's start and its abort (2026-10-13), here so 12d-12f can read them
 var UIROLE = "main";                       // the chart window; 12f is the controls window
 function aisCenter() { return asv ? { lat: asv.lat, lon: asv.lon } : { lat: 0, lon: 0 }; }

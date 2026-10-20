@@ -6139,6 +6139,38 @@ let aisPollBegun = 0, aisPollCtl = null;
 // nothing while the feed itself reports perfectly healthy. Naming it turns that from a
 // silent blank into an obvious answer.
 let aisState = "idle", aisSrc = null, aisSrcName = null;
+// ⚠ CONNECTED, BUT NOT POPULATING (Andy, 2026-10-20: "generate an alert when the AIS card is not populating even though its
+// connected to the given service. Force retry connection every minute if this condition persists."). The service says
+// so per source (ais_service.py stall_check: connected, no vessel report for a minute - and it then drops and remakes the
+// connection once a minute while that lasts), and the layer reads "stalled" when NO connected source is populating.
+// `aisStall` is the dry source's {name, quiet_s, retries} while it does; aisStallSay raises the alert once and lifts it.
+let aisStall = null, aisStallSaid = false, aisStallSaidAt = -1;
+const AIS_STALL_BANNER = "⚠ AIS NOT POPULATING — ";
+/** The card's words for a stalled feed: how long it has been dry and how many times the service has reconnected. */
+function aisStallNote(st){
+  if(!st) return "";
+  return (st.quiet_s != null ? "no vessel report for " + fmtDur(st.quiet_s) : "no vessel report")
+    + " · reconnecting every minute" + (st.retries ? " (" + st.retries + " so far)" : "");
+}
+/** THE ALERT: raised when the layer reads "stalled" - a standing banner, in the alerts card with the rest - and lifted
+ *  when it does not, with a note when vessels are arriving again. Not re-written on every poll (the history would hold a
+ *  line every 5 s): the card's status line carries the live figures (aisStallNote). ⚠ BUT RAISED AGAIN, on the service's
+ *  next try - once a minute - if another banner has covered it: the banner is one slot, and measured live the chart
+ *  read's "Nogo established" covered it within a second of its being raised. */
+function aisStallSay(){
+  if(aisState === "stalled"){
+    const b = $("#encbanner"), up = !!(b && b.style.display === "block" && (b.textContent || "").indexOf(AIS_STALL_BANNER) === 0);
+    if(up) aisStallSaidAt = aisStall.retries;          // seen showing at this try: covered later, the NEXT try raises it
+    if(!aisStallSaid || (!up && aisStall.retries !== aisStallSaidAt)){ aisStallSaid = true; aisStallSaidAt = aisStall.retries;
+      showBanner(AIS_STALL_BANNER + aisStall.name + " says it is connected, but no vessel report has arrived for "
+        + (aisStall.quiet_s != null ? aisStall.quiet_s + " s" : "over a minute") + ". The console is reconnecting to it "
+        + "every minute until vessels arrive; the contacts on the chart are the last ones heard."); }
+  } else if(aisStallSaid){ aisStallSaid = false; aisStallSaidAt = -1;
+    takeDownBanner(/^⚠ AIS NOT POPULATING/);
+    if(aisState === "ok" || aisState === "empty")
+      flashNote("AIS populating again" + (aisSrcName ? " — " + aisSrcName + ": vessels arriving." : "."));
+  }
+}
 const AIS_SRC_COVER = {aisstream:"global", digitraffic:"Finland/Baltic only",
                        aishub:"member pool", opencpn:"OpenCPN relay",
                        nmea:"local receiver"};
@@ -13617,16 +13649,22 @@ async function pollAIS(){ if(UIROLE === "controls" || !aisWanted() || aisBusy) r
     aisSrcName = live[0] || srcNames.slice().sort((a,b)=>srcRank(a)-srcRank(b))[0] || null;
     aisSrc = aisSrcName ? srcs[aisSrcName] : null;
     const allErr = srcNames.length > 0 && srcNames.every(n => srcs[n].state === "error");
+    // CONNECTED, NOT POPULATING: every source the service reports connected is `stalled` (one dry feed beside a live one
+    // is not, as one dead feed beside a live one is not an outage). Ahead of "ok": the contacts it still holds only age.
+    const conn = srcNames.filter(n => srcs[n].state === "ok"), dry = conn.filter(n => srcs[n].stalled);
+    aisStall = (conn.length && dry.length === conn.length)
+      ? {name: dry[0], quiet_s: srcs[dry[0]].quiet_s, retries: srcs[dry[0]].stall_retries || 0} : null;
     if(d && d.ok===false)                     aisState = "offline";
+    else if(aisStall)                         aisState = "stalled";
     else if(aisVessels.length)                aisState = "ok";
     else if(allErr)                           aisState = "error";
     else if(aisSrc && aisSrc.state==="ok")    aisState = "empty";   // connected, none in range
     else                                      aisState = "connecting";
     aisNote = (d && d.ok===false) ? (d.note || "AIS service offline")
             : (allErr ? ((aisSrc && aisSrc.note) || "all sources erroring") : "");
-  }catch(e){ aisVessels=[]; aisBeyondRpts=[]; aisState="offline"; aisSrc=null; aisSrcName=null;
+  }catch(e){ aisVessels=[]; aisBeyondRpts=[]; aisState="offline"; aisSrc=null; aisSrcName=null; aisStall=null;
              aisNote = (e && e.name === "AbortError") ? "AIS query timed out" : "AIS query failed"; }
-  finally{ aisBusy=false; aisPollCtl=null; renderAisTable(); render(); }
+  finally{ aisBusy=false; aisPollCtl=null; aisStallSay(); renderAisTable(); render(); }
 }
 /** Is a poll due? Asked on every telemetry frame (onFrame) and by the timer: polls when AIS_POLL_MS have passed since the
  *  last one began, and aborts one still out after AIS_POLL_TIMEOUT_MS. */
@@ -13980,6 +14018,8 @@ function renderAisTable(){
   if(aisState==="offline"){        stDot="#d9534f"; stMain="AIS service offline"; stNote=aisNote||""; }
   else if(aisState==="error"){     stDot="#d9534f"; stMain="AIS feed error";
                                    stNote=[srcLbl, aisNote].filter(Boolean).join(" · "); }
+  else if(aisState==="stalled"){   stDot="#d9534f"; stMain="connected, not populating" + held;
+                                   stNote=[srcLbl, aisStallNote(aisStall)].filter(Boolean).join(" · "); }
   else if(aisState==="connecting"){stDot="#e8a13f"; stMain="connecting to AIS";
                                    stNote=[srcLbl, "warming up"+(aisArea?" over "+aisAreaLabel():"")+"..."].filter(Boolean).join(" · "); }
   // AN EMPTY CARD MUST SAY WHICH KIND OF EMPTY. "no vessels in 27 nm yet" reads like a dead

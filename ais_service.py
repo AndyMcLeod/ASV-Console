@@ -178,6 +178,15 @@ STATIONARY_GAP_S = 120.0       # recorded; not a condition any more
 STATIONARY_NAV = (1, 5, 6)     # at anchor, moored, aground ...
 STATIONARY_NAV_KN = 3.0        # ... believed only under this speed: "at anchor" left set at 6 kn is the commonest AIS error
 UA = {"User-Agent": "ais-service/1.0 (+survey-asv console; open AIS aggregation)"}
+# ⚠ CONNECTED, BUT NOT POPULATING (Andy, 2026-10-20: "generate an alert when the AIS card is not populating even though its
+# connected to the given service. Force retry connection every minute if this condition persists."). A push feed can
+# hold its connection open and deliver nothing - the subscription taken, no frame after it - and the card then reads
+# "connected" over contacts that only age. Measured on the console's own subscription box (150 km round the port, +20%):
+# New Castle about a report a second, never more than 3 s apart; Lewes the same; Cape Canaveral, the sparsest, 8 reports
+# in 75 s with silences up to 30 s. A minute with no vessel at all is a feed that has stopped, not a quiet sea.
+STALL_S = 60.0          # connected, and no vessel report for this long (the DATA clock): the feed is not populating
+STALL_RETRY_S = 60.0    # ... so the connection is dropped and made again, once this connection has had this long
+STALL_PAUSE_S = 1.0     # the pause before that reconnect - not the error backoff: nothing failed, the link is just dry
 
 
 # --------------------------------------------------------------------------- #
@@ -412,19 +421,74 @@ class Source(threading.Thread):
         # against a real loopback server: 27 reconnects, one report ever, the
         # transport clock never older than 1.5 s, and the poll that exists to carry
         # the feed when the stream drops deferred to it for ever.
+        # `stalled`: connected, and no vessel report for STALL_S (stall_check); `stall_retries`: the connections
+        # dropped and made again since it began. Both cleared by the next vessel.
         self.status = {"state": "starting", "note": "", "updated": 0, "reports": 0,
-                       "last_report": 0}
+                       "last_report": 0, "stalled": False, "stall_since": 0, "stall_retries": 0}
+        self._first_connect = None       # the first connection this source made: the data clock's start before any report
+        self._conn_at = None             # when the CURRENT connection was made: it gets its minute before a forced retry
 
     def _ok(self, note=""):
         self.status.update(state="ok", note=note, updated=time.time())
 
     def _err(self, note):
-        self.status.update(state="error", note=str(note)[:200], updated=time.time())
+        # an error is its own state (the card says "feed error"): not a connected feed that is merely dry
+        self.status.update(state="error", note=str(note)[:200], updated=time.time(), stalled=False)
 
     def _report(self, mmsi, **fields):
         self.reg.update(mmsi, self.name, **fields)
         self.status["reports"] += 1
         self.status["last_report"] = time.time()
+        if self.status.get("stalled") or self.status.get("stall_retries"):
+            print("[ais] %s: vessels arriving again (after %d reconnect(s))" % (self.name, self.status["stall_retries"]),
+                  file=sys.stderr)
+            self.status.update(stalled=False, stall_since=0, stall_retries=0)
+
+    def _connected(self, now=None):
+        """A connection has been made. The data clock starts at the FIRST one and is not reset by the next: a far end that
+        accepts and then hangs up reconnects every couple of seconds, and must still read as not populating."""
+        now = time.time() if now is None else now
+        self._conn_at = now
+        if self._first_connect is None:
+            self._first_connect = now
+
+    def quiet_s(self, now=None):
+        """Seconds since the last vessel report - or, before the first, since the first connection - or None while this
+        source has never connected (a poll source never does: it has no connection to be dry on)."""
+        now = time.time() if now is None else now
+        ref = self.status.get("last_report") or self._first_connect
+        return None if ref is None else max(0.0, now - ref)
+
+    def stall_check(self, now=None):
+        """One look at a connected feed (the read loop's, on every frame and every read timeout). None: populating, or
+        not connected (an error is its own state). "stalled": connected and no vessel for STALL_S - said in the status
+        and the note. "reconnect": stalled, and the current connection has had its STALL_RETRY_S - the caller drops it
+        and makes it again, so a stall that persists is retried once a minute."""
+        now = time.time() if now is None else now
+        q = self.quiet_s(now)
+        if q is None or q < STALL_S or self.status.get("state") != "ok":
+            return None
+        if not self.status.get("stalled"):
+            self.status.update(stalled=True, stall_since=now)
+            print("[ais] %s: connected, but no vessel report for %.0f s - reconnecting every %.0f s while it lasts"
+                  % (self.name, q, STALL_RETRY_S), file=sys.stderr)
+        tries = self.status.get("stall_retries", 0)
+        self.status["note"] = ("connected, but no vessel report for %.0f s - reconnecting every %.0f s (%d so far)"
+                               % (q, STALL_RETRY_S, tries))
+        if self._conn_at is not None and now - self._conn_at >= STALL_RETRY_S:
+            self.status["stall_retries"] = tries + 1
+            print("[ais] %s: still no vessel after %.0f s - reconnecting (try %d)" % (self.name, q, tries + 1),
+                  file=sys.stderr)
+            return "reconnect"
+        return "stalled"
+
+    def health(self, now=None):
+        """The status the service serves (/health, /vessels `sources`), with the data clock read NOW - `quiet_s` - so the
+        page needs no clock of its own (it may be on another machine)."""
+        st = dict(self.status)
+        q = self.quiet_s(now)
+        st["quiet_s"] = None if q is None else round(q)
+        return st
 
 
 # --------------------------------------------------------------------------- #
@@ -513,6 +577,9 @@ def _frame_error(raw):
 class AisstreamSource(Source):
     name = "aisstream"
     URL = "wss://stream.aisstream.io/v0/stream"
+    # The socket's read timeout: how often a QUIET connection is looked at (stall_check). It was 30 s, which would have
+    # made "a minute" anything up to ninety seconds. A timeout mid-frame keeps the bytes read (WSClient._recv_exact).
+    READ_S = 10.0
 
     def __init__(self, reg, key, bbox=None):
         super().__init__(reg)
@@ -527,14 +594,18 @@ class AisstreamSource(Source):
         backoff = 2.0
         frame_err = None                # the upstream's LAST error frame, until data flows
         while True:
+            ws = None
+            forced = False              # this connection was dropped because it was dry (stall_check), not because it failed
             try:
-                ws = WSClient(self.URL)
+                ws = WSClient(self.URL, timeout=self.READ_S)
                 ws.connect()
                 sub = {"APIKey": self.key, "BoundingBoxes": self.boxes,
                        "FilterMessageTypes": ["PositionReport", "StandardClassBPositionReport",
                                               "ExtendedClassBPositionReport", "ShipStaticData"]}
                 ws.send_text(json.dumps(sub))
                 self._ok("connected")
+                self._connected()
+                self.stall_check()      # a connection remade for a stall still says so: "connected" alone would hide it
                 backoff = 2.0
                 frame_err = None        # a fresh subscription starts clean; a real fault re-reports
                 while True:
@@ -555,6 +626,11 @@ class AisstreamSource(Source):
                             self._err("aisstream: " + frame_err)
                         else:
                             self._ok("connected; no vessels reporting in this area yet")
+                        # ... UNTIL IT HAS BEEN QUIET A MINUTE (STALL_S): then it is a feed not populating, said, and
+                        # the connection is made again once a minute while that lasts (stall_check)
+                        if self.stall_check() == "reconnect":
+                            forced = True
+                            break
                         continue
                     if msg is None:
                         break
@@ -570,8 +646,24 @@ class AisstreamSource(Source):
                     frame_err = None    # real data flowing again - the fault has passed
                     self._ok("connected")
                     self._ingest(msg)
+                    # a frame that carries no vessel (no MMSI: _ingest drops it) does not populate the card either
+                    if self.stall_check() == "reconnect":
+                        forced = True
+                        break
             except Exception as e:
                 self._err(e)
+            finally:
+                # THE OLD SOCKET IS CLOSED BEFORE THE NEXT IS MADE: aisstream limits the connections a key may hold, and
+                # one left to the garbage collector beside a new one could be refused as a second
+                close = getattr(ws, "close", None)
+                if close:
+                    try:
+                        close()
+                    except Exception:
+                        pass
+            if forced:
+                time.sleep(STALL_PAUSE_S)
+                continue
             time.sleep(backoff)
             backoff = min(60.0, backoff * 2)
 
@@ -1268,6 +1360,20 @@ class WSClient:
         hdr += mask
         self.sock.sendall(bytes(hdr) + bytes(b ^ mask[i % 4] for i, b in enumerate(payload)))
 
+    def close(self):
+        """A close frame (best effort) and the socket shut - so the far end counts one connection, not two, when the
+        caller makes the next (the stall's reconnect)."""
+        if self.sock is None:
+            return
+        try:
+            self._send_frame(0x8, struct.pack(">H", 1000))
+        except Exception:
+            pass
+        try:
+            self.sock.close()
+        finally:
+            self.sock = None
+
     def recv_text(self):
         """Return the next text message (reassembling continuations), or None on close.
         Replies to pings transparently and skips non-text frames."""
@@ -1445,7 +1551,9 @@ def make_handler(reg, sources):
             # and hid which one was carrying the feed, and with it the stream's
             # "authorise this IP" hint. Provenance and health are different
             # questions; only the second needs the transport.
-            return {getattr(s, "health_name", s.name): dict(s.status) for s in sources}
+            # ... with the data clock read now (Source.health: `quiet_s`), so the page needs no clock of its own
+            return {getattr(s, "health_name", s.name): (s.health() if hasattr(s, "health") else dict(s.status))
+                    for s in sources}
 
         def do_GET(self):
             path, _, qs = self.path.partition("?")

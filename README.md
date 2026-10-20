@@ -1179,6 +1179,21 @@ stopped; one already listening on the port when the console starts is used, and 
 on. Until this a crashed service left the layer empty for the rest of the session, reading
 exactly like a quiet sea.
 
+**A feed that is connected but not populating is said, and its connection made again every
+minute** (2026-10-20, Andy: "generate an alert when the AIS card is not populating even though its connected to the given service. Force retry connection every minute if this condition persists."). A push feed can
+keep its connection open and send nothing, and the card then read "connected" over contacts that
+only aged. The aisstream source now times the silence from its last vessel report, across
+reconnects, so a far end that accepts and hangs up counts too. After a minute with no vessel the
+source is *stalled*: the AIS card reads **connected, not populating**, with how long and how many
+tries, and a standing alert **AIS NOT POPULATING** names the source. The service then drops the
+connection and makes it again once each new connection has had its minute, closing the old
+socket first. The contacts it still holds stay on the chart as the last ones heard, and the guard
+ages each by its own report. Vessels arriving lift the alert with a note. Another message
+covering the alert does not bury it: the next try raises it again. One dry source beside a
+populating one is not a stall, and a feed reporting an error is its own state. A minute is far
+outside a healthy feed's quiet: measured on the console's own subscription box, New Castle and
+Lewes deliver about a report a second, and Cape Canaveral, the sparsest, went 30 s at most.
+
 ## Using it
 
 **One tab is in charge.** The clearance guard, the speed governor and the end-of-plan
