@@ -46,7 +46,7 @@ const SERVER = fs.readFileSync(path.join(__dirname, "..", "asv_console.py"), "ut
 
 // THE REAL MODULES.
 const { planeFrame, M_PER_DEG_LAT } = require("../static/js/geodesy.js");
-const { nogo } = require("../static/js/state.js");
+const { nogo, sea } = require("../static/js/state.js");   // sea: the water level readPassageAis adds to a charted depth
 const P = require("../static/js/passage.js");
 const K = require("../static/js/keepouts.js");
 const { bbOf } = require("../static/js/geometry.js");
@@ -239,6 +239,10 @@ const PASSAGE_AIS_MAX_READS = declValue("PASSAGE_AIS_MAX_READS"), PASSAGE_AIS_TI
 const { distTo } = require("../static/js/geodesy.js");
 // eslint-disable-next-line no-eval
 const passageReadCenters = eval("(" + grab("passageReadCenters") + ")");
+// eslint-disable-next-line no-eval
+// ... which writes the charted depth under each vessel at anchor on her record (2026-11-01: her watch circle's cable); no
+// features in this world, so every record is returned as it came
+const { aisWithChart } = require("../static/js/ais_keepout.js");
 // eslint-disable-next-line no-eval
 const readPassageAis = eval("(" + grab("readPassageAis") + ")");
 // THE ROUTE WORKER (2026-10-12) is not here: each search runs on this thread as it always did (tests/route_worker.js); and no Stop

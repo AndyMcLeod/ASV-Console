@@ -272,10 +272,12 @@ console.log("An AIS contact as a keep-out:");
   check("6b. ... and clearanceM measures to her clear water: 50 m abeam of a 20 x 8 m boat is 36 m clear (her side 4, her 10)",
         () => Math.abs(clearanceM({ e: 50, n: 0 }, full) - 36) < 0.05,
         () => clearanceM({ e: 50, n: 0 }, full).toFixed(2) + " m");
-  // VICTORIA T as she broadcast it on 2026-10-17: 200 x 32 m, A 173 / B 27 / C 10 / D 22, heading 323 - here heading 0
-  const vic = modelOf(contact(0, 0, { name: "VICTORIA T", heading: 0, nav: 1, length: 200, beam: 32, dim: { a: 173, b: 27, c: 10, d: 22 } }));
+  // VICTORIA T as she broadcast it on 2026-10-17: 200 x 32 m, A 173 / B 27 / C 10 / D 22, heading 323 - here heading 0, and
+  // here with NO navigational status: at anchor (status 1) she has her watch circle since 2026-11-01 (N2), and these
+  // checks are the half-length rule's, which still holds every vessel not under way that has no status rule
+  const vic = modelOf(contact(0, 0, { name: "VICTORIA T", heading: 0, nav: null, length: 200, beam: 32, dim: { a: 173, b: 27, c: 10, d: 22 } }));
   const vq = vic.q, vf = vic.full;
-  check("6c. ... scaled to her size: VICTORIA T (200 x 32 m, at anchor) keeps 100 m - 99 m off her starboard side is "
+  check("6c. ... scaled to her size: VICTORIA T (200 x 32 m, stopped, no status) keeps 100 m - 99 m off her starboard side is "
         + "inside, 101 m clear; 99 m beyond her bow inside, 101 m clear; the survey line 28.8 m off her side is inside",
         () => vq && vq.marginM === 100 && inKo(vf, 22 + 99, 0) && !inKo(vf, 22 + 101, 0) && inKo(vf, 0, 173 + 99) && !inKo(vf, 0, 173 + 101)
               && inKo(vf, 22 + 28.8, 50) && !inKo(vic.ko, 22 + 28.8, 50),
@@ -287,9 +289,9 @@ console.log("An AIS contact as a keep-out:");
         () => sw.q && sw.q.marginM === 10 && inKo(sw.full, 0, reach + 9.5) && !inKo(sw.full, 0, reach + 10.5),
         () => sw.q && (reach + 9.5).toFixed(0) + " m " + inKo(sw.full, 0, reach + 9.5) + ", " + (reach + 10.5).toFixed(0) + " m " + inKo(sw.full, 0, reach + 10.5));
   // the boat already in her clear water: her bare hull, said
-  const inside = A.aisKeepout(contact(0, 0, { name: "VICTORIA T", heading: 0, nav: 1, length: 200, beam: 32, dim: { a: 173, b: 27, c: 10, d: 22 } }),
+  const inside = A.aisKeepout(contact(0, 0, { name: "VICTORIA T", heading: 0, nav: null, length: 200, beam: 32, dim: { a: 173, b: 27, c: 10, d: 22 } }),
                               ref, { now: NOW, polledAt: NOW, sweepS: 0, own: { e: 22 + 60, n: 0 } });
-  const outside = A.aisKeepout(contact(0, 0, { name: "VICTORIA T", heading: 0, nav: 1, length: 200, beam: 32, dim: { a: 173, b: 27, c: 10, d: 22 } }),
+  const outside = A.aisKeepout(contact(0, 0, { name: "VICTORIA T", heading: 0, nav: null, length: 200, beam: 32, dim: { a: 173, b: 27, c: 10, d: 22 } }),
                                ref, { now: NOW, polledAt: NOW, sweepS: 0, own: { e: 22 + 140, n: 0 } });
   const insideKo = { polys: inside ? [inside] : [], lines: [], points: [] };
   check("6e. NOT ROUND A BOAT ALREADY IN IT: the boat 60 m off her side (inside her 100 m) gets her BARE hull - 1 m off her "
@@ -299,8 +301,9 @@ console.log("An AIS contact as a keep-out:");
         () => "inside: waived " + (inside && inside.marginWaived) + ", margin " + (inside && inside.marginM)
             + "; outside: waived " + (outside && outside.marginWaived) + ", margin " + (outside && outside.marginM));
   // ... the guard's model, and a passage's start
-  const both = [contact(0, 0, { name: "NEAR", heading: 0, sog: 0, nav: 5, length: 100, beam: 20, dim: { a: 50, b: 50, c: 10, d: 10 } }),
-                contact(400, 0, { name: "FAR", heading: 0, sog: 0, nav: 5, length: 100, beam: 20, dim: { a: 50, b: 50, c: 10, d: 10 } })];
+  // (no status: moored and still, they would keep 20 m since 2026-11-01 - N1)
+  const both = [contact(0, 0, { name: "NEAR", heading: 0, sog: 0, nav: null, length: 100, beam: 20, dim: { a: 50, b: 50, c: 10, d: 10 } }),
+                contact(400, 0, { name: "FAR", heading: 0, sog: 0, nav: null, length: 100, beam: 20, dim: { a: 50, b: 50, c: 10, d: 10 } })];
   const g = A.aisKeepouts(both, ref, { now: NOW, polledAt: NOW, own: { e: 40, n: 0 }, sweepS: 0 });
   const m0 = A.aisMooredKeepouts(both, ref, { now: NOW, polledAt: NOW });
   const by = (r, nm) => r.polys.find((p) => p.name === nm) || {};
@@ -599,6 +602,219 @@ console.log("An AIS contact as a keep-out:");
           + " m off her hull, " + (out100 == null ? "-" : out100.toFixed(1)) + " m off it 100 m on" : "no route to the target"));
   nogo.ais = null;
   Object.assign(nogo, saved);
+}
+
+// ── N. HER NAVIGATIONAL STATUS SETS HER CLEAR WATER (Andy, 2026-11-01) ────────────────────────────────────────────────
+// "When a vessel is moored or anchored and it is broadcasting AIS it may have Code 1 (anchored) or Code 5 (moored) in the
+// message. If so, utilize this to override avoidance distances as follows: Moored and unmoving in a harbor or alongside a
+// pier change avoidance distance to 20m, Anchored we must assume a watch circle driven by tide and/or current and/or wind.
+// Calculate watch circle and add another 10m to the radius for safety."
+{
+  // alongside: her hull 2 m off a charted berth (berth_m, which the page writes from the chart - N9 measures it)
+  const MOOR = (o = {}) => contact(0, 0, { name: "MOORED", heading: 0, sog: 0.2, nav: 5, length: 100, beam: 20,
+                                           dim: { a: 50, b: 50, c: 10, d: 10 }, berth_m: 2, ...o });
+  const m = modelOf(MOOR());
+  check("N1. MOORED ALONGSIDE AND STILL (status 5, 0.2 kn, 2 m off a charted berth): her hull grown by 20 m, not half her length (50) - 19.5 m off her starboard "
+        + "side inside, 20.5 m clear; 19.5 m past her bow inside, 20.5 m clear; her name unchanged",
+        () => A.AIS_MOORED_CLEAR_M === 20 && m.q && m.q.rule === "moored" && m.q.marginM === 20
+              && inKo(m.full, 10 + 19.5, 0) && !inKo(m.full, 10 + 20.5, 0) && inKo(m.full, 0, 50 + 19.5) && !inKo(m.full, 0, 50 + 20.5)
+              && /^AIS: MOORED \(100 x 20 m, moored\)$/.test(m.q.kind),
+        () => m.q && "rule " + m.q.rule + ", margin " + m.q.marginM + ", kind " + m.q.kind);
+  const fast = modelOf(MOOR({ sog: 0.6 })), noSog = modelOf(MOOR({ sog: null }));
+  check("N1b. ... \"unmoving\" is a reported speed under 0.5 kn: moored at 0.6 kn, or moored with no speed reported, is not proof "
+        + "she is still, and the half-length rule (50 m) stands",
+        () => fast.q && fast.q.rule === null && fast.q.marginM === 50 && noSog.q && noSog.q.rule === null && noSog.q.marginM === 50
+              && A.AIS_MOORED_STILL_KN === 0.5,
+        () => "0.6 kn: " + (fast.q && fast.q.rule) + " " + (fast.q && fast.q.marginM) + "; no sog: " + (noSog.q && noSog.q.rule) + " " + (noSog.q && noSog.q.marginM));
+  const small = modelOf(contact(0, 0, { heading: 0, sog: 0, nav: 5, berth_m: 0 }));
+  check("N1c. ... and a small boat moored alongside keeps 20 m too, where half her length was 10: a 20 x 8 m (assumed) boat's side "
+        + "is 4 m off her center, 23.5 m inside, 24.5 m clear",
+        () => small.q && small.q.rule === "moored" && small.q.marginM === 20 && inKo(small.full, 23.5, 0) && !inKo(small.full, 24.5, 0),
+        () => small.q && "margin " + small.q.marginM);
+
+  // VICTORIA T at anchor, 200 x 32 m, A 173 / B 27 / C 10 / D 22, heading 0, in a charted 12 m
+  const VIC = (o = {}) => contact(0, 0, { name: "VICTORIA T", heading: 0, nav: 1, length: 200, beam: 32,
+                                          dim: { a: 173, b: 27, c: 10, d: 22 }, chart_depth_m: 12, ...o });
+  const v = modelOf(VIC()), w = v.q && v.q.watch;
+  const near = (a, b, tol = 0.05) => Math.abs(a - b) < tol;
+  check("N2. AT ANCHOR: her WATCH CIRCLE plus 10 m - cable 3 x 12 + 90 = 126 m; the circle round her anchor hypot(126 + 200, "
+        + "32 / 2) = 326.4 m; her anchor 126 m ahead of her bow on its centerline (6 m to starboard of her antenna), at "
+        + "(6, 299); the circle kept out centered 126 cos 20 = 118.4 m ahead of her bow and 326.4 + 126 sin 20 + 10 = 379.5 m",
+        () => v.q && v.q.rule === "anchored" && w && w.rodeM === 126 && w.depthM === 12 && w.depthFrom === "chart"
+              && near(w.watchM, Math.hypot(326, 16)) && near(w.anchor.e, 6) && near(w.anchor.n, 299)
+              && near(w.center.e, 6) && near(w.center.n, 173 + 126 * Math.cos(20 * Math.PI / 180))
+              && near(w.koM, Math.hypot(326, 16) + 126 * Math.sin(20 * Math.PI / 180) + 10) && v.q.marginM === 0
+              && /^AIS: VICTORIA T \(200 x 32 m, at anchor\)$/.test(v.q.kind),
+        () => w && JSON.stringify({ rode: w.rodeM, watch: +w.watchM.toFixed(2), anchor: [w.anchor.e, w.anchor.n],
+                                   center: [+w.center.e.toFixed(2), +w.center.n.toFixed(2)], ko: +w.koM.toFixed(2) }));
+  const c = w.center, R = w.koM;
+  check("N2b. ... the ring IS that circle: 379 m east of its center inside, 380.5 m clear; 379 m south inside (past her "
+        + "stern, 27 m behind her antenna), 380.5 m clear",
+        () => inKo(v.full, c.e + R - 0.5, c.n) && !inKo(v.full, c.e + R + 1, c.n) && inKo(v.full, c.e, c.n - R + 0.5)
+              && !inKo(v.full, c.e, c.n - R - 1),
+        () => "R " + R.toFixed(1));
+  // every water her hull can sweep, with her cable leading anywhere within 20 deg of her heading
+  let missed = 0, tried = 0;
+  for (const lead of [-20, -10, 0, 10, 20]) {
+    const a = lead * Math.PI / 180, anc = { e: 6 + 126 * Math.sin(a), n: 173 + 126 * Math.cos(a) };
+    for (let k = 0; k < 72; k++) {
+      const b = k * 5 * Math.PI / 180, p = { e: anc.e + w.watchM * Math.sin(b), n: anc.n + w.watchM * Math.cos(b) };
+      tried++; if (!inKo(v.full, p.e, p.n)) missed++;
+    }
+  }
+  check("N2c. ... and it holds the whole watch circle wherever her cable leads within 20° of her heading (" + tried
+        + " points on five circles, 10 m inside the ring's edge at the worst)",
+        () => tried === 360 && missed === 0, () => missed + " outside");
+  const deep = modelOf(VIC({ chart_depth_m: 500 })), none = modelOf(VIC({ chart_depth_m: undefined }));
+  check("N2d. ... no charted depth on her record: 30 m assumed (cable 180 m) and said so; a band with no useful deep "
+        + "bound is asked at 80 m at most (cable 330 m)",
+        () => none.q && none.q.watch.depthM === 30 && none.q.watch.depthFrom === "assumed" && none.q.watch.rodeM === 180
+              && deep.q && deep.q.watch.depthM === 80 && deep.q.watch.rodeM === 330,
+        () => "none " + (none.q && none.q.watch.rodeM) + " " + (none.q && none.q.watch.depthFrom) + "; 500 m " + (deep.q && deep.q.watch.rodeM));
+  const nh = modelOf(VIC({ heading: null })), nw = nh.q && nh.q.watch;
+  const nhR = Math.hypot(173, 22) + 126 + Math.hypot(326, 16) + 10;
+  check("N2e. ... NO HEADING: the anchor may lie any way - the circle is centered on her antenna, reaching her bow's "
+        + "distance from it (hypot(173, 22)), her cable, the watch radius and the 10 m: " + nhR.toFixed(1) + " m",
+        () => nw && !nw.fromHeading && nw.anchor === null && near(nw.center.e, 0) && near(nw.center.n, 0) && near(nw.koM, nhR)
+              && inKo(nh.full, 0, -(nhR - 0.5)) && !inKo(nh.full, 0, -(nhR + 1)),
+        () => nw && nw.koM.toFixed(1));
+  const liar = modelOf(VIC({ sog: 6, cog: 0, age: 5 }), { sweepS: 45 }), slow = modelOf(VIC({ sog: 1.5, cog: 0, age: 5 }));
+  check("N2f. ... only where her status is believed: 'at anchor' at 6 kn is a vessel under way (no rule, swept); at 1.5 kn "
+        + "it is believed (under 3 kn) and she has her circle",
+        () => liar.q && liar.q.moving && liar.q.rule === null && slow.q && !slow.q.moving && slow.q.rule === "anchored",
+        () => "6 kn: " + (liar.q && liar.q.rule) + "; 1.5 kn: " + (slow.q && slow.q.rule));
+
+  // the boat already in her water: ONE STEP AT A TIME
+  const at = (own) => A.aisKeepout(VIC(), ref, { now: NOW, polledAt: NOW, sweepS: 0, own });
+  const out = at({ e: 500, n: 0 }), mid = at({ e: 22 + 140, n: 0 }), inn = at({ e: 22 + 60, n: 0 });
+  check("N3. THE BOAT INSIDE HER WATCH CIRCLE IS KEPT TO THE HALF-LENGTH CLEAR WATER, her bare hull only inside both: 573 m "
+        + "from the circle's center (outside it) she has the circle; 140 m off her side (inside the circle, outside her "
+        + "100 m) she has the 100 m (ruleWaived); 60 m off her side she has her hull (marginWaived)",
+        () => out && out.rule === "anchored" && !out.ruleWaived && !out.marginWaived && out.ring === out.ruleRing
+              && mid && mid.ruleWaived && !mid.marginWaived && mid.marginM === 100
+              && inn && inn.ruleWaived && inn.marginWaived && inn.marginM === 0 && inn.ring === inn.bare,
+        () => JSON.stringify([out, mid, inn].map((q) => q && { ruleWaived: q.ruleWaived, waived: q.marginWaived, margin: q.marginM })));
+
+  // THE ESCAPE
+  const escM = A.aisAvoidKeepout(m.q), escMko = { polys: [escM], lines: [], points: [] };
+  const escOut = A.aisAvoidKeepout(out), escOutKo = { polys: [escOut], lines: [], points: [] };
+  const escMid = A.aisAvoidKeepout(mid), escMidKo = { polys: [escMid], lines: [], points: [] };
+  const ringIn = (q, ko) => q.ruleRing.every((p) => blocked({ e: c.e + (p.e - c.e) * 0.999, n: c.n + (p.n - c.n) * 0.999 }, ko, 0));
+  check("N4. THE ESCAPE: moored and still, 20 m round her hull (his number, not her length); at anchor with the boat outside "
+        + "her circle, the circle AND a ship-length round her hull (it must hold the guard's ring); with the boat inside "
+        + "her circle, a ship-length round her hull as before (a 380 m circle is not left within the escape's horizon)",
+        () => escM.avoidM === 20 && inKo(escMko, 10 + 19.5, 0) && !inKo(escMko, 10 + 21, 0)
+              && ringIn(out, escOutKo) && inKo(escOutKo, 0, -27 - 199) && /and her watch circle$/.test(escOut.kind)
+              && !inKo(escMidKo, 6, 661) && inKo(escMidKo, 0, 173 + 199) && !/watch circle/.test(escMid.kind),
+        () => "moored " + escM.avoidM + "; outside: " + escOut.kind + "; inside: " + escMid.kind);
+
+  // THE WAY ROUND
+  const rM = A.aisRoundKeepout(m.q, 3, 3), rMko = { polys: [rM], lines: [], points: [] };
+  const rOut = A.aisRoundKeepout(out, 3, 3), rMid = A.aisRoundKeepout(mid, 3, 3);
+  check("N5. THE WAY ROUND: moored and still, her 20 m and the buffer (the router's standoff outside it) - no ship-length "
+        + "disc (60 m off her side is clear of it); at anchor, her watch circle; inside her circle, the ship-length disc as before",
+        () => rM.roundM === 20 && inKo(rMko, 10 + 22.5, 0) && !inKo(rMko, 60, 0) && /20 m round her$/.test(rM.kind)
+              && near(rOut.roundM, w.koM) && /round her watch circle$/.test(rOut.kind) && rMid.roundM === 200,
+        () => "moored " + rM.roundM + ", anchored " + (+rOut.roundM).toFixed(1) + ", inside " + rMid.roundM);
+
+  // A PASSAGE: the rule's rings, never waived; and a ship anchored past the chart box's edge whose circle reaches into it
+  const sw = ll(-300, -300), ne = ll(300, 300), box = { W: sw.lon, S: sw.lat, E: ne.lon, N: ne.lat };
+  const outside = contact(0, 1000, { mmsi: 9, name: "OFF THE BOX", heading: 180, nav: 1, length: 200, beam: 32,
+                                     dim: { a: 173, b: 27, c: 16, d: 16 } });
+  const pm = A.aisMooredKeepouts([MOOR({ mmsi: 7 }), VIC({ mmsi: 8 }), outside], ref, { now: NOW, polledAt: NOW, bbox: box });
+  const byN = (nm) => pm.polys.find((q) => q.name === nm) || {};
+  check("N6. A PASSAGE lays her round the status's ring: the moored ship's 20 m, the anchored ship's circle - and a ship "
+        + "anchored 700 m north of the box (bow toward it, 30 m assumed) whose 452 m circle reaches 94 m into it is kept "
+        + "(the box's pad is 0.015 deg since the circle)",
+        () => byN("MOORED").marginM === 20 && byN("VICTORIA T").rule === "anchored" && byN("VICTORIA T").ring === byN("VICTORIA T").ruleRing
+              && byN("OFF THE BOX").rule === "anchored" && byN("OFF THE BOX").bb.y0 < 300,
+        () => pm.polys.map((q) => q.name + " " + q.rule + " " + Math.round(q.bb.y0)).join("; "));
+
+  // THE CHARTED DEPTH UNDER HER
+  const sq = (e0, n0, e1, n1) => [ll(e0, n0), ll(e1, n0), ll(e1, n1), ll(e0, n1), ll(e0, n0)].map((p) => [p.lon, p.lat]);
+  const feats = [
+    { role: "depth_area", props: { DRVAL1: 10, DRVAL2: 20 }, geometry: { type: "Polygon", coordinates: [sq(-500, -500, 500, 500), sq(-50, -50, 50, 50)] } },
+    { role: "depth_area", props: { DRVAL1: 5, DRVAL2: 10 }, geometry: { type: "Polygon", coordinates: [sq(-50, -50, 50, 50)] } },
+    { role: "dredged", props: { DRVAL1: 12 }, geometry: { type: "MultiPolygon", coordinates: [[sq(200, -20, 400, 20)]] } },
+    { role: "dredged", props: { DRVAL1: 25 }, geometry: { type: "Polygon", coordinates: [sq(600, -20, 700, 20)] } },
+    { role: "land", props: {}, geometry: { type: "Polygon", coordinates: [sq(-500, -500, 500, 500)] } },
+  ];
+  const dAt = (e, n) => { const p = ll(e, n); return A.chartDepthAt(feats, p.lat, p.lon); };
+  check("N7. THE CHARTED DEPTH UNDER HER, the deeper bound: 20 m in a 10-20 m area; 10 m in the 5-10 m area that fills its "
+        + "hole; 20 m where a dredged 12 m lies inside the 20 m band (the deeper); a dredged area alone gives its own 25 m; "
+        + "no depth area at all, null",
+        () => dAt(100, 0).deepM === 20 && dAt(0, 0).deepM === 10 && dAt(300, 0).deepM === 20 && dAt(650, 0).deepM === 25
+              && dAt(900, 900) === null,
+        () => JSON.stringify([dAt(100, 0), dAt(0, 0), dAt(300, 0), dAt(650, 0), dAt(900, 900)]));
+  const pAt = (e, n) => ll(e, n);
+  const recs = [{ mmsi: 1, nav: 1, ...pAt(100, 0) }, { mmsi: 2, nav: 5, ...pAt(100, 0) },
+                { mmsi: 3, nav: 1, ...pAt(900, 900), chart_depth_m: 7 }, { mmsi: 4, nav: 1, ...pAt(0, 0) }];
+  recs.push({ mmsi: 5, nav: 0, ...pAt(100, 0) });
+  const up = A.aisWithChart(recs, feats, 1.5), down = A.aisWithChart(recs, feats, -2);
+  check("N7b. ... written on each record AT ANCHOR OR MOORED (aisWithChart): the deeper bound plus a rising tide (20 + 1.5); a "
+        + "falling tide takes nothing off (20); moored, the same, and her berth_m (this world's land polygon covers her: 0); one the chart "
+        + "does not cover loses a stale depth (aisWatchCircle then assumes 30 m); status 0 is left as it came; the records "
+        + "are copies",
+        () => up[0].chart_depth_m === 21.5 && down[0].chart_depth_m === 20 && up[1].chart_depth_m === 21.5 && up[1].berth_m === 0
+              && up[2].chart_depth_m === undefined && up[3].chart_depth_m === 11.5 && up[4] === recs[4]
+              && recs[0].chart_depth_m === undefined && recs[1].chart_depth_m === undefined,
+        () => JSON.stringify(up.map((r) => [r.chart_depth_m, r.berth_m])));
+
+  // ── N9. MOORED, NOT ALONGSIDE: HER SWING CIRCLE (settled 2026-11-01, "commit rules as you best suggest") ──────────────
+  // A 20 x 6 m boat moored in a charted 10 m with no berth near her (KLEOS's kind): mooring line 3 m + riser 1.118 x 10 =
+  // 11.2 m, so 14.2 m of "cable"; her swing circle hypot(14.2 + 20, 3) = 34.3 m round her mooring; kept to that, plus
+  // 14.2 sin 20 = 4.9 m and the 10 m: 49.2 m, centered 14.2 cos 20 = 13.3 m ahead of her bow
+  const SW = (o = {}) => contact(0, 0, { name: "ON A MOORING", heading: 0, sog: 0.1, nav: 5, length: 20, beam: 6,
+                                         dim: { a: 10, b: 10, c: 3, d: 3 }, chart_depth_m: 10, ...o });
+  const sq9 = modelOf(SW()), sw9 = sq9.q && sq9.q.watch;
+  const cab = 3 + Math.sqrt(1.25) * 10, swR = Math.hypot(cab + 20, 3) + cab * Math.sin(20 * Math.PI / 180) + 10;
+  check("N9. MOORED AND STILL BUT NOT ALONGSIDE: she may swing round a mooring - her SWING CIRCLE, worked as the watch "
+        + "circle is with a mooring's cable (3 m of line + 1.118 x the depth of riser): " + swR.toFixed(1) + " m, centered "
+        + (cab * Math.cos(20 * Math.PI / 180)).toFixed(1) + " m ahead of her bow; the same boat alongside keeps 20 m",
+        () => sq9.q && sq9.q.rule === "swinging" && sw9 && sw9.kind === "swinging" && near(sw9.rodeM, cab, 0.01)
+              && near(sw9.koM, swR) && near(sw9.center.n, 10 + cab * Math.cos(20 * Math.PI / 180))
+              && inKo(sq9.full, 0, sw9.center.n + swR - 0.5) && !inKo(sq9.full, 0, sw9.center.n + swR + 1)
+              && modelOf(SW({ berth_m: 12 })).q.rule === "moored" && modelOf(SW({ berth_m: 31 })).q.rule === "swinging"
+              && /^moored and still, not alongside a charted berth: she may swing round a mooring - swing circle 34 m, kept to 49 m/.test(A.aisNavRuleText(sq9.q)),
+        () => sw9 && "rule " + sq9.q.rule + ", cable " + sw9.rodeM.toFixed(2) + ", ko " + sw9.koM.toFixed(2) + " | " + A.aisNavRuleText(sq9.q));
+  const escSw = A.aisAvoidKeepout(A.aisKeepout(SW(), ref, { now: NOW, polledAt: NOW, sweepS: 0, own: { e: 200, n: 0 } }));
+  const rSw = A.aisRoundKeepout(A.aisKeepout(SW(), ref, { now: NOW, polledAt: NOW, sweepS: 0, own: { e: 200, n: 0 } }), 3, 3);
+  check("N9b. ... and the escape and the way round treat her circle as the watch circle's (named so)",
+        () => /and her swing circle$/.test(escSw.kind) && /round her swing circle$/.test(rSw.kind) && near(rSw.roundM, swR),
+        () => escSw.kind + " | " + rSw.kind);
+
+  // HOW FAR HER HULL LIES FROM A CHARTED BERTH: MOOR's hull is e -10..10, n -50..50 about her antenna
+  const line = (pts) => ({ type: "LineString", coordinates: pts.map(([e, n]) => { const p = ll(e, n); return [p.lon, p.lat]; }) });
+  const pt = (e, n) => { const p = ll(e, n); return { type: "Point", coordinates: [p.lon, p.lat] }; };
+  const pier = [{ role: "dock_line", cls: "Shoreline_Construction_line", props: {}, geometry: line([[12, -80], [12, 80]]) }];
+  const buoy = [{ role: "hazard_point", cls: "Mooring_Warping_Facility_point", props: { CATMOR: 7 }, geometry: pt(0, 55) }];
+  const dolphin = [{ role: "hazard_point", cls: "Mooring_Warping_Facility_point", props: { CATMOR: "1" }, geometry: pt(-15, 0) }];
+  const noCat = [{ role: "hazard_point", cls: "Mooring_Warping_Facility_point", props: {}, geometry: pt(-15, 0) }];
+  const shoal = [{ role: "depth_area", props: { DRVAL1: 0, DRVAL2: 2 }, geometry: { type: "Polygon", coordinates: [sq(-500, -500, 500, 500)] } }];
+  const quay = [{ role: "land", props: {}, geometry: { type: "Polygon", coordinates: [sq(-40, -100, -10.5, 100)] } }];
+  const far = [{ role: "dock_line", cls: "Shoreline_Construction_line", props: {}, geometry: line([[45, -80], [45, 80]]) }];
+  const v0 = MOOR({ berth_m: undefined });
+  const bM = (fs) => A.chartBerthM(fs, v0);
+  check("N9c. HOW FAR HER HULL LIES FROM A CHARTED BERTH (chartBerthM): a pier line 2 m off her side reads 2 m; a quay's "
+        + "edge 0.5 m off it 0.5 m; a dolphin (CATMOR 1) 5 m off it 5 m; a MOORING BUOY (CATMOR 7) at her bow, a mooring "
+        + "facility with no category, a depth area, or a pier 35 m off: none (null) - she is not alongside",
+        () => near(bM(pier), 2, 0.11) && near(bM(quay), 0.5, 0.11) && near(bM(dolphin), 5, 0.11)
+              && bM(buoy) === null && bM(noCat) === null && bM(shoal) === null && bM(far) === null && bM([]) === null,
+        () => JSON.stringify({ pier: bM(pier), quay: bM(quay), dolphin: bM(dolphin), buoy: bM(buoy), noCat: bM(noCat), shoal: bM(shoal), far: bM(far) }));
+  const recs9 = A.aisWithChart([v0, { ...v0, mmsi: 2, nav: 1 }, MOOR({ berth_m: undefined, ...ll(0, 200), mmsi: 3 })], pier, 0);
+  const rule9 = recs9.map((r) => { const q = A.aisKeepout(r, ref, { now: NOW, polledAt: NOW, sweepS: 0 }); return q && q.rule; });
+  check("N9d. ... written on the MOORED records only (berth_m), and read by the rule: the ship 2 m off the pier is moored "
+        + "alongside (20 m); at anchor in the same place she has no berth_m and her watch circle; moored 200 m up the pier's "
+        + "line, past its end, she is swinging",
+        () => recs9[0].berth_m === 2 && recs9[1].berth_m === undefined && recs9[2].berth_m === undefined
+              && rule9[0] === "moored" && rule9[1] === "anchored" && rule9[2] === "swinging",
+        () => JSON.stringify(recs9.map((r, i) => [r.berth_m, rule9[i]])));
+
+  const off = modelOf(VIC(), { navRules: false });
+  check("N8. navRules false builds her without the status rules - the half-length rule (100 m), as before 2026-11-01 (the "
+        + "suites that measure that rule alone ask for it)",
+        () => off.q && off.q.rule === null && off.q.marginM === 100 && off.q.watch === null,
+        () => off.q && "rule " + off.q.rule + ", margin " + off.q.marginM);
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");

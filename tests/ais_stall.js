@@ -74,11 +74,14 @@ function mkWorld() {
   // eslint-disable-next-line no-new-func
   // the banner slot as the page has it: one line, shown or not - showBanner fills it, takeDownBanner hides it
   w.slot = { textContent: "", style: { display: "none" } };
-  w.api = new Function("fetch", "showBanner", "takeDownBanner", "flashNote", "slot", src)(
+  // the poll writes the charted depth under each vessel at anchor (2026-11-01: ais_keepout.js aisWithChart) - no chart
+  // here, so the records come back as they went
+  w.api = new Function("fetch", "showBanner", "takeDownBanner", "flashNote", "slot", "aisWithChart", "nogo", "sea", src)(
     async () => { if (w.answer instanceof Error) throw w.answer; return { json: async () => w.answer }; },
     (t) => { w.banners.push(t); w.slot.textContent = t; w.slot.style.display = "block"; },
     (re) => { w.downs.push(re); if (re.test(w.slot.textContent)) w.slot.style.display = "none"; },
-    (t) => w.notes.push(t), w.slot);
+    (t) => w.notes.push(t), w.slot,
+    require("../static/js/ais_keepout.js").aisWithChart, { features: null }, { waterOffset: 0 });
   return w;
 }
 const ship = (mmsi, age) => ({ mmsi, lat: 43.07, lon: -70.70, age, name: "SHIP " + mmsi });

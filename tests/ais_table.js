@@ -884,20 +884,36 @@ check("8. the row template provides the marker and name spans the patch writes t
   const tipEl = { style: {}, innerHTML: "" };
   const makeTip = new Function("aisShow", "dragging", "patDrag", "boundDrag", "searchDrag", "wpDrag", "roseDrag", "aisAt",
                                "aisTypeLabel", "fmtHullM", "aisCpa", "cpaText", "aisMotion", "aisPolledAt", "$",
+                               "nogo", "aisKeepout", "aisNavRuleText",       // her status's clear water, said (2026-11-01)
                                grab("updateAisTip") + "\nreturn updateAisTip;");
+  const { planeFrame } = require("../static/js/geodesy.js");
+  const tipNogo = { frame: planeFrame(at) };
   const tipFor = (v) => {
     const f = makeTip(true, false, false, null, false, false, false, () => v, () => "cargo", (m) => m + " m", () => null,
-                      () => "", KO.aisMotion, 0, () => tipEl);
+                      () => "", KO.aisMotion, 0, () => tipEl, tipNogo, KO.aisKeepout, KO.aisNavRuleText);
     const was = Date.now; Date.now = () => 0;
     try { f({ clientX: 10, clientY: 10 }); } finally { Date.now = was; }
     return tipEl.innerHTML;
   };
-  const tA = tipFor({ ...fleet[0], age: 0 }), tC = tipFor({ ...fleet[1], age: 0 }), tU = tipFor({ ...fleet[2], age: 0 });
+  // AMAZON lies alongside Pier 300: the page writes how far her hull is from it (berth_m, aisWithChart) - here, 3 m
+  const tA = tipFor({ ...fleet[0], age: 0, berth_m: 3 }), tC = tipFor({ ...fleet[1], age: 0 }), tU = tipFor({ ...fleet[2], age: 0 });
   check("23e. ... and the hover tip says which way she is drawn and why: along her heading (AMAZON, her course marked as noise while she is stopped), as a circle with no heading (CABRILLO), along her course under way (no noise mark)",
         () => /Drawn along her heading, 251°/.test(tA) && /COG 328° \(noise while she is stopped\)/.test(tA)
               && /drawn as a circle: she can lie any way round/.test(tC)
               && /Drawn along her course, 90° — under way, no heading reported/.test(tU) && !/noise while she is stopped/.test(tU),
         () => "AMAZON: " + tA.replace(/<br>/g, " | ").slice(0, 170) + " || UNDER WAY: " + tU.replace(/<br>/g, " | ").slice(0, 120));
+  // 23f. HER STATUS SETS HER CLEAR WATER, AND THE TIP SAYS SO (Andy, 2026-11-01): AMAZON moored at 0.0 kn is kept 20 m off
+  //      her hull; DRIFTER, moored at 0.6 kn, is not proof of still and says nothing of it; a ship at anchor on a charted
+  //      12 m gives her watch circle, its cable and the depth it came from; CABRILLO (status 0) says nothing
+  const tAnch = tipFor({ ...at, mmsi: 7, name: "AT ANCHOR", cat: "cargo", sog: 0.1, cog: 10, heading: 0, nav: 1, length: 200, beam: 32,
+                         dim: { a: 173, b: 27, c: 10, d: 22 }, chart_depth_m: 12, age: 0 });
+  const tDrift = tipFor({ ...fleet[5], age: 0 }), tSwing = tipFor({ ...fleet[0], age: 0 });
+  check("23f. ... and it says what her navigational status sets: moored alongside and still, 20 m off her hull (AMAZON, 3 m off her pier); the same ship with no berth near her, her swing circle round a mooring; moored at 0.6 kn, nothing (not still); at anchor, her watch circle with the cable and the charted depth it is sized from; status 0, nothing",
+        () => /Moored alongside and still: kept 20 m off her hull/.test(tA) && !/Moored|watch circle|swing circle/.test(tDrift)
+              && /Moored and still, not alongside a charted berth: she may swing round a mooring - swing circle/.test(tSwing)
+              && /At anchor: watch circle 326 m round her anchor, kept to 379 m/.test(tAnch) && /cable 126 m \(3 x 12\.0 m charted \+ 90\)/.test(tAnch)
+              && !/Moored|watch circle|swing circle/.test(tC),
+        () => "AMAZON: " + (tA.match(/Moored[^<]*/) || ["-"])[0] + " || ANCHOR: " + (tAnch.match(/At anchor[^<]*/) || ["-"])[0]);
   const tip = (H.match(/id="aisBtn" title="([^"]*)"/) || [])[1] || "";
   check("23c. ... and the AIS button says it in words: the bow, the heading, the course only while under way, the circle, and that the red outline is the guard's keep-out by the same rule - not the old 'Triangles point along course' or 'Situational awareness only'",
         () => /points the way her BOW does/.test(tip) && /course over the ground only while she is under way/.test(tip)

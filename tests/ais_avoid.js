@@ -159,7 +159,9 @@ const { aisKeepouts: AK_aisKeepouts, aisAvoidKeepouts, aisAvoidKeepout, aisRound
 // one wrapper, the page's aisKeepoutsNow calls it as it calls the module - and 27-27d set `aisMarginHere` to null to
 // drive the page with the module's own margin, which is what the page runs.
 let aisMarginHere = 0;
-const aisKeepouts = (v, f, o = {}) => AK_aisKeepouts(v, f, aisMarginHere == null ? o : { ...o, marginFrac: aisMarginHere });
+// ... and without the navigational-status rules (2026-11-01: moored and still 20 m, at anchor her watch circle), which are
+// clear water of their own - this world's model is the bare hull; 27-28 drive the page as it runs
+const aisKeepouts = (v, f, o = {}) => AK_aisKeepouts(v, f, aisMarginHere == null ? o : { ...o, marginFrac: aisMarginHere, navRules: false });
 // the guard's model of slowing down (2026-10-03): the in-gear profile, and the console's command delay
 const { slowLaw, slowProfile } = require("../static/js/coast.js"), { SPEED_CMD_LATENCY_S } = require("../static/js/turns.js");
 const { clearanceM, blocked } = require("../static/js/keepouts.js");
@@ -416,6 +418,9 @@ eval([
   grab("resumeHereAt"), grab("legOfLine"), grab("lineOfLeg"), grab("alongAsRun"), grab("gateResumeHere"), grab("resumeFromHere"),
   grab("patClipBufM"), "const guardStandoffM = G.guardStandoffM;",
   grab("aisWanted"), grab("pollAIS"), grab("setAIS"),
+  // the poll writes the charted depth under each vessel at anchor (2026-11-01: her watch circle's cable) - no features
+  // here, so the records come back as they went
+  "const { aisWithChart } = require('../static/js/ais_keepout.js'); const sea = { waterOffset: 0 };",
   // a feed connected but not populating (2026-10-20): the poll says it, once (tests/ais_stall.js is its subject)
   grabDecl("AIS_STALL_BANNER"), grab("aisStallSay"), "const fmtDur = (s) => Math.round(s / 60) + 'm';",
   // the poll rides the stream (2026-10-13): the frame's tick, its period and the limit on one that never answers
@@ -2665,11 +2670,15 @@ function stationing(beh, sogKn, cogDeg, o = {}) {
   surveying(7, [VIC()]); longLine(); frame();
   const ko27 = aisKoDrawn[0] || {};
   const kept = { level: clearance.level, sent: paths().slice(), said: banners.concat(notes).filter(b => /VICTORIA T/.test(b)).length };
+  // ⚠ SINCE 2026-11-01 HER STATUS GIVES HER A WATCH CIRCLE (ais_keepout.js aisNavRule), and here the boat starts inside it
+  // (no chart in this world: 30 m of water assumed, a 452 m circle) - so the half-length clear water stands in for it
+  // (ruleWaived), exactly the 100 m this check was written for. 28 is the circle itself, the boat outside it.
   check("27. THE REPORT: VICTORIA T (200 x 32 m, at anchor) with her stern 28.8 m off the line - on her bare hull the guard "
         + "reads the line clear and sends nothing (what his survey did, 28.8 m off her); with her clear water, 100 m round "
         + "her, it ANSWERS "
-        + "her before she is reached, naming her",
+        + "her before she is reached, naming her (the boat inside her watch circle: the half-length clear water stands in)",
         () => AIS_MARGIN_FRAC === 0.5 && bare.level === "clear" && bare.sent.length === 0 && ko27.marginM === 100
+              && ko27.rule === "anchored" && ko27.ruleWaived === true
               && kept.level !== "clear" && kept.sent.length > 0 && kept.said > 0,
         () => JSON.stringify({ bare, kept, marginM: ko27.marginM }));
 
@@ -2677,7 +2686,7 @@ function stationing(beh, sogKn, cogDeg, o = {}) {
   surveying(7, [VIC()]); longLine(); frame(); nowHolding(); sent = []; notes = []; banners = []; logged = []; pinCalls = []; pinNext = null;
   clock += WAIT + 1000; aisPolledAt = clock; frame(); await settle();
   const up = sent.find(x => x.p === "/api/cmd/upload"), rte = (up && up.route) || [];
-  const hull27 = AK_aisKeepouts([VIC()], ref, { now: clock, polledAt: clock, sweepS: 0, marginFrac: 0 }).polys[0];
+  const hull27 = AK_aisKeepouts([VIC()], ref, { now: clock, polledAt: clock, sweepS: 0, marginFrac: 0, navRules: false }).polys[0];
   const wayIn = wayInOf(rte, ll(0, 0));
   const dH = rte.length ? minClearTo(wayIn, hull27) : null;
   check("27b. ... and the way round her, at the operator's wait, keeps her clear water: the way in never within 100 m of her "
@@ -2713,6 +2722,41 @@ function stationing(beh, sogKn, cogDeg, o = {}) {
         + "25 m abeam is inside the ship-length disc) - still the tight way round of 09-28, within a meter and a half",
         () => rte2.length >= 3 && dC2 != null && dC2 >= 30 - 0.05 && dC2 <= 31.5,
         () => rte2.length + " wpts; closest to her center " + (dC2 == null ? "-" : dC2.toFixed(2)) + " m");
+
+  // ── 28. AT ANCHOR, HER WATCH CIRCLE (Andy, 2026-11-01: "Anchored we must assume a watch circle driven by tide and/or
+  //        current and/or wind. Calculate watch circle and add another 10m to the radius for safety.") ──────────────────
+  // A 40 x 10 m vessel at anchor in a charted 5 m, heading north, her hull 40-80 m north of the line: cable 3 x 5 + 90 =
+  // 105 m, her watch circle hypot(105 + 40, 5) = 145.1 m round her anchor, 105 cos 20 = 98.7 m ahead of her bow, grown by
+  // 105 sin 20 = 35.9 m and the 10 m: 191.0 m. Its south edge is 12.3 m south of the line, over 67 m of it either side of
+  // e = 97.4; the boat at the line's start is 12.5 m outside it. Her bare hull, and the half-length clear water round it
+  // (20 m), leave the line 40 and 20 m clear.
+  const ANCH = () => contact(97.4, 60, { mmsi: 636000002, name: "AT ANCHOR", sog: 0, cog: null, heading: 0, nav: 1,
+                                         dim: { a: 20, b: 20, c: 5, d: 5 }, length: 40, beam: 10, chart_depth_m: 5 });
+  aisMarginHere = 0;
+  surveying(7, [ANCH()]); longLine(); frame();
+  const bare28 = { level: clearance.level, sent: paths().slice() };
+  aisMarginHere = null;
+  surveying(7, [ANCH()]); longLine(); frame();
+  const ko28 = aisKoDrawn[0] || {};
+  const kept28 = { level: clearance.level, sent: paths().slice(), said: banners.concat(notes).filter(b => /AT ANCHOR/.test(b)).length };
+  check("28. AT ANCHOR, THE GUARD ANSWERS HER WATCH CIRCLE: a 40 m vessel anchored in 5 m whose hull is 40 m off the line "
+        + "(clear on her hull and on the half-length rule) has a 191 m circle reaching 12.3 m over the line - the guard "
+        + "ANSWERS it from 12.5 m outside, naming her, where her bare hull read the line clear",
+        () => bare28.level === "clear" && bare28.sent.length === 0
+              && ko28.rule === "anchored" && !ko28.ruleWaived && ko28.watch && Math.abs(ko28.watch.koM - 191.0) < 0.1
+              && kept28.level !== "clear" && kept28.sent.length > 0 && kept28.said > 0,
+        () => JSON.stringify({ bare: bare28, kept: kept28, koM: ko28.watch ? +ko28.watch.koM.toFixed(1) : null, ruleWaived: ko28.ruleWaived }));
+
+  // the way round her, at the operator's wait: outside her watch circle, with the standoff
+  surveying(7, [ANCH()]); longLine(); frame(); nowHolding(); sent = []; notes = []; banners = []; logged = []; pinCalls = []; pinNext = null;
+  clock += WAIT + 1000; aisPolledAt = clock; frame(); await settle();
+  const up28 = sent.find(x => x.p === "/api/cmd/upload"), rte28 = (up28 && up28.route) || [];
+  const watch28 = AK_aisKeepouts([ANCH()], ref, { now: clock, polledAt: clock, sweepS: 0 }).polys[0];
+  const dW = rte28.length ? minClearTo(wayInOf(rte28, ll(0, 0)), watch28) : null;
+  check("28b. ... and the way round her, at the operator's wait, keeps OUTSIDE her watch circle by the standoff - not the "
+        + "ship-length disc round her hull, which the circle replaces",
+        () => rte28.length >= 3 && dW != null && dW >= 3 - 0.5,
+        () => rte28.length + " wpts; closest to her watch circle " + (dW == null ? "-" : dW.toFixed(1)) + " m; sent " + JSON.stringify(paths()));
   aisMarginHere = 0;
 }
 

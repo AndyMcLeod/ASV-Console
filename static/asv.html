@@ -1203,8 +1203,13 @@ import { homeGrid, fieldDistM, cellOf } from "/static/js/home_field.js";
 // AIS CONTACTS AS KEEP-OUTS (2026-09-25): the hull box each broadcasts (20 x 8 m assumed where it
 // broadcasts none), dead-reckoned between polls and swept over the guard's look-ahead while she is
 // under way. Pure geometry; the clearance guard below is what acts on it, and nothing else reads it.
+// ... and HER NAVIGATIONAL STATUS SETS HER CLEAR WATER (2026-11-01): moored alongside and still, 20 m; moored and still but
+// not alongside, her swing circle plus 10 m; at anchor, her watch circle plus 10 m - the circles sized from the charted
+// depth under her. aisWithChart writes that depth, and how far a moored hull lies from a charted berth, on each record as
+// the contacts are polled, so the guard's model and a passage laid in the route worker read the same.
 import { aisKeepouts, aisAvoidKeepouts, aisRoundKeepout, convexHull, AIS_KO_STALE_S,
-         AIS_LOOKAHEAD_M, aisInReach, aisReachM, aisMotion, aisDiscM } from "/static/js/ais_keepout.js";
+         AIS_LOOKAHEAD_M, aisInReach, aisReachM, aisMotion, aisDiscM,
+         aisKeepout, aisWithChart, aisNavRuleText } from "/static/js/ais_keepout.js";
 // What is AHEAD, and what it warrants. Pure prediction - it commands nothing; the
 // clearance guard below is the one place that decides and commands.
 // THE LAUNCH GRANT - the berth, what it covers, where it applies and when it ends. Pure
@@ -13629,7 +13634,9 @@ async function pollAIS(){ if(UIROLE === "controls" || !aisWanted() || aisBusy) r
   try{ const c=aisCenter();
     const r=await fetch(`/api/ais?center=${c.lat.toFixed(5)},${c.lon.toFixed(5)}${aisFloorQuery()}${aisHeldQuery()}`, ac ? {signal: ac.signal} : undefined);
     const d=await r.json();
-    aisVessels = (d && Array.isArray(d.vessels)) ? d.vessels : [];
+    // the charted depth under each vessel moored or at anchor, and how far a moored hull lies from a charted berth
+    // (ais_keepout.js aisWithChart, 2026-11-01)
+    aisVessels = (d && Array.isArray(d.vessels)) ? aisWithChart(d.vessels, nogo.features, sea.waterOffset || 0) : [];
     aisBeyondRpts = (d && Array.isArray(d.beyond)) ? d.beyond : [];
     // THE SERVICE ANSWERED (contacts, or none in range): the DR clock moves. This is the AIS proxy's own
     // reply, not a command result - `ok` is the service's word for "I am up" - so it is read as such,
@@ -14251,6 +14258,12 @@ function updateAisTip(e){ const tip=$("#aisTip");
   rows.push(mo.from === "heading" ? `Drawn along her heading, ${Math.round(mo.hdg)}°`
           : mo.from === "course" ? `Drawn along her course, ${Math.round(mo.hdg)}° — under way, no heading reported`
           : "No heading reported and not under way — drawn as a circle: she can lie any way round");
+  // HER STATUS SETS HER CLEAR WATER (ais_keepout.js aisNavRule, 2026-11-01): moored alongside and still, 20 m; moored but
+  // not alongside, her swing circle; at anchor, her watch circle - said with its numbers, the cable and the depth it was
+  // sized from, so a large red circle is explained
+  const qr = nogo.frame ? aisKeepout(v, nogo.frame, {now: Date.now(), polledAt: aisPolledAt, sweepS: 0}) : null;
+  const ruleTxt = aisNavRuleText(qr);
+  if(ruleTxt) rows.push(ruleTxt.charAt(0).toUpperCase() + ruleTxt.slice(1));
   const c = aisCpa(v);
   if(c) rows.push(cpaText(c));
   rows.push(`${Math.round(v.age)}s ago · ${v.srcs && v.srcs.length>1 ? v.srcs.join("+") : v.src}`);
@@ -14428,12 +14441,21 @@ function drawAisKeepouts(toScreen){
     ctx.setLineDash(q.moving ? [6,4] : []);
     ctx.strokeStyle = "rgba(217,83,79,0.9)"; ctx.lineWidth = 1.5; ctx.stroke();
     ctx.setLineDash([]);
-    if(q.bare && q.marginM > 0){ path(q.bare); ctx.fillStyle = q.moving ? "rgba(217,83,79,0.12)" : "rgba(217,83,79,0.22)"; ctx.fill(); }
+    // at anchor, her WATCH CIRCLE is the outline - on a swinging mooring, her SWING CIRCLE (ais_keepout.js aisWatchCircle,
+    // 2026-11-01): her hull filled inside it, and her estimated anchor or mooring marked with a cross where her heading
+    // places it
+    const watchOn = !!(q.watch && !q.ruleWaived);
+    if(q.bare && (q.marginM > 0 || watchOn)){ path(q.bare); ctx.fillStyle = q.moving ? "rgba(217,83,79,0.12)" : "rgba(217,83,79,0.22)"; ctx.fill(); }
     if(q.moving){ path(q.hull); ctx.fillStyle = "rgba(217,83,79,0.30)"; ctx.fill(); }
+    if(watchOn && q.watch.anchor){ const a = nogo.frame.fromEN(q.watch.anchor.e, q.watch.anchor.n); const s = toScreen(a.lat, a.lon);
+      ctx.beginPath(); ctx.moveTo(s.x - 5, s.y - 5); ctx.lineTo(s.x + 5, s.y + 5); ctx.moveTo(s.x + 5, s.y - 5); ctx.lineTo(s.x - 5, s.y + 5);
+      ctx.strokeStyle = "rgba(217,83,79,0.9)"; ctx.lineWidth = 1.5; ctx.stroke(); }
     if(zoom >= 13){ const at = nogo.frame.fromEN(q.at.e, q.at.n); const s = toScreen(at.lat, at.lon);
       ctx.font = "10px Consolas,monospace"; ctx.fillStyle = "rgba(255,150,130,0.95)";
-      ctx.fillText(q.kind.replace(/^AIS: /, "") + (q.marginM > 0 ? " · " + fmtDist(q.marginM) + " clear"
-                   : q.marginWaived ? " · inside her clear water" : ""), s.x + 8, s.y - 6); }
+      const circ = q.watch && q.watch.kind === "swinging" ? "swing circle" : "watch circle";
+      ctx.fillText(q.kind.replace(/^AIS: /, "") + (watchOn ? " · " + circ + " " + fmtDist(q.watch.koM)
+                   : q.marginM > 0 ? " · " + fmtDist(q.marginM) + " clear" + (q.watch ? " (inside her " + circ + ")" : "")
+                   : q.marginWaived ? (q.watch ? " · inside her " + circ : " · inside her clear water") : ""), s.x + 8, s.y - 6); }
   }
   ctx.restore();
 }
@@ -15117,7 +15139,9 @@ async function readPassageAis(pts){
       const more = await Promise.all(passageReadCenters(pts, area.show_km * 1500, PASSAGE_AIS_MAX_READS - 1).map(read));
       for(const d of more) if(d) add(d);
     }
-    nogo.ais = {vessels: [...byId.values()], polledAt: Date.now()};
+    // with what the chart says of each vessel moored or at anchor written on her (aisWithChart): the route worker is not
+    // sent the features, and reads her depth and her berth from her record
+    nogo.ais = {vessels: aisWithChart([...byId.values()], nogo.features, sea.waterOffset || 0), polledAt: Date.now()};
   }catch(e){ nogo.ais = null; }
 }
 /** What a passage was laid round that the chart does not hold (passageKo): the vessels not under way it passes near. */

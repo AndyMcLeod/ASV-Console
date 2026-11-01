@@ -707,7 +707,45 @@ boat; until then the hull alone, and a survey line ran 28.8 m off a 200 m ship a
 the vessel's own keep-clear buffer outside that. A boat already inside a ship's clear water (a ship
 anchoring beside her) is guarded against that ship's bare hull, so the guard never takes the helm
 to escape water she was already in; a passage that starts inside it is laid out of it the short
-way. While she is under way the
+way.
+
+**Her navigational status sets her clear water (2026-11-01).** A Class A contact reports a
+navigational status. Two of them replace the half-length rule, in three ways:
+
+- **Moored (status 5), still and alongside**: her hull grown by **20 m**. Still is a reported
+  speed under 0.5 kn. Alongside is her hull within 30 m of a charted berth or shore: land, the
+  shoreline, a pier, wharf, floating dock or pontoon, a charted pile, or a dolphin, bollard, tie-up
+  wall or post. A mooring buoy is not a berth.
+- **Moored and still, not alongside** (no charted berth within 30 m, or no chart read there): she
+  may lie to a mooring buoy and swing round it as the tide turns. Her **swing circle** plus
+  **10 m**, worked as the watch circle below, with a mooring's cable: 3 m of mooring line and the
+  riser's horizontal swing, 1.118 x the depth (a bottom chain about 1.5 x the depth, laid taut).
+  These are a small-craft mooring field's figures; a ship on a terminal buoy rides to a longer
+  hawser and swings wider.
+- **At anchor (status 1)**: her **watch circle** plus **10 m**. Tide, current and wind swing her
+  round her anchor, so the whole circle is water she may be in. The cable is not in AIS, so it is
+  estimated by the (3D + 90) m rule from the depth under her: the deeper bound of the charted depth
+  area at her position, plus any rise of the water above chart datum, capped at 80 m; 30 m is
+  assumed where no chart is read there. The rule matches the cable ships veer in winds up to
+  15 m/s; ships veer more above that, and the boat is not surveying in it. The circle round her
+  anchor is the cable plus her length (and half her beam). Her anchor is placed the cable's length
+  ahead of her bow along her heading; the circle kept out holds every anchor position within 20° of
+  her heading. With no heading reported the circle is centered on her antenna and reaches her bow,
+  the cable and the watch radius. A 200 m ship in a charted 12 m keeps 379 m from a point 118 m
+  ahead of her bow. A 20 m boat on a mooring in a charted 10 m keeps 49 m.
+
+A status of 5 with no reported speed, or at 0.5 kn or more, keeps the half-length rule. The status
+counts only where it is already believed: under 3 kn ("at anchor" at 6 kn is a vessel under way). A
+Class B report carries no status, so the rules never reach her. The chart draws the circle as her
+red outline, marks the estimated anchor or mooring with a cross and labels it "· watch circle 379 m"
+or "· swing circle 49 m"; the hover tip gives the cable and the depth it was sized from. The escape
+from a ship alongside keeps the same 20 m; from a circle it keeps the circle and a ship-length round
+her hull. The way round her is laid outside the 20 m or the circle, with the buffer and the standoff
+outside that. A passage plans round all three. A boat already inside a ship's circle (a survey
+through an anchorage or a mooring field, or a ship anchoring near her) is guarded against the
+half-length clear water instead, and against the bare hull only when she is inside that too.
+
+While she is under way the
 keep-out is **dead-reckoned** between polls and **swept** over the guard's look-ahead — the
 water she will occupy within the next 45 s — so a contact crossing ahead holds the boat
 before her track and one bearing down reads in extremis while there is still water to escape
@@ -856,7 +894,9 @@ contact near the boat is drawn twice, and the two drawings mean different things
   AIS target as she reports herself;
 - the **red outline** over her is the clearance guard's **keep-out** - her clear water, half her
   length round her hull (labeled "· 100 m clear"), with the hull itself filled inside it, dashed
-  ahead where she will be within the look-ahead while she is under way.
+  ahead where she will be within the look-ahead while she is under way. Moored alongside and still it
+  is 20 m round her hull; moored elsewhere, her swing circle; at anchor, her watch circle - each
+  circle with a cross at her estimated anchor or mooring.
 
 The two were turned by two different rules. The keep-out pointed the hull along her **heading**;
 the layer pointed it along her **course over the ground** first - and a moored ship's course is

@@ -49,6 +49,7 @@
 // than the report it came from - the same argument targets.js makes for CPA.
 
 import { hullBox, velocityEN } from "./targets.js";
+import { planeFrame } from "./geodesy.js";
 import { bbOf } from "./geometry.js";
 import { HORIZON_S } from "./guard.js";
 import { clearanceM } from "./keepouts.js";
@@ -72,6 +73,8 @@ export const AIS_DEFAULT_BEAM_M = 8;
  * holds would put her there with nothing new to avoid. Such a contact is her bare (swept) hull, exactly as before this
  * change, and says so; the margin is water not to ENTER, not water to escape from. THE GUARD'S MODEL ONLY: a PASSAGE
  * keeps it whatever her start (aisMooredKeepouts), and the router lays her out of it the short way.
+ * ⚠⚠ HER NAVIGATIONAL STATUS REPLACES IT (Andy, 2026-11-01; aisNavRule): moored and still, 20 m round her hull; at
+ * anchor, her watch circle plus 10 m. Half her length stands for every other contact not under way.
  */
 export const AIS_MARGIN_FRAC = 0.5;
 /** The clear water kept round a contact of hull `box`, meters: `frac` (AIS_MARGIN_FRAC) of her length (the assumed one if
@@ -286,6 +289,353 @@ export function convexHull(pts) {
   return lower.concat(upper);
 }
 
+// ── THE NAVIGATIONAL STATUS SETS HER CLEAR WATER (Andy, 2026-11-01) ───────────────────────────────────────────────────
+// His words: "When a vessel is moored or anchored and it is broadcasting AIS it may have Code 1 (anchored) or Code 5
+// (moored) in the message. If so, utilize this to override avoidance distances as follows: Moored and unmoving in a harbor
+// or alongside a pier change avoidance distance to 20m, Anchored we must assume a watch circle driven by tide and/or
+// current and/or wind. Calculate watch circle and add another 10m to the radius for safety." Then, of the three questions
+// left open: "commit rules as you best suggest".
+//
+// Three rules, and each REPLACES the clear water of AIS_MARGIN_FRAC (half her length) for that contact:
+//   * MOORED (status 5), STILL (a reported SOG under AIS_MOORED_STILL_KN) and ALONGSIDE (her hull within AIS_ALONGSIDE_M
+//     of a charted berth or shore: `berth_m` on her record, aisWithChart): her hull grown by AIS_MOORED_CLEAR_M, 20 m.
+//     (A 20 m boat alongside keeps 20 m now, where half her length was 10.)
+//   * MOORED AND STILL, NOT ALONGSIDE (no charted berth or shore within AIS_ALONGSIDE_M, or no chart read there): she may
+//     lie to a mooring buoy and swing round it as the tide turns, so 20 m off her hull now is not 20 m off her later. Her
+//     SWING CIRCLE, worked as the watch circle is, with the cable a mooring's: AIS_MOORING_LINE_M of mooring line and the
+//     riser's horizontal swing, AIS_RISER_PER_DEPTH x the depth - plus AIS_WATCH_SAFETY_M.
+//   * AT ANCHOR (status 1, believed under AIS_NAV_TRUST_KN): the WATCH CIRCLE, the water her hull can sweep as tide,
+//     current and wind swing her round her anchor, plus AIS_WATCH_SAFETY_M, 10 m. aisWatchCircle has the calculation.
+// A status of 5 with no reported speed, or at a speed above AIS_MOORED_STILL_KN, is not proof she is still: the
+// half-length rule stands for her. The status is read only where it is already believed (aisMotion's navStopped): "at
+// anchor" at 6 kn is a vessel under way, swept up her course, exactly as before. A Class B report carries no status, so
+// these rules never reach her. `opts.navRules === false` builds the contact without them (the suites that measure the
+// half-length rule alone).
+export const AIS_NAV_ANCHORED = 1;
+export const AIS_NAV_MOORED = 5;
+/** Moored alongside and still: the clear water kept round her hull, meters. His number. */
+export const AIS_MOORED_CLEAR_M = 20;
+/** ... "unmoving": a reported speed over the ground under this, knots (the keep-out model's own AIS_MOVING_KN). */
+export const AIS_MOORED_STILL_KN = AIS_MOVING_KN;
+/**
+ * ... "alongside a pier": her hull within this of a charted berth or shore, meters - land, the shoreline, a pier, wharf,
+ * floating dock or pontoon (as an area or a line), a charted pile or small shoreline construction, a dolphin, bollard,
+ * tie-up wall or post (a mooring facility point whose CATMOR is one of those, never 7, a mooring buoy). A ship alongside
+ * lies a few meters off the face; the rest is room for her antenna offsets, her GNSS and the chart.
+ */
+export const AIS_ALONGSIDE_M = 30;
+/** At anchor, or on a swinging mooring: added to the circle's radius, meters. His number. */
+export const AIS_WATCH_SAFETY_M = 10;
+/**
+ * THE CABLE SHE IS ASSUMED TO HAVE OUT AT ANCHOR: AIS_RODE_PER_DEPTH x the depth + AIS_RODE_FIXED_M, meters - the
+ * (3D + 90) m rule, the empirical rule widely used among merchant seafarers for the cable veered on anchoring (TransNav,
+ * "On the Development of an Anchor Watch Supporting System for Small Merchant Ships"). AIS carries no cable length, so
+ * this is an estimate. ⚠ KEPT AS IT IS, AND WHY (settled 2026-11-01): the same paper's table at 15 m of depth gives 5
+ * shackles (137.5 m) in winds up to 15 m/s, and the rule gives 135 m there; ships veer more only above that (6 shackles at
+ * 15-17 m/s, up to 8 at 20-22 m/s). The boat is not surveying in winds above 15 m/s (about 29 kn), so the conditions she
+ * meets a ship at anchor in are the ones the rule was made for. For a small vessel the rule gives more cable than she is
+ * likely to carry, which errs wide.
+ */
+export const AIS_RODE_PER_DEPTH = 3;
+export const AIS_RODE_FIXED_M = 90;
+/**
+ * THE CABLE OF A SWINGING MOORING (settled 2026-11-01), from a mooring-field plan's own figures (Lušić, TransNav, "Mooring
+ * Area and Mooring Buoys Plan"): her swing radius is her length, the mooring line from her bow to the buoy (3 m - about a
+ * small craft's 2.5 m of freeboard, rounded up) and the riser's horizontal swing round its sinker, with the bottom chain
+ * about 1.5 x the depth at high water: laid taut, sqrt(1.5^2 - 1) = 1.118 x the depth across. (The paper's own table: 11 m
+ * of riser swing at 10 m of depth.) ⚠ A SMALL CRAFT'S MOORING: a ship on a terminal buoy rides to a longer hawser and
+ * swings wider than this.
+ */
+export const AIS_MOORING_LINE_M = 3;
+export const AIS_RISER_PER_DEPTH = Math.sqrt(1.5 * 1.5 - 1);
+/** The depth used where the chart gives none at her position (no ENC read there), meters - said as "assumed". */
+export const AIS_WATCH_DEPTH_ASSUMED_M = 30;
+/** The deepest depth the rules are asked at, meters: a chart band with no useful deep bound does not make a 1 km circle. */
+export const AIS_WATCH_DEPTH_CAP_M = 80;
+/**
+ * THE CABLE'S LEAD OFF HER BOW, degrees either side of her heading. The anchor (or the mooring) is estimated AHEAD of her
+ * bow along her heading - she lies head to her cable - but a ship yaws at anchor and her cable does not lead dead ahead at
+ * every report. The circle is drawn to hold every anchor position within this of her heading: centered cable x cos(lead)
+ * ahead of her bow, its radius grown by cable x sin(lead) (the circle on the chord of that arc holds the arc; every watch
+ * circle on it is then inside). 0 = the anchor dead ahead, the textbook circle. ⚠ KEPT AT 20 (settled 2026-11-01): no
+ * source gives a figure; 20 deg costs a 200 m ship in 12 m of water 43 m of radius, and her heading is re-read at every
+ * report, so the circle follows her as she yaws.
+ */
+export const AIS_ANCHOR_LEAD_DEG = 20;
+
+/** The navigational status as a number, or null. */
+function navOf(v) {
+  const n = v && v.nav != null && v.nav !== "" ? +v.nav : NaN;
+  return Number.isFinite(n) ? n : null;
+}
+/** The circle rules: her hull sweeps a circle round her anchor or her mooring. */
+export function aisCircleRule(rule) { return rule === "anchored" || rule === "swinging"; }
+
+/**
+ * WHICH RULE SETS HER CLEAR WATER: "moored" (alongside), "swinging" (moored, not alongside), "anchored", or null (the
+ * half-length rule). `m` is aisMotion's answer for her. Only a status already believed counts (m.navStopped), and never
+ * while she is modelled as under way.
+ */
+export function aisNavRule(v, m) {
+  if (!m || m.moving || !m.navStopped) return null;
+  const nav = navOf(v);
+  if (nav === AIS_NAV_MOORED) {
+    if (!(m.sog != null && m.sog < AIS_MOORED_STILL_KN)) return null;
+    const b = v && v.berth_m != null ? +v.berth_m : NaN;
+    return Number.isFinite(b) && b <= AIS_ALONGSIDE_M ? "moored" : "swinging";
+  }
+  if (nav === AIS_NAV_ANCHORED) return "anchored";
+  return null;
+}
+
+/** The cable assumed out at anchor in `depthM` of water, meters (AIS_RODE_PER_DEPTH x depth + AIS_RODE_FIXED_M). */
+export function aisRodeM(depthM) {
+  return AIS_RODE_PER_DEPTH * Math.max(0, +depthM || 0) + AIS_RODE_FIXED_M;
+}
+/** The reach of a swinging mooring in `depthM` of water, meters (AIS_MOORING_LINE_M + AIS_RISER_PER_DEPTH x depth). */
+export function aisMooringM(depthM) {
+  return AIS_MOORING_LINE_M + AIS_RISER_PER_DEPTH * Math.max(0, +depthM || 0);
+}
+
+/**
+ * THE WATCH CIRCLE of a contact at anchor (aisNavRule "anchored"), or the SWING CIRCLE of one on a swinging mooring
+ * ("swinging": `opts.rule`).
+ *
+ *   depth  her `chart_depth_m` - the chart's deeper bound at her position plus any rise of the water above datum, which
+ *          the page writes on the record (aisWithChart) - else AIS_WATCH_DEPTH_ASSUMED_M; capped at AIS_WATCH_DEPTH_CAP_M.
+ *   cable  at anchor aisRodeM(depth), on a mooring aisMooringM(depth). Taken as its full length laid out flat: the
+ *          horizontal reach of a real cable is less (it hangs from her hawse to the seabed), so the circle errs wide.
+ *   watch  the radius her hull sweeps round her anchor: from the anchor along the cable to her bow, then her length to
+ *          her stern, half her beam across it - hypot(cable + length, beam / 2). Tide, current and wind decide where on
+ *          that circle she lies at any time, and a turn of the tide or a shift of the wind takes her round it, so the
+ *          whole circle is the water she may be in.
+ *   anchor ahead of her bow (her hull box's bow on its centerline, about her antenna) by the cable, along her heading.
+ *          Within AIS_ANCHOR_LEAD_DEG of it: the circle kept out is centered cable x cos(lead) ahead of her bow and grown
+ *          by cable x sin(lead).
+ *   no heading (a stopped ship that reports none): the anchor may be anywhere within the cable of her bow, and her bow
+ *          anywhere about her antenna - the circle is centered on her antenna and reaches her bow's distance from it,
+ *          the cable, and the watch radius.
+ *   ko     the radius kept out: that circle plus AIS_WATCH_SAFETY_M.
+ *
+ * `c0` is her antenna in the frame, `hdgDeg` her heading or null, `box` her hull (aisBox). Returns
+ * {kind ("anchored" | "swinging"), center, anchor, koM, watchM, rodeM, depthM, depthFrom ("chart" | "assumed"), leadDeg,
+ *  fromHeading}.
+ */
+export function aisWatchCircle(v, c0, hdgDeg, box, opts = {}) {
+  const kind = opts.rule === "swinging" ? "swinging" : "anchored";
+  const raw = v && v.chart_depth_m != null ? +v.chart_depth_m : NaN;
+  const charted = Number.isFinite(raw) && raw > 0;
+  const depthM = Math.min(AIS_WATCH_DEPTH_CAP_M, charted ? raw : AIS_WATCH_DEPTH_ASSUMED_M);
+  const rodeM = kind === "swinging" ? aisMooringM(depthM) : aisRodeM(depthM);
+  const watchM = Math.hypot(rodeM + box.lengthM, box.beamM / 2);
+  const lead = Math.max(0, Math.min(89, opts.leadDeg == null ? AIS_ANCHOR_LEAD_DEG : +opts.leadDeg || 0));
+  const safety = opts.safetyM == null ? AIS_WATCH_SAFETY_M : Math.max(0, +opts.safetyM || 0);
+  const lat = (box.toStbdM - box.toPortM) / 2;                          // the bow's centerline, to starboard of the antenna
+  const depthFrom = charted ? "chart" : "assumed";
+  if (hdgDeg != null) {
+    const a = hdgDeg * D2R, fe = Math.sin(a), fn = Math.cos(a), re = Math.cos(a), rn = -Math.sin(a);
+    const bow = { e: c0.e + fe * box.toBowM + re * lat, n: c0.n + fn * box.toBowM + rn * lat };
+    const anchor = { e: bow.e + fe * rodeM, n: bow.n + fn * rodeM };
+    const ahead = rodeM * Math.cos(lead * D2R);
+    const center = { e: bow.e + fe * ahead, n: bow.n + fn * ahead };
+    const koM = watchM + rodeM * Math.sin(lead * D2R) + safety;
+    return { kind, center, anchor, koM, watchM, rodeM, depthM, depthFrom, leadDeg: lead, fromHeading: true };
+  }
+  const bowM = Math.hypot(Math.max(box.toBowM, box.toSternM), Math.max(box.toPortM, box.toStbdM));
+  return { kind, center: { e: c0.e, n: c0.n }, anchor: null, koM: bowM + rodeM + watchM + safety, watchM, rodeM, depthM,
+           depthFrom, leadDeg: lead, fromHeading: false };
+}
+
+/** The rule in words, for the chart's label and the hover tip: null where the half-length rule sets her clear water. */
+export function aisNavRuleText(q) {
+  if (!q || !q.rule) return null;
+  const m = (x) => Math.round(x) + " m";
+  if (q.rule === "moored") return "moored alongside and still: kept " + m(AIS_MOORED_CLEAR_M) + " off her hull";
+  const w = q.watch;
+  if (!w) return null;
+  const d = w.depthM.toFixed(1) + " m " + (w.depthFrom === "chart" ? "charted" : "assumed");
+  const where = w.fromHeading ? " (" + (w.kind === "swinging" ? "mooring" : "anchor") + " ahead of her bow, cable within "
+                                + w.leadDeg + "° of her heading)"
+                              : " round her antenna (no heading: she may lie any way)";
+  if (w.kind === "swinging") {
+    return "moored and still, not alongside a charted berth: she may swing round a mooring - swing circle " + m(w.watchM)
+         + ", kept to " + m(w.koM) + where + "; mooring line " + AIS_MOORING_LINE_M + " m + riser "
+         + (w.rodeM - AIS_MOORING_LINE_M).toFixed(1) + " m (" + AIS_RISER_PER_DEPTH.toFixed(3) + " x " + d + ")";
+  }
+  return "at anchor: watch circle " + m(w.watchM) + " round her anchor, kept to " + m(w.koM) + where
+       + "; cable " + m(w.rodeM) + " (" + AIS_RODE_PER_DEPTH + " x " + d + " + " + AIS_RODE_FIXED_M + ")";
+}
+
+// ── WHAT THE CHART SAYS ABOUT A VESSEL NOT UNDER WAY (for aisNavRule and aisWatchCircle) ─────────────────────────────
+// The page's ENC features (`nogo.features`: GeoJSON geometry in lon/lat, role-tagged) are read for two things, and both
+// are written on the vessel's record by the page (aisWithChart) when the contacts are polled and when a passage's read is
+// taken, so the guard's model and a passage laid in the route worker - which is not sent the features - read the same:
+//   * THE DEPTH UNDER HER: the depth area or dredged area her position lies in, its DEEPER bound (DRVAL2, else DRVAL1) -
+//     more water means more cable and a wider circle, so the deeper bound errs wide;
+//   * HOW FAR HER HULL LIES FROM A CHARTED BERTH OR SHORE (moored only): whether she is alongside.
+const FEAT_BB = new WeakMap();
+function featBB(f) {
+  let bb = FEAT_BB.get(f);
+  if (bb !== undefined) return bb;
+  bb = null;
+  const scan = (c) => {
+    if (typeof c[0] === "number") {
+      if (!bb) bb = { W: c[0], E: c[0], S: c[1], N: c[1] };
+      else { bb.W = Math.min(bb.W, c[0]); bb.E = Math.max(bb.E, c[0]); bb.S = Math.min(bb.S, c[1]); bb.N = Math.max(bb.N, c[1]); }
+    } else for (const x of c) scan(x);
+  };
+  const g = f && f.geometry;
+  if (g && g.coordinates) scan(g.coordinates);
+  FEAT_BB.set(f, bb);
+  return bb;
+}
+/** Is (lon, lat) inside a GeoJSON polygon's rings (even-odd: the first ring is the outline, the rest its holes)? */
+function inPolygonLL(rings, lon, lat) {
+  let c = false;
+  for (const ring of rings) {
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const a = ring[i], b = ring[j];
+      if ((a[1] > lat) !== (b[1] > lat) && lon < (b[0] - a[0]) * (lat - a[1]) / (b[1] - a[1]) + a[0]) c = !c;
+    }
+  }
+  return c;
+}
+/**
+ * The charted depth at (lat, lon): {deepM, shallowM} of the depth area or dredged area there (the deepest, where two
+ * overlap), or null where no feature in `feats` covers the point.
+ */
+export function chartDepthAt(feats, lat, lon) {
+  if (!feats || !feats.length || !Number.isFinite(+lat) || !Number.isFinite(+lon)) return null;
+  let best = null;
+  for (const f of feats) {
+    if (!f || (f.role !== "depth_area" && f.role !== "dredged")) continue;
+    const g = f.geometry;
+    if (!g || (g.type !== "Polygon" && g.type !== "MultiPolygon")) continue;
+    const d1 = f.props && f.props.DRVAL1 != null ? +f.props.DRVAL1 : null;
+    const d2 = f.props && f.props.DRVAL2 != null ? +f.props.DRVAL2 : null;
+    const deep = Number.isFinite(d2) && d2 != null ? d2 : (Number.isFinite(d1) && d1 != null ? d1 : null);
+    if (deep == null) continue;
+    const bb = featBB(f);
+    if (!bb || lon < bb.W || lon > bb.E || lat < bb.S || lat > bb.N) continue;
+    const polys = g.type === "Polygon" ? [g.coordinates] : g.coordinates;
+    if (!polys.some((rings) => inPolygonLL(rings, +lon, +lat))) continue;
+    if (!best || deep > best.deepM) best = { deepM: deep, shallowM: d1 != null && Number.isFinite(d1) ? d1 : deep };
+  }
+  return best;
+}
+
+/** The roles a vessel lies alongside: land, the shoreline, and the structures charted as areas or lines. */
+const BERTH_ROLES = new Set(["land", "shore_line", "dock", "dock_line"]);
+/** Charted POINTS a vessel can lie alongside or make fast to. */
+const BERTH_POINT_CLS = new Set(["Pile_point", "Shoreline_Construction_point"]);
+/** A mooring facility point is a berth for these CATMOR values: dolphin, deviation dolphin, bollard, tie-up wall, post or
+ *  pile. Not 6 (chain, wire or cable) and never 7, a mooring buoy - which she would swing round, not lie alongside. */
+const MORFAC_FIXED = new Set([1, 2, 3, 4, 5]);
+function isBerth(f) {
+  if (!f || !f.geometry) return false;
+  if (BERTH_ROLES.has(f.role)) return true;
+  if (f.role !== "hazard_point") return false;
+  if (BERTH_POINT_CLS.has(f.cls)) return true;
+  if (f.cls === "Mooring_Warping_Facility_point") {
+    const c = f.props && f.props.CATMOR;
+    return c != null && String(c).split(/[,;\s]+/).some((x) => MORFAC_FIXED.has(+x));
+  }
+  return false;
+}
+function segPtM(p, a, b) {
+  const dx = b.e - a.e, dy = b.n - a.n, L2 = dx * dx + dy * dy;
+  const t = L2 > 0 ? Math.max(0, Math.min(1, ((p.e - a.e) * dx + (p.n - a.n) * dy) / L2)) : 0;
+  return Math.hypot(p.e - (a.e + dx * t), p.n - (a.n + dy * t));
+}
+function segsCross(a, b, c, d) {
+  const o = (p, q, r) => (q.e - p.e) * (r.n - p.n) - (q.n - p.n) * (r.e - p.e);
+  const d1 = o(c, d, a), d2 = o(c, d, b), d3 = o(a, b, c), d4 = o(a, b, d);
+  return ((d1 > 0) !== (d2 > 0)) && ((d3 > 0) !== (d4 > 0));
+}
+function segSegM(a, b, c, d) {
+  if (segsCross(a, b, c, d)) return 0;
+  return Math.min(segPtM(a, c, d), segPtM(b, c, d), segPtM(c, a, b), segPtM(d, a, b));
+}
+/**
+ * HOW FAR HER HULL LIES FROM A CHARTED BERTH OR SHORE, meters (0 where they touch or overlap), or null where nothing
+ * charted lies within `capM` (default AIS_ALONGSIDE_M) of it. Her hull is the box she broadcasts (aisBox) along her heading,
+ * or the disc of every orientation (aisDiscM) where she reports none, about her antenna.
+ */
+export function chartBerthM(feats, v, capM = AIS_ALONGSIDE_M) {
+  if (!feats || !feats.length || !v || v.lat == null || v.lon == null) return null;
+  const lat0 = +v.lat, lon0 = +v.lon;
+  if (!Number.isFinite(lat0) || !Number.isFinite(lon0)) return null;
+  const fr = planeFrame({ lat: lat0, lon: lon0 });
+  const box = aisBox(v), c = { e: 0, n: 0 };
+  const h = v.heading, hdg = (h != null && Number.isFinite(+h) && +h >= 0 && +h < 360) ? +h : null;
+  const hull = hdg == null ? discRingEN(c, aisDiscM(box), 16) : hullRingEN(c, hdg, box);
+  const reach = Math.max(...hull.map((p) => Math.hypot(p.e, p.n))) + capM + 1;
+  const dLat = reach / 111320, dLon = reach / (111320 * Math.max(0.05, Math.cos(lat0 * D2R)));
+  const W = lon0 - dLon, E = lon0 + dLon, S = lat0 - dLat, N = lat0 + dLat;
+  const hb = bbOf(hull);
+  const nearHull = (p) => !(p.e < hb.x0 - capM || p.e > hb.x1 + capM || p.n < hb.y0 - capM || p.n > hb.y1 + capM);
+  const toEN = (q) => fr.toEN({ lon: q[0], lat: q[1] });
+  let best = Infinity;
+  const path = (pts, closed) => {
+    for (let i = 1; i < pts.length + (closed ? 1 : 0) && best > 0; i++) {
+      const q0 = pts[i - 1], q1 = pts[i % pts.length];
+      if ((q0[0] < W && q1[0] < W) || (q0[0] > E && q1[0] > E) || (q0[1] < S && q1[1] < S) || (q0[1] > N && q1[1] > N)) continue;
+      const a = toEN(q0), b = toEN(q1);
+      for (let k = 0; k < hull.length; k++) best = Math.min(best, segSegM(a, b, hull[k], hull[(k + 1) % hull.length]));
+    }
+  };
+  for (const f of feats) {
+    if (best === 0) break;
+    if (!isBerth(f)) continue;
+    const bb = featBB(f);
+    if (!bb || bb.E < W || bb.W > E || bb.N < S || bb.S > N) continue;
+    const g = f.geometry, t = g.type, cs = g.coordinates;
+    if (t === "Point" || t === "MultiPoint") {
+      for (const q of (t === "Point" ? [cs] : cs)) {
+        const p = toEN(q);
+        if (!nearHull(p)) continue;
+        if (inRingEN(p, hull)) { best = 0; break; }
+        for (let k = 0; k < hull.length; k++) best = Math.min(best, segPtM(p, hull[k], hull[(k + 1) % hull.length]));
+      }
+    } else if (t === "LineString" || t === "MultiLineString") {
+      for (const line of (t === "LineString" ? [cs] : cs)) path(line, false);
+    } else if (t === "Polygon" || t === "MultiPolygon") {
+      for (const poly of (t === "Polygon" ? [cs] : cs)) {
+        for (const ring of poly) path(ring, true);
+        if (best > 0 && inPolygonLL(poly, lon0, lat0)) best = 0;   // her antenna on charted land or a pier: alongside
+      }
+    }
+  }
+  return best <= capM ? Math.round(best * 10) / 10 : null;
+}
+
+/**
+ * The contacts with what the chart says written on each one not under way by her status - a new array; the records are
+ * copied, not changed:
+ *   `chart_depth_m` on each at anchor (1) or moored (5): the charted deeper bound at her position plus the water's rise
+ *       above chart datum (`waterOffsetM`, counted only when positive - a falling tide does not shorten the cable she put
+ *       out); left off where the chart does not cover her (aisWatchCircle then assumes AIS_WATCH_DEPTH_ASSUMED_M);
+ *   `berth_m` on each moored (5): chartBerthM - left off where no charted berth or shore lies within AIS_ALONGSIDE_M
+ *       of her hull, or no chart is read there (aisNavRule then reads her as not alongside: "swinging").
+ * A stale value the chart no longer gives is dropped. Every other contact is returned as it was.
+ */
+export function aisWithChart(vessels, feats, waterOffsetM = 0) {
+  if (!Array.isArray(vessels)) return vessels;
+  const rise = Math.max(0, +waterOffsetM || 0);
+  return vessels.map((v) => {
+    const nav = navOf(v);
+    if (!v || (nav !== AIS_NAV_ANCHORED && nav !== AIS_NAV_MOORED) || v.lat == null || v.lon == null) return v;
+    const { chart_depth_m, berth_m, ...rest } = v;
+    const d = chartDepthAt(feats, +v.lat, +v.lon);
+    const out = d ? { ...rest, chart_depth_m: Math.round((d.deepM + rise) * 10) / 10 } : rest;
+    if (nav === AIS_NAV_MOORED) {
+      const b = chartBerthM(feats, v);
+      if (b != null) out.berth_m = b;
+    }
+    return out;
+  });
+}
+
 /**
  * ONE contact as a keep-out polygon in `frame`, or null when she is not modelled (no position,
  * or beyond `rangeM` of `own` both now and at the end of her sweep).
@@ -322,17 +672,44 @@ export function aisKeepout(v, frame, opts = {}) {
     : hullRingEN(at, hdg, box);
   const hull = shape(c0);
   const bare = c1 ? convexHull(hull.concat(shape(c1))) : hull;
-  // her clear water (AIS_MARGIN_FRAC) - unless the boat is already in it (see AIS_MARGIN_FRAC)
-  const margin = aisMarginM(box, opts.marginFrac == null ? AIS_MARGIN_FRAC : opts.marginFrac);   // the page never sets it
-  const grown = margin > 0 ? growRingEN(bare, margin) : bare;
-  const waived = !!(opts.own && margin > 0 && inRingEN(opts.own, grown));   // the guard's model only (AIS_MARGIN_FRAC)
-  const ring = waived ? bare : grown;
+  // HER CLEAR WATER: set by her navigational status where it says moored and still, or at anchor (aisNavRule, Andy
+  // 2026-11-01), else half her length (AIS_MARGIN_FRAC) - and in every case waived for a boat already in it
+  const rule = opts.navRules === false ? null : aisNavRule(v, { sog, navStopped, moving });
+  let margin = 0, grown = bare, watch = null;
+  if (rule === "moored") {
+    margin = AIS_MOORED_CLEAR_M;
+    grown = growRingEN(bare, margin);
+  } else if (aisCircleRule(rule)) {
+    watch = aisWatchCircle(v, c0, hdg, box, { ...opts, rule });
+    grown = convexHull(discOutEN(watch.center, watch.koM, 64).concat(bare));
+  } else {
+    margin = aisMarginM(box, opts.marginFrac == null ? AIS_MARGIN_FRAC : opts.marginFrac);   // the page never sets it
+    grown = margin > 0 ? growRingEN(bare, margin) : bare;
+  }
+  // THE BOAT ALREADY IN IT (the guard's model only, AIS_MARGIN_FRAC): her bare hull. ⚠ WITH A STATUS RULE, ONE STEP AT A
+  // TIME: a boat inside a ship's watch circle - surveying an anchorage, or a ship anchoring near her - is kept to the
+  // half-length clear water while she is outside THAT (ruleWaived), so the circle's waiver never brings her closer than
+  // the 2026-10-17 rule did; her bare hull only when she is inside both.
+  let ring = grown, waived = false, ruleWaived = false;
+  if (opts.own && grown !== bare && inRingEN(opts.own, grown)) {
+    ring = bare; waived = true;
+    if (rule) {
+      ruleWaived = true;
+      const half = aisMarginM(box, opts.marginFrac == null ? AIS_MARGIN_FRAC : opts.marginFrac);
+      const halfRing = half > 0 ? growRingEN(bare, half) : bare;
+      if (halfRing !== bare && !inRingEN(opts.own, halfRing)) { ring = halfRing; margin = half; waived = false; }
+    }
+  }
   const size = Math.round(box.lengthM) + " x " + Math.round(box.beamM) + " m" + (box.assumed ? " assumed" : "");
   const name = (v.name != null && String(v.name).trim()) ? String(v.name).trim() : null;
   const kind = "AIS: " + (name || ("MMSI " + v.mmsi)) + " (" + size
     + (moving ? ", " + sog.toFixed(1) + " kn" : navStopped ? ", " + aisNavWord(+v.nav) : "") + ")";
+  // `ruleRing`: her keep-out under her status, never waived (aisAvoidKeepout); `ruleWaived`: the boat is inside it, and
+  // `ring` is the half-length clear water or her bare hull instead; `marginM`: the margin round her hull in `ring` (0
+  // for the watch circle, which is not a margin round her hull, and for her bare hull)
   return { ring, bb: bbOf(ring), kind, mmsi: v.mmsi, name, moving, sweepS: c1 ? sweepS : 0,
-           at: c0, end: c1, hull, bare, box, hdg, marginM: waived ? 0 : margin, marginWaived: waived };
+           at: c0, end: c1, hull, bare, box, hdg, marginM: waived ? 0 : margin, marginWaived: waived,
+           rule, watch, ruleRing: rule ? grown : null, ruleWaived };
 }
 /** A convex ring grown by `m` on every side (it CONTAINS every point within m of the ring): discs about its vertices. */
 export function growRingEN(ring, m) {
@@ -361,12 +738,26 @@ export function inRingEN(p, ring) {
  */
 export function aisAvoidKeepout(q) {
   if (!q || !q.ring || !q.box) return q;
+  // MOORED AND STILL (aisNavRule, Andy 2026-11-01: "change avoidance distance to 20m"): the escape keeps her 20 m too -
+  // her hull grown by AIS_MOORED_CLEAR_M, the guard's own ring, whether or not the boat is already in it
+  if (q.rule === "moored" && q.ruleRing) {
+    return { ...q, ring: q.ruleRing, bb: bbOf(q.ruleRing), avoidM: AIS_MOORED_CLEAR_M,
+             kind: q.kind + ", " + AIS_MOORED_CLEAR_M + " m round her" };
+  }
   const L = Math.max(0, +q.box.lengthM || AIS_DEFAULT_LENGTH_M);
   const pts = [];
   // from her (swept) hull, as his rule says: a ship-length contains her clear water (AIS_MARGIN_FRAC < 1)
   for (const v of (q.bare || q.ring)) for (const p of discRingEN(v, L, 16)) pts.push(p);
+  // AT ANCHOR, WITH THE BOAT OUTSIDE HER WATCH CIRCLE: the escape's ring must hold the guard's, or an escape could be
+  // steered into the circle it is escaping. With the boat INSIDE it (ruleWaived: the guard's ring is the half-length one
+  // or her hull), the escape's job is her hull, as before: a 400 m circle cannot be left within the escape's horizon from
+  // beside her.
+  const withWatch = aisCircleRule(q.rule) && q.ruleRing && !q.ruleWaived;
+  if (withWatch) for (const p of q.ruleRing) pts.push(p);
   const ring = convexHull(pts);
-  return { ...q, ring, bb: bbOf(ring), avoidM: L, kind: q.kind + ", " + Math.round(L) + " m round her" };
+  return { ...q, ring, bb: bbOf(ring), avoidM: L,
+           kind: q.kind + ", " + Math.round(L) + " m round her"
+                 + (withWatch ? " and her " + (q.rule === "swinging" ? "swing" : "watch") + " circle" : "") };
 }
 export function aisAvoidKeepouts(polys) { return (polys || []).map(aisAvoidKeepout); }
 
@@ -405,6 +796,18 @@ export function aisRoundKeepout(q, stdM, bufM) {
   for (const v of q.ring) {
     if (buf > 0) for (const p of discOutEN(v, buf, 16)) pts.push(p);
     else pts.push(v);
+  }
+  // HER STATUS SETS THE DISTANCE (aisNavRule, Andy 2026-11-01): moored and still, her 20 m; at anchor, her watch circle -
+  // the ring itself, with the buffer and the router's standoff outside it as round a pier, and no ship-length disc. At
+  // anchor with the boat already inside her circle (ruleWaived: the ring is the half-length one or her hull), the
+  // ship-length disc stands, as before. Moored, never: his 20 m is the distance, in a harbor most of all.
+  const byStatus = q.rule === "moored" || (aisCircleRule(q.rule) && !q.ruleWaived);
+  if (byStatus) {
+    const ring = convexHull(pts);
+    const roundM = q.rule === "moored" ? AIS_MOORED_CLEAR_M : (q.watch ? q.watch.koM : L);
+    return { ...q, ring, bb: bbOf(ring), roundM, stdM: std,
+             kind: q.kind + (q.rule === "moored" ? ", " + AIS_MOORED_CLEAR_M + " m round her"
+                             : ", round her " + (q.rule === "swinging" ? "swing" : "watch") + " circle") };
   }
   const r = L - std;
   if (r > 0) {
@@ -466,7 +869,10 @@ export function aisKeepouts(vessels, frame, opts = {}) {
 // A SHIP JUST OUTSIDE THE CHART BOX REACHES INTO IT (the 2026-10-18 review): her hull and her clear water run her length and a
 // half from her antenna (233 m for a 200 m ship), so a filter on the antenna alone laid a passage through a ship anchored 40 m
 // past the box's edge, bow in. Contacts are taken within this pad of the box, then kept by their keep-out's own reach into it.
-const AIS_BOX_PAD_DEG = 0.005;
+// ⚠ WIDER SINCE THE WATCH CIRCLE (2026-11-01): a ship at anchor keeps out her cable, her length and the circle round them -
+// 0.005 deg (about 400-550 m) is less than that for a 200 m ship in 30 m of water (about 800 m from her antenna). 0.015 deg
+// is about 1.1-1.7 km at these latitudes; `reachesBox` still keeps only the keep-outs that reach the box.
+const AIS_BOX_PAD_DEG = 0.015;
 function reachesBox(q, b, frame) {
   if (!q || !q.bb) return true;
   const sw = frame.toEN({ lat: b.S, lon: b.W }), ne = frame.toEN({ lat: b.N, lon: b.E });
