@@ -783,17 +783,28 @@ coverage overlaps, and carries on — with none of the operator's resume latches
 hold, no override). A contact that **stays on the line** gets the three answers Andy set out
 (2026-09-27): the same line where she left it is **refused** — she would meet the contact again;
 the operator may right-click the line **beyond** the contact (*Resume from here*, below) and the
-console routes her round it and continues the survey from there; and if the operator has not
-answered **within 10 s** (a minute until 28 September, 30 s until 29 September - shortened at his word both times), the
-console routes round the contact **itself**, as if it were a buoy or
-a dock, to the first point of the line beyond her that is clear by the standoff with the rest of
-the line clear too, and carries on (a contact covering the rest of the line leaves that line and
-picks the plan up at its next waypoint). The guard bar counts the 10 s down, to the next try
-after one that did not go, and names both answers. Never on a stale feed, never while you have
-her **paused** (a paused hold keeps the offer now, and the bar says the console waits), not twice
-inside 10 s, and where no way round
-is found it says so and keeps holding (`koWithAis`, `aisAroundPlan`, `aisAroundTick`, the held
-path of `resumeHeldRun`). **The way round keeps one ship-length from her, and no more than it has
+console routes her round it and continues the survey from there; and the console routes round the
+contact **itself**, as if it were a buoy or a dock, to the first point of the line beyond her that
+is clear by the standoff with the rest of the line clear too, and carries on (a contact covering
+the rest of the line leaves that line and picks the plan up at its next waypoint).
+
+**It no longer waits to be asked** (1 November: *"remove the wait for operator rule for ais target
+avoiding. go to immediate maneuver to avoid"*). There was a decision budget - a minute until 28
+September, 30 s until 29 September, 10 s until now - and it is gone: the console maneuvers on the
+first frame she is on station. The stop itself stays, because the guard's hold is what banks the
+plan and so what gives the way round something to resume, and because it is the answer that needs
+no router to succeed; "immediate" is bounded by the water she needs to come to station, not by a
+timer. What this costs is coverage under a contact that was merely passing: she is routed round one
+who would have cleared the line a few seconds later, where the 100 m return used to take it back
+over water already run. The return still has two seas of its own - a contact clear of the line by
+the time she reaches station, and one that clears while she keeps holding because no way round could
+be found - and a contact that clears while she still has **way on** needs no answer at all: the
+guard reads clear water and releases her. The guard bar says the console routes round her **now**,
+and counts seconds only after a try that found nothing. Never on a stale feed, never while you have
+her **paused** (a paused hold keeps the offer, and the bar says the console waits), not twice inside
+`AIS_AROUND_RETRY_MS` (10 s, the spacing between TRIES and all that constant now means), and where
+no way round is found it says so and keeps holding (`koWithAis`, `aisAroundPlan`, `aisAroundTick`,
+the held path of `resumeHeldRun`). **The way round keeps one ship-length from her, and no more than it has
 to** (Andy, 2026-09-27: "an avoidance maneuver of a radius equal to the length or the estimated
 length of the vessel"; 2026-09-28: "Too much distance from the AIS target and a long failure to
 regain the survey line"). The radius is about her **center**: the way round, and the way in to a
@@ -837,7 +848,7 @@ answering is an **empty model that says so** — a
 banner while a run is under way, never a quiet sea (`static/js/ais_keepout.js`; the guard's
 `koAll`, `aisReturnTick` and `resumeHeldRun` in `static/asv.html`).
 
-**From 50 m, the same way round on every leg, and ten seconds to answer** (29 September: "The
+**From 50 m, and the same way round on every leg** (29 September: "The
 buffer zone on approach to an AIS target appears to be 150m. confirm distance and modify to 50m";
 "the avoidance maneuver used on survey lines for avoidance of AIS contact should have identical
 avoidance behavior when running a GOTO, RTH or transit line"; "reduce the wait for user input from
@@ -866,11 +877,12 @@ TRANSIT HELD, with ROUTE ROUND HER NOW, RESUME <leg> AT LOW SPEED and LEAVE IT H
 rest of the leg reads clear of her for 4 s she carries on from where she stopped, and if she stays
 the console routes round her itself - one ship-length off her, the leg picked up beyond her - and
 re-issues the leg's OWN command, so she still holds at its end point. Right-clicking a contact on a
-running leg amends it round her. The wait before the console routes round her itself is **10 s**
-(30 s until now), and its retries follow it. Rehearsed on a throwaway console with the DriX: a
-Go-To, the Return-to-Home chained after it and a drawn transit each met a moored test contact at
-7 kn, were slowed 67-69 m off her, held 44-45 m off, and were routed round her 10 s later in their
-own command. The rehearsal found one more thing: slowed to LOW 58 m off her - outside the DriX's
+running leg amends it round her. There is no wait before the console routes round her itself since
+1 November - it goes on the first frame she is on station - and only its retries are spaced, by
+`AIS_AROUND_RETRY_MS`. Rehearsed on a throwaway console with the DriX, when the wait was still
+10 s: a Go-To, the Return-to-Home chained after it and a drawn transit each met a moored test
+contact at 7 kn, were slowed 67-69 m off her, held 44-45 m off, and were routed round her in their
+own command - 10 s later then, at once now. The rehearsal found one more thing: slowed to LOW 58 m off her - outside the DriX's
 50 m at LOW - the guard released her, she sped back into her 70 m and was slowed again; the
 release now asks the reach at the speed it would restore.
 

@@ -211,7 +211,7 @@ eval([
   // RESUME FROM HERE (2026-09-26): the snap, the leg search and the resume itself - the real ones, driven in 18-19k.
   grabDecl("IDENTIFY_PX"), grabDecl("LINE_MATCH_M"), grab("onLineM"), grab("lineOfLeg"),
   grab("resumeHereAt"), grab("legOfLine"), grab("alongAsRun"), grab("resumeFromHere"),
-  grab("koWithAis"), grabDecl("AIS_AROUND_AFTER_MS"),                              // the contacts fold into the way in (2026-09-27)
+  grab("koWithAis"), grabDecl("AIS_AROUND_RETRY_MS"),                              // the contacts fold into the way in (2026-09-27)
   grab("sameContact"), grab("aisHerPoly"), grab("koRoundHer"), grab("tautRoundHer"),   // the tighter way round (2026-09-28)
   "const { blocked, clearanceM } = require('../static/js/keepouts.js');",
   // THE WAY IN IS PLANNED THROUGH planInsideChart (2026-10-03) - the page's own - with her and the contacts' model taken
