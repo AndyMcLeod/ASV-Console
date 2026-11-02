@@ -2319,10 +2319,14 @@ ENC_ROLES = {
 #   CATGAT (2026-10-18, the lock transit - static/js/locks.js): what a gate is - "lock gate" at Canaveral, whose two are
 #           the lock's only charted trace (no Lock_Basin_area); text. A gate that says it is no lock gate is never paired
 #           into a lock; a tile read before carries none, and its gates may still pair (the operator's opt-in checks it).
+#   CATMOR (2026-11-01, AIS contacts alongside - static/js/ais_keepout.js chartBerth): what a mooring facility is - a
+#           dolphin, bollard, tie-up wall or post is a berth a vessel lies at; a mooring buoy (7) is one she swings round.
+#           Never kept until today, so every dolphin read as no berth. Code or text, as ENCDirect publishes it; a tile
+#           read before carries none until it is read again within ENC_TILE_FRESH_S.
 ENC_KEEP_PROPS = ("DRVAL1", "DRVAL2", "VALSOU", "VALDCO", "OBJNAM", "CATLAM", "COLOUR",
                   "CATREA", "INFORM", "RESTRN", "WATLEV", "QUASOU", "EXPSOU", "CATWRK", "CATOBS", "CATCAM",
                   "CONDTN", "TRAFIC", "VERCLR", "VERCCL", "VERCOP", "HORCLR", "CATBRG", "CATSLC", "CATSCF", "CATHAF",
-                  "CATGAT")
+                  "CATMOR", "CATGAT")
 # ...and the ones the nogo model does ARITHMETIC or comparison on, which have to be NUMBERS.
 ENC_NUMERIC_PROPS = frozenset(("DRVAL1", "DRVAL2", "VALSOU", "VALDCO", "WATLEV",
                                "VERCLR", "VERCCL", "VERCOP", "HORCLR"))

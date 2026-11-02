@@ -914,10 +914,29 @@ check("8. the row template provides the marker and name spans the patch writes t
               && /At anchor: watch circle 326 m round her anchor, kept to 379 m/.test(tAnch) && /cable 126 m \(3 x 12\.0 m charted \+ 90\)/.test(tAnch)
               && !/Moored|watch circle|swing circle/.test(tC),
         () => "AMAZON: " + (tA.match(/Moored[^<]*/) || ["-"])[0] + " || ANCHOR: " + (tAnch.match(/At anchor[^<]*/) || ["-"])[0]);
+  // 23g. ALONGSIDE WITH NO HEADING (2026-11-01): she is drawn along the charted berth, centered on her antenna (which end is
+  //      her bow is not known), and the tip says so and says the 20 m was read from the chart, not her status
+  const berthShip = { ...at, mmsi: 8, name: "ALONGSIDE", cat: "tug", sog: 0.0, cog: 10, heading: null, nav: 0, length: 37, beam: 10,
+                      dim: { a: 30, b: 7, c: 5, d: 5 }, berth_m: 2, berth_deg: 45, age: 0 };
+  const drawn2 = [], boxes2 = [];
+  const drawAIS2 = make(ctxStub, true, [berthShip], { cargo: "#3c3", tug: "#333", unknown: "#999" }, KO.aisMotion, KO.aisDiscM, 0, hullBox,
+                        { lat: at.lat }, 19, "",                                   // close enough to draw her to scale
+                        (c, x, y, course, col, box) => { drawn2.push(["hull", course]); boxes2.push(box); },
+                        (c, x, y, course) => drawn2.push(["glyph", course]),
+                        (c, x, y, col, rPx) => drawn2.push(["disc", Math.round(rPx * 10) / 10]));
+  { const was = Date.now; Date.now = () => 0; try { drawAIS2(() => ({ x: 100, y: 100 })); } finally { Date.now = was; } }
+  const tB = tipFor(berthShip);
+  check("23g. A SHIP STOPPED ALONGSIDE WITH NO HEADING is drawn ALONG THE BERTH (45), centered on her antenna (18.5 m each way, "
+        + "not her 30 / 7), and the tip says she is drawn along the berth and read as moored from the chart",
+        () => drawn2.length === 1 && drawn2[0][0] === "hull" && drawn2[0][1] === 45 && boxes2[0] && boxes2[0].toBowM === 18.5 && boxes2[0].toSternM === 18.5
+              && /Drawn along the charted berth she lies at, 45° — no heading reported, so either end may be her bow/.test(tB)
+              && /Stopped alongside a charted berth, broadcasting status 0, under way using engine: read as moored - kept 20 m off her hull/.test(tB),
+        () => "drawn " + JSON.stringify(drawn2) + " box " + JSON.stringify(boxes2[0] && [boxes2[0].toBowM, boxes2[0].toSternM]) + " | " + tB.replace(/<br>/g, " | ").slice(0, 300));
   const tip = (H.match(/id="aisBtn" title="([^"]*)"/) || [])[1] || "";
   check("23c. ... and the AIS button says it in words: the bow, the heading, the course only while under way, the circle, and that the red outline is the guard's keep-out by the same rule - not the old 'Triangles point along course' or 'Situational awareness only'",
         () => /points the way her BOW does/.test(tip) && /course over the ground only while she is under way/.test(tip)
               && /dashed circle/.test(tip) && /KEEP-OUT/.test(tip) && !/Triangles point along course/.test(tip)
+              && /stopped alongside a charted berth, she is drawn along it/.test(tip)
               && !/Situational awareness only/.test(tip),
         () => "title: " + tip.slice(0, 160));
 }

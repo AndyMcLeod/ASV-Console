@@ -734,6 +734,20 @@ navigational status. Two of them replace the half-length rule, in three ways:
   the cable and the watch radius. A 200 m ship in a charted 12 m keeps 379 m from a point 118 m
   ahead of her bow. A 20 m boat on a mooring in a charted 10 m keeps 49 m.
 
+**Stopped alongside, whatever she broadcasts (2026-11-01).** Many vessels at a pier do not broadcast
+status 5. A Class B position report carries no status at all, and Class A crews often leave status 0
+("under way using engine") set alongside. On the live feed in Honolulu Harbor, 15 Class B boats and 6
+Class A vessels at the piers kept half their length; a 217 m ship broadcasting 0 at 0 kn was kept 109 m
+off her hull. So a vessel reporting under 0.5 kn, with her hull within 30 m of a charted berth, is read
+as moored and kept 20 m off her hull when her status is none, 0, 7 (fishing), 8 (sailing) or 15
+(undefined). Status 2, 3, 4, 6 and 14 declare a condition and keep half her length; status 1 keeps the
+watch circle. The label adds "alongside" to her name and the hover tip says the 20 m was read from the
+chart. A stopped vessel that reports no heading and lies alongside is drawn and kept out along the
+berth's face, held either way round, instead of as a circle of every orientation (a 64 m cutter kept
+52 m off every way is now 52 m off along the berth and 24.5 m off abeam). A dolphin, bollard, tie-up wall or post now counts as a berth: the server
+keeps the chart's mooring-facility category (CATMOR), which it used to drop; a tile read before
+carries none until it is read again.
+
 A status of 5 with no reported speed, or at 0.5 kn or more, keeps the half-length rule. The status
 counts only where it is already believed: under 3 kn ("at anchor" at 6 kn is a vessel under way). A
 Class B report carries no status, so the rules never reach her. The chart draws the circle as her

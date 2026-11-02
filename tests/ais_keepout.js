@@ -810,6 +810,117 @@ console.log("An AIS contact as a keep-out:");
               && rule9[0] === "moored" && rule9[1] === "anchored" && rule9[2] === "swinging",
         () => JSON.stringify(recs9.map((r, i) => [r.berth_m, rule9[i]])));
 
+  // ── N10. STOPPED ALONGSIDE, WHATEVER SHE BROADCASTS (Andy, 2026-11-01, of the Honolulu piers: "The vessels at the pier
+  //         do not have the updated avoidance distance applied" - then "make these changes as recommended") ──────────────
+  // His live feed: 15 Class B contacts (no status at all) and 6 Class A alongside at 0 kn broadcasting 0 kept half their
+  // length - MAUNAWILI, 217 x 32 m, 109 m across his survey lines.
+  const MAU = (o = {}) => contact(0, 0, { name: "MAUNAWILI", heading: 122, sog: 0, nav: 0, length: 217, beam: 32,
+                                          dim: { a: 150, b: 67, c: 16, d: 16 }, berth_m: 0, berth_deg: 122, ...o });
+  const mau = modelOf(MAU()), mq = mau.q;
+  const box10 = A.aisBox(MAU());
+  const sideE = (m) => { const a = 122 * Math.PI / 180; return { e: Math.cos(a) * (16 + m), n: -Math.sin(a) * (16 + m) }; };   // to starboard
+  const p19 = sideE(19.5), p21 = sideE(20.5);
+  check("N10. STATUS 0 AT 0 KN ALONGSIDE IS MOORED: MAUNAWILI (217 x 32 m, 'under way using engine', her hull on the pier) "
+        + "keeps 20 m off her hull, not half her length (109) - 19.5 m off her side inside, 20.5 m clear - and her name and "
+        + "the tip say it was read so",
+        () => mq && mq.rule === "moored" && mq.ruleInferred && mq.marginM === 20 && box10.lengthM === 217
+              && inKo(mau.full, p19.e, p19.n) && !inKo(mau.full, p21.e, p21.n)
+              && /^AIS: MAUNAWILI \(217 x 32 m, alongside\)$/.test(mq.kind)
+              && A.aisNavRuleText(mq) === "stopped alongside a charted berth, broadcasting status 0, under way using engine: read as moored - kept 20 m off her hull",
+        () => mq && "rule " + mq.rule + ", inferred " + mq.ruleInferred + ", margin " + mq.marginM + ", kind " + mq.kind + " | " + A.aisNavRuleText(mq));
+  const cb = modelOf(contact(0, 0, { sog: 0, nav: null, berth_m: 4 })), cbq = cb.q;
+  const fish = modelOf(MAU({ nav: 7 })), sail = modelOf(MAU({ nav: 8 })), undef = modelOf(MAU({ nav: 15 }));
+  check("N10b. ... and so is a Class B boat with NO status (the Pier 38 fleet: 20 x 8 m assumed, 4 m off the pier) - 20 m "
+        + "where she had 10 - and status 7 (fishing), 8 (sailing) and 15 (undefined)",
+        () => cbq && cbq.rule === "moored" && cbq.ruleInferred && cbq.marginM === 20
+              && A.aisNavRuleText(cbq) === "stopped alongside a charted berth, broadcasting no navigational status: read as moored - kept 20 m off her hull"
+              && fish.q.rule === "moored" && sail.q.rule === "moored" && undef.q.rule === "moored",
+        () => [cbq && cbq.rule, cbq && cbq.marginM, fish.q.rule, sail.q.rule, undef.q.rule].join(", "));
+  const notAlong = modelOf(MAU({ berth_m: undefined, berth_deg: undefined })), far31 = modelOf(MAU({ berth_m: 31 }));
+  const noSog10 = modelOf(MAU({ sog: null })), slowish = modelOf(MAU({ sog: 0.6 }));
+  const nuc = modelOf(MAU({ nav: 2 })), ram = modelOf(MAU({ nav: 3 })), cbd = modelOf(MAU({ nav: 4 })), agr = modelOf(MAU({ nav: 6 })), sart = modelOf(MAU({ nav: 14 }));
+  check("N10c. NOT INFERRED: not alongside (no berth, or 31 m off one); no speed reported (heard only by her static report); "
+        + "0.6 kn; or a status that declares a condition - 2 not under command, 3 restricted, 4 constrained by draught, 6 "
+        + "aground, 14 AIS-SART: each keeps half her length (109 m)",
+        () => [notAlong, far31, noSog10, slowish, nuc, ram, cbd, agr, sart].every((x) => x.q && x.q.rule === null && !x.q.ruleInferred && Math.round(x.q.marginM) === 109),
+        () => [notAlong, far31, noSog10, slowish, nuc, ram, cbd, agr, sart].map((x) => x.q && (x.q.rule + "/" + Math.round(x.q.marginM))).join(", "));
+  const anchAlong = modelOf(MAU({ nav: 1, chart_depth_m: 12 })), moorTrue = modelOf(MAU({ nav: 5 }));
+  check("N10d. ... and the two broadcast rules stand: at anchor (1) beside a pier keeps her watch circle; moored (5) is the "
+        + "moored rule NOT inferred (its own words)",
+        () => anchAlong.q.rule === "anchored" && !anchAlong.q.ruleInferred && moorTrue.q.rule === "moored" && !moorTrue.q.ruleInferred
+              && /^moored alongside and still/.test(A.aisNavRuleText(moorTrue.q)),
+        () => anchAlong.q.rule + " " + moorTrue.q.rule + " " + moorTrue.q.ruleInferred);
+
+  // ── N11. ALONGSIDE WITH NO HEADING, SHE LIES ALONG THE BERTH ──────────────────────────────────────────────────────────
+  // CG ACTIVE, 64 x 9 m, no heading, on the Sand Island pier: a disc of every orientation, 52 m from her antenna. Along
+  // the berth (30 deg), either way round: her larger offsets both ways, 20 m outside them.
+  const ACT = (o = {}) => contact(0, 0, { name: "CG ACTIVE", heading: null, sog: 0, nav: 5, length: 64, beam: 9,
+                                          dim: { a: 40, b: 24, c: 3, d: 6 }, berth_m: 0, berth_deg: 30, ...o });
+  const act = modelOf(ACT()), aq = act.q;
+  const mo11 = A.aisMotion(ACT(), { now: NOW, polledAt: NOW });
+  const along = (m) => { const a = 30 * Math.PI / 180; return { e: Math.sin(a) * m, n: Math.cos(a) * m }; };
+  const across = (m) => { const a = 120 * Math.PI / 180; return { e: Math.sin(a) * m, n: Math.cos(a) * m }; };
+  const pts11 = [[along(40 + 19.5), true], [along(40 + 20.5), false], [along(-(40 + 19.5)), true], [along(-(40 + 20.5)), false],
+                 [across(6 + 19.5), true], [across(6 + 20.5), false], [across(-(6 + 19.5)), true], [across(-(6 + 20.5)), false]];
+  check("N11. NO HEADING, ALONGSIDE: she lies ALONG THE BERTH (aisMotion 'berth', 30 deg) - kept out as the box of her larger "
+        + "offsets (40 m fore and aft, 6 m each side) EITHER WAY ROUND, plus 20 m: 59.5 m along the berth inside both ways, "
+        + "60.5 clear; 25.5 m across inside both sides, 26.5 clear - where the disc of every orientation reached 52 m every way",
+        () => mo11.from === "berth" && mo11.hdg === 30 && aq.byBerth && aq.rule === "moored"
+              && pts11.every(([p, inside]) => inKo(act.full, p.e, p.n) === inside),
+        () => "from " + mo11.from + ", hdg " + mo11.hdg + "; " + pts11.map(([p, i]) => (inKo(act.full, p.e, p.n) === i ? "ok" : "X")).join(""));
+  const nb1 = A.aisMotion(ACT({ nav: 1 }), { now: NOW, polledAt: NOW }), nb2 = A.aisMotion(ACT({ sog: 0.6 }), { now: NOW, polledAt: NOW });
+  const nb3 = A.aisMotion(ACT({ berth_m: 31 }), { now: NOW, polledAt: NOW }), nb4 = A.aisMotion(ACT({ nav: 3 }), { now: NOW, polledAt: NOW });
+  const nb5 = A.aisMotion(ACT({ heading: 200 }), { now: NOW, polledAt: NOW });
+  const old11 = modelOf(ACT(), { navRules: false });
+  check("N11b. ... only alongside, stopped, moored or with no condition declared: at anchor (1), at 0.6 kn, 31 m off, or "
+        + "status 3 she is the disc as before; a heading she reports wins over the berth; navRules false is the model before "
+        + "(the disc)",
+        () => nb1.from === null && nb2.from !== "berth" && nb3.from === null && nb4.from === null && nb5.from === "heading" && nb5.hdg === 200
+              && old11.q && !old11.q.byBerth && old11.q.hdg === null,
+        () => [nb1.from, nb2.from, nb3.from, nb4.from, nb5.from + "@" + nb5.hdg, old11.q && old11.q.hdg].join(", "));
+
+  // ── N12. THE BERTH'S BEARING, AND HOW FAR A HULL WITH NO HEADING IS FROM IT ─────────────────────────────────────────
+  const diag = [{ role: "dock_line", cls: "Shoreline_Construction_line", props: {}, geometry: line([[-100, -100], [100, 100]]) }];
+  const bN = A.chartBerth(pier, MOOR({ berth_m: undefined })), bD = A.chartBerth(diag, MOOR({ heading: 45, berth_m: undefined, ...ll(20, 0) }));
+  const quayIn = A.chartBerth(quay, contact(-20, 0, { sog: 0, nav: 0 }));
+  const dolph = A.chartBerth(dolphin, v0);
+  check("N12. chartBerth gives the bearing of the berth's face nearest her: a pier line running north, 0; one running "
+        + "north-east, 45; her antenna on the quay, 0 m and the quay's face (0); a dolphin (a point), no bearing",
+        () => bN && bN.m === 2 && bN.deg === 0 && bD && near(bD.deg, 45, 0.11) && quayIn && quayIn.m === 0 && quayIn.deg === 0
+              && dolph && dolph.m === 5 && dolph.deg === null,
+        () => JSON.stringify({ bN, bD, quayIn, dolph }));
+  const big = (e) => contact(e, 0, { name: "BIG", heading: null, sog: 0, nav: 0, length: 217, beam: 32, dim: { a: 150, b: 67, c: 16, d: 16 } });
+  const b40 = A.chartBerthM(pier, big(12 - 40)), b60 = A.chartBerthM(pier, big(12 - 60));
+  check("N12b. WITH NO HEADING, HER SIDE OFFSET, NOT EVERY ORIENTATION: a 217 m ship (16 m to either side of her antenna) "
+        + "40 m from a pier line is 24 m off it - alongside; 60 m from it, 44 m - not (the disc of every orientation, 109 m, "
+        + "read both as touching it)",
+        () => b40 === 24 && b60 === null,
+        () => "40 m: " + b40 + ", 60 m: " + b60);
+
+  // ── N13. CATMOR AS CODE OR TEXT ─────────────────────────────────────────────────────────────────────────────────────
+  const mf = (c) => A.chartBerthM([{ role: "hazard_point", cls: "Mooring_Warping_Facility_point", props: { CATMOR: c }, geometry: pt(-15, 0) }], v0);
+  const kinds13 = { "dolphin": mf("dolphin"), "deviation dolphin": mf("deviation dolphin"), "bollard": mf("bollard"),
+                    "tie-up wall": mf("tie-up wall"), "post or pile": mf("post or pile"), "\"1\"": mf("1"), "5": mf(5),
+                    "mooring buoy": mf("mooring buoy"), "chain/wire/cable": mf("chain/wire/cable"), "7": mf(7), "\"6\"": mf("6") };
+  check("N13. A MOORING FACILITY IS A BERTH BY ITS CATMOR, AS A CODE OR AS TEXT: dolphin, deviation dolphin, bollard, tie-up "
+        + "wall, post or pile, 1-5 - 5 m off; a mooring buoy, chain/wire/cable, 6 or 7 - none; and the console keeps CATMOR",
+        () => ["dolphin", "deviation dolphin", "bollard", "tie-up wall", "post or pile", "\"1\"", "5"].every((k) => kinds13[k] === 5)
+              && ["mooring buoy", "chain/wire/cable", "7", "\"6\""].every((k) => kinds13[k] === null)
+              && /ENC_KEEP_PROPS = \([\s\S]{0,700}"CATMOR"/.test(require("fs").readFileSync(path.join(__dirname, "..", "asv_console.py"), "utf8")),
+        () => JSON.stringify(kinds13));
+
+  // ── N14. WHAT THE PAGE WRITES ON THE RECORDS ────────────────────────────────────────────────────────────────────────
+  const recs14 = A.aisWithChart([{ ...v0, nav: null, berth_m: 99, berth_deg: 7 }, { ...v0, nav: 0, sog: 3 }, { ...v0, nav: 3, sog: 0 },
+                                 { ...v0, nav: 0, sog: null }, { ...v0, nav: 1, sog: 0 },
+                                 { ...v0, ...ll(0, 400), nav: null, berth_m: 5, berth_deg: 9 }], pier, 0);
+  check("N14. aisWithChart writes berth_m and berth_deg on a still vessel with no status (the stale 99 m and 7 deg replaced: "
+        + "2 m, 0 deg) - and drops them from one 400 m up the pier's line, past its end; not on one at 3 kn, one reporting a "
+        + "condition (3), one with no speed, or one at anchor (her depth only)",
+        () => recs14[0].berth_m === 2 && recs14[0].berth_deg === 0 && recs14[1].berth_m === undefined && recs14[2].berth_m === undefined
+              && recs14[3].berth_m === undefined && recs14[4].berth_m === undefined && recs14[4].berth_deg === undefined
+              && recs14[5].berth_m === undefined && recs14[5].berth_deg === undefined,
+        () => JSON.stringify(recs14.map((r) => [r.nav, r.sog, r.berth_m, r.berth_deg])));
+
   const off = modelOf(VIC(), { navRules: false });
   check("N8. navRules false builds her without the status rules - the half-length rule (100 m), as before 2026-11-01 (the "
         + "suites that measure that rule alone ask for it)",

@@ -538,7 +538,7 @@
 
   <div class="controls">
     <!-- + / - / BOAT / CHRT / NOGO LEFT THIS COLUMN on 2026-10-15: they are the chart's own, on its command bar (below). -->
-    <button class="ctl small" id="aisBtn" title="AIS: show nearby vessels (name, position, course, speed) from the AIS service (ais_service.py, proxied at /api/ais). Colored by ship type, drawn to scale when the chart can show her, each ship points the way her BOW does: her true heading; her course over the ground only while she is under way, because a stopped ship's course is noise. A dashed circle: stopped with no heading reported — she can lie any way round. The red outline round a contact near your boat is the clearance guard's KEEP-OUT: the same hull, pointed by the same rule, dashed ahead where she will be within the look-ahead. Hover a ship for details. Needs the AIS service running.">AIS</button>
+    <button class="ctl small" id="aisBtn" title="AIS: show nearby vessels (name, position, course, speed) from the AIS service (ais_service.py, proxied at /api/ais). Colored by ship type, drawn to scale when the chart can show her, each ship points the way her BOW does: her true heading; her course over the ground only while she is under way, because a stopped ship's course is noise. A dashed circle: stopped with no heading reported — she can lie any way round; stopped alongside a charted berth, she is drawn along it. The red outline round a contact near your boat is the clearance guard's KEEP-OUT: the same hull, pointed by the same rule, dashed ahead where she will be within the look-ahead. Hover a ship for details. Needs the AIS service running.">AIS</button>
     <button class="ctl small" id="rocBtn" title="Remote Operations Centers + HOME: track each ROC (shore or ship/Mothership) from its position data stream, set the launch/recovery offset, and pick one as HOME. A ship HOME moves and Return-to-Home chases it live.">ROC</button>
     <button class="ctl small" id="clear" title="Clear the displayed track">CLR</button>
     <button class="ctl small" id="linesBtn" title="Show / hide the per-survey-line table: length, planned time and actual time, plus the ENC-routed transit time from the boat to line 1 and the RTH time from the last line home. Actuals accrue while the survey runs and are written to the session log.">LINES</button>
@@ -14257,6 +14257,7 @@ function updateAisTip(e){ const tip=$("#aisTip");
   rows.push(`SOG ${sog} · COG ${cog}` + (!mo.moving && v.cog != null ? " (noise while she is stopped)" : ""));
   rows.push(mo.from === "heading" ? `Drawn along her heading, ${Math.round(mo.hdg)}°`
           : mo.from === "course" ? `Drawn along her course, ${Math.round(mo.hdg)}° — under way, no heading reported`
+          : mo.from === "berth" ? `Drawn along the charted berth she lies at, ${Math.round(mo.hdg)}° — no heading reported, so either end may be her bow`
           : "No heading reported and not under way — drawn as a circle: she can lie any way round");
   // HER STATUS SETS HER CLEAR WATER (ais_keepout.js aisNavRule, 2026-11-01): moored alongside and still, 20 m; moored but
   // not alongside, her swing circle; at anchor, her watch circle - said with its numbers, the cable and the depth it was
@@ -14403,7 +14404,9 @@ function drawAIS(toScreen){
     const mpp = 156543.03392 * Math.cos(center.lat*Math.PI/180) / Math.pow(2, zoom);
     const toScale = box && (box.lengthM / mpp) > (GLYPH_FWD + GLYPH_AFT) * 0.62;
     if(dir == null) drawHullDisc(ctx, s.x, s.y, col, toScale ? aisDiscM(box) / mpp : GLYPH_FWD * 0.62);
-    else if(toScale) drawHullToScale(ctx, s.x, s.y, dir, col, box, mpp);
+    // along a berth (aisMotion "berth", 2026-11-01): which end is her bow is not known, so she is drawn centered on her antenna
+    else if(toScale) drawHullToScale(ctx, s.x, s.y, dir, col, mo.from === "berth"
+      ? {...box, toBowM: box.lengthM / 2, toSternM: box.lengthM / 2, toPortM: box.beamM / 2, toStbdM: box.beamM / 2} : box, mpp);
     else drawVesselGlyph(ctx, s.x, s.y, dir, col, null, 0.62);
     if(mo.moving){                                   // speed stalk along her COURSE, from her bow: where she is going
       const cogDeg = ((+v.cog % 360) + 360) % 360;

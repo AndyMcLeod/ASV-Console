@@ -226,9 +226,20 @@ export function aisMotion(v, opts = {}) {
   const slowAndOld = sog != null && sog < AIS_MOVING_SURE_KN && ageS > AIS_MOVING_AGE_S;   // reporting like one
   const vel = (sog != null && sog >= AIS_MOVING_KN && !navStopped && !slowAndOld) ? velocityEN(sog, v.cog) : null;   // null: no course
   const moving = !!vel;
-  const hdg = aisHeadingDeg(v, moving);
+  let hdg = aisHeadingDeg(v, moving);
   const h = v && v.heading;
-  const from = hdg == null ? null : (h != null && Number.isFinite(+h) && +h >= 0 && +h < 360) ? "heading" : "course";
+  let from = hdg == null ? null : (h != null && Number.isFinite(+h) && +h >= 0 && +h < 360) ? "heading" : "course";
+  // ⚠ ALONGSIDE, SHE LIES ALONG THE BERTH (Andy, 2026-11-01, of the Honolulu piers: "The vessels at the pier do not have
+  // the updated avoidance distance applied"). A stopped vessel that reports no heading was a disc of every orientation -
+  // CG ACTIVE, 64 m alongside Sand Island, reached 52 m from her antenna. Where the page found her hull alongside a
+  // charted berth (aisWithChart: `berth_m`, and `berth_deg`, the bearing of the berth's face nearest her), she lies
+  // parallel to it, so she is drawn and kept out along that bearing. WHICH END IS HER BOW IS NOT KNOWN: the keep-out holds
+  // her either way round (aisKeepout: the box of her larger offsets), and the layer draws her centered on her antenna.
+  // Not under way, only: a vessel moving has her course.
+  if (hdg == null && !moving) {
+    const bd = aisBerthDeg(v, sog);
+    if (bd != null) { hdg = bd; from = "berth"; }
+  }
   return { sog, ageS, navStopped, vel, moving, hdg, from };
 }
 
@@ -313,6 +324,16 @@ export function convexHull(pts) {
 // half-length rule alone).
 export const AIS_NAV_ANCHORED = 1;
 export const AIS_NAV_MOORED = 5;
+/**
+ * THE STATUSES THAT DECLARE NOTHING ABOUT A BERTH (2026-11-01): none at all (null - every Class B position report, and a
+ * Class A heard so far only by her static report), 0 "under way using engine" (the status most often left set alongside),
+ * 7 "engaged in fishing", 8 "under way sailing" and 15 "undefined" (the default). A vessel reporting one of these, stopped
+ * and alongside a charted berth, is read as moored (aisNavRule). NOT 2 not under command, 3 restricted in her ability to
+ * maneuver, 4 constrained by her draught, 6 aground or 14 an active AIS-SART: each declares a condition 20 m does not
+ * answer, and she keeps half her length. Not 9-13 (reserved). 1 and 5 have their own rules.
+ */
+export const AIS_NAV_INFER = new Set([null, 0, 7, 8, 15]);
+const AIS_NAV_WORDS = { 0: "under way using engine", 7: "engaged in fishing", 8: "under way sailing", 15: "undefined" };
 /** Moored alongside and still: the clear water kept round her hull, meters. His number. */
 export const AIS_MOORED_CLEAR_M = 20;
 /** ... "unmoving": a reported speed over the ground under this, knots (the keep-out model's own AIS_MOVING_KN). */
@@ -377,15 +398,41 @@ export function aisCircleRule(rule) { return rule === "anchored" || rule === "sw
  * while she is modelled as under way.
  */
 export function aisNavRule(v, m) {
-  if (!m || m.moving || !m.navStopped) return null;
+  if (!m || m.moving) return null;
   const nav = navOf(v);
-  if (nav === AIS_NAV_MOORED) {
-    if (!(m.sog != null && m.sog < AIS_MOORED_STILL_KN)) return null;
-    const b = v && v.berth_m != null ? +v.berth_m : NaN;
-    return Number.isFinite(b) && b <= AIS_ALONGSIDE_M ? "moored" : "swinging";
-  }
-  if (nav === AIS_NAV_ANCHORED) return "anchored";
+  const still = m.sog != null && m.sog < AIS_MOORED_STILL_KN;
+  const b = v && v.berth_m != null ? +v.berth_m : NaN;
+  const alongside = Number.isFinite(b) && b <= AIS_ALONGSIDE_M;
+  if (m.navStopped && nav === AIS_NAV_MOORED) return still ? (alongside ? "moored" : "swinging") : null;
+  if (m.navStopped && nav === AIS_NAV_ANCHORED) return "anchored";
+  // STOPPED ALONGSIDE, WHATEVER SHE BROADCASTS (Andy, 2026-11-01: "in claude code make these changes as recommended").
+  // His rule is "moored and unmoving in a harbor or alongside a pier", and the chart and her speed can say that where her
+  // status does not. Measured on his live feed in Honolulu Harbor: of 46 contacts, 17 broadcast 5 and all 17 had the 20 m;
+  // 15 were Class B, whose position report carries NO status (the Pier 38 fleet, 146-410 m from the boat, 10 m each), and
+  // 6 were Class A alongside at 0 kn broadcasting 0, "under way using engine" - MAUNAWILI, 217 m, kept 109 m off her
+  // hull across his survey lines. So a vessel whose status declares nothing (AIS_NAV_INFER), reporting under
+  // AIS_MOORED_STILL_KN, with her hull within AIS_ALONGSIDE_M of a charted berth, is moored: the 20 m. Not alongside, she
+  // keeps half her length - a stopped vessel with no status is no evidence of an anchor or a mooring.
+  if (AIS_NAV_INFER.has(nav) && still && alongside) return "moored";
   return null;
+}
+
+/** Is the moored rule INFERRED for her (aisNavRule "moored" with a status other than 5)? Said on the label and the tip. */
+export function aisRuleInferred(v, rule) {
+  return rule === "moored" && navOf(v) !== AIS_NAV_MOORED;
+}
+
+/**
+ * The bearing of the charted berth she lies along (0-180 deg), where the page found one (aisWithChart `berth_deg`) within
+ * AIS_ALONGSIDE_M of her hull, she reports under AIS_MOORED_STILL_KN, and her status is moored or declares nothing - else
+ * null. Never at anchor: a ship at anchor swings, whatever lies near her.
+ */
+export function aisBerthDeg(v, sog) {
+  if (!v || !(sog != null && sog < AIS_MOORED_STILL_KN)) return null;
+  const nav = navOf(v);
+  if (nav !== AIS_NAV_MOORED && !AIS_NAV_INFER.has(nav)) return null;
+  const b = v.berth_m != null ? +v.berth_m : NaN, d = v.berth_deg != null ? +v.berth_deg : NaN;
+  return Number.isFinite(b) && b <= AIS_ALONGSIDE_M && Number.isFinite(d) ? ((d % 180) + 180) % 180 : null;
 }
 
 /** The cable assumed out at anchor in `depthM` of water, meters (AIS_RODE_PER_DEPTH x depth + AIS_RODE_FIXED_M). */
@@ -450,7 +497,12 @@ export function aisWatchCircle(v, c0, hdgDeg, box, opts = {}) {
 export function aisNavRuleText(q) {
   if (!q || !q.rule) return null;
   const m = (x) => Math.round(x) + " m";
-  if (q.rule === "moored") return "moored alongside and still: kept " + m(AIS_MOORED_CLEAR_M) + " off her hull";
+  if (q.rule === "moored") {
+    if (!q.ruleInferred) return "moored alongside and still: kept " + m(AIS_MOORED_CLEAR_M) + " off her hull";
+    const st = q.nav == null ? "no navigational status" : "status " + q.nav + (AIS_NAV_WORDS[q.nav] ? ", " + AIS_NAV_WORDS[q.nav] : "");
+    return "stopped alongside a charted berth, broadcasting " + st + ": read as moored - kept " + m(AIS_MOORED_CLEAR_M)
+         + " off her hull";
+  }
   const w = q.watch;
   if (!w) return null;
   const d = w.depthM.toFixed(1) + " m " + (w.depthFrom === "chart" ? "charted" : "assumed");
@@ -529,8 +581,13 @@ const BERTH_ROLES = new Set(["land", "shore_line", "dock", "dock_line"]);
 /** Charted POINTS a vessel can lie alongside or make fast to. */
 const BERTH_POINT_CLS = new Set(["Pile_point", "Shoreline_Construction_point"]);
 /** A mooring facility point is a berth for these CATMOR values: dolphin, deviation dolphin, bollard, tie-up wall, post or
- *  pile. Not 6 (chain, wire or cable) and never 7, a mooring buoy - which she would swing round, not lie alongside. */
+ *  pile. Not 6 (chain, wire or cable) and never 7, a mooring buoy - which she would swing round, not lie alongside.
+ *  ⚠ AS A CODE OR AS TEXT (2026-11-01): ENCDirect publishes some enumerated attributes as their codes (CATLAM) and some as
+ *  their words (CATSLC "pier"), and CATMOR was not kept at all until today (asv_console.py ENC_KEEP_PROPS) - so every
+ *  dolphin read as no berth. Both forms are read; a tile read before carries none until it is read again. */
 const MORFAC_FIXED = new Set([1, 2, 3, 4, 5]);
+const MORFAC_FIXED_TEXT = /dolphin|bollard|tie-up wall|post|pile/i;
+const MORFAC_FLOAT_TEXT = /buoy|chain|wire|cable/i;
 function isBerth(f) {
   if (!f || !f.geometry) return false;
   if (BERTH_ROLES.has(f.role)) return true;
@@ -538,7 +595,12 @@ function isBerth(f) {
   if (BERTH_POINT_CLS.has(f.cls)) return true;
   if (f.cls === "Mooring_Warping_Facility_point") {
     const c = f.props && f.props.CATMOR;
-    return c != null && String(c).split(/[,;\s]+/).some((x) => MORFAC_FIXED.has(+x));
+    if (c == null) return false;
+    return String(c).split(/[,;]+/).some((x) => {
+      const t = x.trim();
+      if (/^\d+$/.test(t)) return MORFAC_FIXED.has(+t);
+      return MORFAC_FIXED_TEXT.test(t) && !MORFAC_FLOAT_TEXT.test(t);
+    });
   }
   return false;
 }
@@ -556,36 +618,63 @@ function segSegM(a, b, c, d) {
   if (segsCross(a, b, c, d)) return 0;
   return Math.min(segPtM(a, c, d), segPtM(b, c, d), segPtM(c, a, b), segPtM(d, a, b));
 }
+/** The bearing of segment a-b, degrees 0-180 (a line has no direction). */
+function segDeg(a, b) {
+  const d = Math.atan2(b.e - a.e, b.n - a.n) / D2R;
+  return ((d % 180) + 180) % 180;
+}
 /**
- * HOW FAR HER HULL LIES FROM A CHARTED BERTH OR SHORE, meters (0 where they touch or overlap), or null where nothing
- * charted lies within `capM` (default AIS_ALONGSIDE_M) of it. Her hull is the box she broadcasts (aisBox) along her heading,
- * or the disc of every orientation (aisDiscM) where she reports none, about her antenna.
+ * HOW FAR HER HULL LIES FROM A CHARTED BERTH OR SHORE: {m, deg} - meters (0 where they touch or overlap) and the bearing
+ * (0-180 deg) of the berth's edge nearest her, null for a charted point (a dolphin or a pile has no face) - or null where
+ * nothing charted lies within `capM` (default AIS_ALONGSIDE_M) of her. Her hull is the box she broadcasts (aisBox) along
+ * her heading about her antenna. ⚠ WITH NO HEADING (2026-11-01), the disc of her larger SIDE offset (max(C, D)) about her
+ * antenna, not the disc of every orientation (aisDiscM): a vessel alongside lies parallel to the face, so her antenna is
+ * within her side offset of it - and the disc of every orientation read a 217 m ship stopped 120 m off a pier as
+ * alongside.
  */
-export function chartBerthM(feats, v, capM = AIS_ALONGSIDE_M) {
+const BERTH_CACHE = new WeakMap();   // feats -> Map(key -> answer): the berth is asked at every poll, of every contact
+export function chartBerth(feats, v, capM = AIS_ALONGSIDE_M) {
   if (!feats || !feats.length || !v || v.lat == null || v.lon == null) return null;
   const lat0 = +v.lat, lon0 = +v.lon;
   if (!Number.isFinite(lat0) || !Number.isFinite(lon0)) return null;
-  const fr = planeFrame({ lat: lat0, lon: lon0 });
   const box = aisBox(v), c = { e: 0, n: 0 };
   const h = v.heading, hdg = (h != null && Number.isFinite(+h) && +h >= 0 && +h < 360) ? +h : null;
-  const hull = hdg == null ? discRingEN(c, aisDiscM(box), 16) : hullRingEN(c, hdg, box);
+  const key = [lat0.toFixed(6), lon0.toFixed(6), hdg, box.toBowM, box.toSternM, box.toPortM, box.toStbdM, capM].join("|");
+  let memo = BERTH_CACHE.get(feats);
+  if (!memo) { memo = new Map(); BERTH_CACHE.set(feats, memo); }
+  if (memo.has(key)) return memo.get(key);
+  if (memo.size > 5000) memo.clear();
+  const fr = planeFrame({ lat: lat0, lon: lon0 });
+  const hull = hdg == null ? discRingEN(c, Math.max(box.toPortM, box.toStbdM), 16) : hullRingEN(c, hdg, box);
   const reach = Math.max(...hull.map((p) => Math.hypot(p.e, p.n))) + capM + 1;
   const dLat = reach / 111320, dLon = reach / (111320 * Math.max(0.05, Math.cos(lat0 * D2R)));
   const W = lon0 - dLon, E = lon0 + dLon, S = lat0 - dLat, N = lat0 + dLat;
   const hb = bbOf(hull);
   const nearHull = (p) => !(p.e < hb.x0 - capM || p.e > hb.x1 + capM || p.n < hb.y0 - capM || p.n > hb.y1 + capM);
   const toEN = (q) => fr.toEN({ lon: q[0], lat: q[1] });
-  let best = Infinity;
+  let best = Infinity, deg = null;
+  const take = (m, d) => { if (m < best) { best = m; deg = d; } };
   const path = (pts, closed) => {
-    for (let i = 1; i < pts.length + (closed ? 1 : 0) && best > 0; i++) {
+    for (let i = 1; i < pts.length + (closed ? 1 : 0); i++) {
       const q0 = pts[i - 1], q1 = pts[i % pts.length];
       if ((q0[0] < W && q1[0] < W) || (q0[0] > E && q1[0] > E) || (q0[1] < S && q1[1] < S) || (q0[1] > N && q1[1] > N)) continue;
       const a = toEN(q0), b = toEN(q1);
-      for (let k = 0; k < hull.length; k++) best = Math.min(best, segSegM(a, b, hull[k], hull[(k + 1) % hull.length]));
+      if (Math.hypot(b.e - a.e, b.n - a.n) < 0.5) continue;           // a sliver edge has no face to lie along
+      for (let k = 0; k < hull.length; k++) take(segSegM(a, b, hull[k], hull[(k + 1) % hull.length]), segDeg(a, b));
     }
   };
+  // a polygon her antenna stands in: 0, and the bearing of its edge nearest her antenna
+  const inside = (poly) => {
+    let m = Infinity, d = null;
+    for (const ring of poly) for (let i = 1; i <= ring.length; i++) {
+      const a = toEN(ring[i - 1]), b = toEN(ring[i % ring.length]);
+      if (Math.hypot(b.e - a.e, b.n - a.n) < 0.5) continue;
+      const x = segPtM(c, a, b);
+      if (x < m) { m = x; d = segDeg(a, b); }
+    }
+    best = 0; deg = d;
+  };
   for (const f of feats) {
-    if (best === 0) break;
     if (!isBerth(f)) continue;
     const bb = featBB(f);
     if (!bb || bb.E < W || bb.W > E || bb.N < S || bb.S > N) continue;
@@ -594,43 +683,60 @@ export function chartBerthM(feats, v, capM = AIS_ALONGSIDE_M) {
       for (const q of (t === "Point" ? [cs] : cs)) {
         const p = toEN(q);
         if (!nearHull(p)) continue;
-        if (inRingEN(p, hull)) { best = 0; break; }
-        for (let k = 0; k < hull.length; k++) best = Math.min(best, segPtM(p, hull[k], hull[(k + 1) % hull.length]));
+        if (inRingEN(p, hull)) { take(0, null); continue; }
+        for (let k = 0; k < hull.length; k++) take(segPtM(p, hull[k], hull[(k + 1) % hull.length]), null);
       }
     } else if (t === "LineString" || t === "MultiLineString") {
       for (const line of (t === "LineString" ? [cs] : cs)) path(line, false);
     } else if (t === "Polygon" || t === "MultiPolygon") {
       for (const poly of (t === "Polygon" ? [cs] : cs)) {
+        if (inPolygonLL(poly, lon0, lat0)) { inside(poly); break; }   // her antenna on charted land or a pier: alongside
         for (const ring of poly) path(ring, true);
-        if (best > 0 && inPolygonLL(poly, lon0, lat0)) best = 0;   // her antenna on charted land or a pier: alongside
       }
     }
+    if (best === 0 && deg != null) break;
   }
-  return best <= capM ? Math.round(best * 10) / 10 : null;
+  const out = best <= capM ? { m: Math.round(best * 10) / 10, deg: deg == null ? null : Math.round(deg * 10) / 10 } : null;
+  memo.set(key, out);
+  return out;
+}
+/** chartBerth's meters alone, or null. */
+export function chartBerthM(feats, v, capM = AIS_ALONGSIDE_M) {
+  const r = chartBerth(feats, v, capM);
+  return r ? r.m : null;
 }
 
 /**
- * The contacts with what the chart says written on each one not under way by her status - a new array; the records are
- * copied, not changed:
+ * The contacts with what the chart says written on each one not under way - a new array; the records are copied, not
+ * changed:
  *   `chart_depth_m` on each at anchor (1) or moored (5): the charted deeper bound at her position plus the water's rise
  *       above chart datum (`waterOffsetM`, counted only when positive - a falling tide does not shorten the cable she put
  *       out); left off where the chart does not cover her (aisWatchCircle then assumes AIS_WATCH_DEPTH_ASSUMED_M);
- *   `berth_m` on each moored (5): chartBerthM - left off where no charted berth or shore lies within AIS_ALONGSIDE_M
- *       of her hull, or no chart is read there (aisNavRule then reads her as not alongside: "swinging").
+ *   `berth_m` and `berth_deg` (chartBerth) on each moored (5), and since 2026-11-01 on each whose status declares nothing
+ *       (AIS_NAV_INFER) reporting under AIS_MOORED_STILL_KN - left off where no charted berth or shore lies within
+ *       AIS_ALONGSIDE_M of her hull, or no chart is read there (aisNavRule then reads a 5 as "swinging", and anyone else
+ *       as not alongside).
  * A stale value the chart no longer gives is dropped. Every other contact is returned as it was.
  */
 export function aisWithChart(vessels, feats, waterOffsetM = 0) {
   if (!Array.isArray(vessels)) return vessels;
   const rise = Math.max(0, +waterOffsetM || 0);
   return vessels.map((v) => {
+    if (!v || v.lat == null || v.lon == null) return v;
     const nav = navOf(v);
-    if (!v || (nav !== AIS_NAV_ANCHORED && nav !== AIS_NAV_MOORED) || v.lat == null || v.lon == null) return v;
-    const { chart_depth_m, berth_m, ...rest } = v;
-    const d = chartDepthAt(feats, +v.lat, +v.lon);
-    const out = d ? { ...rest, chart_depth_m: Math.round((d.deepM + rise) * 10) / 10 } : rest;
-    if (nav === AIS_NAV_MOORED) {
-      const b = chartBerthM(feats, v);
-      if (b != null) out.berth_m = b;
+    const sog = v.sog != null && Number.isFinite(+v.sog) ? +v.sog : null;
+    const berthAsked = nav === AIS_NAV_MOORED || (AIS_NAV_INFER.has(nav) && sog != null && sog < AIS_MOORED_STILL_KN);
+    const depthAsked = nav === AIS_NAV_ANCHORED || nav === AIS_NAV_MOORED;
+    if (!berthAsked && !depthAsked) return v;
+    const { chart_depth_m, berth_m, berth_deg, ...rest } = v;
+    const out = { ...rest };
+    if (depthAsked) {
+      const d = chartDepthAt(feats, +v.lat, +v.lon);
+      if (d) out.chart_depth_m = Math.round((d.deepM + rise) * 10) / 10;
+    }
+    if (berthAsked) {
+      const b = chartBerth(feats, v);
+      if (b) { out.berth_m = b.m; if (b.deg != null) out.berth_deg = b.deg; }
     }
     return out;
   });
@@ -653,7 +759,12 @@ export function aisKeepout(v, frame, opts = {}) {
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
   // THE ONE RULE (aisMotion, 2026-09-30): whether she is under way, and which way her bow points. The AIS layer draws
   // her hull by the same answer, so the outline here and the ship drawn inside it always point the same way.
-  const { sog, ageS, navStopped, vel, moving, hdg } = aisMotion(v, opts);
+  const mo = aisMotion(v, opts);
+  const { sog, ageS, navStopped, vel, moving } = mo;
+  // along a berth (aisMotion "berth": no heading reported, stopped alongside) she may lie either way round - the box of
+  // her larger offsets holds her both ways; `navRules: false` is the model before 2026-11-01, which had no berth
+  const byBerth = mo.from === "berth" && opts.navRules !== false;
+  const hdg = (mo.from === "berth" && !byBerth) ? null : mo.hdg;
   const c = frame.toEN({ lat, lon });
   // Dead reckoning, capped: past AIS_DR_MAX_S the box stays where the last honest position put it.
   const dr = moving ? Math.min(ageS, AIS_DR_MAX_S) : 0;
@@ -667,9 +778,11 @@ export function aisKeepout(v, frame, opts = {}) {
     if (Math.min(d0, d1) > range) return null;
   }
   const box = aisBox(v);
+  const fore = Math.max(box.toBowM, box.toSternM), side = Math.max(box.toPortM, box.toStbdM);
+  const shapeBox = byBerth ? { ...box, toBowM: fore, toSternM: fore, toPortM: side, toStbdM: side } : box;
   const shape = (at) => hdg == null
     ? discRingEN(at, aisDiscM(box))
-    : hullRingEN(at, hdg, box);
+    : hullRingEN(at, hdg, shapeBox);
   const hull = shape(c0);
   const bare = c1 ? convexHull(hull.concat(shape(c1))) : hull;
   // HER CLEAR WATER: set by her navigational status where it says moored and still, or at anchor (aisNavRule, Andy
@@ -702,14 +815,15 @@ export function aisKeepout(v, frame, opts = {}) {
   }
   const size = Math.round(box.lengthM) + " x " + Math.round(box.beamM) + " m" + (box.assumed ? " assumed" : "");
   const name = (v.name != null && String(v.name).trim()) ? String(v.name).trim() : null;
+  const ruleInferred = aisRuleInferred(v, rule);
   const kind = "AIS: " + (name || ("MMSI " + v.mmsi)) + " (" + size
-    + (moving ? ", " + sog.toFixed(1) + " kn" : navStopped ? ", " + aisNavWord(+v.nav) : "") + ")";
+    + (moving ? ", " + sog.toFixed(1) + " kn" : navStopped ? ", " + aisNavWord(+v.nav) : ruleInferred ? ", alongside" : "") + ")";
   // `ruleRing`: her keep-out under her status, never waived (aisAvoidKeepout); `ruleWaived`: the boat is inside it, and
   // `ring` is the half-length clear water or her bare hull instead; `marginM`: the margin round her hull in `ring` (0
   // for the watch circle, which is not a margin round her hull, and for her bare hull)
   return { ring, bb: bbOf(ring), kind, mmsi: v.mmsi, name, moving, sweepS: c1 ? sweepS : 0,
            at: c0, end: c1, hull, bare, box, hdg, marginM: waived ? 0 : margin, marginWaived: waived,
-           rule, watch, ruleRing: rule ? grown : null, ruleWaived };
+           rule, watch, ruleRing: rule ? grown : null, ruleWaived, ruleInferred, nav: navOf(v), byBerth };
 }
 /** A convex ring grown by `m` on every side (it CONTAINS every point within m of the ring): discs about its vertices. */
 export function growRingEN(ring, m) {
