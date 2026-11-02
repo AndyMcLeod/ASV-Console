@@ -568,6 +568,10 @@ check("20. the unrouted upload path clears the set rather than leaving a stale o
     grabFn("alongLineM"), grabFn("linePhase"), grabFn("currentActivity"), grabFn("speedRole"),
     grabFn("roleSpeed"), grabFn("roleSpeedMS"), grabFn("sendSpeed"), grabFn("commandSpeed"),
     grabFn("slowestMakingWayKey"), grabFn("setMsNow"), grabFn("makesWayKey"),   // the floor under every command (2026-09-26)
+    // govRaiseHeld (2026-11-02): the governor's refusal-to-raise, which the speed-zone release banner asks
+    // too, so the banner can no longer announce a restore the next statement declines. Lifted beside the
+    // governor itself - it IS the raise rule this suite's own comment below names.
+    grabFn("govRaiseHeld"),
     grabFn("speedGovernor"),
     grabLet("govLead"), grabFn("leadSpeedKey"),   // the lead (2026-10-03): null at once with no slowdown block
     "let zoneHeld = null, zoneRestore = null; const zoneCap = () => null, zoneTrack = () => {}, zoneOnlyGovern = () => null;",   // speed zones (2026-10-16): none in this world - tests/speed_zones.js drives them

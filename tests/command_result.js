@@ -415,6 +415,10 @@ function world(opts) {
   const api = new Function("W", "setTimeout", "clearTimeout", "AbortController",
                            PRELUDE + "\n"
                            + grabDecl("SUPERVISOR_ANY") + "\n"
+                           // ⚠ THE OPERATOR'S START CARRIES THE STAND-DOWN RELEASE (2026-11-02, HONOLULU):
+                           // startRun and resumeRun are presses and send SUP_RELEASE, so the console can tell
+                           // a human's Continue from a page's own bookkeeping. Lifted, never stubbed.
+                           + grabDecl("SUP_RELEASE") + "\n"
                            + grabDecl("CMD_TIMEOUT_MS") + "\n"
                            + grabDecl("NOGO_RADIUS_M") + "\n" + grabDecl("RTH_MAX_M") + "\n"
                            + grab("rthTooFar") + "\n"

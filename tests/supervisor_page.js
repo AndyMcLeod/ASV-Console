@@ -346,6 +346,12 @@ const onFrame = new Function("calls", "flags", [
   "const supervisorReport = () => { calls.push('report'); };",
   "const onState = (m) => { calls.push('ladder'); if (flags.throwIt) throw new TypeError('guard fell over'); };",
   "const aisPollTick = () => { flags.aisAsked = (flags.aisAsked || 0) + 1; };",   // 8d
+  // 8e. THE CONSOLE'S OWN CONDITIONS, read off the frame it published: the supervision stand-down said on the
+  // chart, and the route a page loaded mid-run does not hold. Stubs that only RECORD, because what this suite
+  // owns about them is WHERE they are called, not what they do (tests/supervision_standdown.py owns the
+  // stand-down itself; tests/governor_says.js owns the route the governor needs).
+  "const supHeldSay = () => { calls.push('standdown'); };",
+  "const adoptRunRoute = () => { calls.push('route'); };",
   decl(/^const FRAME_FAULT_AFTER = [^;]*;/m),
   decl(/^let frameFaults = [^;]*;/m),
   grab("onFrame"),
@@ -359,7 +365,20 @@ onFrame({ data: JSON.stringify({ type: "tick" }) });
 onFrame({ data: "not a frame" });
 check("8c. every state frame is a pulse, taken BEFORE the ladder runs; a report goes only after the ladder ran on the "
       + "frame - one whose ladder threw is no report - and what is not a state frame is neither",
-      () => calls.join(",") === "pulse,ladder,report,pulse,ladder",
+      () => calls.join(",") === "pulse,ladder,report,standdown,route,pulse,ladder",
+      () => calls.join(","));
+// ⚠ 8e. AND THE CONSOLE'S OWN CONDITIONS ARE READ INSIDE THE TRY (2026-11-02, HONOLULU). The stand-down alert and
+// the mid-run route fetch were first written into onState, where everything is gated on a RUNNING boat - and a
+// stood-down boat is PAUSED, so the alert would have been raised by the frame that never came. Written next into
+// onFrame's TAIL, where consoleHealth and the rest live; a throw there ESCAPES the frame handler, which
+// tests/frame_health.js check 1 exists to forbid. They belong after the report and inside the try: a frame whose
+// ladder threw runs neither of them and is counted as a CONSOLE FAULT, said out loud, which is review #12's rule.
+check("8e. the stand-down alert and the mid-run route read come AFTER the report and INSIDE the try - a frame "
+      + "whose ladder threw runs neither, and a throw in either is a counted fault rather than an escape",
+      () => calls.join(",").indexOf("ladder,report,standdown,route") >= 0
+            && calls.join(",").lastIndexOf("standdown") < calls.join(",").lastIndexOf("pulse")
+            && /supervisorReport\(\);[\s\S]{0,900}?supHeldSay\(\);\s*[^\n]*\n\s*adoptRunRoute\(\);/.test(H)
+            && !/storageCheck\(\);\s*\n\s*supHeldSay\(\)/.test(H),
       () => calls.join(","));
 // 8d. THE AIS POLL RIDES THE STREAM TOO (Andy, 2026-10-13: "AIS KEEP-OUTS BLIND" ... "Drove right through it"): a covered
 // window's timers are throttled while its stream still arrives, so every state frame asks whether a poll is due - the

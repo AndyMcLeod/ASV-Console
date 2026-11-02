@@ -784,6 +784,22 @@ def validate_vessel(v, source="<vessel>"):
             a = v[blk][key]
             if isinstance(a, bool) or not isinstance(a, (int, float)) or not math.isfinite(a) or a < 0:
                 raise ValueError("%s: %s.%s must be a number >= 0 (got %r)" % (source, blk, key, a))
+    # OPTIONAL SUPERVISION STAND-DOWN (2026-11-02, HONOLULU): how long this hull may run armed with NO browser tab
+    # supervising her before the console takes the way off, and whether it does. Absent is the default (see
+    # supervisor_lost_setting). A SAFETY INPUT, so a wrong type or an unknown word is REFUSED at load rather than
+    # read - a NaN here would compare false against every quiet time and silently never stand her down, which is
+    # the shape of fault set_approach's own note records for a NaN approach radius.
+    if "supervisor_lost_s" in v["planning"]:
+        a = v["planning"]["supervisor_lost_s"]
+        if isinstance(a, bool) or not isinstance(a, (int, float)) or not math.isfinite(a) or a <= 0:
+            raise ValueError("%s: planning.supervisor_lost_s must be a number > 0 seconds (got %r)" % (source, a))
+    if "supervisor_lost_action" in v["planning"]:
+        a = v["planning"]["supervisor_lost_action"]
+        if a not in ("pause", "none"):
+            raise ValueError("%s: planning.supervisor_lost_action must be \"pause\" (take the way off) or \"none\" "
+                             "(alarm only) - got %r. \"hold\" is deliberately not offered: with no page there is no "
+                             "certified clear disc, so a hold would command a direct drive with no guard running"
+                             % (source, a))
     # The operator selects speed in WHOLE KNOTS between the hull's low and high (apply_vessel), so a hull must have one.
     lo, hi = v["propulsion"]["speeds_kn"]["low"], v["propulsion"]["speeds_kn"]["high"]
     if not (lo > 0 and math.floor(hi + 1e-9) >= math.ceil(lo - 1e-9)):
@@ -6575,6 +6591,11 @@ class VcuLink:
                     completion="complete", hold_clear_m=None, coast_from_m=None,
                     name="unknown"): ...
     def amend_plan(self, waypoints): ...     # replace the UNFLOWN remainder, keep the run; returns the index it spliced at
+
+    # THE LOADED PLAN, for a page that did not upload it - see SimVcu.plan_points. A link that cannot read its
+    # own plan back answers an empty list, and the endpoint then says the route is not available rather than
+    # serving a short one: a WRONG waypoint count is what indexedRoute's whole length test exists to refuse.
+    plan_points = ()
     def start(self): ...
     def pause(self): ...
     def stop(self): ...
@@ -6754,6 +6775,19 @@ class SimVcu(VcuLink):
     def plan_total(self):
         """How many waypoints the LOADED plan holds - what the next tick's telemetry reports as wp_total."""
         return len(self._plan)
+
+    @property
+    def plan_points(self):
+        """THE LOADED PLAN ITSELF - the array `wp_index` counts into, as [{lat, lon}, ...] (2026-11-02).
+
+        ⚠ READ FROM THE LINK, NOT KEPT A SECOND TIME BY THE ENGINE. The Engine held only wp_index and wp_total
+        (it threw the waypoints away after link.upload_plan), so a page that loaded mid-run could not name the
+        leg she was on - indexedRoute() answered null, the speed governor stood down, and after Honolulu it also
+        announced a hand-back it never sent. The obvious repair is for the Engine to keep a copy of what it
+        uploads; that copy would be WRONG after a staged plan is applied on Start and after every amend, which
+        splice the link's array and not the Engine's. This is the array itself, so there is nothing to keep in
+        step. A COPY is returned, because a caller must not be able to splice the plan the vessel is flying."""
+        return [{"lat": p["lat"], "lon": p["lon"]} for p in self._plan]
 
     @property
     def loaded_name(self):
@@ -7593,6 +7627,12 @@ class Engine:
     # disarmed" while the same frame carried armed and running. Every command that arms her, loads a plan or moves her asks
     # this first; Stop, Pause, disarm and E-STOP never do.
     LINK_LOST_REFUSAL = "LINK LOST: no frame from the vessel - nothing is commanded until one is seen (check her first)"
+    # ⚠ AND NOTHING RESTARTS A BOAT THIS CONSOLE STOOD DOWN until the operator releases it. Asked by start()
+    # alone: ARM, an upload and a Stop are all still taken, because the latch is about RESUMING THIS RUN
+    # unsupervised, not about taking the boat away from the operator.
+    SUPERVISOR_HELD_REFUSAL = ("STOOD DOWN: this console took the way off because no browser tab was supervising "
+                               "her. Look at the water, then press CONTINUE THE SURVEY on the SUPERVISION LOST "
+                               "alert - that is the one Start that releases it")
 
     TICK_HZ = 4.0
     DT_MAX_S = 1.0                       # the most one tick may advance her (clamp_dt)
@@ -7615,6 +7655,14 @@ class Engine:
         self.estop = False
         self.plan_uploaded = False
         self.run = "idle"          # idle | running | paused | stopped | complete
+        # ⚠ THE SUPERVISION STAND-DOWN'S LATCH (2026-11-02, HONOLULU). Set when THIS CONSOLE took the way off
+        # because no browser tab was supervising an armed running boat; cleared only by a Start that carries the
+        # operator's release, or by a Stop / E-STOP / disarm. It exists because "we never auto-resume" (line 34)
+        # has to be true of a returning PAGE too: the page that comes back after a crash must not start her
+        # before the operator has seen why she stopped. Published in state() so the page can say so on the chart.
+        self.supervisor_held = False
+        self.supervisor_held_t = None
+        self.supervisor_held_why = ""
         # ⚠ THE LIST WAS STALE: `escape` has been a behavior since the guard was given the
         # helm, and `/api/cmd/escape` sets it (see the escape route). A comment that omits the
         # one behavior the CONSOLE commands on its own authority is the one worth having.
@@ -8042,7 +8090,7 @@ class Engine:
                                                                  "L" if POWER_TYPE == "fuel" else "V")
         self._push_state()
 
-    def start(self):
+    def start(self, release=False):
         with self._lock:
             link = self._link
             self._require(link is not None, "not connected")
@@ -8050,11 +8098,27 @@ class Engine:
             self._require(self.armed, "ARM before starting")
             self._require(self.plan_uploaded, "upload a run plan first")
             self._require(not self.estop, "clear E-STOP first")
+            # ⚠ AND A CONSOLE-SIDE STAND-DOWN IS NOT RESUMED BY WHOEVER ASKS FIRST (2026-11-02). Every automatic
+            # resume in the page - the AIS return, the held-survey resume, a passage section - is this same POST,
+            # so the console cannot tell a human's Continue from a page's bookkeeping. The release flag can: the
+            # standing SUPERVISION LOST alert on the chart is the only thing that sends it, which puts the undo
+            # in the one place that explains what happened.
+            # ⚠⚠ AND THE GATE IS KEYED ON `run == "paused"`, WHICH IS THE WHOLE POINT. The latch alone would be a
+            # flag with six other writers to audit - connect, disconnect, disarm, stop, estop, _link_lost all
+            # abandon the run - and a gate keyed on a flag those six do not clear refuses a Start the operator is
+            # entitled to the first one of them I missed. The stand-down IS a pause; the moment she is anything
+            # else, every one of those paths has already taken the run away and there is nothing to refuse.
+            self._require(not (self.supervisor_held and self.run == "paused") or release,
+                          self.SUPERVISOR_HELD_REFUSAL)
             # ⚠ A RESUME IS THE SAME RUN, AND KEEPS ITS NAME (review #8). Every Start used to rename
             # the run "survey" - so a paused ESCAPE or HOLD came back as a chainable run, and the
             # page chains the end-of-plan Return-to-Home from a survey that is holding: straight
             # back toward whatever the escape had just steered clear of. A staged plan is a new run.
             resuming = self.run == "paused" and not link.plan_staged   # read BEFORE start() clears it
+            # ⚠ SPENT ON EVERY START THAT GETS THROUGH, released or not, so the latch can never go stale. The gate
+            # above is keyed on `run == "paused"`, so a Start after a Stop passes it without a release - and a flag
+            # left set there would refuse the operator's NEXT ordinary pause-and-continue for no reason at all.
+            self._clear_supervisor_hold()
             link.start()
             self.run = "running"
             self._commanded()
@@ -8468,16 +8532,53 @@ class Engine:
                 self.note = "Home set to the chosen point."
         self._push_state()
 
-    def pause(self):
+    def pause(self, why=None, supervisor_held=False):
+        """⚠ `why` AND THE LATCH ARE SET INSIDE THE SAME LOCK AND ONE STATE FRAME (2026-11-02). The supervision
+        stand-down is a pause, and two things have to be true of it that are not true of the operator's own:
+        the operator must be told WHICH pause this was - setting `note` afterwards would publish "Paused (next
+        waypoint held)" first and the reason on a later frame, and the first of the two is the one a page
+        catches - and it must LATCH, because this file's rule from line 34 is that we never auto-resume. A page
+        coming back must not start her; the operator presses Continue, having seen why she stopped.
+        Every other caller passes neither argument and reads exactly as before.
+        ⚠ THE LINK IS TOLD FIRST AND NOTHING IS LATCHED IF IT REFUSES, which is _link_lost's ordering. A RealVcu
+        raises for pause (RealVcu._blocked), so on a real link the stand-down can only be SAID - and a latch that
+        refused the operator's Start for a boat that was never stopped would be the worst of both."""
         with self._lock:
             link = self._link
             self._require(link is not None, "not connected")
             if link:
                 link.pause()
             self.run = "paused"
+            if supervisor_held:
+                self.supervisor_held = True
+                self.supervisor_held_t = time.time()
+                self.supervisor_held_why = why or ""
             self._commanded()
-            self.note = "Paused (next waypoint held)."
+            self.note = why or "Paused (next waypoint held)."
         self._push_state()
+
+    def run_route(self):
+        """The plan the vessel HOLDS, for a page that did not upload it. Served by /api/run_route.
+
+        ⚠ BOTH COUNTS ARE RETURNED AND NEITHER IS TRUSTED OVER THE OTHER. `wp_total` is this console's mirror of
+        the vessel's own telemetry; `len(route)` is the link's array. They agree in every ordinary case, and when
+        they do not the page must adopt nothing - that disagreement is exactly what indexedRoute's length test
+        exists to catch, and a page that adopted the shorter array would measure the wrong water confidently.
+        `staged` says a plan is loaded but not yet started, so its waypoints are NOT what her index counts into."""
+        with self._lock:
+            link = self._link
+            pts = [dict(p) for p in (getattr(link, "plan_points", ()) or ())] if link is not None else []
+            return {"route": pts, "wp_total": self.wp_total, "wp_index": self.wp_index,
+                    "behavior": self.behavior, "run": self.run, "run_seq": self.run_seq,
+                    "staged": bool(link is not None and getattr(link, "plan_staged", False))}
+
+    def _clear_supervisor_hold(self):
+        """Called under the lock by every path that abandons or re-authorizes the run. The latch is NOT a
+        second E-STOP: a Stop, an E-STOP or a disarm has already taken the run away, so holding it after
+        them would only refuse the operator a Start she is entitled to."""
+        self.supervisor_held = False
+        self.supervisor_held_t = None
+        self.supervisor_held_why = ""
 
     def stop(self):
         with self._lock:
@@ -9024,6 +9125,12 @@ class Engine:
             "run_seq": self.run_seq,                   # which commanded motion this is (review #23)
             "berth": self.berth,                       # the launch grant, if one is latched (R16)
             "supervisor": SUPERVISION.snapshot(),      # which tab is in charge, and whether it is still there (#14)
+            # ⚠ THE STAND-DOWN HAS TO BE ON THE CHART, NOT ONLY IN `note` (2026-11-02). The server's standing note
+            # is deliberately not painted on the chart page (see its own comment there), so a stand-down whose only
+            # output was `note` would leave the operator looking at a paused boat with no reason given. Published
+            # as its own field for the page to raise as a standing alert, the way the AIS stall is.
+            "supervisor_held": ({"t": self.supervisor_held_t, "why": self.supervisor_held_why,
+                                 "paused": self.run == "paused"} if self.supervisor_held else None),
             # Two DIFFERENT things, deliberately both published:
             #   completion      - the operator's END-OF-PLAN SETTING (the mission store).
             #                     The command-bar selector and the end-of-plan RTH chain
@@ -9388,6 +9495,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, json.dumps(load_mission()))
             except MissionUnavailable as e:
                 self._send(503, json.dumps({"error": str(e)}))
+        elif self.path == "/api/run_route":
+            # ⚠ THE ARRAY THE VESSEL'S WAYPOINT NUMBER COUNTS INTO (2026-11-02, HONOLULU). /api/mission serves the
+            # DRAWN plan from the mission store, which is not the same thing: on the failing run it held 451
+            # waypoints while the vessel was flying a 388-waypoint way round an AIS contact, so a page loaded
+            # mid-run had no way to place her - indexedRoute() answered null and the speed governor stood down for
+            # the rest of the session. Read-only, and read from the LINK, so it cannot drift from what she holds.
+            self._send(200, json.dumps(ENGINE.run_route()))
         elif self.path == "/api/vessel":
             # active vessel (full params for the UI) + the available list (picker)
             self._send(200, json.dumps({"vessel": VESSEL, "active": VESSEL["id"],
@@ -9925,7 +10039,8 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/cmd/upload":            # optional ENC-aware run path
                 ENGINE.upload(body.get("route"), body.get("hold_clear_m"), body.get("completion"))
             elif path == "/api/cmd/start":
-                ENGINE.start()
+                # `supervisor_release`: only the chart's SUPERVISION LOST alert sends it - see Engine.start
+                ENGINE.start(release=bool(body.get("supervisor_release")))
             elif path == "/api/cmd/pause":
                 ENGINE.pause()
             elif path == "/api/cmd/stop":
@@ -10597,13 +10712,65 @@ STORAGE = StorageWatch()
 # planning tab then sent was REFUSED as another tab's. So the page now says it is about to plan (`busy_s` on its
 # report, just before each search), and while that holds - at most SUPERVISOR_BUSY_MAX_S - the post is not handed
 # away and its silence is not called a lapse. Its next ordinary report ends it. A deliberate TAKE OVER still moves it.
+#
+# ⚠⚠ AND NOW A LAPSE CAN STAND HER DOWN - THE OPERATOR'S CALL, MADE (Andy, 2026-11-02). The paragraph above left the
+# question open and HONOLULU answered it. Edge's renderer was killed by a machine-wide out-of-memory abort 1 h 56 m
+# into a 9.3 h run (commit charge 99.64% of the limit; three 0xE0000008 aborts in three minutes), the tab Edge
+# reloaded was killed the same way 2.5 minutes later, and after the last lapse at t=7,011.5 s NO page ever took the
+# post again. This console then flew an ARMED boat on survey for 7 h 21 m - 2,664 state records at run=running,
+# behavior=survey, armed=True - with no clearance guard, no speed governor and no AIS answer anywhere in the system:
+# 104 client:guard records before the lapse, ZERO after. She ran 8.10 nm across Honolulu Harbor at a mean 1.099 kn
+# (the governor's last command was `low` and only the dead page could release it) and spent 19 minutes inside the
+# broadcast hull box of a moored 265 m container ship the guard had called IN EXTREMIS and routed 530 m around half
+# an hour earlier. The paragraph above is still right that a browser hiccup halting a survey mid-line is its own
+# hazard - which is why the stand-down waits out four to five stale windows, not one, and is a per-vessel setting.
+#
+# ⚠ IT TAKES THE WAY OFF; IT COMMANDS NO MOTION. `pause` is the only one of the four answers that commands LESS
+# motion rather than DIFFERENT motion: the vessel's own pause zeroes her speed and `run="paused"` keeps the plan and
+# her place in it ("Paused (next waypoint held)"), so the operator's Continue resumes the survey with nothing lost.
+# A `hold` was considered and REFUSED: ENGINE.hold replaces the plan with a one-waypoint route, and with no page
+# there is no certified clear disc (hold.js), so the vessel re-approaches DIRECT - a new commanded motion, through
+# whatever is in the way, with no ladder running. Commanding motion with nothing watching the water is the fault
+# being repaired; the repair must not do it. For the same reason "hold" is not offered as a setting value.
+# ⚠ AND IT NEVER AUTO-RESUMES, which is this file's rule from line 34: a page coming back does not start her. The
+# operator presses Continue. The latch is cleared only by that - see StandDown.
+# ⚠ AND IT IS KEYED ON `tabs == 0`, NOT ON `stale`. _prune clears the holder when it forgets it, so the moment the
+# prune moved onto the watch loop (below) a dead holder stops being a holder at SUPERVISOR_FORGET_S and `stale`
+# goes FALSE - the condition would evaporate exactly when it mattered most. "No tab has reported within
+# SUPERVISOR_STALE_S" is true whether a holder is named or not, and it also catches the case nobody had noticed:
+# the operator CLOSING the only chart window mid-survey is a clean release(), leaves no holder, and until now was
+# just as unprotected and just as silent as a crash.
+# ⚠ AND ONLY AFTER A PAGE HAS ACTUALLY SUPERVISED THIS SESSION. A suite, a script or curl drives this console with
+# no page at all and arms and runs - see Supervision.knows - and standing those down would be a harness breaking
+# itself. The clock starts at the last report from ANY tab, and there is no clock until there has been one.
 SUPERVISOR_BEAT_S = 2.0          # what a supervising page keeps to - published, so one number governs both ends
 SUPERVISOR_STALE_S = 10.0        # no report for this long and that tab is not running its ladder - published too
 SUPERVISOR_FORGET_S = 120.0      # silent this long and the tab is forgotten: it was closed
 SUPERVISOR_BUSY_MAX_S = 60.0     # the longest a supervising tab may say it will be busy planning
+SUPERVISOR_RESAY_S = 60.0        # armed and running with no tab at all: say it again this often, not once for 7 h
+SUPERVISOR_LOST_DEFAULT_S = 45.0  # ... and take the way off after this long (4-5 stale windows; per-vessel override)
+SUPERVISOR_UI_RETRY_S = 120.0    # ... and then try ONCE for a fresh chart window, after she is already stopped
 SUPERVISOR_ANY = ("/api/cmd/stop", "/api/cmd/pause", "/api/cmd/estop")
 LOG_QUIET_POSTS = ("/api/supervisor",    # the heartbeat is not a command; the registry logs what matters about it
                    "/api/enc/corridor")  # a chart read moves nothing; the page logs the operator's own (corridor_read)
+
+
+def supervisor_lost_setting():
+    """(seconds, action) for the stand-down, from the running vessel's `planning` block.
+
+    ⚠ READ HERE, NOT CACHED IN apply_vessel, for two reasons. The constants above are defined 9,700 lines after
+    apply_vessel's first call, so a global set there would be overwritten by the definition at import; and a LIVE
+    vessel switch must change the setting - the module-global staleness trap that bit HULL_A_LAT. It is also
+    deliberately NOT in _VESSEL_SCHEMA, which is the REQUIRED-field list: a hull file written before today, or
+    anyone else's, must still load. Absent means the default. `supervisor_lost_action` takes "pause" or "none"
+    ("none" is today's behavior: alarm only); anything else reads as "pause", because an unrecognized word in a
+    safety setting must not resolve as "do nothing"."""
+    pl = (VESSEL or {}).get("planning") or {} if isinstance(VESSEL, dict) else {}
+    s = pl.get("supervisor_lost_s")
+    secs = (float(s) if isinstance(s, (int, float)) and not isinstance(s, bool)
+            and math.isfinite(s) and s > 0 else SUPERVISOR_LOST_DEFAULT_S)
+    act = str(pl.get("supervisor_lost_action") or "pause").strip().lower()
+    return secs, (act if act in ("pause", "none") else "pause")
 
 
 class Supervision:
@@ -10615,6 +10782,12 @@ class Supervision:
         self._said_stale = False
         self._busy_until = 0.0       # the holder said it is planning until then (0: it did not)
         self._said_busy = False
+        self._said_lost_at = 0.0     # when the "no tab at all" line was last said (0: not said this episode)
+        # ⚠ SURVIVES _prune, WHICH IS THE WHOLE POINT. `_seen` is emptied as tabs are forgotten, so it cannot
+        # answer "when did anyone last report"; this can, and it is what the stand-down's clock runs on. It is
+        # also the test for "has a page EVER supervised this session" - 0.0 means no, and a console nobody has
+        # opened a page on is a harness, not an unwatched boat.
+        self._last_any = 0.0
 
     def _prune(self, now):
         for cid in [c for c, t in self._seen.items() if now - t > SUPERVISOR_FORGET_S]:
@@ -10635,6 +10808,7 @@ class Supervision:
         with self._lock:
             prev = self._seen.get(cid)
             self._seen[cid] = now
+            self._last_any = max(self._last_any, now)   # the stand-down's clock; see _last_any
             self._prune(now)
             held = self._holder
             stale = (held is not None and held != cid and (now - self._seen.get(held, 0.0)) > SUPERVISOR_STALE_S
@@ -10657,6 +10831,20 @@ class Supervision:
                 if not busy_s:
                     self._said_busy = False
         return self.snapshot(now)
+
+    def quiet_s(self, now=None):
+        """How long NO tab at all has been reporting, or None while one is (or while none ever has).
+
+        ⚠ THIS, NOT `stale`, IS THE "NOBODY IS WATCHING" SIGNAL - see the paragraph above the constants. `stale`
+        needs a named holder and the prune takes that away; a count of tabs seen within SUPERVISOR_STALE_S does
+        not, so this answers the same for a crashed tab, a frozen tab and a window the operator closed."""
+        now = time.time() if now is None else now
+        with self._lock:
+            if not self._last_any:                 # no page has ever supervised: a harness, not a lost operator
+                return None
+            if any(now - t <= SUPERVISOR_STALE_S for t in self._seen.values()):
+                return None
+            return max(0.0, now - self._last_any)
 
     def release(self, client_id, now=None):
         """A tab says it is going away (the operator closed it). The post is open for the next heartbeat."""
@@ -10694,8 +10882,18 @@ class Supervision:
             return str(client_id or "")[:64] in self._seen
 
     def check_once(self, now=None):
-        """Said once when supervision lapses, and once when it comes back."""
+        """Said once when supervision lapses, and once when it comes back - and said AGAIN, on
+        SUPERVISOR_RESAY_S, for as long as an armed boat is running with no tab reporting at all."""
+        now = time.time() if now is None else now
+        # ⚠ THE PRUNE RUNS HERE NOW, AND NOT ONLY IN beat() (2026-11-02, HONOLULU). _prune was reachable from
+        # beat() alone, so TOTAL page death was the one case it could never run: with no tab ever reporting again,
+        # SUPERVISOR_FORGET_S never fired, the dead holder was never forgotten, and the snapshot published it as
+        # the holder with age_s climbing to 26,479.2 s - 220 times the forget time - beside tabs: 0. A single beat
+        # from anywhere would have cleared it. On the watch loop it clears itself.
+        with self._lock:
+            self._prune(now)
         snap = self.snapshot(now)
+        self._say_unwatched(snap, now)
         with self._lock:
             if snap["holder"] is None:
                 self._said_stale = False
@@ -10709,11 +10907,21 @@ class Supervision:
                     LOG.event("supervisor_busy", tab=(snap["holder"] or "")[:8], age_s=snap["age_s"])
             if snap["stale"] and not self._said_stale:
                 self._said_stale = True
+                # ⚠ "Nothing was stopped." WAS THE WHOLE OF THIS SENTENCE, AND IT IS NO LONGER TRUE OF EVERY CASE
+                # (2026-11-02). A lapse with another tab still reporting stops nothing, as before; a lapse with NO
+                # tab reporting now has a clock on it, and the line says which of the two this is and what follows.
+                _secs, _act = supervisor_lost_setting()
                 print("[supervisor] ⚠ the supervising tab has not reported for %.0f s - the page's clearance guard "
-                      "and speed governor are not running. Nothing was stopped." % (snap["age_s"] or 0),
+                      "and speed governor are not running.%s" % ((snap["age_s"] or 0),
+                      (" Nothing is stopped: another tab is reporting." if snap["tabs"] else
+                       (" NO tab is reporting: the way comes off at %.0f s unwatched." % _secs)
+                       if _act == "pause" and armed_and_running() else
+                       " Nothing is stopped." if _act == "pause" else
+                       " Nothing is stopped (this vessel's supervisor_lost_action is \"none\").")),
                       file=sys.stderr, flush=True)
                 if LOG is not None:
-                    LOG.event("supervisor_lapsed", tab=(snap["holder"] or "")[:8], age_s=snap["age_s"])
+                    LOG.event("supervisor_lapsed", tab=(snap["holder"] or "")[:8], age_s=snap["age_s"],
+                              tabs=snap["tabs"], action=_act)
             elif not snap["stale"] and self._said_stale:
                 self._said_stale = False
                 print("[supervisor] the supervising tab is reporting again", flush=True)
@@ -10721,11 +10929,37 @@ class Supervision:
                     LOG.event("supervisor_back", tab=(snap["holder"] or "")[:8])
         return snap
 
+    def _say_unwatched(self, snap, now):
+        """THE REPEAT. One stderr line and one log event per SUPERVISOR_RESAY_S for as long as an ARMED boat is
+        RUNNING with no tab reporting at all.
+
+        ⚠ GATED ON ARMED AND RUNNING, AND THAT IS NOT TIDINESS. The 2026-10-30 session lapsed 46 times over 11.2 h
+        with the boat IDLE at the dock, armed=False, wp 0/0 - a repeat there writes 660 lines about nothing and
+        teaches the operator to ignore the one line that matters. The condition worth repeating is the one that
+        cost 7 h 21 m: a boat under autonomous command with nobody watching the water."""
+        q = self.quiet_s(now)
+        if q is None or not armed_and_running():
+            with self._lock:
+                self._said_lost_at = 0.0
+            return
+        with self._lock:
+            if self._said_lost_at and now - self._said_lost_at < SUPERVISOR_RESAY_S:
+                return
+            first = not self._said_lost_at
+            self._said_lost_at = now
+        print("[supervisor] ⚠⚠ %sNO BROWSER TAB HAS SUPERVISED FOR %.0f s and the boat is ARMED and RUNNING. No "
+              "clearance guard, no speed governor and no AIS answer is running anywhere."
+              % ("" if first else "STILL ", q), file=sys.stderr, flush=True)
+        if LOG is not None:
+            LOG.event("supervisor_unwatched", quiet_s=round(q, 1), first=first,
+                      holder=(snap["holder"] or "")[:8], tabs=snap["tabs"])
+
     def start(self):
         def loop():
             while True:
                 try:
-                    self.check_once()
+                    snap = self.check_once()
+                    STAND_DOWN.tick(self.quiet_s(), snap)
                 except Exception as e:                # the watch must outlive a bad check
                     print("[supervisor] %s: %s" % (type(e).__name__, e), file=sys.stderr)
                 time.sleep(1.0)
@@ -10733,6 +10967,130 @@ class Supervision:
 
 
 SUPERVISION = Supervision()
+
+
+def unwatched_run():
+    """(run, armed, estop) as this console holds them. One function, so a suite can replace it."""
+    return (str(getattr(ENGINE, "run", "") or ""), bool(getattr(ENGINE, "armed", False)),
+            bool(getattr(ENGINE, "estop", False)))
+
+
+def armed_and_running():
+    """A boat under autonomous command: the only state in which an absent supervisor is a hazard."""
+    run, armed, estop = unwatched_run()
+    return run == "running" and armed and not estop
+
+
+# ⚠ HOW THE CONSOLE REACHES A BROWSER AFTER STARTUP. `opener` and `url` are locals of main(), and the launch block
+# is the only place that knows whether a browser was wanted at all (--browser none) and which one. It leaves the one
+# call needed here. Empty means "do not open windows", which is what a headless run, a suite and --browser none all
+# want, and reopen_chart_window says so rather than guessing.
+UI_REOPEN = {"open": None}
+
+
+def reopen_chart_window(quiet_s):
+    """ONE attempt at a fresh chart window, AFTER she is already stopped. True if the opener was called.
+
+    ⚠ ONCE PER EPISODE, AND SECOND IN THE ORDER, ON PURPOSE. A window is a convenience; taking the way off is the
+    safety action, it needs no browser, and it goes first. And the window may well fail for the reason the last one
+    died - on 2026-11-01 the machine was at 99.64% of its commit limit and Edge had just lost three processes, so
+    spawning renderers in a loop would have been the worst thing this console could do. One try, logged, and the
+    latch is cleared only when a tab reports again (StandDown.rearm).
+    ⚠ IT CANNOT RE-POINT THE DEAD TAB. `webbrowser` hands a URL to the OS and gets no handle back - see the launch
+    block's own note - so this opens a NEW window and the dead one is left for the operator to close. Edge usually
+    reloads a crashed tab by itself (it did, twice, that night); this is for when it does not."""
+    fn = UI_REOPEN.get("open")
+    if fn is None:
+        print("[supervisor] no browser window was opened by this console (--browser none), so none is re-opened. "
+              "Open %s to get a clearance guard back." % (UI_REOPEN.get("url") or "the console URL"),
+              file=sys.stderr, flush=True)
+        if LOG is not None:
+            LOG.event("supervisor_window", opened=False, why="no browser launched by this console")
+        return False
+    try:
+        fn()
+    except Exception as e:
+        print("[supervisor] could not open a chart window: %s: %s" % (type(e).__name__, e),
+              file=sys.stderr, flush=True)
+        if LOG is not None:
+            LOG.event("supervisor_window", opened=False, why="%s: %s" % (type(e).__name__, e))
+        return False
+    print("[supervisor] opened a fresh chart window after %.0f s with no supervisor - its first beats take the post "
+          "and the clearance guard runs again. She stays paused until you press Continue." % quiet_s, flush=True)
+    if LOG is not None:
+        LOG.event("supervisor_window", opened=True, quiet_s=round(quiet_s, 1))
+    return True
+
+
+class StandDown:
+    """WHAT THE CONSOLE DOES WHEN THE OPERATOR'S PAGE IS GONE - see the paragraph above SUPERVISOR_BEAT_S for the
+    decision and the incident behind it. Two steps, in this order and no other:
+        1. at the vessel's `supervisor_lost_s` (default SUPERVISOR_LOST_DEFAULT_S), TAKE THE WAY OFF - ENGINE.pause,
+           which zeroes her speed and holds the plan and her place in it. Nothing is commanded to move.
+        2. at SUPERVISOR_UI_RETRY_S, ask ONCE for a fresh chart window, so the guard comes back with no human there.
+    The episode ends when a tab reports again or she is no longer an armed running boat - and ENDING IT DOES NOT
+    START HER. That is this file's rule from line 34, and it is the whole reason the pause is latched: the operator
+    presses Continue, having seen why she stopped."""
+
+    def __init__(self):
+        self._at = 0.0           # when she was stood down (0: not this episode)
+        self._tried_at = 0.0     # when the pause was last attempted - a refusal is retried, not latched
+        self._ui_at = 0.0        # when a window was asked for (0: not this episode)
+
+    def rearm(self):
+        """The episode is over. ⚠ THIS DOES NOT RESUME HER: the pause stands until Continue."""
+        self._at = self._tried_at = self._ui_at = 0.0
+
+    def state(self):
+        return {"stood_down_at": self._at or None, "window_at": self._ui_at or None}
+
+    def tick(self, quiet_s, snap=None, now=None):
+        """Called once a second from the supervision watch. `quiet_s` is Supervision.quiet_s()."""
+        now = time.time() if now is None else now
+        # ⚠ `or self._at` IS NOT BELT AND BRACES. The stand-down makes her PAUSED, so armed_and_running() goes
+        # false on the very next tick - and keyed on that alone the window retry was dead code in exactly the
+        # case it exists for: she would be stopped, nobody would be watching, and no page would ever be asked
+        # for. The episode stays open while THIS console is holding her, and ends when a tab reports (quiet_s
+        # None) or the operator takes her somewhere. Caught by tests/supervision_standdown.py 7b.
+        if quiet_s is None or not (armed_and_running() or self._at):
+            self.rearm()
+            return self.state()
+        secs, action = supervisor_lost_setting()
+        if action == "pause" and not self._at and quiet_s >= secs \
+                and now - self._tried_at >= SUPERVISOR_RESAY_S:
+            self._tried_at = now
+            self._take_the_way_off(quiet_s, secs, now, snap)
+        if not self._ui_at and quiet_s >= SUPERVISOR_UI_RETRY_S:
+            self._ui_at = now
+            reopen_chart_window(quiet_s)
+        return self.state()
+
+    def _take_the_way_off(self, quiet_s, secs, now, snap):
+        why = ("SUPERVISION LOST - the way is off and the plan is held. No browser tab has supervised for %.0f s, "
+               "so no clearance guard or speed governor has been running. Press Continue when a chart window is "
+               "back and you have looked at the water." % quiet_s)
+        try:
+            ENGINE.pause(why, supervisor_held=True)
+        except Exception as e:
+            # ⚠ NOT LATCHED ON A REFUSAL. pause() raises on a link that is gone or refusing, and a boat still
+            # running unwatched is still the hazard - so this is tried again on the re-say cadence, each attempt
+            # in the log, rather than failing once and going quiet for ever.
+            print("[supervisor] ⚠⚠ COULD NOT STAND HER DOWN after %.0f s with no supervisor: %s: %s - she is still "
+                  "running. Trying again in %.0f s." % (quiet_s, type(e).__name__, e, SUPERVISOR_RESAY_S),
+                  file=sys.stderr, flush=True)
+            if LOG is not None:
+                LOG.event("supervisor_stand_down", done=False, quiet_s=round(quiet_s, 1),
+                          why="%s: %s" % (type(e).__name__, e))
+            return False
+        self._at = now
+        print("[supervisor] ⚠⚠ STOOD HER DOWN: %s" % why, file=sys.stderr, flush=True)
+        if LOG is not None:
+            LOG.event("supervisor_stand_down", done=True, action="pause", quiet_s=round(quiet_s, 1),
+                      after_s=secs, holder=((snap or {}).get("holder") or "")[:8])
+        return True
+
+
+STAND_DOWN = StandDown()
 
 
 def _busy_seconds(v):
@@ -11332,6 +11690,7 @@ def main():
         _stop_ais_service()
         sys.exit(2)
     url = "http://%s:%d/" % ("localhost" if args.host in ("0.0.0.0", "127.0.0.1") else args.host, args.port)
+    UI_REOPEN["url"] = url      # named even under --browser none, so the "cannot open one" line can print it
 
     if args.sim:
         ENGINE.connect("sim", "", DEFAULT_VCU_PORT, "tcp")
@@ -11363,6 +11722,11 @@ def main():
     if args.browser != "none":
         b = None if args.browser == "default" else pick_browser(args.browser)
         opener = b or webbrowser
+        # ⚠ THE ONE CALL THE SUPERVISION WATCH NEEDS, LEFT WHERE IT CAN REACH IT. Only this block knows whether a
+        # browser was wanted (--browser none) and which one, and both are locals; reopen_chart_window must not
+        # re-derive either. `new=1` for the same reason the launch below uses it: each window its own, never two
+        # tabs of one (2026-10-17).
+        UI_REOPEN["open"] = lambda: opener.open(url, new=1)
         try:
             opener.open(url)                                  # main window: chart + status + command bar
             if not args.single_window:

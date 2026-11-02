@@ -96,6 +96,9 @@ const page = eval("(function(){ \"use strict\"; let S = {}; const $ = world.$, s
   // onFrame also pulses the supervision report (review #14) - tests/supervisor_page.js 8c checks that - and asks for
   // the AIS poll (2026-10-13, 8d there)
   + " const supervisorStreamed = () => {}, supervisorReport = () => {}, aisPollTick = () => {};"
+  // The console's own conditions, read off each frame inside the try (2026-11-02): no-ops here, because what
+  // this suite owns is the FAULT COUNTING around them - tests/supervisor_page.js 8e owns where they are called.
+  + " const supHeldSay = () => {}, adoptRunRoute = () => {};"
   + " const onState = (m) => { stateSeen++; S = m; if (throwNext > 0) { throwNext--; throw new TypeError(\"guard fell over\"); } };\n"
   + DECL + "\n" + grab("onFrame") + "\n" + grab("consoleHealth") + "\n"
   + "return { onFrame, consoleHealth, faults: () => frameFaults, lastAt: () => lastFrameAt }; })()");

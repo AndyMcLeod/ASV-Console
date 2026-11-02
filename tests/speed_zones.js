@@ -202,8 +202,14 @@ const gov = (o) => {
     "const slowLaw = () => null, slowLeadM = () => 0, SPEED_CMD_LATENCY_S = 1;",
     "const {zoneDecision, zoneLeadM, zoneRuleTxt, zoneId, zoneApplies, noaaZones, inZone, lawZones} = Z;",
     "let commandedSpeed = null, zoneHeld = null, zoneRestore = null, zonesFor = null, zonesList = []; const zoneSaid = new Set();",
-    ["speedZonesNow", "zoneCap", "zoneSpd", "zoneName", "zoneTrack", "zoneOnlyGovern", "speedGovernor"].map(grab).join("\n"),
-    "return {tick: () => { asv = w.pos; return speedGovernor(); }, held: () => zoneHeld};",
+    // govRaiseHeld (2026-11-02): the ONE function the governor's refusal-to-raise and the zone's release
+    // banner both ask, so the banner can no longer announce a restore the next statement declines. Lifted,
+    // never stubbed - a copy is a copy no mutation has ever been run against.
+    ["speedZonesNow", "zoneCap", "zoneSpd", "zoneName", "govRaiseHeld", "zoneTrack", "zoneOnlyGovern",
+     "speedGovernor"].map(grab).join("\n"),
+    // the guard's edge clock, so a check can put the governor inside its refusal-to-raise window
+    "return {tick: () => { asv = w.pos; return speedGovernor(); }, held: () => zoneHeld,"
+    + " edgeAt: (t) => { guardEdgeAt = t; }, commanded: () => commandedSpeed};",
   ].join("\n");
   w.api = new Function("w", "Z", src)(w, Z);
   return w;
@@ -270,6 +276,65 @@ const gov = (o) => {
         () => /; survey \(7 kn\) comes back when she is clear of it\.$/.test(N.banners[0] || "")
               && /back to survey \(7 kn\), her commanded speed\.$/.test(N.banners[1] || ""),
         () => JSON.stringify(N.banners));
+  // ── 5h-5j. THE RELEASE MAY NOT ANNOUNCE A RAISE THE GOVERNOR IS ABOUT TO DECLINE ────────────────
+  // Andy, 2026-11-02: "fix the zone banner too". speedGovernor calls zoneTrack FOUR LINES above its
+  // refusal-to-raise, so within EDGE_REASSESS_MS of the clearance guard moving her this banner said
+  // "back to 7 kn, her commanded speed" and the next statement returned the 5 kn she was already doing.
+  // Two seconds wide and self-expiring - but it is the same defect as the guard's own release note,
+  // which is the one Honolulu was about. Both now ask govRaiseHeld.
+  {
+    const E = gov();
+    E.pos = at(200, 200); E.api.tick();                       // in the zone: 5 kn commanded
+    const inZoneSent = E.sent.slice();
+    E.api.edgeAt(Date.now());                                 // the guard moves her: the window opens
+    E.pos = at(420, 200); const eClear = E.api.tick();        // clear of the zone, INSIDE the window
+    const held = E.banners[E.banners.length - 1] || "";
+    check("5h. clear of the zone INSIDE the guard's refusal-to-raise window: the banner says she is NOT back to "
+          + "7 kn yet and why, the governor declines the raise, and nothing is sent - it used to announce the "
+          + "restore and then decline it on the next statement",
+          () => /^CLEAR OF SPEED ZONE Test limit \(TEST\): not back to 7 kn yet - the clearance guard moved her /.test(held)
+                && /so she is held at 5 kn until it has re-read the water at the speed above\.$/.test(held)
+                && eClear === "5" && JSON.stringify(E.sent) === JSON.stringify(inZoneSent)
+                && E.logs.filter((l) => l[0] === "speed_zone").slice(-1)[0][1].raise_held === true,
+          () => JSON.stringify({ eClear, banner: held, sent: E.sent,
+                                 log: E.logs.filter((l) => l[0] === "speed_zone").slice(-1)[0][1] }));
+
+    // ⚠ PAIRED WITH THE ACCEPTANCE, because a check that only ever refuses passes with the raise broken.
+    const W = gov();
+    W.pos = at(200, 200); W.api.tick();
+    W.api.edgeAt(Date.now() - 5000);                          // the window has expired
+    W.pos = at(420, 200); const wClear = W.api.tick();
+    check("5i. ... and once the window has expired the same release reads exactly as it always did, and the "
+          + "raise is sent",
+          () => /^CLEAR OF SPEED ZONE Test limit \(TEST\): back to 7 kn, her commanded speed\.$/
+                  .test(W.banners[W.banners.length - 1] || "")
+                && wClear === "7" && W.sent[W.sent.length - 1] === "7"
+                && W.logs.filter((l) => l[0] === "speed_zone").slice(-1)[0][1].raise_held === false,
+          () => JSON.stringify({ wClear, banner: W.banners[W.banners.length - 1], sent: W.sent }));
+
+    // and the one function is read by BOTH ends, so the test and the sentence cannot drift apart
+    const src = require("fs").readFileSync(process.env.ASV_HTML
+                  || require("path").join(__dirname, "..", "static", "asv.html"), "utf8");
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+    // ⚠ THE GUARD'S `settling` READS THE SAME CLOCK AND IS A DIFFERENT QUESTION, so it is named here rather
+    // than folded in. `settling` asks "is the ladder deliberately quiet after an edge deviation" and gates the
+    // slow and hold rungs; govRaiseHeld asks "will a RAISE be taken", and also weighs `commandedSpeed` and the
+    // DIRECTION of the change - lowering is always allowed. One clock, two questions; merging them would gate
+    // the rungs on a throttle test. What this check forbids is a third copy of the THROTTLE question.
+    const edgeClock = (code.match(/Date\.now\(\) - guardEdgeAt < EDGE_REASSESS_MS/g) || []).length;
+    check("5j. the governor's refusal and the banner ask ONE function - the governor's line is "
+          + "`if(govRaiseHeld(want)) return commandedSpeed;`, the banner asks `govRaiseHeld(jobKey)`, and the "
+          + "raise test is written nowhere else (the guard's `settling` is the only other reader of that "
+          + "clock, and it is a different question)",
+          () => /if\(govRaiseHeld\(want\)\) return commandedSpeed;/.test(code)
+                && /govRaiseHeld\(jobKey\)/.test(code)
+                && (code.match(/ms < EDGE_REASSESS_MS/g) || []).length === 1
+                && edgeClock === 1
+                && /const settling = Date\.now\(\) - guardEdgeAt < EDGE_REASSESS_MS;/.test(code),
+          () => "governor asks: " + /if\(govRaiseHeld\(want\)\) return commandedSpeed;/.test(code)
+                + ", banner asks: " + /govRaiseHeld\(jobKey\)/.test(code)
+                + ", readers of the raw clock: " + edgeClock + " (expected 1, the guard's `settling`)");
+  }
   // a zone that does not bind the hull: said once, her speed untouched
   const SK = gov({ zones: [SMAZ] }); SK.pos = at(200, 200); const s1 = SK.api.tick(); SK.api.tick();
   check("5d. A ZONE THAT DOES NOT BIND HER (a 65 ft rule, the DriX 7.7 m) is said ONCE and her speed left as the job has it",

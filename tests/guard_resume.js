@@ -330,6 +330,12 @@ function $(sel) {
 
 // eslint-disable-next-line no-eval
 eval([
+  // ⚠ THE STAND-DOWN RELEASE AND THE GOVERNOR'S OWN ANSWER (2026-11-02, HONOLULU) - see ais_avoid.js's own
+  // note. Both LIFTED, never stubbed, and check 12a is why: with SUP_RELEASE missing the resume RAISED
+  // inside the suite's own no-model scenario and was reported as the console assuming water it cannot chart.
+  grabDecl("SUP_RELEASE"),
+  grab("govHeldBy"),
+  grab("govRaiseHeld"),   // the governor's refusal-to-raise, which the speed-zone release banner asks too (2026-11-02)
   grabDecl("RESUME_BACK_LENGTHS"),
   grabDecl("OVERRIDE_GIVE_M"),
   grabDecl("EDGE_REASSESS_MS"),

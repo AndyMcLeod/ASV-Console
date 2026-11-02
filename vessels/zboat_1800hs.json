@@ -47,6 +47,8 @@
   },
   "planning": {
     "nogo_buffer_m": 3.0,
+    "supervisor_lost_s": 45,
+    "supervisor_lost_action": "pause",
     "under_keel_clearance_m": 0.9,
     "overhead_clearance_m": 1.0,
     "min_survey_line_m": 0,

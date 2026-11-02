@@ -15,8 +15,14 @@ WHAT IS DELIBERATELY NOT GATED, and each has a check here:
     API, and refusing anonymous callers would break every harness that drives the console directly.
   * The plan (/api/mission). A second screen may draw and save while the first supervises; the plan's own revision
     guard (review #10) is what stops two tabs overwriting each other, and it already works.
-  * The boat. A lapsed heartbeat is an ALARM, not a hold: a browser hiccup stopping a survey mid-line is its own
-    hazard, and nothing the vessel does depends on the page. Whether it should ever hold is the operator's call.
+  * The boat, WHILE ANOTHER TAB IS STILL REPORTING. A lapse there is an ALARM, not a hold: a browser hiccup
+    stopping a survey mid-line is its own hazard, and nothing the vessel does depends on the page.
+    ⚠ BUT NO TAB AT ALL IS NOW A CONDITION WITH A CLOCK ON IT (Andy, 2026-11-02, after Honolulu: an armed boat
+    surveyed for 7 h 21 m with every page dead and no guard running anywhere). The console re-says the lapse,
+    forgets a dead holder on its own watch, PAUSES her at the hull's planning.supervisor_lost_s, latches that
+    against every automatic resume, and asks once for a fresh chart window. That half is
+    tests/supervision_standdown.py; this suite still owns the question of WHICH tab is in charge, and not one
+    of its answers changed.
 
 2026-09-16, Andy: "the supervisory tab process is broken." In his session the post changed hands ten times in twelve
 minutes between the two windows the console opens itself. The console's half of the fix has checks here:
@@ -311,9 +317,18 @@ finally:
 srvlog.seek(0)
 server_out = srvlog.read()
 srvlog.close()
-check("11. the console SAYS the supervising tab went quiet, on its own console, once",
-      lambda: server_out.count("has not reported for") == 1 and "Nothing was stopped" in server_out,
-      lambda: next((l for l in server_out.splitlines() if "has not reported" in l), "(nothing said)")[:110])
+# ⚠ 11's TAIL CHANGED WITH THE STAND-DOWN (2026-11-02), and it was "Nothing was stopped." unconditionally.
+# It is no longer true of every case, so the line now names WHICH of the three this lapse is. Here the boat is
+# not under autonomous command, so nothing is stopped and nothing is going to be - that is the branch asserted.
+# The armed-and-running branch, which says the way comes off, is tests/supervision_standdown.py's.
+_lapse = next((l for l in server_out.splitlines() if "has not reported" in l), "")
+check("11. the console SAYS the supervising tab went quiet, on its own console, once - and the line says what "
+      "FOLLOWS, which is not the same sentence for every lapse any more",
+      lambda: server_out.count("has not reported for") == 1
+              and "the page's clearance guard and speed governor are not running." in _lapse
+              and _lapse.rstrip().endswith("Nothing is stopped.")
+              and "the way comes off" not in _lapse,          # she is not armed and running in this scenario
+      lambda: _lapse[:150] or "(nothing said)")
 from server_log import exception_lines  # noqa: E402
 tb = exception_lines(server_out)
 check("12. and it logged NO exception while serving any of it",

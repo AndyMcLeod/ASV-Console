@@ -328,6 +328,13 @@ function $(sel) {
 
 // eslint-disable-next-line no-eval
 eval([
+  // ⚠ THE STAND-DOWN RELEASE AND THE GOVERNOR'S OWN ANSWER (2026-11-02, HONOLULU). The operator's Start
+  // carries SUP_RELEASE and the console's automatic one does not, which is what resumeHeldRun branches on;
+  // the guard's release note asks govHeldBy whether the governor will really put the plan's speed back.
+  // Both LIFTED, never stubbed: a copy of either is a copy no mutation has ever been run against.
+  grabDecl("SUP_RELEASE"),
+  grab("govHeldBy"),
+  grab("govRaiseHeld"),   // the governor's refusal-to-raise, which the speed-zone release banner asks too (2026-11-02)
   grabDecl("RESUME_BACK_LENGTHS"),
   grabDecl("OVERRIDE_GIVE_M"),
   grabDecl("EDGE_REASSESS_MS"),

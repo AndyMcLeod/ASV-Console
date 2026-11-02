@@ -1273,9 +1273,42 @@ tab shows **👁 VIEW ONLY · TAKE OVER** in the top bar, greys its command bar,
 everything else exactly as before — a second screen is what it is for, and you can still
 draw and save a plan from it. Click the pill to supervise from there instead; the handover
 is immediate and recorded. **Stop, Pause and E-STOP work from every tab**, in both
-directions — the page never withholds them and the console never refuses them. A lapse is an
-**alarm, not a hold**: nothing the vessel does depends on the page, and a browser hiccup
-halting a survey mid-line would be its own hazard.
+directions — the page never withholds them and the console never refuses them. A lapse with
+**another tab still reporting** is an **alarm, not a hold**: nothing the vessel does depends
+on the page, and a browser hiccup halting a survey mid-line would be its own hazard.
+
+**No tab at all is a different condition, and since 2026-11-02 the console answers it.** On
+the overnight Honolulu Harbor run the browser's renderer was killed by the machine running
+out of memory 1 h 56 m in, the tab it reloaded was killed the same way 2.5 minutes later,
+and no page ever took the post again: the console then flew an **armed boat on survey for
+7 h 21 m** with no clearance guard, no speed governor and no AIS answer running anywhere —
+8.10 nm of harbor at a mean 1.1 kn, repeatedly through water the guard had refused half an
+hour earlier — and had said so exactly once. Now, while she is armed and running with no tab
+reporting: the lapse is **re-said every 60 s** rather than once; a dead holder is **forgotten
+on the console's own 1 Hz watch** instead of only when some tab reports (nothing pruned it
+before, so the state named a tab silent for 26,479 s beside `tabs: 0`); at the hull's
+`planning.supervisor_lost_s` (45 s by default) the console **pauses her itself** — the way
+off, the plan and her place in it held, nothing commanded to move — **latches** it, writes
+`supervisor_stand_down`, and raises a standing SUPERVISION LOST alert on the chart; and at
+120 s it opens **one** fresh chart window, whose first beats restore the guard with nobody
+there. She does not resume by herself and a returning page cannot resume her: the operator's
+**Continue** is the one Start that carries the release. `planning.supervisor_lost_action` is
+`pause` or `none` per hull (`none` is the behavior above this paragraph). **A hold is
+deliberately not offered** — with no page there is no certified clear disc, so it would
+command a direct bearing through whatever lies between with no ladder watching; a pause is
+the only answer that commands *less* motion rather than *different* motion, and the cost is
+that she drifts on the set while she is stopped.
+
+A page that **loaded mid-run** can also now name the leg she is on. `runRoute` is the array
+*this page* installed, so a reloaded tab had none, `indexedRoute()` answered null for the
+rest of the session, and the speed governor, every line readout and — worse — the clearance
+guard's own projection of the track ahead all stood down. `GET /api/run_route` serves the
+array her waypoint index counts into, read from the link rather than from any copy the
+console keeps, and the page adopts it under an exact count agreement (a staged plan is
+refused, and it is re-read when a deviation changes the count). The release note that used
+to announce "speed back to 6 kn" as a completed fact now asks one function — `govHeldBy` —
+whether the governor will really hand the throttle back, and says which condition holds it
+instead when it will not.
 
 The **controls window** the console opens beside the chart is not a second tab in this sense:
 it runs none of those checks, and every control in it is carried out BY the chart window

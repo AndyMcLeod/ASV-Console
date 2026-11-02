@@ -108,6 +108,11 @@ var S = null, asv = null, runRoute = null, pauseMark = null, resumeSlow = false;
 var escapeThrottle = false;
 var clearance = { slowed: false };
 var commandedSpeed = null;
+// govRaiseHeld's two inputs (2026-11-02). The clearance guard's edge clock at 0 means the refusal-to-raise
+// window is long expired, which is what every scenario in this suite is: nothing here drives an edge rung.
+// tests/speed_zones.js 5h-5j own the window itself.
+var guardEdgeAt = 0;
+const EDGE_REASSESS_MS = 2000;
 globalThis.window = globalThis;
 function fmtDist(m) { return Math.round(m) + " m"; }
 // The governor issues real commands. Recorded rather than stubbed to nothing, so the checks
@@ -176,6 +181,10 @@ function planNogoRoute(from, to, opts) {
 
 // eslint-disable-next-line no-eval
 eval([
+  // ⚠ THE OPERATOR'S START CARRIES THE STAND-DOWN RELEASE (2026-11-02, HONOLULU) - resumeRun and
+  // resumeFromHere are presses, so both send SUP_RELEASE. Lifted, never stubbed: see ais_avoid.js.
+  grabDecl("SUP_RELEASE"),
+  grab("govRaiseHeld"),   // the governor's refusal-to-raise, which the speed-zone release banner asks too (2026-11-02)
   grabDecl("RESUME_BACK_LENGTHS"),
   // markPause DELEGATES to lineMark, which the clearance guard's hold takes as well
   // (tests/guard_resume.js) - one implementation of "which line, how far along, which way",

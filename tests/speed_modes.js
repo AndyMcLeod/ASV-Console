@@ -174,6 +174,10 @@ function showBanner(m) { banners.push(m); }
 // exactly as it always did, which is what makes these checks evidence that the OPEN regime
 // is unchanged (DEPARTURE_PARADIGM.md R8; tests/berth_grant.js is where a grant stands).
 eval("let grant = null;" + grabDecl("SPEED_ROLES") + "\n" + grab("alongLineM") + "\n" + grab("linePhase") + "\n" +
+     // ⚠ THE GOVERNOR'S OWN ANSWER (2026-11-02, HONOLULU): the clearance guard's release note asks govHeldBy
+     // whether the governor will really put the plan's speed back, instead of announcing it as a fact. Lifted
+     // beside speedGovernor itself, because the two must answer the same question - see tests/governor_says.js.
+     grab("govHeldBy") + "\n" + grab("govRaiseHeld") + "\n" +
      grab("currentActivity") + "\n" + grab("speedRole") + "\n" +
      // the DRAWN-LINE numbering "line N of M" now goes through (review #18) - the page's own, not a stub
      grab("lineSetKey") + "\n" + grabDecl("LINE_PART_OFFSET_M") + "\n" + grabDecl("_drawnLines") + "\n" + grab("linePartContinues") + "\n" +

@@ -4554,12 +4554,24 @@ function clearanceGuard(){
         // unmoved 13 m off a pier - because the rung's phantom route reads clear by
         // construction. The LADDER really has let go. The THROTTLE has not, and saying it has
         // is the console telling the operator the episode is over while it is running.
+        // ⚠⚠ NOR ONE THE GOVERNOR'S OTHER STAND-DOWNS MAKE IMPOSSIBLE (2026-11-02, HONOLULU).
+        // The escape and the operator's LOW were the only two this sentence asked about, and
+        // speedGovernor has five more. On the overnight run it printed "Clear ahead again
+        // (47.5 m) — speed back to 6 kn (transit)" at t=6,922.96 s to a page that could not name
+        // her leg; the governor stood down on its `indexedRoute()` line, no /api/cmd/speed was
+        // ever sent, and she stayed on the guard's `low` - which was the last speed command of
+        // a 9.3 h session and left her at 1.1 kn for 7 h 21 m. The operator's only record of the
+        // throttle was a note for a command that did not exist. `govHeldBy` answers the one
+        // question both ends need, so the sentence and the throttle cannot drift apart again.
+        const govWhy = (escapeThrottle || resumeSlow) ? null : govHeldBy();
         flashNote((onStation ? "On station (" + c.m.toFixed(1) + " m off) — the drift reaches nothing, so the guard "
                                + "stands down; "
                              : "Clear ahead again (" + c.m.toFixed(1) + " m) — ") + (escapeThrottle
           ? "the escape still has the throttle at high until you command her somewhere."
           : resumeSlow
           ? "still at LOW on your authority; RELEASE LOW on the bar gives the throttle back to the plan's speed."
+          : govWhy
+          ? "her speed stays as commanded — " + govWhy + "."
           : "speed back to " + spdTxt(roleSpeed(speedRole())) + " (" + speedRole() + ")."));
         clearance.slowed = false; commandedSpeed = null;   // let the governor re-assert
         guardLevel = "clear";
@@ -5451,10 +5463,25 @@ function zoneTrack(zc, jobKey, toldKey){
     // not one she is CLEAR of: said as what it is (2026-10-16, live: "Clear of speed zone" of water she had not reached)
     const was = zoneHeld, ahead = was.where === "ahead";
     zoneHeld = null;
+    // ⚠⚠ AND IT MAY NOT ANNOUNCE A RESTORE THE GOVERNOR IS ABOUT TO DECLINE (Andy, 2026-11-02: "fix the zone
+    // banner too"). speedGovernor calls this FOUR LINES before its refusal-to-raise, so within EDGE_REASSESS_MS
+    // of the clearance guard moving her this said "back to 7 kn, her commanded speed" and the next statement
+    // returned the speed she was already doing. Two seconds wide, self-expiring and the right speed named - but
+    // it is the same defect as the guard's release note, which is the one Honolulu was about, so it asks the
+    // same kind of question: govRaiseHeld, the one function the refusal itself is now written in terms of.
+    // ⚠ AND A KEY THIS PAGE CANNOT NAME IS SAID AS THAT, not printed. `zoneSpd(undefined)` reads "undefined"
+    // on a frame whose telemetry carried no speed_key - the same "wrong water, measured confidently" shape the
+    // entering branch above already refuses for a null jobKey.
+    const raiseHeld = was.capping ? govRaiseHeld(jobKey) : null;
     if(was.capping) showBanner((ahead ? "SPEED ZONE " + zoneName(was.zone) + " is no longer on her way" : "CLEAR OF SPEED ZONE " + zoneName(was.zone))
-                               + ": back to " + zoneSpd(jobKey) + ", her commanded speed.");
+                               + (jobKey == null
+                                  ? ": her commanded speed is not known to this page, so nothing is restored - check her speed."
+                                  : raiseHeld
+                                  ? ": not back to " + zoneSpd(jobKey) + " yet - " + raiseHeld + "."
+                                  : ": back to " + zoneSpd(jobKey) + ", her commanded speed."));
     else if(!ahead) flashNote("Clear of speed zone " + zoneName(was.zone) + ".");
-    logClient("speed_zone", {state: "clear", zone: zoneName(was.zone), job: jobKey, was: was.where});
+    logClient("speed_zone", {state: "clear", zone: zoneName(was.zone), job: jobKey, was: was.where,
+                             raise_held: !!raiseHeld});
   }
 }
 /** THE ZONES WHEN THE GOVERNOR CANNOT SAY WHICH LEG SHE IS ON (indexedRoute null): her position alone decides. A zone
@@ -5475,6 +5502,46 @@ function zoneOnlyGovern(st){
     return k;
   }
   zoneTrack(null, cur, cur);
+  return null;
+}
+/** WHY THE GOVERNOR WILL NOT PUT THE PLAN'S SPEED BACK, or null if it will. ONE function, because two copies of
+ *  this question drifted apart and the console announced a throttle command it never sent - see the clearance
+ *  guard's release note (2026-11-02, HONOLULU).
+ *  ⚠⚠ EVERY STAND-DOWN ADDED TO speedGovernor BELOW BELONGS HERE TOO, and tests/governor_says.js fails if one is
+ *  not: it drives the governor through each state, asserts it commands nothing, and asserts this answers why.
+ *  It deliberately does NOT repeat four of the governor's exits, and each omission is a reason, not an oversight:
+ *  `clearance.slowed` and the EDGE_REASSESS_MS refusal-to-raise both read state the release nulls on its very next
+ *  line (`clearance.slowed = false; commandedSpeed = null`), so neither can be standing when the note is read;
+ *  `escapeThrottle` and `resumeSlow` are the two the note already asked about and has its own sentence for. */
+function govHeldBy(){
+  const st = (S && S.status) || {};
+  if(!(S && S.run === "running" && S.armed && !S.estop))
+    return "she is not under autonomous command";
+  if(!supervising())
+    return "this tab is view-only, so nothing it says reaches the throttle";
+  if(st.holding && S.behavior === "escape")
+    return "the escape's throttle stands until you command her somewhere";
+  if(st.drifting)
+    return "she is coasting, and a coast is the absence of a commanded speed";
+  if(!indexedRoute())
+    return "this page cannot say which leg she is on, so the governor stands down (a speed zone can still cap her)";
+  return null;
+}
+/** WHY A RAISE TO `want` IS NOT TAKEN ON THIS FRAME, or null if it is. ONE function, for exactly the reason
+ *  govHeldBy above is one: speedGovernor calls zoneTrack BEFORE this refusal, so the speed-zone release banner
+ *  announced "back to <speed>, her commanded speed" and the governor then declined the raise for up to
+ *  EDGE_REASSESS_MS. Two seconds of a false sentence is still a false sentence, and it is the same defect the
+ *  guard's release note had (both 2026-11-02, Andy: "fix the zone banner too").
+ *  ⚠ COMPUTED FROM `guardEdgeAt` AND NEVER LATCHED, which is the property the refusal was written for: it
+ *  expires by itself and cannot stick if the guard stops running. Asking it twice in one frame is free and
+ *  gives the same answer - nothing between the two call sites touches `commandedSpeed` or `guardEdgeAt`. */
+function govRaiseHeld(want){
+  const ms = Date.now() - guardEdgeAt;
+  if(commandedSpeed && want !== commandedSpeed
+     && (V.SPEED_KN[want] || 0) > (V.SPEED_KN[commandedSpeed] || 0)
+     && ms < EDGE_REASSESS_MS)
+    return "the clearance guard moved her " + (ms / 1000).toFixed(1) + " s ago, so she is held at "
+           + spdTxt(commandedSpeed) + " until it has re-read the water at the speed above";
   return null;
 }
 function speedGovernor(){
@@ -5563,10 +5630,10 @@ function speedGovernor(){
   // now flying. LOWERING is always allowed.
   // ⚠ COMPUTED FROM `guardEdgeAt`, NOT LATCHED, so it expires by itself and cannot stick if
   // the guard stops running.
-  if(commandedSpeed && want !== commandedSpeed
-     && (V.SPEED_KN[want] || 0) > (V.SPEED_KN[commandedSpeed] || 0)
-     && Date.now() - guardEdgeAt < EDGE_REASSESS_MS)
-    return commandedSpeed;
+  // ⚠⚠ AND IT IS `govRaiseHeld` NOW, NOT A CONDITION WRITTEN TWICE (2026-11-02). zoneTrack, four lines above
+  // this, announces the zone's release as "back to <speed>, her commanded speed" - and it was announcing a
+  // raise that this line then declined. The test and the sentence ask one function.
+  if(govRaiseHeld(want)) return commandedSpeed;
   if(want === commandedSpeed) return want;
   commandedSpeed = want;
   commandSpeed(want);
@@ -6168,6 +6235,37 @@ function aisStallNote(st){
   if(!st) return "";
   return (st.quiet_s != null ? "no vessel report for " + fmtDur(st.quiet_s) : "no vessel report")
     + " · reconnecting every minute" + (st.retries ? " (" + st.retries + " so far)" : "");
+}
+const SUP_HELD_BANNER = "⚠⚠ SUPERVISION LOST — ";
+let supHeldSaid = false;
+/** THE STAND-DOWN SAID ON THE CHART. The console takes the way off when no tab has supervised an armed running boat
+ *  for the vessel's `supervisor_lost_s`, and publishes `supervisor_held` so this can say so.
+ *  ⚠ IT HAS TO BE A BANNER, NOT THE SERVER'S `note`. The standing note is deliberately not painted on the chart page
+ *  (see its own comment at the status readouts), so a stand-down whose only output was `note` would leave the operator
+ *  looking at a paused boat with no reason given - and the whole fault being repaired is a console that knew something
+ *  and did not say it. Raised again if another banner covers it, exactly as aisStallSay is, and for the same reason:
+ *  the banner is one slot.
+ *  ⚠ AND IT NAMES THE BUTTON. Engine.start refuses every Start that carries no release while the latch is up, so a
+ *  sentence that did not say which control releases it would be a dead end - see SUP_RELEASE. */
+function supHeldSay(){
+  const held = S && S.supervisor_held;
+  if(held){
+    const b = $("#encbanner");
+    const up = !!(b && b.style.display === "block" && (b.textContent || "").indexOf(SUP_HELD_BANNER) === 0);
+    if(!supHeldSaid || !up){
+      supHeldSaid = true;
+      const at = held.t ? new Date(held.t * 1000).toLocaleTimeString() : null;
+      showBanner(SUP_HELD_BANNER + "this console took the way off" + (at ? " at " + at : "")
+        + " because no browser tab was supervising her: the clearance guard and the speed governor run in the page, "
+        + "and neither was running anywhere. The plan and her place in it are held. "
+        + (held.paused ? "Look at the water, then press Continue to resume the survey - nothing else restarts her."
+                       : "She is no longer paused, so Continue is not what she needs; command her from here."));
+    }
+  } else if(supHeldSaid){
+    supHeldSaid = false;
+    takeDownBanner(/^⚠⚠ SUPERVISION LOST/);
+    flashNote("Supervision is back and the stand-down is released.");
+  }
 }
 /** THE ALERT: raised when the layer reads "stalled" - a standing banner, in the alerts card with the rest - and lifted
  *  when it does not, with a note when vessels are arriving again. Not re-written on every poll (the history would hold a
@@ -8517,6 +8615,57 @@ function indexedRoute(){
   if(runRoute && runRoute.length) return runRoute;
   const w = mission.waypoints || [];
   return (S && S.wp_total > 0 && w.length !== S.wp_total) ? null : w;
+}
+// ⚠⚠ A PAGE LOADED MID-RUN ASKS THE CONSOLE FOR THE ROUTE SHE IS FLYING (2026-11-02, HONOLULU). `runRoute` is the
+// array THIS PAGE installed, so a page that did not do the uploading has none - and with none, indexedRoute()
+// answers null for the rest of the session: the speed governor stands down, no line can be named, lineMark gives
+// resumeRun and resumeHeldSurvey no backtrack, and the Intent card prints rows saying it cannot say. On the failing
+// run the drawn mission held 451 waypoints while the vessel flew a 388-waypoint way round a contact, so the
+// fallback could not help either. The console has the answer - the array is on the link - and now serves it.
+// ⚠ THE INTEGER COMPARE IS THE WHOLE SAFETY OF THIS. Adopting a route of the wrong length would be exactly the
+// fault indexedRoute's own contract was written against: the wrong water, measured confidently, with the top-bar
+// WPT pill reading the vessel's count beside it. The served length, the served wp_total and the frame's wp_total
+// must all agree, and a STAGED plan is refused outright because its waypoints are not what her index counts into.
+// ⚠ AND ONE TRY PER COMMANDED MOTION, latched on SUCCESS only: a route fetch that fails transiently must not
+// leave the page degraded for the whole run, and one that keeps failing must not be asked four times a second.
+let adoptedSeq = null, adoptNextAt = 0, adoptBusy = false;
+function adoptRunRoute(){
+  const s = S;
+  if(!SUPERVISES || !s || adoptBusy) return;              // the controls window holds no chart model
+  if(!(s.wp_total > 0) || s.run === "idle" || s.run === "complete") return;
+  // ⚠⚠ AN AMEND GOES STALE WITHOUT MOVING `run_seq`, WHICH IS WHY THIS IS NOT A ONE-SHOT. Engine.amend keeps
+  // the run - that is its whole point - so run_seq does not move, but it DOES splice the link's array and
+  // change wp_total. A route adopted before a deviation is then the wrong length, and indexedRoute does NOT
+  // length-test `runRoute` (only cardRoute and guardTrack do), so the governor would run on the stale array:
+  // the wrong water, measured confidently. Re-adopted on a length disagreement - but ONLY a route this page
+  // ADOPTED (`adoptedSeq !== null`), never one it installed itself and never a deliberate give-up, because
+  // this page's own staged upload is legitimately a different length from what the vessel is counting into.
+  const mine = runRoute && runRoute.length;
+  if(mine && !(adoptedSeq !== null && runRoute.length !== s.wp_total)) return;
+  if(!mine && (adoptedSeq === s.run_seq || Date.now() < adoptNextAt)) return;
+  if(mine && Date.now() < adoptNextAt) return;
+  const seq = s.run_seq, total = s.wp_total, was = runRoute;
+  adoptBusy = true;
+  fetch("/api/run_route").then(r => r.json()).then(j => {
+    if(!j || !Array.isArray(j.route) || !j.route.length) throw new Error("no route served");
+    if(j.staged) throw new Error("the plan aboard is staged, not running");
+    if(j.route.length !== total || j.wp_total !== total) throw new Error("the counts disagree");
+    // ⚠ IDENTITY, NOT EMPTINESS. On a re-adopt after an amend `runRoute` is non-empty by definition, so the
+    // old `if(runRoute && runRoute.length) return` would have refused every re-adopt and left the stale array
+    // in place - the bug this re-adopt exists to fix, reintroduced by its own guard. What must not be
+    // overwritten is a route something ELSE installed while the fetch was out.
+    if(runRoute !== was) return;
+    if(!(S && S.run_seq === seq)) throw new Error("she was commanded somewhere else while this was out");
+    runRoute = j.route.map(p => ({lat: p.lat, lon: p.lon}));
+    adoptedSeq = seq;
+    flashNote("Read the route she is flying from the console — " + runRoute.length + " waypoints. This page can "
+              + "place her in it again, so the speed governor and the line readouts work.");
+    logClient("run_route", {adopted: runRoute.length, wp_total: total, behavior: j.behavior, run_seq: seq});
+    updateMissionCard(); renderIntent(); render();
+  }).catch(e => {
+    adoptNextAt = Date.now() + 10000;                     // not latched: the next motion, or ten seconds, tries again
+    logClient("run_route", {adopted: 0, wp_total: total, why: (e && e.message) || String(e)});
+  }).finally(() => { adoptBusy = false; });
 }
 // ⚠⚠ AND THE SAME QUESTION ASKED OF `runRoute`, FOR THE CARD ONLY. The rule above states
 // the test - the drawn plan may be used only when it IS the array the index counts into - and
@@ -18743,6 +18892,18 @@ const CLIENT_ID = (()=>{ try{ return crypto.randomUUID(); }catch(e){ return "tab
 // Until the console says its own (S.supervisor.beat_s / stale_s), which it publishes so one number governs both ends.
 const SUPERVISOR_BEAT_MS = 2000, SUPERVISOR_STALE_MS = 10000;
 const SUPERVISOR_ANY = ["/api/cmd/stop", "/api/cmd/pause", "/api/cmd/estop"];   // never gated, in either direction
+// ⚠⚠ THE OPERATOR'S OWN START RELEASES A CONSOLE STAND-DOWN; THE CONSOLE'S AUTOMATIC ONES DO NOT (2026-11-02,
+// HONOLULU). When no tab has supervised an armed running boat for the vessel's `supervisor_lost_s`, the console
+// takes the way off itself and LATCHES it (Engine.pause's `supervisor_held`), because "we never auto-resume" has
+// to be true of a returning page too: the page that comes back after a crash must not start her before the
+// operator has seen why she stopped. Engine.start refuses a Start carrying no release while that latch is up and
+// she is still paused, so this body is the discriminator - and the console cannot find one for itself, because
+// every automatic resume in this page is the SAME POST as the operator's Continue.
+// IT GOES ON exactly three starts, all of them a press: startRun (the Start / Go button), resumeRun (Resume) and
+// resumeFromHere (Resume from here). It does NOT go on the clearance guard putting her back on station, nor on
+// resumeHeldRun when `opts.auto` is set - that flag is already this page's name for "the console is doing this,
+// not the operator" (aisReturnTick and aisAroundGo pass it; the guard bar's own resume does not).
+const SUP_RELEASE = {supervisor_release: true};
 const SUPERVISES = UIROLE === "main";               // the controls window never holds the post - see above
 let supHolder = null, supStale = false, supSaidViewOnly = false;
 let supWas = true;                                   // what supervising() said last (it is true until the console says)
@@ -19504,7 +19665,7 @@ async function startRun(opts){
   pauseMark = null; resumeSlow = false; escapeThrottle = false; commandedSpeed = null; speedWant = null;   // a FRESH run, not a resume
   // The other two start sites (resumeRun, resumeHeldSurvey) have always read this reply;
   // this one did not, so a refused Start was a button press that looked like a departure.
-  const r = await cmd("/api/cmd/start");
+  const r = await cmd("/api/cmd/start", SUP_RELEASE);          // a press: it releases a stand-down (see SUP_RELEASE)
   if(!took(r)){
     // ⚠⚠ PUT BACK ONLY WHAT THIS PRESS STILL OWNS. Restoring unconditionally is the same
     // fault as clearing unconditionally, in the mirror: the guard runs at 4 Hz through this
@@ -19883,7 +20044,7 @@ async function resumeRun(){
               + "). She is still paused; press Resume again.");
     return;
   }
-  const started = await cmd("/api/cmd/start");
+  const started = await cmd("/api/cmd/start", SUP_RELEASE);    // a press: it releases a stand-down (see SUP_RELEASE)
   if(!took(started)){
     resumeSlow = false;
     // ⚠ SAY WHICH IT WAS. "Start was refused" was printed for a LOST reply too, which is the
@@ -20144,7 +20305,7 @@ async function resumeFromHere(ll){
   // the line - and `resumeSlow` is left exactly as the operator had it. Start has to land before anything
   // is said (review #6).
   commandedSpeed = null;
-  const started = await cmd("/api/cmd/start");
+  const started = await cmd("/api/cmd/start", SUP_RELEASE);    // a press: it releases a stand-down (see SUP_RELEASE)
   if(!took(started)){
     flashNote(started && started.refused
       ? "Resume stopped " + '—' + " Start was REFUSED (" + started.error + "). She is still paused, on the amended plan."
@@ -20927,7 +21088,11 @@ async function resumeHeldRun(opts){
   const lowOk = took(slowed);
   if(guardMoved !== moved0)                             // ... during the LOW's round trip
     return notRunning("the guard " + guardMovedHow + " after the remainder was uploaded, and that replaced it on the vessel", guardDoing());
-  const started = lowOk ? await cmd("/api/cmd/start") : null;
+  // ⚠ RELEASES A STAND-DOWN ONLY WHEN THIS IS THE OPERATOR'S RESUME, NOT THE CONSOLE'S OWN (see SUP_RELEASE).
+  // `opts.auto` is already this page's name for "the console is doing this": aisReturnTick and aisAroundGo set it,
+  // the guard bar's resume and resumeFromHere do not. A console-side stand-down that the AIS return could release
+  // would be the console undoing its own answer, which is the fault in the first place.
+  const started = lowOk ? await cmd("/api/cmd/start", (opts && opts.auto) ? undefined : SUP_RELEASE) : null;
   if(!took(started)){
     // ... and not over the guard's own move, if it made one while Start was out.
     if(guardMoved !== moved0)
@@ -21594,6 +21759,9 @@ function onState(s){
   }
   updateMissionCard();                           // the common per-behavior Mission readout
   renderRoc();                                   // ROC · HOME card (from s.roc)
+  // ⚠ OUTSIDE THE RUNNING BLOCK ABOVE, BECAUSE A STOOD-DOWN BOAT IS PAUSED. Everything in that block is gated on
+  // a running boat, which is precisely what the stand-down has just stopped her being - the alert would have been
+  // raised by the frame that never came.
 }
 // ⚠ THE SAFETY LOOP DOES NOT FAIL WITHOUT A SIGN (review #12, 2026-09-14). Every telemetry frame runs the
 // clearance guard, the speed governor, the re-approach and the end-of-plan chain inside onState - and every
@@ -21617,6 +21785,14 @@ function onFrame(ev){
   try{
     onState(m);
     supervisorReport();                 // ... and the ladder ran on this frame, which is what a report stands for
+    // ⚠ INSIDE THE TRY, UNLIKE THE TAIL BELOW, AND NOT INSIDE onState. Both of these react to something the
+    // CONSOLE published rather than to anything this page computed, and both must run on a boat that is NOT
+    // running - a stood-down boat is PAUSED, and everything in onState's live block is gated on
+    // `run === "running"`, so the alert would have been raised by the frame that never came. In the try because
+    // a throw here must be a counted CONSOLE FAULT, said out loud, and not an escape from the frame handler -
+    // that is this block's own rule (review #12), and tests/frame_health.js check 1 is what holds it.
+    supHeldSay();                       // the console's own supervision stand-down, said on the chart
+    adoptRunRoute();                    // a page loaded mid-run asks the console for the route she is flying
     if(frameFaults && ++frameClean >= FRAME_CLEAR_AFTER){ frameFaults = 0; frameClean = 0; frameFaultLogged = false; }
   }catch(e){
     frameFaults++; frameClean = 0;
