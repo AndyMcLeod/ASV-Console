@@ -24,7 +24,7 @@
 //   * the ladder answers a contact only once her keep-out is within 50 m of the boat - farther for a hull
 //     whose own coast datum says she needs the water to come down to LOW (the DriX) - checks 24;
 //   * the console does NOT wait for the operator before routing round her (2026-11-01): the only timing
-//     left is the spacing between TRIES, read from the page's own constant (RETRY), never a copy (25);
+//     left is the spacing between TRIES, read from the page's own constant (WHILE_MS), never a copy (25);
 //   * a stale feed is an EMPTY model that says so, never a quiet sea - and is a banner while it
 //     matters;
 //   * the contacts are polled whenever the console has authority, layer or no layer.
@@ -405,7 +405,7 @@ eval([
   "function __keyLast(){ return guardKeyLast; }",
   grab("aisReturnTick"), grab("logClient"),
   // the way round a contact that stays, and the operator's point beyond her (2026-09-27)
-  grabDecl("AIS_AROUND_RETRY_MS"), grabDecl("AIS_AROUND_STEP_M"), grab("koWithAis"), grab("aisAroundPlan"), grab("aisAroundTick"),
+  grabDecl("AIS_AROUND_STEP_M"), grab("koWithAis"), grab("aisAroundPlan"), grab("aisAroundTick"),
   grab("sameContact"), grab("aisHerPoly"), grab("koRoundHer"), grab("tautRoundHer"),   // the tighter way round (2026-09-28)
   // ... which judges every route it returns against the box the chart was read over (2026-10-03) - the real one; this
   // world's model has no box, so nothing is judged past it (tests/chart_box.js 9 is that rule's own check)
@@ -576,10 +576,15 @@ const kindRe = /AIS: WORKBOAT \(30 x 8 m, 6\.0 kn\)/;
 
 // THE SPACING BETWEEN TRIES, READ FROM THE PAGE - AND IT IS NOT A WAIT (2026-11-01). The operator's wait is gone
 // ("remove the wait for operator rule for ais target avoiding. go to immediate maneuver to avoid"): the FIRST try
-// goes on the first frame she is on station, so no scenario here counts down to it any more. What this constant
-// still times is a try that found no way round being asked AGAIN, and the bar's count after one (14h, 20d, 25).
-// Read from the page rather than retyped, because it was retyped once and the page moved underneath it.
-const RETRY = +H.match(/const AIS_AROUND_RETRY_MS = (\d+)/)[1], RETRY_S = RETRY / 1000;
+// goes on the first frame she is on station, so no scenario here counts down to it any more.
+// ⚠⚠ AND THERE IS NO CONSTANT TO READ AT ALL SINCE 2026-11-02 (Andy: "this over rides previous directive to wait
+// for a certain amount of time. Delete that"). AIS_AROUND_RETRY_MS is deleted, and a RE-try is gated on the MODEL
+// instead: a refused try records {polled, ko, route, idx} and the next goes on the first frame any of them differs.
+// So there is no number left for this suite to read, and nothing in it may advance a clock to earn a second try -
+// it has to change the model (a fresh `aisPolledAt`, a new `nogo.ko`, a different route). See 14h, 20d and 25b.
+// WHILE_MS / WHILE_S are NOT read from the page and name nothing in it: they are just "let a while pass"
+// for scenes that need the clock to move. A try is earned by bumping `aisPolledAt`, never by the clock.
+const WHILE_MS = 10000, WHILE_S = WHILE_MS / 1000;
 console.log("AIS contacts as keep-outs, and the way back:");
 
 (async () => {
@@ -961,7 +966,7 @@ const wayInOf = (rte, from, tail = 3) => [from, ...viaOf(rte, tail), rejoinOf(rt
   const her2 = (t) => { aisVessels = [contact(34, -5 + 3.087 * t, { sog: 6, cog: 0, heading: 0 })]; aisPolledAt = clock; };
   clock += 8000; her2(8); frame(); await settle();   // she crosses while the boat still has way on
   const releasedAt = sent.length;
-  clock += RETRY + 1000; her2(12.1 + RETRY_S + 1); frame(); await settle();
+  clock += WHILE_MS + 1000; her2(12.1 + WHILE_S + 1); frame(); await settle();
   check("14e. a contact that clears the line while the boat still has WAY ON needs no answer: the guard releases her, the banked record is spent, and neither the way round nor the 100 m return is reached - no upload, however long after",
         () => !paths().includes("/api/cmd/upload") && guardHeld === null && aisAvoid === null
               && sent.length === releasedAt
@@ -989,22 +994,38 @@ const wayInOf = (rte, from, tail = 3) => [from, ...viaOf(rte, tail), rejoinOf(rt
         () => rte2.length + " wpts: " + JSON.stringify(rte2.map(p => { const q = llEN(p.lat, p.lon, ref); return [Math.round(q.e), Math.round(q.n)]; }))
             + "; " + JSON.stringify(banners.slice(-1)));
 
-  // 14h. NO WAY ROUND: SAID, STILL HOLDING, TRIED AGAIN AIS_AROUND_RETRY_MS LATER - NOT EVERY FRAME. This is the
-  // one timing left in the file, and it is a RETRY's, not an operator's: the first try goes at once. Charted walls on both
-  // sides of her ring (WALLS_NWR), so the taut way round cannot be certified and the router's own search is the
-  // one asked (2026-09-28: the taut path comes first now) - and the router finds nothing either.
+  // ⚠⚠ 14h. NO WAY ROUND: SAID ONCE, STILL HOLDING, AND ASKED AGAIN WHEN THE MODEL MOVES - NOT ON A CLOCK AND
+  // NOT EVERY FRAME (rewritten 2026-11-02 for "Delete that"). There is no timing left in this file at all. The
+  // gate is the MODEL: a refused try records {polled, ko, route, idx}, and the next goes on the first frame one
+  // of them differs. ⚠ WHY IT IS A GATE AT ALL, measured: a failed try ASKS THE ROUTER (that is what pinCalls
+  // counts), planNogoRoute runs synchronously on the page's thread, and a route search there was measured at
+  // 11 s and then 17.8 s - so a free-running try would wedge the page and the ladder with it. Charted walls on
+  // both sides of her ring (WALLS_NWR), so the taut way round cannot be certified and the router's own search is
+  // the one asked (2026-09-28: the taut path comes first now) - and the router finds nothing either.
   surveying(7, [PARKED()], { ko: WALLS_NWR() }); frame(); nowHolding(); sent = []; banners = []; pinCalls = [];
   pinNext = NO_ROUTE;
   frame(); await settle();                          // the first station frame: the first try, unspaced
   const said1 = banners.filter(b => /CANNOT RESUME FROM HERE/.test(b)).length, sent1 = paths().slice(), tries1 = pinCalls.length;
-  clock += RETRY - 2000; aisPolledAt = clock; frame(); await settle();
+  // two more frames on the SAME model - the clock moves, nothing else does: no second try, however long she holds
+  clock += 60000; frame(); await settle(); clock += 60000; frame(); await settle();
   const tries2 = pinCalls.length;
-  clock += 3000; aisPolledAt = clock; frame(); await settle();
+  // a fresh AIS poll: the contacts may have moved, so the answer may have changed, so it is asked
+  clock += 1000; aisPolledAt = clock; frame(); await settle();
   const tries3 = pinCalls.length;
+  const said3 = banners.filter(b => /CANNOT RESUME FROM HERE/.test(b)).length;
+  // and a fresh CHARTED model - a new read of the same water is a NEW OBJECT, which is the whole identity test
+  nogo.ko = WALLS_NWR().polys ? WALLS_NWR() : nogo.ko;
+  frame(); await settle();
+  const tries4 = pinCalls.length;
   pinNext = null;
-  check("14h. no way round her: nothing is sent, she keeps holding with the offer and the episode standing, it is said, and the router is asked again " + RETRY_S + " s later - a contact moves - not every frame",
-        () => sent1.length === 0 && said1 === 1 && tries1 === 1 && !!guardHeld && !!aisAvoid && tries2 === 1 && tries3 === 2,
-        () => "sent " + JSON.stringify(sent1) + ", said " + said1 + ", router asked " + tries1 + " / " + tries2 + " / " + tries3 + " times at 0 / " + (RETRY_S - 2) + " / " + (RETRY_S + 1) + " s");
+  check("14h. no way round her: nothing is sent, she keeps holding with the offer and the episode standing, it is "
+        + "said ONCE however many tries go, and the router is asked again only when the MODEL moves - a fresh AIS "
+        + "poll or a fresh chart read - never on a clock and never at frame rate",
+        () => sent1.length === 0 && said1 === 1 && tries1 === 1 && !!guardHeld && !!aisAvoid
+              && tries2 === 1 && tries3 === 2 && tries4 === 3 && said3 === 1,
+        () => "sent " + JSON.stringify(sent1) + ", said " + said1 + " then " + said3
+            + ", router asked " + tries1 + " (first) / " + tries2 + " (after 120 s on the same model) / "
+            + tries3 + " (a fresh poll) / " + tries4 + " (a fresh chart read)");
 }
 {
   // 15. OPTION 2: THE OPERATOR'S POINT BEYOND HER
@@ -1047,7 +1068,7 @@ const wayInOf = (rte, from, tail = 3) => [from, ...viaOf(rte, tail), rejoinOf(rt
   await resumeFromHere(ll(55, 2));                  // 10 m beyond her hull, inside a ship-length of her CENTER (e = 60)
   const inLenSent = paths().slice(), inLenSaid = banners.filter(b => /NEAR SIDE/.test(b));
   check("15d. a point on the NEAR side of her, on her, or within her own length of her is refused in words - she would only be stopped again - and the refusal says the console routes round her itself NOW, there being nothing left to wait out; nothing is sent, the offer and the episode stand",
-        () => nearSent.length === 0 && nearSaid.length === 1 && /routes round her itself now\./.test(nearSaid[0])
+        () => nearSent.length === 0 && nearSaid.length === 1 && /routes round her itself, on every frame until it finds a way\./.test(nearSaid[0])
               && !/routes round her itself in \d+ s/.test(nearSaid[0])
               && onSent.length === 0 && onSaid.length === 2 && inLenSent.length === 0 && inLenSaid.length === 3
               && !!guardHeld && !!aisAvoid && pinCalls.length === 0,
@@ -1803,7 +1824,7 @@ const pausedSetToward = (kn) => { S = { ...S, status: { ...S.status, sog_kn: kn,
       const n0 = sent.length; frame(); clock += 1600; frame(); midSent = sent.slice(n0).map(x => x.p);
     };
     sent = []; banners = []; notes = []; logged = [];
-    clock += RETRY - 6000; aisPolledAt = clock; frame(); await settle();
+    clock += WHILE_MS - 6000; aisPolledAt = clock; frame(); await settle();
     onReply = null;
     const after = paths().slice(paths().indexOf("/api/cmd/escape") + 1);
     got.push({ at, latchKept, esc: !!midSent && midSent.includes("/api/cmd/escape"), after,
@@ -1831,24 +1852,27 @@ const pausedSetToward = (kn) => { S = { ...S, status: { ...S.status, sog_kn: kn,
   sent = []; banners = []; notes = []; logged = [];
   const r20c = aisAroundNow(); await settle();
   replyState = {};
-  check("20c. the Start answers with the vessel's STATION-KEEP plan: no way round is announced - it says the way round is NOT RUNNING, why, and that the console tries again itself in " + RETRY_S + " s - and the held survey, the episode and the logged record stand",
+  check("20c. the Start answers with the vessel's STATION-KEEP plan: no way round is announced - it says the way round is NOT RUNNING, why, and that the console keeps trying itself, every frame - and the held survey, the episode and the logged record stand",
         () => r20c === true && paths().includes("/api/cmd/start") && !banners.some(b => /ROUTED ROUND/.test(b))
-              && banners.some(b => /THE WAY ROUND IS NOT RUNNING/.test(b) && /answered Start with its station-keep plan/.test(b) && new RegExp("tries again itself in " + RETRY_S + " s").test(b))
+              && banners.some(b => /THE WAY ROUND IS NOT RUNNING/.test(b) && /answered Start with its station-keep plan/.test(b) && /keeps trying itself, every frame/.test(b))
               && guardHeld === kept && aisAvoid === ep && runRoute === route20c && !logged.some(e => e.kind === "ais_around")
               && logged.some(e => e.kind === "resume_not_running" && /station-keep/.test(e.data.why)),
         () => "returned " + r20c + "; sent " + JSON.stringify(paths()) + "; banners " + JSON.stringify(banners.map(b => b.slice(0, 120)))
             + "; record " + (guardHeld === kept ? "kept" : "CHANGED") + ", episode " + (aisAvoid === ep ? "kept" : "CHANGED")
             + ", drawn route " + (runRoute === route20c ? "the held survey's" : "NOT the held survey's"));
-  // 20d. ... the bar counts to the NEXT try, and the console does try again itself AIS_AROUND_RETRY_MS after the one that did not start
+  // ⚠⚠ 20d. ... THE BAR COUNTS NOTHING, AND THE NEXT TRY GOES WHEN THE MODEL MOVES (rewritten 2026-11-02
+  // for "Delete that"). It used to assert "nothing at 8 s, the way round at 11 s" - a clock. There is no clock:
+  // a frame on the SAME model is stood aside however long she holds, and the first frame carrying a fresh AIS
+  // poll is the retry. That is strictly faster than the 10 s it replaces, which is the point of the change.
   renderGuardBar({ level: "blind" }, clearance);
   const why20d = $("#gb_why").textContent;
-  clock += RETRY - 2000; aisPolledAt = clock; sent = []; banners = []; frame(); await settle();
+  sent = []; banners = []; clock += 60000; frame(); await settle();   // 60 s on the same model: nothing
   const at20 = paths().slice();
   replyState["/api/cmd/start"] = { behavior: "survey" };
-  clock += 3000; aisPolledAt = clock; frame(); await settle();
+  clock += 1000; aisPolledAt = clock; frame(); await settle();        // a fresh poll: the retry goes
   replyState = {};
-  check("20d. ... the bar counts to the NEXT try, not to 'now', and " + RETRY_S + " s after the try that did not start the console tries again itself - nothing at " + (RETRY_S - 2) + " s, the way round at " + (RETRY_S + 1) + " s, the vessel starting the remainder ('survey'), announced and the record spent",
-        () => new RegExp("routes round her itself in " + RETRY_S + " s").test(why20d) && at20.length === 0
+  check("20d. ... the bar counts NOTHING - it says 'now' - and the next try goes when the MODEL moves, not on a clock: 60 s on the same model sends nothing, and the first frame with a fresh AIS poll routes her round, starts the remainder, says so, and spends both records",
+        () => /routes round her itself now/.test(why20d) && !/routes round her itself in \d+ s/.test(why20d) && at20.length === 0
               && paths().indexOf("/api/cmd/pause") === 0 && paths().includes("/api/cmd/start")
               && banners.some(b => /ROUTED ROUND/.test(b)) && guardHeld === null && aisAvoid === null,
         () => "bar '" + why20d.slice(-80) + "'; at 20 s " + JSON.stringify(at20) + "; at 31 s " + JSON.stringify(paths())
@@ -1925,7 +1949,7 @@ const pausedSetToward = (kn) => { S = { ...S, status: { ...S.status, sog_kn: kn,
   };
   lost = "/api/cmd/upload";
   sent = []; banners = []; logged = [];
-  clock += RETRY - 6000; aisPolledAt = clock; frame(); await settle();
+  clock += WHILE_MS - 6000; aisPolledAt = clock; frame(); await settle();
   onReply = null; lost = null; escFake = null;
   const after20h = paths().slice(paths().indexOf("/api/cmd/escape") + 1);
   check("20h. the upload's answer LOST while the helm rung escaped: the failed-upload path does not put her 'back on station' over the escape - nothing is sent after it, NOT RUNNING is said with the cause, the record and the episode kept",
@@ -1936,22 +1960,33 @@ const pausedSetToward = (kn) => { S = { ...S, status: { ...S.status, sog_kn: kn,
             + "; banners " + JSON.stringify(banners.map(b => b.slice(0, 110))));
 }
 
+// Claim the CURRENT model as the one a try was already refused on, so aisAroundTick stands aside and the
+// scenario's water is untouched. The four fields are the gate's own (aisAroundTick): a fresh AIS poll, a
+// new chart read or a changed route all break it, which is exactly what the gate is for.
+const heldModel = () => {
+  if (!aisAvoid || !guardHeld) return;      // no record, nothing to stand aside for (21a clears it on purpose)
+  const h = guardHeld.at || (asv ? { lat: asv.lat, lon: asv.lon } : null);
+  aisAvoid.triedOn = { polled: aisPolledAt, ko: nogo.ko, route: guardHeld.route, idx: guardHeld.idx,
+                       at: h ? Math.round(h.lat * 1e5) + "," + Math.round(h.lon * 1e5) : null };
+};
 // ── 21. THE HOLD THE GUARD COMMANDED STANDS UNTIL SHE LEAVES IT (2026-09-29, the three open items) ────────────────
 // His FRIGGA log again: the clear branch released the hold rung's record six seconds into the hold (a station-keeping
 // boat reads clear) and put the throttle back to the transit speed; with the record gone, each Pause was answered by
 // a fresh hold where the set had carried her - 48 m off her, then 41, 33, 25.
 {
   // 21. item 1: station-keeping frames that read CLEAR release nothing
-  // ⚠ INSIDE THE RETRY SPACING, so that she is still HOLDING to be tested (2026-11-01). The subject of this
-  // whole block is the hold rung's own record, and since the operator's wait went a boat that CAN be routed
-  // round is routed round on her first station frame - which would answer the hold before the check could read
-  // it. Stamping `aroundAt` is the console's own state for "a try has just gone": the frames below are inside
-  // the spacing, so the way round stands aside and leaves the water of these scenarios exactly as it was.
-  surveying(7, [PARKED()]); frame(); nowHolding(); aisAvoid.aroundAt = clock;
+  // ⚠⚠ THE WAY ROUND IS STOOD ASIDE BY THE MODEL GATE, so that she is still HOLDING to be tested
+  // (2026-11-01, relevered 2026-11-02). The subject of this whole block is the hold rung's own record, and
+  // since the operator's wait went a boat that CAN be routed round is routed round on her first station
+  // frame - which would answer the hold before the check could read it. The old lever was `aroundAt`, the
+  // spacing's clock, and the spacing is deleted. The lever now is `triedOn`: the console's own record of the
+  // MODEL a refused try was taken on, so claiming the CURRENT model makes the tick answer "nothing has
+  // moved" and leaves the water of these scenarios exactly as it was. `heldModel()` is below.
+  surveying(7, [PARKED()]); frame(); nowHolding(); heldModel();
   const acted21 = guardActedAt, lvl21 = guardLevel;
   S = { ...S, status: { ...S.status, sog_kn: 0.3, cog_deg: 270, heading_deg: 90 } };
   sent = []; notes = [];
-  for (let k = 0; k < 8; k++) { clock += 1000; aisPolledAt = clock; frame(); }
+  for (let k = 0; k < 8; k++) { clock += 1000; aisPolledAt = clock; heldModel(); frame(); }
   const read21 = clearance.level, sent21 = paths().slice();
   check("21. held for her and station-keeping, the frames read CLEAR for 8 s and NOTHING is released - no 'Clear ahead again', no speed command, the hold rung's record and the ladder's level stand: the hold is the answer, not a cleared situation",
         () => acted21 > 0 && lvl21 === "hold" && read21 === "clear" && guardActedAt === acted21 && guardLevel === "hold"
@@ -1960,7 +1995,7 @@ const pausedSetToward = (kn) => { S = { ...S, status: { ...S.status, sog_kn: kn,
             + ", sent " + JSON.stringify(sent21) + ", notes " + JSON.stringify(notes));
   // 21a. CONTROL: the same frames with the record gone - as his console had it - DO release: the gate is what stops it
   guardActedAt = 0; notes = []; sent = [];
-  for (let k = 0; k < 6; k++) { clock += 1000; aisPolledAt = clock; frame(); }
+  for (let k = 0; k < 6; k++) { clock += 1000; aisPolledAt = clock; (heldModel(), frame()); }
   // (said as "On station" since 2026-09-30: with the guard's record gone this is an ordinary station-keep, judged on the drift)
   check("21a. CONTROL: the same station-keeping frames with the record gone - as his console had it after 21:19:04 - DO release and say so: the gate on her own hold is what stops it, not the water",
         () => notes.some(n => /Clear ahead again|On station \(/.test(n)) && guardLevel === "clear",
@@ -1968,13 +2003,13 @@ const pausedSetToward = (kn) => { S = { ...S, status: { ...S.status, sog_kn: kn,
 }
 {
   // 21b. item 3: PAUSED on the guard's hold, the set carrying her in - back on station at the hold's own point
-  surveying(7, [PARKED()]); frame(); nowHolding(); aisAvoid.aroundAt = clock;   // inside the spacing, as 21
-  clock += 5000; aisPolledAt = clock; frame();
+  surveying(7, [PARKED()]); frame(); nowHolding(); heldModel();   // inside the spacing, as 21
+  clock += 5000; aisPolledAt = clock; (heldModel(), frame());
   S.run = "paused"; pausedSetToward(1.0);
   sent = []; notes = [];
-  frame();
+  (heldModel(), frame());
   const first21b = paths().slice(), lvl21b = clearance.level;
-  frame(); clock += 1000; aisPolledAt = clock; frame();
+  (heldModel(), frame()); clock += 1000; aisPolledAt = clock; (heldModel(), frame());
   const again21b = paths().slice();
   check("21b. PAUSED on the guard's hold with the set carrying her toward her (the ladder reads HOLD): the rung RESUMES the hold she is paused on - /api/cmd/start, back to its own point - and does NOT post a fresh hold where the set has carried her; it says so, and asks once, not every frame",
         () => lvl21b === "hold" && JSON.stringify(first21b) === '["/api/cmd/start"]' && JSON.stringify(again21b) === '["/api/cmd/start"]'
@@ -1982,18 +2017,18 @@ const pausedSetToward = (kn) => { S = { ...S, status: { ...S.status, sog_kn: kn,
         () => "level " + lvl21b + ", first frame sent " + JSON.stringify(first21b) + ", two more " + JSON.stringify(again21b)
             + ", notes " + JSON.stringify(notes.map(n => n.slice(0, 90))));
   // 21c. ... with a plan STAGED a Start would apply it: the old answer, a hold at her present position, paced
-  surveying(7, [PARKED()]); frame(); nowHolding(); aisAvoid.aroundAt = clock;
-  clock += 5000; aisPolledAt = clock; frame();
+  surveying(7, [PARKED()]); frame(); nowHolding(); heldModel();
+  clock += 5000; aisPolledAt = clock; (heldModel(), frame());
   S.run = "paused"; pausedSetToward(1.0); S.plan_staged = true; sent = [];
-  frame(); const staged21c = paths().slice(); frame(); const staged21c2 = paths().slice();
+  (heldModel(), frame()); const staged21c = paths().slice(); (heldModel(), frame()); const staged21c2 = paths().slice();
   check("21c. ... but with a plan STAGED on the vessel (a Start would apply it, not resume the hold) the rung holds her where she is, as it always did - and paced, not every frame",
         () => JSON.stringify(staged21c) === '["/api/cmd/hold"]' && JSON.stringify(staged21c2) === '["/api/cmd/hold"]',
         () => "first " + JSON.stringify(staged21c) + ", next frame " + JSON.stringify(staged21c2));
   // 21d. ... and a STOPPED boat is neither put back nor re-held
-  surveying(7, [PARKED()]); frame(); nowHolding(); aisAvoid.aroundAt = clock;
-  clock += 5000; aisPolledAt = clock; frame();
+  surveying(7, [PARKED()]); frame(); nowHolding(); heldModel();
+  clock += 5000; aisPolledAt = clock; (heldModel(), frame());
   S.run = "stopped"; pausedSetToward(1.0); sent = [];
-  frame(); clock += 1000; aisPolledAt = clock; frame();
+  (heldModel(), frame()); clock += 1000; aisPolledAt = clock; (heldModel(), frame());
   check("21d. ... and a STOPPED boat drifting the same way is neither put back nor re-held: Stop ends the hold, and only the in-extremis rung acts on her then",
         () => clearance.level === "hold" && sent.length === 0,
         () => "level " + clearance.level + ", sent " + JSON.stringify(paths()));
@@ -2173,10 +2208,10 @@ const LEG_NAME = { goto: "Go-To", rth: "Return-to-Home", transit: "transit" };
   const kept = guardHeld, ep = aisAvoid;
   sent = []; banners = []; logged = [];
   const r = aisAroundNow(); await settle();
-  check("23h. the Go-To's answer names the vessel's STATION-KEEP plan: no way round is announced - THE WAY ROUND IS NOT RUNNING, why, and that the console tries again itself in " + RETRY_S + " s - and the held Go-To and the episode stand, the attempt logged with the leg",
+  check("23h. the Go-To's answer names the vessel's STATION-KEEP plan: no way round is announced - THE WAY ROUND IS NOT RUNNING, why, and that the console keeps trying itself, every frame - and the held Go-To and the episode stand, the attempt logged with the leg",
         () => r === true && paths().includes("/api/cmd/goto") && !banners.some(b => /ROUTED ROUND/.test(b))
               && banners.some(b => /THE WAY ROUND IS NOT RUNNING/.test(b) && /answered with its station-keep plan, not the Go-To/.test(b)
-                                   && new RegExp("tries again itself in " + RETRY_S + " s").test(b))
+                                   && /keeps trying itself, every frame/.test(b))
               && guardHeld === kept && aisAvoid === ep && logged.some(e => e.kind === "resume_not_running" && e.data.leg === "goto"),
         () => "returned " + r + ", sent " + JSON.stringify(paths()) + ", banners " + JSON.stringify(banners.map(b => b.slice(0, 130)))
             + ", record " + (guardHeld === kept ? "kept" : "CHANGED") + ", episode " + (aisAvoid === ep ? "kept" : "CHANGED"));
@@ -2195,7 +2230,7 @@ const LEG_NAME = { goto: "Go-To", rth: "Return-to-Home", transit: "transit" };
     const n0 = sent.length; frame(); clock += 1600; frame(); mid = sent.slice(n0).map(x => x.p);
   };
   sent = []; banners = []; logged = [];
-  clock += RETRY - 6000; aisPolledAt = clock; frame(); await settle();
+  clock += WHILE_MS - 6000; aisPolledAt = clock; frame(); await settle();
   onReply = null; escFake = null;
   check("23i. IN EXTREMIS MID-RESUME on a held Go-To: the helm rung escapes during the LOW's round trip - it never stands by - and no Go-To is sent after it: THE WAY ROUND IS NOT RUNNING, said with the cause, the record and the episode kept",
         () => !!mid && mid.includes("/api/cmd/escape") && !paths().includes("/api/cmd/goto")
@@ -2616,12 +2651,26 @@ const LEG_NAME = { goto: "Go-To", rth: "Return-to-Home", transit: "transit" };
             + "; page says 'waiting out the' " + /waiting out the/.test(H)
             + ", 'did not clear the line within' " + /did not clear the line within/.test(H)
             + ", \"the operator's N s\" " + /the operator's \d+ s\b/.test(H));
-  check("25b. ... and the ONE number left is the spacing between tries, AIS_AROUND_RETRY_MS (10 s): the retry gate reads it, the ROUTE ROUND HER NOW tooltip is set from it at start-up, and so are the bar's count and the NOT RUNNING banners - no seconds typed by hand beside any of them",
-        () => RETRY === 10000 && /aroundAt < AIS_AROUND_RETRY_MS/.test(tickCode)
-              && /Math\.round\(AIS_AROUND_RETRY_MS \/ 1000\)/.test(tip)
-              && (H.match(/AIS_AROUND_RETRY_MS/g) || []).length >= 8,
-        () => "AIS_AROUND_RETRY_MS " + RETRY + ", read " + (H.match(/AIS_AROUND_RETRY_MS/g) || []).length
-            + " times; retry gate " + /aroundAt < AIS_AROUND_RETRY_MS/.test(tickCode)
+  // ⚠⚠ 25b IS THE WHOLE OF "Delete that" AS A CHECK (Andy, 2026-11-02). There is no timing constant in this
+  // maneuver any more - not an operator's wait, not a retry spacing - and nothing anywhere counts seconds down
+  // to a try. What gates a RE-try is the MODEL the last refused try was taken on, which is three identity
+  // comparisons and no clock. The only `AIS_AROUND_RETRY_MS` the page may still contain is the two comments
+  // that record the deletion, so this asserts the CODE is clean of it rather than the file.
+  const codeOnly = H.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ").replace(/([^:"'])\/\/.*$/gm, "$1");
+  const secondsSaid = /routes round her itself in " \+|tries again itself in " \+|s between tries/.test(codeOnly);
+  check("25b. ... and NO TIMER IS LEFT AT ALL: AIS_AROUND_RETRY_MS is gone from the code, aisAroundTick gates a "
+        + "re-try on the MODEL (a fresh poll, a fresh chart read, a changed route) and not on a clock, and not "
+        + "one sentence in the page counts seconds down to a try",
+        () => !/AIS_AROUND_RETRY_MS/.test(codeOnly)
+              && !/aroundAt < /.test(tickCode)
+              && /aisAvoid\.triedOn/.test(tickCode) && /t\.polled === onNow\.polled/.test(tickCode)
+              && /t\.ko === onNow\.ko/.test(tickCode)
+              && !secondsSaid
+              && /keeps trying itself, every frame/.test(H),
+        () => "constant in code " + /AIS_AROUND_RETRY_MS/.test(codeOnly)
+            + ", clock gate in the tick " + /aroundAt < /.test(tickCode)
+            + ", model gate " + /aisAvoid\.triedOn/.test(tickCode)
+            + ", a sentence still counting seconds " + secondsSaid
             + "; tooltip " + (tip ? tip.slice(0, 140) : "NOT SET"));
 }
 
@@ -2744,7 +2793,7 @@ function stationing(beh, sogKn, cogDeg, o = {}) {
   const held26i = guardLevel;
   S = { ...S, status: { ...S.status, env_set_kn: 0 } };      // the set slackens
   notes = [];
-  for (let k = 0; k < 8; k++) { clock += 1000; aisPolledAt = clock; frame(); }
+  for (let k = 0; k < 8; k++) { clock += 1000; aisPolledAt = clock; heldModel(); frame(); }
   check("26i. ... and when the drift no longer reaches it, the on-station HOLD is RELEASED and said as on station - with no counterfactual at the plan's speed along her bow, which would read the very hazard she holds off and never let go",
         () => held26i === "hold" && guardLevel === "clear" && notes.some(n => /^On station \(/.test(n)) && paths().length === 0,
         () => "level " + held26i + " -> " + guardLevel + ", notes " + JSON.stringify(notes.map(n => n.slice(0, 90))) + ", sent " + JSON.stringify(paths()));
@@ -2783,7 +2832,7 @@ function stationing(beh, sogKn, cogDeg, o = {}) {
 
   // the way round her, on the first station frame: outside her clear water by the standoff, her bare hull never nearer
   surveying(7, [VIC()]); longLine(); frame(); nowHolding(); sent = []; notes = []; banners = []; logged = []; pinCalls = []; pinNext = null;
-  clock += RETRY + 1000; aisPolledAt = clock; frame(); await settle();
+  clock += WHILE_MS + 1000; aisPolledAt = clock; frame(); await settle();
   const up = sent.find(x => x.p === "/api/cmd/upload"), rte = (up && up.route) || [];
   const hull27 = AK_aisKeepouts([VIC()], ref, { now: clock, polledAt: clock, sweepS: 0, marginFrac: 0, navRules: false }).polys[0];
   const wayIn = wayInOf(rte, ll(0, 0));
@@ -2813,7 +2862,7 @@ function stationing(beh, sogKn, cogDeg, o = {}) {
 
   // a 20 m boat or one broadcasting no size: 10 m clear - the tight way round he asked for on 09-28 stays tight
   surveying(7, [PARKED()]); frame(); nowHolding(); sent = []; notes = []; banners = []; logged = []; pinCalls = []; pinNext = null;
-  clock += RETRY + 1000; aisPolledAt = clock; frame(); await settle();
+  clock += WHILE_MS + 1000; aisPolledAt = clock; frame(); await settle();
   const up2 = sent.find(x => x.p === "/api/cmd/upload"), rte2 = (up2 && up2.route) || [];
   const dC2 = rte2.length ? minDistTo(wayInOf(rte2, ll(0, 0)), PARKED_C) : null;
   check("27d. ... and a 30 x 8 m workboat keeps 15 m: the way round her passes no nearer her center than her own length "
@@ -2848,7 +2897,7 @@ function stationing(beh, sogKn, cogDeg, o = {}) {
 
   // the way round her, on the first station frame: outside her watch circle, with the standoff
   surveying(7, [ANCH()]); longLine(); frame(); nowHolding(); sent = []; notes = []; banners = []; logged = []; pinCalls = []; pinNext = null;
-  clock += RETRY + 1000; aisPolledAt = clock; frame(); await settle();
+  clock += WHILE_MS + 1000; aisPolledAt = clock; frame(); await settle();
   const up28 = sent.find(x => x.p === "/api/cmd/upload"), rte28 = (up28 && up28.route) || [];
   const watch28 = AK_aisKeepouts([ANCH()], ref, { now: clock, polledAt: clock, sweepS: 0 }).polys[0];
   const dW = rte28.length ? minClearTo(wayInOf(rte28, ll(0, 0)), watch28) : null;

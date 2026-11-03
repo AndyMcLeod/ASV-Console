@@ -652,9 +652,10 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
   const GUARD_HOLD_S = G4.HOLD_S;                    // the way round's run-out (2026-09-28)
   let aisVessels = [], aisPolledAt = Infinity, aisShow = false, aisAvoid = null;
   let aisKoDrawn = [], aisKoNote = null, aisKoStale = false, aisKoBlindSaid = false, aisKoWantedAt = 0;
-  // AIS_AROUND_RETRY_MS READ FROM THE PAGE (2026-09-29): it was retyped here as 30000 and the page moved to 10 s.
+  // (AIS_AROUND_RETRY_MS was read from the page here, because it had once been retyped as 30000 while the page
+  //  moved to 10 s. The page has no retry timing at all since 2026-11-02 - a re-try is gated on the MODEL, not
+  //  on a clock - so there is nothing left to read, and the stale regex that answered NaN goes with it.)
   const AIS_RETURN_BACK_M = 100, AIS_RETURN_DWELL_MS = 4000, AIS_AROUND_STEP_M = 5;
-  const AIS_AROUND_RETRY_MS = +(H.match(/const AIS_AROUND_RETRY_MS = (\d+)/) || [])[1];
   const logClient = () => {}, heldResuming = false;
   // ⚠ SWAPPABLE, because the escape rung's own behavior was untestable while this was a
   // constant null: every helm frame took the BOXED IN branch and no /api/cmd/escape could

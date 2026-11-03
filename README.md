@@ -800,10 +800,20 @@ over water already run. The return still has two seas of its own - a contact cle
 the time she reaches station, and one that clears while she keeps holding because no way round could
 be found - and a contact that clears while she still has **way on** needs no answer at all: the
 guard reads clear water and releases her. The guard bar says the console routes round her **now**,
-and counts seconds only after a try that found nothing. Never on a stale feed, never while you have
-her **paused** (a paused hold keeps the offer, and the bar says the console waits), not twice inside
-`AIS_AROUND_RETRY_MS` (10 s, the spacing between TRIES and all that constant now means), and where
-no way round is found it says so and keeps holding (`koWithAis`, `aisAroundPlan`, `aisAroundTick`,
+and **counts nothing at all** — since 2026-11-02 there is no timing of any kind left in this
+maneuver (Andy: *"this over rides previous directive to wait for a certain amount of time. Delete
+that"*). `AIS_AROUND_RETRY_MS` is gone, constant and all. Never on a stale feed, never while you
+have her **paused** (a paused hold keeps the offer, and the bar says the console waits), and a try
+that found nothing is asked again **as soon as the model moves** — a fresh AIS poll, a fresh chart
+read, a changed route, or her own position changing — and not on a clock. That is strictly faster
+than the 10 s it replaces: a contact that shifts two metres is answered on the next poll. It is a
+gate rather than a free run because a try that gets as far as the way in asks `planNogoRoute`
+*synchronously on the page's thread*, and a route search there was measured at 11 s and then 17.8 s
+on the Piscataqua Go-To — one at 4 Hz would wedge the page and the ladder with it. It also fixes
+what the clock got wrong for charted water: a pier does not move, so re-running a doomed search
+against one every 10 s bought nothing. Where no way round is found it says so **once** — the
+refusal is latched per episode, keyed on the reason, so a new reason is still heard — and keeps
+holding (`koWithAis`, `aisAroundPlan`, `aisAroundTick`,
 the held path of `resumeHeldRun`). **The way round keeps one ship-length from her, and no more than it has
 to** (Andy, 2026-09-27: "an avoidance maneuver of a radius equal to the length or the estimated
 length of the vessel"; 2026-09-28: "Too much distance from the AIS target and a long failure to
@@ -878,8 +888,8 @@ rest of the leg reads clear of her for 4 s she carries on from where she stopped
 the console routes round her itself - one ship-length off her, the leg picked up beyond her - and
 re-issues the leg's OWN command, so she still holds at its end point. Right-clicking a contact on a
 running leg amends it round her. There is no wait before the console routes round her itself since
-1 November - it goes on the first frame she is on station - and only its retries are spaced, by
-`AIS_AROUND_RETRY_MS`. Rehearsed on a throwaway console with the DriX, when the wait was still
+1 November - it goes on the first frame she is on station - and since 2 November its retries are not
+spaced either: a try that found nothing is asked again when the model moves, never on a clock. Rehearsed on a throwaway console with the DriX, when the wait was still
 10 s: a Go-To, the Return-to-Home chained after it and a drawn transit each met a moored test
 contact at 7 kn, were slowed 67-69 m off her, held 44-45 m off, and were routed round her in their
 own command - 10 s later then, at once now. The rehearsal found one more thing: slowed to LOW 58 m off her - outside the DriX's
@@ -952,7 +962,7 @@ rungs below helm **stand by** while a held resume is in flight, for its four ste
 resume counts the guard's own stops, holds and escapes, and will not upload, set LOW or Start over
 one. It also reads the vessel's own answer to Start for the plan it actually started. Anything but
 the remainder says **THE WAY ROUND IS NOT RUNNING** with the cause, keeps the held survey and the
-contact's hold, and the console tries again itself 10 s later (`heldResumeOwns`, `guardMove` and
+contact's hold, and the console keeps trying itself (`heldResumeOwns`, `guardMove` and
 the checks in `resumeHeldRun`). His wait before pressing was not the cause: the latch was gone six
 seconds into the hold, and the automatic way round takes the same path. Rehearsed on a throwaway
 console with his line, boat, set and FRIGGA across the line: held 51 m short of her, the latch

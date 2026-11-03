@@ -2760,12 +2760,10 @@ function renderHeldBar(bar, g){
   // HOLDING FOR A CONTACT (2026-09-25): say so, and that the way back is the console's own - and, since
   // 2026-09-27, the two other answers: the operator's point beyond her, or the console's own way round her
   // (paused: it waits for the operator).
-  // ⚠ THE COUNT IS A RETRY'S, NOT AN OPERATOR'S (2026-11-01). With the wait gone there is nothing to count
-  // before the FIRST try - the bar reads "now" - and a count appears only after a try that found no way round,
-  // or did not start, at AIS_AROUND_RETRY_MS past that try (aisAroundTick).
+  // ⚠⚠ THERE IS NO COUNT AT ALL ANY MORE (2026-11-02, "Delete that"). 2026-11-01 took away the operator's count
+  // and left a retry's; the retry spacing is now deleted too, so this bar has no seconds to show in any state
+  // but one - PAUSED, which is the operator's own hold on the maneuver and not a timer. A try goes every frame.
   if(aisAvoid){
-    const leftS = aisAvoid.aroundAt
-      ? Math.max(0, Math.ceil((aisAvoid.aroundAt + AIS_AROUND_RETRY_MS - Date.now()) / 1000)) : 0;
     // STOPPED OFF THE COVERAGE LINES (2026-09-27, a turn; 2026-10-16, a transit - the approach, where this said "a TURN"
     // of a boat on a straight run to the first line): no line under her, so no backtrack - the return picks the plan up
     // at its next waypoint once she is clear, and the way round walks the route past her (aisAroundPlan).
@@ -2774,7 +2772,7 @@ function renderHeldBar(bar, g){
       + (onLine ? " — resumes on its own once she is clear of the line (" + AIS_RETURN_BACK_M + " m back down it)"
                 : " - stopped OFF the coverage lines (on a turn or a transit): resumes on its own from the plan's next waypoint once she is clear")
       + "; right-click the line BEYOND her to resume there (routed round her), or the console routes round her itself "
-      + ((S && S.run === "paused") ? "once you resume the hold" : leftS > 0 ? "in " + leftS + " s" : "now");
+      + ((S && S.run === "paused") ? "once you resume the hold" : "now");
   }
   // ROUTE ROUND HER NOW (2026-09-27): a try on demand - since 2026-11-01 nothing is waited out, so what the press
   // asks for is ANOTHER try inside the retry spacing - while she is held for a contact still on the line
@@ -2809,10 +2807,9 @@ function renderHeldLegBar(bar, g){
                : " and is station-keeping · ")
     + left + " waypoint" + (left === 1 ? "" : "s") + " to go to its end point";
   if(aisAvoid){
-    const leftS = aisAvoid.aroundAt      // a retry's count; nothing is counted before the first try (2026-11-01)
-      ? Math.max(0, Math.ceil((aisAvoid.aroundAt + AIS_AROUND_RETRY_MS - Date.now()) / 1000)) : 0;
+    // no count: the retry spacing is deleted (2026-11-02), so PAUSED is the only state that is not "now"
     why += " · holding for " + aisAvoid.kind + " — carries on by itself once she is clear of the way; the console "
-      + "routes round her itself " + ((S && S.run === "paused") ? "once you resume the hold" : leftS > 0 ? "in " + leftS + " s" : "now");
+      + "routes round her itself " + ((S && S.run === "paused") ? "once you resume the hold" : "now");
   }
   $("#gb_why").textContent = why;
   { const ga = $("#gb_around"); if(ga) ga.style.display = (aisAvoid && !aisAvoid.clearSince) ? "" : "none"; }
@@ -3885,15 +3882,26 @@ function aisWalkPast(pts, endS, herOnly, others, std, runOutM){
  *
  * A contact that CLEARS the way before the first try still gets the 100 m return above - the return takes the
  * coverage back over water already run - and so does one that clears while she keeps holding because no way
- * round could be found. The way round never fires on a STALE model, never while the operator has her PAUSED
- * (the offer stands and the bar says it waits), and not twice inside AIS_AROUND_RETRY_MS; where no way round
- * is found it says so and keeps holding, and tries again that long after, because a contact moves.
+ * round could be found. The way round never fires on a STALE model and never while the operator has her PAUSED
+ * (the offer stands and the bar says it waits); where no way round is found it says so ONCE and keeps holding,
+ * and it is asked again on every frame, because the only thing that can change the answer is the model.
  *
  * NO WAIT AT ALL (Andy, 2026-11-01: "remove the wait for operator rule for ais target avoiding. go to immediate
- * maneuver to avoid"). A minute until 2026-09-28, 30 s until 2026-09-29, 10 s until today: the operator's decision
- * budget is GONE, and the console maneuvers as soon as the hold has brought her to station. What remains of the old
- * constant is the RETRY SPACING alone, named for that job and nothing else - a FIRST try is never spaced - so no
- * sentence counts an operator down any more, and the bar's count appears only after a try that found no way round.
+ * maneuver to avoid"). A minute until 2026-09-28, 30 s until 2026-09-29, 10 s until 2026-11-01: the operator's
+ * decision budget is GONE, and the console maneuvers as soon as the hold has brought her to station.
+ *
+ * ⚠⚠ AND NOW THERE IS NO TIMER OF ANY KIND (Andy, 2026-11-02: "this over rides previous directive to wait for a
+ * certain amount of time. Delete that"). What survived 11-01 was AIS_AROUND_RETRY_MS, the SPACING between tries,
+ * and it is gone too - constant and all. A try is made on EVERY FRAME the gates above allow.
+ * ⚠ THAT IS AFFORDABLE BECAUSE THE WAY ROUND IS A WALK, NOT A ROUTE SEARCH, and that measurement is what the
+ * deletion rests on: aisAroundPlan calls aisWalkPast along the plan she is already holding, against the rings of
+ * the contacts in reach - distance sums and point-in-polygon, no planNogoRoute, no planOffThread, no A*. A route
+ * search on this thread was MEASURED at 11 s and then 17.8 s on his Piscataqua Go-To, and running one at 4 Hz
+ * would wedge the page and the ladder with it; a walk is milliseconds. ⚠ IF THE WALK IS EVER REPLACED BY A
+ * SEARCH THE SPACING HAS TO COME BACK - not as an operator's wait, as a budget for the page's own thread.
+ * ⚠ AND THE OPERATOR IS NOT TOLD TWICE: the failure banner is latched on `ep.aroundSaid` (aisAroundGo), so
+ * tries at frame rate say nothing at frame rate. Nothing counts down anywhere now, so the bars carry no seconds
+ * at all - there is no number left to show, which is the whole point of the instruction.
  *
  * ⚠ THE STOP ITSELF STAYS, AND THAT IS NOT AN OVERSIGHT. The guard's hold is the backstop: it is what banks the
  * plan (markGuardHeld) and so what gives the way round something to resume, and it is the answer that needs no
@@ -3901,7 +3909,7 @@ function aisWalkPast(pts, endS, herOnly, others, std, runOutM){
  * Routing round her INSTEAD of stopping is a different maneuver - the running plan's amendment, aisAroundRunning -
  * which is the operator's own answer on the chart menu, and is not what this rule does.
  */
-const AIS_AROUND_RETRY_MS = 10000;   // a try that found no way round is asked again this long after - a contact moves
+// (AIS_AROUND_RETRY_MS is GONE, 2026-11-02 - see the paragraph above. There is no timer in this maneuver.)
 const AIS_AROUND_STEP_M = 5;         // the walk along the held line, looking for the first clear point beyond her
 let aisAroundBusy = false;           // the running plan's way round (aisAroundRunning): one in flight at a time
 /** The charted model plus the contacts of this frame - the guard's own koAll for the routers; with `avoid`,
@@ -4105,11 +4113,40 @@ function aisAroundTick(aisKo, now){
                                        : "she is clear of the line, and the " + AIS_RETURN_BACK_M + " m return is under way";
   // ⚠ NO OPERATOR WAIT (2026-11-01). There is no gate on `since` any more: the FIRST try goes on the first frame
   // every gate above is satisfied - she is on station, not resuming, not paused, the model fresh, and she is not
-  // already clear of the way. What is left is the RETRY SPACING, which is not a decision budget: it keeps a try
-  // that found no way round from being asked of the router on every frame, and gives the contact time to move.
-  const retryS = Math.round(AIS_AROUND_RETRY_MS / 1000);
-  if(!forced && aisAvoid.aroundAt && now - aisAvoid.aroundAt < AIS_AROUND_RETRY_MS) return "tried inside the last " + retryS + " s";
+  // already clear of the way.
+  //
+  // ⚠⚠ AND NO TIMER OF ANY KIND (Andy, 2026-11-02: "this over rides previous directive to wait for a certain
+  // amount of time. Delete that"). AIS_AROUND_RETRY_MS is deleted. What gates a RE-try is not a clock but the
+  // MODEL: a try's answer can only change if the water has. So a refused try records the model it was refused
+  // on, and the next try goes on the first frame any part of that model differs.
+  //
+  // ⚠ IT IS A GATE AND NOT A FREE-RUN, AND THE REASON IS MEASURED. The way round is not only the walk: when
+  // aisWalkPast finds a point, resumeHeldSurvey / resumeHeldLeg ask planNogoRoute for the way in to it -
+  // SYNCHRONOUSLY, on this thread - and the suite's 14h proves the router is asked on a FAILED try too. A route
+  // search on this thread was measured at 11 s and then 17.8 s on the Piscataqua Go-To, so asking one at 4 Hz
+  // would wedge the page and the clearance ladder with it: the very fault of 2026-11-01, self-inflicted. The
+  // model gate costs three comparisons and is STRICTLY FASTER than the clock it replaces - a contact that moves
+  // two meters is answered on the next poll (1 s) instead of up to 10 s later.
+  //
+  // ⚠ AND IT FIXES WHAT THE CLOCK GOT WRONG FOR CHARTED WATER. A pier does not move. The clock re-ran a doomed
+  // router search against one every 10 s for as long as she held; the model gate asks once and then waits for
+  // something to actually change. `nogo.ko` is REPLACED wholesale by each chart read, so object identity is an
+  // exact test for "the charted model is the one I was refused on" - no revision counter needed.
+  // ⚠⚠ HER OWN POSITION IS PART OF THE MODEL, and leaving it out was a real fault found by this suite.
+  // The walk starts from where she IS, so a try refused while she was still running in to the hold point -
+  // guardHeldOffer deliberately does not wait for `holding`, so the offer is live with way still on her -
+  // recorded a model that had not changed by the time she settled, and the gate then refused the try that
+  // mattered: the first SETTLED station frame. Rounded to the meter, so a drifting boat earns a fresh try
+  // as she moves and a stationary one on unchanged water does not.
+  const here = g.at || (asv ? {lat: asv.lat, lon: asv.lon} : null);
+  const onNow = {polled: aisPolledAt, ko: nogo.ko, route: g.route, idx: g.idx,
+                 at: here ? Math.round(here.lat * 1e5) + "," + Math.round(here.lon * 1e5) : null};
+  const t = aisAvoid.triedOn;
+  if(!forced && t && t.polled === onNow.polled && t.ko === onNow.ko
+     && t.route === onNow.route && t.idx === onNow.idx && t.at === onNow.at)
+    return "already tried on this model - nothing has moved, and the answer cannot change until something does";
   aisAvoid.aroundAt = now;
+  aisAvoid.triedOn = onNow;
   return aisAroundGo(g, aisKo, aisAvoid, forced) ? true : "no way round her";
 }
 /** The held path's way round: the plan beyond her (aisAroundPlan), then resumeHeldSurvey from it. `ep` is the
@@ -20222,12 +20259,10 @@ async function resumeFromHere(ll){
     const foul = clearanceM(nogo.frame.toEN(hit.to), herOnly, std + 1) < std
               || !legClear(hit.to, leg.end, nogo.frame, herOnly, std);
     if(foul){
-      // a retry's count, as the bar counts it (renderHeldBar): there is nothing to count before the first try
-      const leftS = aisAvoid.aroundAt
-        ? Math.max(0, Math.ceil((aisAvoid.aroundAt + AIS_AROUND_RETRY_MS - Date.now()) / 1000)) : 0;
+      // no count: the retry spacing is deleted (2026-11-02), so there is never a wait to offer them
       showBanner('⚠ THAT POINT IS ON THE NEAR SIDE OF ' + aisAvoid.kind + ' — line ' + line + " runs from there into her, and she "
         + "would only be stopped again. Pick a point BEYOND her"
-        + (S.run === "running" ? ", or wait: the console routes round her itself " + (leftS > 0 ? "in " + leftS + " s." : "now.") : "."));
+        + (S.run === "running" ? ", or leave it: the console routes round her itself, on every frame until it finds a way." : "."));
       return;
     }
   }
@@ -20335,8 +20370,9 @@ async function resumeFromHere(ll){
  *     first point of her line beyond her avoidance ring (aisAroundPlan over the plan aboard and the line she is
  *     on), the way in routed with the contacts in the model at the standoff - no hold, no re-upload.
  * The automatic answer is his 09-26 rule: a contact on the line holds her, the bar offers, and the console routes
- * round her itself - a minute until 2026-09-28, 30 s until 09-29, 10 s until 2026-11-01, and now as soon as she is
- * on station. These make that answer a press away while a failed try is spaced out (AIS_AROUND_RETRY_MS).
+ * round her itself - a minute until 2026-09-28, 30 s until 09-29, 10 s until 2026-11-01, and since then as soon as
+ * she is on station, with no spacing between tries at all since 2026-11-02. These two make the operator's OWN
+ * answer a press away; they no longer short-cut any wait, because there is none left to short-cut.
  */
 /** The contact under a chart point - its keep-out within the identify reach (IDENTIFY_PX at this zoom) - or null. */
 function contactAt(ll){
@@ -20504,12 +20540,13 @@ async function clearTestContacts(){
   flashNote("Test contacts cleared (" + (r.cleared || 0) + ").");
 }
 $("#gb_around").onclick = ()=>{ aisAroundNow(); };
-// WHAT THE BUTTON IS FOR NOW THAT NOTHING IS WAITED OUT (2026-11-01): the console routes round her as soon as she
-// is on station, so this is the way to ask for ANOTHER try inside the spacing between tries - stated from the one
-// constant that sets that spacing, as every sentence about it is.
+// WHAT THE BUTTON IS FOR NOW THAT NOTHING IS WAITED OUT AT ALL (2026-11-01, then 2026-11-02): the console routes
+// round her as soon as she is on station and asks again on every frame, so this no longer short-cuts anything.
+// What is left for it is the two states the automatic try will not act in - PAUSED, which is the operator's own
+// hold on the maneuver, and a point the operator chose that `forced` overrides - plus simply doing it on demand.
 $("#gb_around").title = "Route round the contact she is held for NOW - one ship-length off her, carrying on beyond her."
-  + " The console does this itself as soon as she is on station; press this to try again without waiting the "
-  + Math.round(AIS_AROUND_RETRY_MS / 1000) + " s between tries.";
+  + " The console does this itself as soon as she is on station, and keeps trying; press this to ask while she is "
+  + "paused, or to force a try the automatic one has refused.";
 
 // PAUSE IS A TOGGLE NOW. It flashes while the run is held, and pressing it again is the
 // resume — so the control that stopped the boat is the control that starts it, and the
@@ -20723,10 +20760,20 @@ async function resumeHeldLeg(opts){
   const auto = (opts && opts.auto) || null, at = (opts && opts.at) || null;
   const around = !!(opts && opts.around), manual = !!(opts && opts.manual);
   const koIn = (opts && opts.ko) || nogo.ko;
+  // ⚠⚠ THE CONSOLE'S OWN TRY SAYS A REFUSAL ONCE PER EPISODE; THE OPERATOR'S PRESS IS ALWAYS ANSWERED
+  // (2026-11-02). With the retry spacing deleted an automatic try goes whenever the model moves - once a second
+  // on a live AIS feed - and every one of them that got as far as the way in raised its banner, so the operator
+  // would be told the same thing at poll rate. The `aroundSaid` latch covers aisAroundGo's own "no way round";
+  // these refusals come from HERE and had none. ⚠ KEYED ON THE TEXT, so a DIFFERENT reason is still said - that
+  // is aisStallSay's rule, and a new reason is news.
+  const sayRefusal = (txt) => {
+    if(auto && !manual && auto.refusedSaid === txt) return;   // already told them this, this episode
+    if(auto && !manual) auto.refusedSaid = txt;
+    showBanner(txt);
+  };
   const tail = at ? (at.tail || []).slice() : g.route.slice(g.idx);
-  const retryS = Math.round(AIS_AROUND_RETRY_MS / 1000);
   if(!tail.length){
-    showBanner("⚠ CANNOT RESUME THE " + NAME + " — it has no waypoint left to fly. She is station-keeping; re-command her.");
+    sayRefusal("⚠ CANNOT RESUME THE " + NAME + " — it has no waypoint left to fly. She is station-keeping; re-command her.");
     render(); return;
   }
   // THE WAY IN, from where she is to the first waypoint of the way on: certified against the model it is routed by, at
@@ -20742,9 +20789,9 @@ async function resumeHeldLeg(opts){
     const pin = (at && at.her ? tautRoundHer(from, tail[0], aisRoundKeepout(at.her, std, nogo.buffer || 0), koIn, std) : null)
              || planNogoRoute(from, tail[0], {...holdOpts(), standoffM: patClipBufM(), ko: koIn, flyThrough: true});
     if(pin.error || pin.heldOff){
-      showBanner("⚠ CANNOT RESUME THE " + NAME + " FROM HERE — " + (planWhy(pin) || heldOffWhy(pin.heldOff))
+      sayRefusal("⚠ CANNOT RESUME THE " + NAME + " FROM HERE — " + (planWhy(pin) || heldOffWhy(pin.heldOff))
         + ". She is still station-keeping and the " + name + " is still held; "
-        + (aisAvoid || auto ? "ROUTE ROUND HER NOW tries again, and the console tries again itself in " + retryS + " s." : "re-command her."));
+        + (aisAvoid || auto ? "ROUTE ROUND HER NOW tries again, and the console keeps trying itself, every frame." : "re-command her."));
       render(); return;
     }
     if(pin.degraded) inNote = "the keep-out model is not loaded, so the way in was NOT certified";
@@ -20774,9 +20821,9 @@ async function resumeHeldLeg(opts){
     resumeSlow = hadLow;
     // The return spent its episode before it called here: put back, with its dwell to run again.
     if(auto && !at && !aisAvoid && guardHeld) aisAvoid = {...auto, clearSince: 0, aroundAt: Date.now()};
-    showBanner("⚠ " + (around ? "THE WAY ROUND" : "THE " + NAME) + " IS NOT RUNNING — " + why + ". She is " + doing
+    sayRefusal("⚠ " + (around ? "THE WAY ROUND" : "THE " + NAME) + " IS NOT RUNNING — " + why + ". She is " + doing
       + (doing === "stopped" ? "." : ", and the " + name + " is still held" + (around
-          ? ": ROUTE ROUND HER NOW on the bar tries again, and the console tries again itself in " + retryS + " s."
+          ? ": ROUTE ROUND HER NOW on the bar tries again, and the console keeps trying itself, every frame."
           : auto ? ": the console tries again once the way reads clear again, or resume it from the guard bar."
           : "; resume it from the guard bar.")));
     logClient("resume_not_running", {why, doing, around, auto: !!auto, manual, leg: beh,
@@ -20867,6 +20914,16 @@ async function resumeHeldRun(opts){
   // THE AIS RETURN (2026-09-25) COMES THROUGH HERE TOO, with its own backtrack and none of the
   // operator's latches - see aisReturnTick. `auto` is that episode's record, or null for a press.
   const auto = (opts && opts.auto) || null;
+  // ⚠⚠ SAID ONCE PER EPISODE FOR THE CONSOLE'S OWN TRY - see resumeHeldLeg's note (2026-11-02).
+  // ⚠ DECLARED HERE, ABOVE EVERY CALL SITE. A `const` is not hoisted for use: declared beside
+  // `manual` further down, the two CANNOT RESUME FROM HERE sites above it threw a ReferenceError that the
+  // caller's own .catch turned into a different banner, so the refusal was never said at all.
+  const sayRefusal = (txt) => {
+    const mine = auto && !(opts && opts.manual);
+    if(mine && auto.refusedSaid === txt) return;   // already told them this, this episode
+    if(mine) auto.refusedSaid = txt;
+    showBanner(txt);
+  };
   const back = (opts && opts.backM != null) ? opts.backM : resumeBackM();
   // A CHOSEN POINT (2026-09-27): the operator's Resume from here on a held survey, or the console's own
   // way round a contact (aisAroundTick). No backtrack - the remainder starts at that point (or at the
@@ -20941,7 +20998,7 @@ async function resumeHeldRun(opts){
     const pin = (at && at.her ? tautRoundHer(backFrom, firstWp, aisRoundKeepout(at.her, stdIn, nogo.buffer || 0), koIn, stdIn) : null)
              || planNogoRoute(backFrom, firstWp, {...holdOpts(), standoffM: patClipBufM(), ko: koIn, flyThrough: true});
     if(pin.error){
-      showBanner("⚠ CANNOT RESUME FROM HERE - " + planWhy(pin) + ". The boat is still "
+      sayRefusal("⚠ CANNOT RESUME FROM HERE - " + planWhy(pin) + ". The boat is still "
         + "station-keeping and the remainder is still held; Go-To open water first, or Stop "
         + "and re-plan.");
       render(); return;
@@ -20951,7 +21008,7 @@ async function resumeHeldRun(opts){
     // it would drive her at the original anyway, which is the one place this must not send
     // her. The punch-out is supposed to make this unreachable; if it is reached, say so.
     if(pin.heldOff){
-      showBanner("⚠ CANNOT RESUME FROM HERE - the first unflown waypoint is itself inside "
+      sayRefusal("⚠ CANNOT RESUME FROM HERE - the first unflown waypoint is itself inside "
         + (g.kind || "a keep-out") + ", so the way in cannot be certified. The boat is still "
         + "station-keeping and the remainder is still held; Stop and re-plan the survey.");
       render(); return;
@@ -20996,7 +21053,7 @@ async function resumeHeldRun(opts){
   // contact's episode stays open, and the way round tries again on its own.
   const moved0 = guardMoved;
   const routeBefore = runRoute, intentBefore = planIntent, intentRouteBefore = planIntent ? planIntent.route : null;
-  const around = !!(opts && opts.around);
+  const around = !!(opts && opts.around), manual = !!(opts && opts.manual);
   const notRunning = (why, doing) => {
     if(!auto && !at) guardOverride = null;             // the override this resume recorded, and only that
     resumeSlow = hadLow;
@@ -21005,10 +21062,9 @@ async function resumeHeldRun(opts){
     // The 100 m return spent its episode before it called here: put back, with its dwell to run again.
     if(auto && !at && !aisAvoid && guardHeld) aisAvoid = {...auto, clearSince: 0, aroundAt: Date.now()};
     const held = doing !== "stopped";
-    showBanner("⚠ " + (around ? "THE WAY ROUND" : "THE SURVEY") + " IS NOT RUNNING — " + why + ". She is " + doing
+    sayRefusal("⚠ " + (around ? "THE WAY ROUND" : "THE SURVEY") + " IS NOT RUNNING — " + why + ". She is " + doing
       + (!held ? "." : ", and the survey remainder is still held" + (around
-          ? ": ROUTE ROUND HER NOW on the bar tries again, and the console tries again itself in "
-            + Math.round(AIS_AROUND_RETRY_MS / 1000) + " s."
+          ? ": ROUTE ROUND HER NOW on the bar tries again, and the console keeps trying itself, every frame."
           : auto && !at ? ": the console tries again once the line reads clear again, or resume it from the guard bar."
           : "; resume it from the guard bar.")));
     logClient("resume_not_running", {why, doing, around, auto: !!auto, manual: !!(opts && opts.manual),
