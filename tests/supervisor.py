@@ -413,7 +413,19 @@ check("13c. a report's busy_s is a finite positive number of seconds or nothing 
 # waypoint index lowers it again - so review found the badge invisible in every other window: a second chart tab, the
 # controls window, anyone watching the same console. It rides this heartbeat rather than a channel of its own, so it
 # inherits this class's staleness and its prune. The page's half is tests/supervisor_page.js 6c-6f.
-RAISED = {"why": "routed round", "kind": "a dock / pier", "since": 1700000000.0}
+# ⚠ WHAT THE PAGE SENDS IS NOT WHAT THE CONSOLE SERVES ANY MORE (2026-11-03, review). The page sends `why` and
+# `kind` and nothing else - `since` was its own clock and no page ever read it - and the snapshot adds `for_s`,
+# measured on the CONSOLE's clock so two machines watching one console agree, and `inherited`, which tells a new
+# holder there is a maneuver to adopt.
+RAISED = {"why": "routed round", "kind": "a dock / pier"}
+
+
+def served(snap, **extra):
+    want = dict(RAISED)
+    want.update(extra)
+    return snap["avoiding"] == want
+
+
 sv7 = A.Supervision()
 sv7.beat("main", now=T)
 pub = sv7.beat("main", avoiding=RAISED, set_avoiding=True, now=T + 1)
@@ -439,47 +451,108 @@ sv10 = A.Supervision()
 sv10.beat("main", now=T)
 sv10.beat("main", avoiding=RAISED, set_avoiding=True, now=T + 1)
 forgotten = sv10.check_once(now=T + 1 + A.SUPERVISOR_FORGET_S + 1)
-# and a handover clears it: the new holder's own first beat says what IT has, and the old holder's rejoin index
-# belongs to a route the new one may already have replaced
-sv11 = A.Supervision()
-sv11.beat("main", now=T)
-sv11.beat("main", avoiding=RAISED, set_avoiding=True, now=T + 1)
-handed = sv11.beat("other", take=True, now=T + 2)
 check("14. the supervising tab's AVOIDING record is served to every page - from the HOLDER only, with a POST that says "
       "nothing about it leaving it alone and the holder's own null lowering it - and it is not served by a tab that has "
-      "gone stale, said it is leaving, been forgotten, or been taken over",
-      lambda: pub["avoiding"] == RAISED and notMine["avoiding"] == RAISED and busyKept["avoiding"] == RAISED
+      "gone stale, said it is leaving, or been forgotten",
+      # the record was stamped at T+1, so `for_s` counts from there on the CONSOLE's clock
+      lambda: served(pub, for_s=0.0, inherited=False) and served(notMine, for_s=2.0, inherited=False)
+      and served(busyKept, for_s=3.0, inherited=False)
       and lowered["avoiding"] is None and stalePub["avoiding"] is None and released["avoiding"] is None
-      and forgotten["avoiding"] is None and handed["avoiding"] is None,
+      and forgotten["avoiding"] is None,
       lambda: json.dumps({"published": pub["avoiding"], "a view-only tab's null": notMine["avoiding"],
                           "after the busy POST": busyKept["avoiding"], "lowered": lowered["avoiding"],
                           "stale": stalePub["avoiding"], "released": released["avoiding"],
-                          "forgotten": forgotten["avoiding"], "handed over": handed["avoiding"]}))
+                          "forgotten": forgotten["avoiding"]}))
+
+# ── 14c. A HANDOVER DOES NOT END THE MANEUVER (2026-11-03, the third review, found by two lenses) ─────────────
+# The record used to be dropped the moment the post changed hands - "the new holder's own first beat says what IT
+# has" - and the measured consequence was that pressing TAKE OVER mid-way-round, or reloading the supervising
+# tab, took AVOIDING off every chart in the building while the console still had her off her planned track, with
+# no path back: every raise sits inside its own command's reply handler, and the tab now in charge commanded
+# nothing. His instruction was a flag that reads AVOIDING "until it's back on line or natural transit"; a
+# handover is neither. So the record is KEPT, marked `inherited`, and the new holder adopts it (its page half is
+# tests/supervisor_page.js 6g) - and until it does, its empty beats cannot erase what it has not seen yet,
+# because its very first beat is sent BEFORE the snapshot that carries the record reaches it.
+sv11 = A.Supervision()
+sv11.beat("main", now=T)
+sv11.beat("main", avoiding=RAISED, set_avoiding=True, now=T + 1)
+handed = sv11.beat("other", take=True, now=T + 2)              # the TAKE OVER post: its own `avoiding` is null
+handedAgain = sv11.beat("other", avoiding=None, set_avoiding=True, now=T + 3)   # and its next empty beat
+adopted = sv11.beat("other", avoiding={"why": "routed round", "kind": "a dock / pier"},
+                    set_avoiding=True, now=T + 4)              # the page adopted it: now it is the holder's own
+afterAdopt = sv11.beat("other", avoiding=None, set_avoiding=True, now=T + 5)    # ... and can be lowered
+# and a holder that NEVER adopts cannot strand the flag: past the orphan window its empty beats erase it
+sv12 = A.Supervision()
+sv12.beat("main", now=T)
+sv12.beat("main", avoiding=RAISED, set_avoiding=True, now=T + 1)
+sv12.beat("other", take=True, now=T + 2)
+neverAdopt = sv12.beat("other", avoiding=None, set_avoiding=True, now=T + 2 + A.SUPERVISOR_STALE_S + 1)
+check("14c. a HANDOVER keeps the record and offers it to the new holder, marked `inherited` - the flag is a fact "
+      "about the BOAT, not about which tab is reporting - and the new holder's empty beats cannot erase a record "
+      "it has not adopted yet, while one that never adopts cannot strand it past the orphan window",
+      lambda: served(handed, for_s=1.0, inherited=True) and served(handedAgain, for_s=2.0, inherited=True)
+      and served(adopted, for_s=3.0, inherited=False) and afterAdopt["avoiding"] is None
+      and neverAdopt["avoiding"] is None,
+      lambda: json.dumps({"handed over": handed["avoiding"], "its next empty beat": handedAgain["avoiding"],
+                          "adopted": adopted["avoiding"], "then lowered": afterAdopt["avoiding"],
+                          "never adopted, past the window": neverAdopt["avoiding"]}))
+
+# ── 14d. AND `busy` DOES NOT CERTIFY A PROMISE (2026-11-03, review, measured) ─────────────────────────────────
+# `stale` carries `and not busy`, and `busy` is what the page POSTs for SUPERVISOR_BUSY_MAX_S immediately before
+# every on-thread route search - 11 s and 17.8 s measured on the Piscataqua, and a page is killed during a long
+# synchronous search more readily than at any other moment (the machine-OOM kill is on this console's record).
+# Keyed on `stale`, the record of a holder that died while planning went on being served to every page: measured
+# at t+46 s with tabs 0, busy True, stale False and the badge still published - one second before the supervision
+# stand-down takes the way off an armed running boat, under a banner promising something was putting her back.
+# `busy` exists to protect the post from a takeover and the stand-down from a false alarm; it was never a reason
+# to go on asserting a maneuver on behalf of a tab that has stopped reporting.
+sv13 = A.Supervision()
+sv13.beat("main", now=T)
+sv13.beat("main", avoiding=RAISED, set_avoiding=True, now=T + 1)
+sv13.beat("main", busy_s=60, now=T + 2)                        # "I am about to plan", then the page dies
+busyAt3 = sv13.snapshot(now=T + 3)
+busyAt46 = sv13.snapshot(now=T + 46)
+check("14d. ... and a holder that said it was PLANNING and then died stops having its badge served the moment it "
+      "stops reporting: the gate is the holder's own reporting age, not `stale`, which `busy` suppresses for a "
+      "minute - long enough to reach the supervision stand-down with every page still showing the flag",
+      lambda: served(busyAt3, for_s=2.0, inherited=False)
+      and busyAt46["avoiding"] is None and busyAt46["busy"] is True and busyAt46["stale"] is False
+      and busyAt46["tabs"] == 0 and busyAt46["age_s"] > A.SUPERVISOR_STALE_S,
+      lambda: json.dumps({"at +3 s": busyAt3["avoiding"],
+                          "at +46 s": {"avoiding": busyAt46["avoiding"], "busy": busyAt46["busy"],
+                                       "stale": busyAt46["stale"], "tabs": busyAt46["tabs"],
+                                       "age_s": busyAt46["age_s"]}}))
 
 # 14b. IT IS CLIENT-SUPPLIED, so it is rebuilt field by field: anything that is not one of the three maneuvers the
 # flag names is nothing, the kind is capped, and nothing a page sends can raise an exception in the heartbeat - which
 # is a safety channel, and the one POST that must never be breakable by a bad body.
 clean = A.Supervision._clean_avoiding
 avVals = {
-    "ok": clean({"why": "deviated", "kind": "a shoal", "since": 1.0}),
-    "unknown why": clean({"why": "wandered off", "kind": "a shoal", "since": 1.0}),
+    "ok": clean({"why": "deviated", "kind": "a shoal"}),
+    "unknown why": clean({"why": "wandered off", "kind": "a shoal"}),
     "no why": clean({"kind": "a shoal"}),
     "no kind": clean({"why": "steered clear"}),
     "long kind": clean({"why": "steered clear", "kind": "x" * 500}),
+    # ⚠ `since` IS NO LONGER STORED AT ALL (2026-11-03, review): no page read it, and it was the RAISING page's
+    # clock, so an elapsed time built from it was wrong on every other machine by whatever two clocks disagree
+    # by. The console stamps the record's arrival itself. One fewer client-supplied number on a safety channel.
+    "a since is dropped": clean({"why": "deviated", "kind": "a shoal", "since": 1.0}),
     "odd since": clean({"why": "deviated", "kind": "a shoal", "since": "yesterday"}),
     "extra fields": clean({"why": "deviated", "kind": "a shoal", "since": 1.0, "rejoin": 7, "odd": {"a": [1, 2]}}),
     "not a dict": clean("AVOIDING"),
     "none": clean(None),
 }
 check("14b. ... and the record is rebuilt field by field from what the page sent: an unknown maneuver, a missing one and "
-      "a body that is not an object are all nothing; a non-numeric time is dropped; the kind is capped; extra fields go",
-      lambda: avVals["ok"] == {"why": "deviated", "kind": "a shoal", "since": 1.0}
+      "a body that is not an object are all nothing; the kind is capped; and every other field a page sends - `since` "
+      "and `rejoin` included - is simply not stored",
+      lambda: avVals["ok"] == {"why": "deviated", "kind": "a shoal"}
       and avVals["unknown why"] is None and avVals["no why"] is None and avVals["not a dict"] is None
       and avVals["none"] is None
-      and avVals["no kind"] == {"why": "steered clear", "kind": "something in her way", "since": None}
+      and avVals["no kind"] == {"why": "steered clear", "kind": "something in her way"}
       and len(avVals["long kind"]["kind"]) == 120
-      and avVals["odd since"] == {"why": "deviated", "kind": "a shoal", "since": None}
-      and sorted(avVals["extra fields"].keys()) == ["kind", "since", "why"],
+      and avVals["a since is dropped"] == {"why": "deviated", "kind": "a shoal"}
+      and avVals["odd since"] == {"why": "deviated", "kind": "a shoal"}
+      and sorted(avVals["extra fields"].keys()) == ["kind", "why"],
       lambda: json.dumps({k: (dict(v, kind="<%d chars>" % len(v["kind"]))
                               if isinstance(v, dict) and len(str(v.get("kind", ""))) > 40 else v)
                           for k, v in avVals.items()}))

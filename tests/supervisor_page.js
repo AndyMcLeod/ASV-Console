@@ -131,11 +131,21 @@ function makeWorld(role) {
     // WHICH TAB SPEAKS; the record's own raising and lowering is tests/ais_avoid.js's subject and is lifted there.
     "let avoiding = null;",
     "const avoidingNow = () => avoiding;",
+    // the RAISER is a stand-in for the same reason the reader is - what is asserted here is which tab speaks -
+    // and applySupervisor needs it, because it is what ADOPTS a record inherited at a handover (2026-11-03).
+    "const avoidingRaise = (why, kind, rejoin, wp) => { avoiding = {why, kind, since: Date.now(),"
+      + " rejoin: (rejoin == null ? null : rejoin), rejoinWp: wp || null}; };",
+    // the sentence that says when the flag comes down, declared by the page (so a rename cannot leave this
+    // suite asserting its own copy) - and the CONTROLS window's own badge, which reads it (2026-11-03)
+    decl(/^const AVOID_TIP = [\s\S]*?;$/m),
+    grab("controlsAvoidShow"),
     ["supervising", "applySupervisor", "supervisorBeat", "supervisorBusy", "supervisorStreamed", "supervisorStreamLost",
      "supervisorReport", "supervisorSlept", "cmd", "cmdLabel", "canCommand", "applyViewOnly",
-     "avoidingWire", "renderAvoiding"].map(grab).join("\n"),
+     "avoidingWire", "avoidingShown", "avoidingForS", "avoidingDur", "avoidingSay",
+     "renderAvoiding"].map(grab).join("\n"),
     "return { CLIENT_ID, supervising, applySupervisor, cmd, canCommand, applyViewOnly, supervisorBusy,",
-    "         setAvoiding: (a) => { avoiding = a; }, renderAvoiding, avoidingWire,",
+    "         controlsAvoidShow,",
+    "         setAvoiding: (a) => { avoiding = a; }, getAvoiding: () => avoiding, renderAvoiding, avoidingWire,",
     "         planned: () => { supPlanEnd = Date.now(); },",
     // what onFrame does for a frame the ladder ran on, and what the console's idle tick does
     "         stream: () => { supervisorStreamed(); supervisorReport(); },",
@@ -143,17 +153,28 @@ function makeWorld(role) {
     "         setS: (s) => { S = s; } };",
   ].join("\n");
   // eslint-disable-next-line no-new-func
+  const madeIn = { _made: {} };
   const w = new Function("UIROLE", "els", "document", "fetch", "posts", "banners", "notes", "recorded", "Date",
                          "setInterval", "addEventListener", "navigator", "crypto", body)(
     role, els,
+    // ⚠ WITH A MINIMAL ELEMENT REGISTRY (2026-11-03): the controls window's AVOIDING badge is built on the fly
+    // with inline styles - deliberately, because that window's own stylesheet hides #map and #vcard outright -
+    // so it goes through document.createElement / body.appendChild rather than the `$` stub above, and it has to
+    // be FOUND again on the next poll or it would be rebuilt every second.
     { querySelectorAll: (sel) => (sel === ".cbtn" ? buttons : []),
-      get visibilityState() { return visibility; } },
+      get visibilityState() { return visibility; },
+      _made: {},
+      getElementById(id) { return madeIn._made[id] || null; },
+      createElement() { return { id: "", style: { cssText: "", display: "" }, title: "", textContent: "",
+                                 setAttribute() {} }; },
+      body: { appendChild(n) { madeIn._made[n.id] = n; } },
+      get _reg() { return madeIn._made; } },
     (url, opt) => { posts.push({ url, opt }); return Promise.resolve({ ok: true, status: 200,
                                                                       json: async () => ({ ok: true }) }); },
     posts, banners, notes, recorded,
     { now: () => clock }, () => {}, () => {}, { sendBeacon: () => true }, { randomUUID: () => role + "-tab" });
   const bodyOf = (p) => { try { return JSON.parse(p.opt && p.opt.body); } catch (e) { return {}; } };
-  return Object.assign(w, { els, buttons, posts, banners, notes, recorded,
+  return Object.assign(w, { els, buttons, posts, banners, notes, recorded, made: madeIn._made,
                             advance: (ms) => { clock += ms; },
                             show: (v) => { visibility = v; },
                             reports: () => posts.filter((p) => p.url === "/api/supervisor"),
@@ -261,13 +282,19 @@ const bAv = JSON.parse(WAV.reports().slice(-1)[0].opt.body);
 WAV.setAvoiding(null);                       // she is back on her track: the next beat has to say so
 WAV.advance(5000); WAV.stream();
 const bClear = JSON.parse(WAV.reports().slice(-1)[0].opt.body);
-check("6c. the SUPERVISING tab publishes its AVOIDING record on the beat it already sends - why and what, never the "
-      + "rejoin index, which is an index into ITS route and means nothing in another page - and the beat that "
-      + "follows the record coming down carries null, so 'she is back on her track' can reach the other tabs",
+check("6c. the SUPERVISING tab publishes its AVOIDING record on the beat it already sends - why and what, and "
+      + "NOTHING ELSE: not the rejoin index, which means nothing in another page's array, and not `since`, "
+      + "which is this page's clock and would be wrong on any other machine - and the beat that follows the "
+      + "record coming down carries null, so 'she is back on her track' can reach the other tabs",
       () => bAv.avoiding && bAv.avoiding.why === "routed round" && bAv.avoiding.kind === "a dock / pier"
-            && bAv.avoiding.since === 123 && bAv.avoiding.rejoin === undefined
+            // ⚠ `since` LEFT THE WIRE (2026-11-03, review): no page read it, and it is the raising page's
+            // clock. The console stamps the record's arrival on its own and serves `for_s`, so an elapsed
+            // time on a second machine is measured by ONE clock instead of the difference of two.
+            && bAv.avoiding.since === undefined && bAv.avoiding.rejoin === undefined
+            && Object.keys(bAv.avoiding).sort().join(",") === "kind,why"
             && "avoiding" in bClear && bClear.avoiding === null,
-      () => "raised " + JSON.stringify(bAv.avoiding) + "; lowered " + JSON.stringify(bClear.avoiding));
+      () => "raised " + JSON.stringify(bAv.avoiding) + " (fields "
+          + Object.keys(bAv.avoiding || {}).sort().join(",") + "); lowered " + JSON.stringify(bClear.avoiding));
 
 const WAV2 = makeWorld("main");
 WAV2.applySupervisor({ holder: "another-tab", stale: false, tabs: 2 });
@@ -303,6 +330,92 @@ check("6f. the SUPERVISING tab shows its OWN record and not the served one, whic
       () => /STEERED CLEAR OF a rock/.test(tagHold) && !/A BEAT OLD/.test(tagHold)
             && tagDown.text === "" && tagDown.display === "none",
       () => "holding '" + tagHold + "'; after '" + tagDown.text + "' display " + tagDown.display);
+
+// ── 6g. A HANDOVER DOES NOT END THE MANEUVER ─────────────────────────────────────────────────────────────────
+// ⚠⚠ MEASURED BY THE THIRD REVIEW, BY TWO LENSES. The console used to drop the record the moment the post
+// changed hands, on the argument that nobody was left who could lower it - so pressing TAKE OVER mid-way-round,
+// or simply RELOADING the supervising tab, took the AVOIDING flag off every chart in the building while the
+// console still had her off her planned track, with no path back: every raise sits inside its own command's
+// reply handler, and the tab now in charge commanded nothing. His instruction was a flag that reads AVOIDING
+// "until it's back on line or natural transit"; a handover is neither. The console keeps the record and marks
+// it `inherited`, and the new holder adopts it as its own - with `rejoin` null, because the index belonged to
+// the other page's route, so what ends it is the next commanded motion.
+const WAV4 = makeWorld("main");
+WAV4.applySupervisor({ holder: "the-old-tab", stale: false, tabs: 2 });     // this tab is view-only to begin with
+const adoptedWhileView = WAV4.getAvoiding();
+WAV4.applySupervisor({ holder: WAV4.CLIENT_ID, stale: false, tabs: 2,
+                       avoiding: { why: "routed round", kind: "a dock / pier", for_s: 12.5, inherited: true } });
+const adopted = WAV4.getAvoiding();
+WAV4.setS({ supervisor: { holder: WAV4.CLIENT_ID, stale: false, tabs: 2,
+                          avoiding: { why: "routed round", kind: "a dock / pier", for_s: 12.5, inherited: true } } });
+WAV4.renderAvoiding();
+const tagAdopt = WAV4.els["#r_avoid"].textContent;
+// and a record the console does NOT mark inherited is not adopted: that is the holder's own, already its own
+const WAV5 = makeWorld("main");
+WAV5.applySupervisor({ holder: WAV5.CLIENT_ID, stale: false, tabs: 1,
+                       avoiding: { why: "deviated", kind: "a shoal", for_s: 3, inherited: false } });
+check("6g. the tab that TAKES OVER mid-maneuver adopts the flag the console kept for it - so AVOIDING stays up in "
+      + "the window now in charge, and is lowerable there - with no index, because the index counted into the "
+      + "other page's route; a record the console does not mark `inherited` is not adopted by anybody",
+      () => adoptedWhileView === null
+            && adopted && adopted.why === "routed round" && adopted.kind === "a dock / pier"
+            && adopted.rejoin === null && adopted.rejoinWp === null
+            && /AVOIDING/.test(tagAdopt) && /ROUTED ROUND a dock \/ pier/.test(tagAdopt)
+            && WAV5.getAvoiding() === null,
+      () => "while view-only " + JSON.stringify(adoptedWhileView) + "; adopted " + JSON.stringify(adopted)
+          + "; badge '" + tagAdopt + "'; not-inherited " + JSON.stringify(WAV5.getAvoiding()));
+
+// ── 6h. AND THE OPERATOR IS TOLD HOW LONG, FROM ONE CLOCK ────────────────────────────────────────────────────
+// `since` is the raising page's clock and no page ever read it; the console stamps the record's arrival on its
+// own and serves `for_s`. A view-only page shows the console's number, the holder times its own record - so two
+// machines watching one console agree, which they could not have done from `since` (2026-11-03, review).
+const WAV6 = makeWorld("main");
+WAV6.applySupervisor({ holder: "another-tab", stale: false, tabs: 2 });
+WAV6.setS({ supervisor: { holder: "another-tab", stale: false, tabs: 2,
+                          avoiding: { why: "routed round", kind: "a tug", for_s: 42 } } });
+WAV6.renderAvoiding();
+const tagFor = WAV6.els["#r_avoid"].textContent;
+WAV6.setS({ supervisor: { holder: "another-tab", stale: false, tabs: 2,
+                          avoiding: { why: "routed round", kind: "a tug", for_s: 2 } } });
+WAV6.renderAvoiding();
+const tagShort = WAV6.els["#r_avoid"].textContent;
+check("6h. a view-only page shows how long the console has had her off her track, measured by the CONSOLE's clock "
+      + "(`for_s`) and not by the raising page's `since` - and says nothing at all for the first few seconds, "
+      + "where a counter would be noise",
+      () => /ROUTED ROUND a tug · 0:42/.test(tagFor) && !/·/.test(tagShort),
+      () => "at 42 s '" + tagFor + "'; at 2 s '" + tagShort + "'");
+
+// ── 6i. AND THE CONTROLS WINDOW, WHICH THE DOCUMENTS HAD BEEN CLAIMING FOR A DAY ─────────────────────────────
+// ⚠⚠ The ops manual, the technical manual and the commit message all said the badge appears in "a second chart
+// tab, the controls window and another machine", and the controls window could not show it at all: it opens no
+// EventSource, so renderAvoiding is never called there, and both surfaces the chart uses (#r_avoid inside #map,
+// #v_mission inside #vcard) are hidden outright by that window's own stylesheet. A document asserting behavior
+// the code cannot produce is this project's named defect, and that document was rewritten while fixing exactly
+// that class of thing. It is drawn from the /api/state poll the window ALREADY makes once a second, as an
+// element built on the fly with inline styles - which `display:none!important` rules cannot reach.
+const WCTL = makeWorld("controls");
+WCTL.controlsAvoidShow({ why: "routed round", kind: "a dock / pier", for_s: 75 });
+const ctl1 = WCTL.made["ctlAvoid"];
+const ctlText1 = ctl1 && ctl1.textContent, ctlStyle = ctl1 && ctl1.style.cssText, ctlTip = ctl1 && ctl1.title;
+WCTL.controlsAvoidShow({ why: "routed round", kind: "a dock / pier", for_s: 80 });
+const ctlSame = WCTL.made["ctlAvoid"] === ctl1;          // found again, not rebuilt every poll
+WCTL.controlsAvoidShow(null);
+const ctlDown = { text: WCTL.made["ctlAvoid"].textContent, display: WCTL.made["ctlAvoid"].style.display };
+// the wiring: the window's own state poll is what draws it, and that poll is what this window already had
+const chartRender = (H.match(/function chartWatchRender\(\)\{[\s\S]*?\n\}/) || [""])[0];
+check("6i. the CONTROLS window shows the flag too, from the /api/state poll it already makes - in the console's "
+      + "words and on the console's clock, as an element built with inline styles so that window's own "
+      + "display:none rules cannot hide it, found again on the next poll rather than rebuilt, and taken down "
+      + "when the console stops serving a record",
+      () => !!ctl1 && /AVOIDING/.test(ctlText1) && /ROUTED ROUND a dock \/ pier/.test(ctlText1)
+            && /1:15/.test(ctlText1)                                  // the CONSOLE's for_s, not a `since`
+            && /position:fixed/.test(ctlStyle) && /z-index:1000/.test(ctlStyle)
+            && !!ctlTip && /waypoint/.test(ctlTip)
+            && ctlSame
+            && ctlDown.text === "" && ctlDown.display === "none"
+            && /controlsAvoidShow\(/.test(chartRender) && /chartWatch\.sup/.test(chartRender),
+      () => "'" + ctlText1 + "'; rebuilt " + !ctlSame + "; down '" + ctlDown.text + "' display "
+          + ctlDown.display + "; chartWatchRender draws it " + /controlsAvoidShow\(/.test(chartRender));
 
 // 7. a tab that the browser put to sleep says so when it comes back
 const W7 = makeWorld("main");

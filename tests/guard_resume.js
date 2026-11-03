@@ -343,15 +343,22 @@ eval([
   grab("chartedHerPoly"),
   // ⚠ WHAT THOSE TWO CALL, LIFTED EVEN THOUGH NO SCENE HERE REACHES IT YET (2026-11-03). chartedHerPoly's
   // ambiguity test asks koWithoutFeature on the frames its entry reach finds nothing, and a CHARTED try's
-  // signature asks aisKoSig; a bundle without them is a bare ReferenceError the moment a scene does reach one -
-  // and clearanceGuard's own tryIt SWALLOWS that, which is how a missing constant reddened ten charted checks
-  // in ais_avoid today with no stack to say why.
-  grabDecl("_koLessKey"), grab("koWithoutFeature"), grab("aisKoSig"),
-  grab("aroundOthers"),
+  // signature asks aisReportSig; a bundle without them is a bare ReferenceError the moment a scene does reach
+  // one - and clearanceGuard's own tryIt SWALLOWS that, which is how a missing constant reddened ten charted
+  // checks in ais_avoid today with no stack to say why.
+  // ⚠ AND THE WHOLE SHARED SET, not only the two this comment began with (2026-11-03, the third review). Its
+  // blast-radius lens reported that this suite and clearance_guard.js lift a changed function without the new
+  // names that function calls - today unreached, so green, and a swallowed ReferenceError on the next scene
+  // that does reach one. aroundMarginSay and herOnlyModel are the two it named; the rest arrived with this
+  // round's fixes, and the same argument covers them.
+  grabDecl("_koLessKey"), grab("koWithoutFeature"), grab("aisReportSig"),
+  grab("aroundOthers"), grab("aroundLine"), grab("aroundStd"), grab("aroundTail"), grab("aroundTailIsSame"),
+  grab("aroundTrySig"), grab("aroundTriedSame"), grab("aroundMarginSay"), grab("herOnlyModel"),
   // THE AVOIDING FLAG'S OWN RECORD AND READER (2026-11-02, "Create a flag that attaches to the ASV an
   // reads AVOIDING until it's back on line or natural transit"). LIFTED, not stubbed: this suite is where
   // the flag's behaviour is asserted, and a stubbed raiser would make its checks about the stub.
-  grab("avoidingRaise"), grab("avoidingNow"),      // everything except the one thing she is getting past (2026-11-02)   // HER when "she" is charted - the model's own poly (2026-11-02)
+  grab("avoidingRaise"), grab("avoidingNow"),
+  grab("avoidingShown"), grab("avoidingSay"), grab("avoidingForS"), grab("avoidingDur"), grabDecl("AVOID_TIP"),      // everything except the one thing she is getting past (2026-11-02)   // HER when "she" is charted - the model's own poly (2026-11-02)
   grab("govRaiseHeld"),   // the governor's refusal-to-raise, which the speed-zone release banner asks too (2026-11-02)
   grabDecl("RESUME_BACK_LENGTHS"),
   grabDecl("OVERRIDE_GIVE_M"),

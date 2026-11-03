@@ -189,10 +189,17 @@ check("3. THE LOWER ROW: the eleven readouts, in their order - POS, SOG, HDG, CO
               createElement: () => ({ id: "", style: {}, attrs: {}, textContent: "", setAttribute(k, v) { this.attrs[k] = v; } }) };
     const fetchStub = (url) => { w.fetched.push(url); const a = w.answers.shift();
       return a ? Promise.resolve({ json: () => Promise.resolve(a) }) : Promise.reject(new Error("the console did not answer")); };
+    // ⚠ chartWatchRender ALSO DRAWS THE CONTROLS WINDOW'S AVOIDING BADGE since 2026-11-03, from this same poll -
+    // that window opens no stream, so this is the only place it can be drawn from. Lifted BESIDE its caller, or
+    // the render is a bare ReferenceError; its WORDING is tests/supervisor_page.js 6i's subject, so `avoidingSay`
+    // and the tip are stand-ins here, which is the same division this suite already draws for the verdict.
     const src = grabDecl("SUPERVISOR_BEAT_MS") + grabDecl("CHART_WATCH_MS") + grabDecl("chartWatch") + grabDecl("CHART_COVERED_SAY") + grabDecl("CHART_SLEEP_SAY")
+      + "\nconst AVOID_TIP = \"when the badge comes down\";"
+      + "\nconst avoidingSay = (a) => \"AVOIDING - \" + a.why.toUpperCase() + \" \" + a.kind;\n"
       + ["chartStoppedSay", "chartNoneSay", "chartWatchVerdict", "chartWatchNote", "chartWatchVis", "chartWatchRender",
-         "chartWatchPoll", "chartWatchStart", "chartWarnShow"].map(grabFn).join("\n")
-      + "\nreturn {chartWatch, chartWatchVerdict, chartWatchVis, chartWatchPoll, chartWatchStart, chartWarnShow};";
+         "chartWatchPoll", "chartWatchStart", "chartWarnShow", "controlsAvoidShow"].map(grabFn).join("\n")
+      + "\nreturn {chartWatch, chartWatchVerdict, chartWatchVis, chartWatchPoll, chartWatchStart, chartWarnShow,"
+      + "        controlsAvoidShow};";
     // eslint-disable-next-line no-new-func
     w.api = new Function("document", "uiBus", "fetch", "setInterval", "setTimeout", "clearTimeout", "AbortController", "Date", src)(
       w.doc, { postMessage: (m) => w.posts.push(m) }, fetchStub, (fn, ms) => w.intervals.push([fn, ms]),

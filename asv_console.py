@@ -10799,13 +10799,27 @@ class Supervision:
         # class's staleness and its prune: a record whose author stops reporting stops being published, and the
         # stand-down says the rest. Published for every page; only the HOLDER may write it.
         self._avoiding = None
+        # When THIS console first saw the record standing now - one clock for every page's elapsed time, because
+        # the raising page's own `since` is wrong on any other machine by whatever two clocks disagree by.
+        self._avoiding_at = 0.0
+        # ⚠⚠ A HANDOVER DOES NOT END THE MANEUVER (2026-11-03, review). The record used to be dropped the moment
+        # the post changed hands, on the argument that nobody was left who could lower it - and the measured
+        # consequence was that pressing TAKE OVER mid-way-round, or simply reloading the supervising tab, took
+        # the AVOIDING flag off EVERY chart in the building while the console still had her off her planned
+        # track, with no path back: every raise sits inside a command's own reply handler, and the new holder
+        # commanded nothing. The flag is a fact about the BOAT, so it is kept and offered to the new holder,
+        # which adopts it on its next frame and can lower it like any other afterwards. This window bounds that:
+        # until it runs out the new holder's empty beats cannot erase a record it has not adopted yet, and after
+        # it they can - so a page that never adopts (an old build, a harness) cannot strand the flag for ever.
+        self._avoiding_orphan_until = 0.0
 
     def _drop_holder(self):
         """The post is open again - and the holder's AVOIDING record goes with it, because nobody is left who
-        can lower it. Written once rather than at the three sites that used to do it by hand."""
+        can lower it. Written once rather than at the three sites that used to do it by hand.
+        ⚠ A HANDOVER is NOT this: there the record is KEPT for the new holder to adopt (see beat)."""
         self._holder, self._since, self._said_stale = None, None, False
         self._busy_until, self._said_busy = 0.0, False
-        self._avoiding = None
+        self._avoiding, self._avoiding_at, self._avoiding_orphan_until = None, 0.0, 0.0
 
     @staticmethod
     def _clean_avoiding(a):
@@ -10819,11 +10833,21 @@ class Supervision:
             if why not in ("deviated", "steered clear", "routed round"):
                 return None
             kind = str(a.get("kind") or "something in her way")[:120]
-            since = a.get("since")
-            return {"why": why, "kind": kind,
-                    "since": float(since) if isinstance(since, (int, float)) else None}
+            # ⚠ `since` IS NO LONGER TAKEN FROM THE PAGE (2026-11-03, review). It had no reader on any page, and
+            # it was the RAISING page's clock: an elapsed time built from it is wrong on every other machine by
+            # whatever two clocks disagree by. The console stamps the record's arrival itself (see beat) and
+            # serves `for_s`, so every reader gets one clock's answer - and that is one fewer client-supplied
+            # number stored on a safety channel, which is the standard the rest of this class holds to.
+            return {"why": why, "kind": kind}
         except Exception:
             return None
+
+    @staticmethod
+    def _same_avoiding(a, b):
+        """The same maneuver, so its clock keeps running? Compared on what the page actually sends."""
+        if a is None or b is None:
+            return a is b
+        return a.get("why") == b.get("why") and a.get("kind") == b.get("kind")
 
     def _prune(self, now):
         for cid in [c for c, t in self._seen.items() if now - t > SUPERVISOR_FORGET_S]:
@@ -10863,7 +10887,11 @@ class Supervision:
             if held != cid and (held is None or take or (stale and steady)):
                 self._holder, self._since, self._said_stale = cid, now, False
                 self._busy_until, self._said_busy = 0.0, False
-                self._avoiding = None     # the new holder's own first beat says what IT has, if anything
+                # ⚠ THE RECORD IS KEPT AND OFFERED, NOT DROPPED - see _avoiding_orphan_until for the measurement.
+                # The new holder adopts it on its next frame; until this window runs out its empty beats cannot
+                # erase it, because its first beat is sent BEFORE it has seen the record at all.
+                if self._avoiding is not None:
+                    self._avoiding_orphan_until = now + SUPERVISOR_STALE_S
                 why = "took over from a tab that had stopped reporting" if stale else (
                     "took over" if take else "is supervising")
                 print("[supervisor] a browser tab %s (%s)" % (why, cid[:8]), flush=True)
@@ -10875,7 +10903,14 @@ class Supervision:
                 if not busy_s:
                     self._said_busy = False
                 if set_avoiding:
-                    self._avoiding = self._clean_avoiding(avoiding)
+                    new = self._clean_avoiding(avoiding)
+                    if new is None and self._avoiding is not None and now < self._avoiding_orphan_until:
+                        pass        # inherited at a handover and not adopted yet - see _avoiding_orphan_until
+                    else:
+                        if not self._same_avoiding(new, self._avoiding):
+                            self._avoiding_at = now if new is not None else 0.0
+                        self._avoiding = new
+                        self._avoiding_orphan_until = 0.0
         return self.snapshot(now)
 
     def quiet_s(self, now=None):
@@ -10911,16 +10946,31 @@ class Supervision:
             last = self._seen.get(held) if held else None
             tabs = sum(1 for t in self._seen.values() if now - t <= SUPERVISOR_STALE_S)
             busy = bool(held is not None and now < self._busy_until)
-            av = self._avoiding
+            av, av_at = self._avoiding, self._avoiding_at
+            orphan = bool(now < self._avoiding_orphan_until)
         age = round(now - last, 1) if last else None
         stale = bool(held is not None and age is not None and age > SUPERVISOR_STALE_S and not busy)
+        # ⚠ NOT PUBLISHED FROM A TAB THAT HAS STOPPED REPORTING. The record is a promise that something is
+        # putting her back, and the one thing that can do that is the ladder in the tab that raised it; while
+        # that tab is silent nothing is lowering the flag either, so a badge from it would be a claim nobody is
+        # behind. The supervision banners and the stand-down are what speak then.
+        # ⚠⚠ AND THE TEST IS THE HOLDER'S OWN REPORTING AGE, NOT `stale` (2026-11-03, review, measured). `stale`
+        # carries `and not busy`, and `busy` is what supervisorBusy() POSTs for 60 s immediately before every
+        # on-thread route search - 11 s and 17.8 s measured, and a page is killed during a long synchronous
+        # search more readily than at any other moment (the machine-OOM kill is on this console's record). So a
+        # holder that died while planning went on having its badge served to every page: measured at t+46 s with
+        # `tabs: 0, busy: True, stale: False` and the record still published - one second before the supervision
+        # stand-down takes the way off an armed running boat. `busy` exists to protect the POST from a takeover
+        # and the stand-down from a false alarm; it was never a reason to certify a promise.
+        reporting = bool(held is not None and age is not None and age <= SUPERVISOR_STALE_S)
+        av_out = None
+        if av is not None and reporting:
+            av_out = dict(av)
+            av_out["for_s"] = round(max(0.0, now - av_at), 1) if av_at else None
+            av_out["inherited"] = orphan
         return {"holder": held, "since": since, "age_s": age, "tabs": tabs, "busy": busy,
                 "stale": stale,
-                # ⚠ NOT PUBLISHED FROM A TAB THAT HAS STOPPED REPORTING. The record is a promise that something
-                # is putting her back, and the one thing that can do that is the ladder in the tab that raised
-                # it; while that tab is stale nothing is lowering the flag either, so a badge from it would be a
-                # claim nobody is behind. The supervision banners and the stand-down are what speak then.
-                "avoiding": (av if (held is not None and not stale) else None),
+                "avoiding": av_out,
                 "beat_s": SUPERVISOR_BEAT_S, "stale_s": SUPERVISOR_STALE_S, "busy_max_s": SUPERVISOR_BUSY_MAX_S}
 
     def is_holder(self, client_id):

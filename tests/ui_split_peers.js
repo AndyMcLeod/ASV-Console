@@ -122,11 +122,22 @@ const SRC = [grabDecl("UI_BRIDGED"), grabDecl("UI_PEER_GONE_MS"), grabDecl("UI_L
              grab("setupUISplit"), grab("pushUISync"), grab("applyUISync"),
              grabDecl("uiMirrored"), grab("uiSameNode"), grab("uiMorph"),      // the mirror's patch (ui_tooltips 17-18)
              grab("uiPeersPrune"), grab("uiSplitApply"), grab("uiSupervisionChanged"), grab("uiOlder"), grab("uiYield"),
+             // ⚠ applySupervisor ALSO ADOPTS AN AVOIDING RECORD THE CONSOLE KEPT ACROSS A HANDOVER since
+             // 2026-11-03, so it reads the page's own record and raises one; both are stand-ins here, because
+             // which tab holds the flag is tests/supervisor_page.js 6g's subject and not this suite's.
+             "let avoiding = null;",
+             "const avoidingRaise = (why, kind) => { avoiding = {why, kind}; };",
              grab("supervising"), grab("applySupervisor"),
              // the chart says whether it can be seen, and the controls window keeps its word (2026-10-17; status_bar 6-6c
              // hold the watch - nothing asks the console here, so it says nothing)
              grabDecl("SUPERVISOR_BEAT_MS"), grabDecl("CHART_WATCH_MS"), grabDecl("chartWatch"), grabDecl("CHART_COVERED_SAY"), grabDecl("CHART_SLEEP_SAY"),
              grab("chartStoppedSay"), grab("chartNoneSay"), grab("chartWatchVerdict"), grab("chartWatchVis"),
+             // ⚠ chartWatchRender ALSO DRAWS THE CONTROLS WINDOW'S AVOIDING BADGE since 2026-11-03, from the
+             // same poll - lifted beside its caller, or the render is a bare ReferenceError. Its wording is
+             // tests/supervisor_page.js 6i's subject, so the sentence and the phrasing are stand-ins here.
+             "const AVOID_TIP = \"when the badge comes down\";",
+             "const avoidingSay = (a) => \"AVOIDING - \" + a.why.toUpperCase() + \" \" + a.kind;",
+             grab("controlsAvoidShow"),
              grab("chartWatchRender"), grab("chartWarnShow")].join("\n");
 // the page's own state, as the page declares it
 const STATE = ["uiPeers", "uiWatched", "uiClosed", "uiYielded", "uiLockFree", "uiCardsHome"].map(grabDecl).join("\n");

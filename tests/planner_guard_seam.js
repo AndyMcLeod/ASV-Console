@@ -73,6 +73,10 @@ const { bbOf } = require("../static/js/geometry.js");
 
 const H = fs.readFileSync(process.env.ASV_HTML ||
                           path.join(__dirname, "..", "static", "asv.html"), "utf8");
+// ⚠ THE SAME TEXT WITH THE CARRIAGE RETURNS OUT (2026-11-03). This file is CRLF in places and LF in others, so
+// a pattern that spans lines matches or not depending on which part of the page it lands in - which is a check
+// failing for a reason that has nothing to do with its subject. Multi-line patterns read HL.
+const HL = H.replace(/\r/g, "");
 
 let fails = 0;
 function check(name, cond, detail) {
@@ -266,7 +270,26 @@ check("7. lines, leads and turns take the standoff; hops and transits try it fir
             // guard's 3.0 m and the console laid a pick-up 5.0 m off a dock face. `g.mark` is "she is on a
             // coverage line", which is aisAroundPlan's own branch test, and the coverage line is the one case
             // that keeps patClipBufM.
-            && /const std = \(ep\.chart && \(g\.leg \|\| !g\.mark\)\) \? transitStandoffM\(\) : patClipBufM\(\);/.test(H)
+            // ⚠⚠ AND THE EXPRESSION IS ONE FUNCTION NOW, BECAUSE THE SENTENCE ABOVE WAS NOT TRUE (2026-11-03,
+            // the third review). `g.mark` is NOT aisAroundPlan's own branch test: the walk branches on
+            // `mission.lines[g.mark.line]` EXISTING, so a mark whose line had been replaced under a standing
+            // hold left `g.mark` truthy and the maneuver took the guard's 3.0 m while the ROUTE - transit legs
+            // and all - was what was being walked. Both ask aroundLine() now, and the standoff is lifted into
+            // aroundStd so aisAroundTick's try signature reads the same number the try will use.
+            && /function aroundStd\(g, ep\)\{\s*return \(ep && ep\.chart && \(g\.leg \|\| !aroundLine\(g\)\)\) \? transitStandoffM\(\) : patClipBufM\(\);/.test(HL)
+            && /const std = aroundStd\(g, ep\);/.test(H)
+            && /function aroundLine\(g\)\{\s*return \(g && g\.mark\) \? \(mission\.lines \|\| \[\]\)\[g\.mark\.line\]/.test(HL)
+            // ⚠⚠⚠ AND THE GATE THAT DECIDES WHETHER THE DETOUR IS BUILT AT ALL READS THE SAME NUMBER
+            // (2026-11-03, the third review's critical, measured). Both held-resume paths were handed `std` for
+            // the ROUTER in the rework - and resumeHeldRun's `wayClear` was left calling patClipBufM(), so a
+            // straight run in merely clear at 3.0 m was certified and the whole `!wayClear` block, detour and
+            // refusal alike, never ran. Measured: a survey held off its coverage lines for a pier, pick-up
+            // 140 m on and 22.4 m clear, the run in passing 10.0 m off the pier face, uploaded as a bare
+            // [pick-up, ...] with nothing in front of it. The leg's gate already read `std`; both are asserted
+            // here, and so is the absence of any wayClear gate that re-derives the guard's buffer.
+            && /const wayClear = !!\(firstWp && nogo\.ready && nogo\.frame && koIn\s+&& legClear\(backFrom, firstWp, nogo\.frame, koIn, at \? stdIn : nogo\.buffer\)\);/.test(HL)
+            && /const wayClear = !!\(nogo\.ready && nogo\.frame && koIn && from\s+&& legClear\(from, tail\[0\], nogo\.frame, koIn, at \? std : \(nogo\.buffer \|\| 0\)\)\);/.test(HL)
+            && !/const wayClear = [^;]*patClipBufM\(\)/.test(HL)      // and no gate re-derives the guard's buffer
             && !/planNogoRoute\([^)]*ko: koIn\}\)/.test(H)    // no way-in site is judged as a berth any more
             && /planNogoRoute\(from, target, \{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\), ko: koIn, flyThrough: true\}\)/.test(H)
             // ⚠ the resumeHeldRun line that stood here asserted patClipBufM() at `backFrom, firstWp`; that site

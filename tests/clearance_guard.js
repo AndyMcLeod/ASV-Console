@@ -734,6 +734,14 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
                      // HER when "she" is charted - the model's own poly, so the episode can be about a pier
                      // and not only a contact (2026-11-02, "or any other contact")
                      + grab(H, "chartedHerPoly") + NL2
+                     // ⚠ AND WHAT chartedHerPoly CALLS (2026-11-03, the third review's blast-radius lens). Its
+                     // ambiguity test asks koWithoutFeature on every frame whose entry reach finds nothing, and
+                     // this bundle did not hold it: today unreached, so green, and a bare ReferenceError on the
+                     // first scene that does reach it - swallowed by the tryIt every scene here wraps the ladder
+                     // in, so the suite would report a wrong NUMBER rather than a stack. herOnlyModel is the
+                     // same case one layer down.
+                     + "let _koLessKey = null, _koLess = null;" + NL2 + grab(H, "koWithoutFeature") + NL2
+                     + grab(H, "herOnlyModel") + NL2
                      + grab(H, "aroundOthers") + NL2
                      // ON STATION the ladder judges the drift and says so in its own words (2026-09-30)
                      + grab(H, "guardOnStation") + NL2 + grab(H, "onStationWhy") + NL2

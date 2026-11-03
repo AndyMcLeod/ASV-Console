@@ -80,6 +80,11 @@ process.on("unhandledRejection", __crash);
 // the AVOIDING record the guard, the resumes and setPlanIntent now touch (2026-11-02):
 // a stub, because this suite owns none of the flag's behaviour - tests/ais_avoid.js does.
 let avoiding = null; const avoidingRaise = (why, kind, rejoin) => { avoiding = {why, kind, rejoin}; }; const avoidingNow = () => avoiding;
+// the Doing row asks avoidingShown(), not avoidingNow(), since 2026-11-03 - two surfaces, one function, so a
+// view-only page cannot have the badge and the row disagree. Stood in for here, where the subject is the card.
+const avoidingShown = () => avoiding;
+const avoidingSay = (a) => "AVOIDING - " + a.why.toUpperCase() + " " + a.kind;
+const AVOID_TIP = "when the badge comes down";
 
 const fs = require("fs");
 const path = require("path");

@@ -910,17 +910,55 @@ walk lays the way past that one feature with the rest of the model standing (`ar
 every bucket: a pier drawn as a LINE or a rock as a POINT is her too, and `polys` would have the
 clearance read its missing ring as open water), and a charted feature gets **no ship-length
 growth** - so `std` is the entire margin, and it is the standoff the plan being resumed was laid
-at: `(ep.chart && (g.leg || !g.mark)) ? transitStandoffM() : patClipBufM()`. A coverage line keeps
+at: `aroundStd()`, which is `(ep.chart && (g.leg || !aroundLine(g))) ? transitStandoffM() :
+patClipBufM()`. A coverage line keeps
 the guard's 3.0 m, because coverage is yours and a line's turns are built on the radius already; a
 leg - a Go-To, an RTH, a transit, **and a survey's own approach and inter-survey transits**, which
-`g.leg` does not name - keeps the 20.6 m its planner required. Review caught both halves of that:
-the first version would have laid a pick-up 10 m off a pier where the plan needed 20.6 m, and the
-first fix still laid one 5.0 m off a dock face on a survey's approach. A way round that would pick
+`g.leg` does not name - keeps the 20.6 m its planner required. Review caught three halves of that:
+the first version would have laid a pick-up 10 m off a pier where the plan needed 20.6 m; the
+first fix still laid one 5.0 m off a dock face on a survey's approach; and the third review found
+the **gate** that decides whether the way in's detour is built at all still asking for the guard's
+3.0 m while every certification below it asked for the plan's. A straight run in merely clear at
+3.0 m was therefore certified and the whole block below - the detour and the refusal alike - never
+ran: measured on a survey held off her lines for a pier, the run in passed **10.0 m off the pier
+face** on a plan her own planner required 20.6 m for, with the governor free to raise her to the
+transit speed whose turn radius that 20.6 m is. The same shape three times down one line of
+reasoning - fix the reader, miss a writer - and 208 green checks each time.
+
+**And one standoff cannot govern both her and the rest of the chart.** The pick-up is a point on
+*your* plan, and that plan was punched against the chart already - a line clipped 6 m off a quay
+wall is legal by the planner's own rule - so demanding the leg's 20.6 m of every other feature at
+that point demands the plan be re-planned. Measured: a survey held off her lines for a dock, with a
+quay 6 m off the line she was running, came back REFUSED along that line's whole length, naming the
+dock, which was 20.6 m clear ten meters on; she then sat station-keeping indefinitely under a
+banner blaming the wrong feature. `aroundOthers` returns two models now: the **contacts**, which
+arrived after the plan was laid and so meet the full standoff, and everything the plan was already
+punched against, which meets `nogo.buffer` - the ladder's own hold threshold, which is exactly "the
+rung would not have held her here either". A contact episode passes the same list twice, so nothing
+about a contact's way round moves. A way round that would pick
 her up **where she stopped** is refused and said, because performing it cancels the guard's own
 hold and spends the remainder with nothing moved; one walk step on is a real maneuver and is
 flown, which the first gate refused too (`> AIS_AROUND_STEP_M` rejects the nearest point the walk
-can ever return). And a doomed charted try waits for the chart, her position or the traffic's
-positions - never for the AIS clock, which advances whether or not anything moved. The episode is classified by whether a contact is at the entry point at all and
+can ever return). **The gate asks the tail, not the distance** - the third review's finding: two
+branches of the walk return a non-zero `skipM` with a tail *identical* to the remainder the guard
+condemned, because a step that lands on her first unflown waypoint nulls `to` and leaves `j` where
+it was. Measured at `skipM` 5, with the uploaded route equal to the condemned one, the episode and
+your offer both spent, under "ROUTED ROUND a rock ... picked up 5.0 m on from where she left it":
+the hold / ROUTED ROUND / hold loop the gate exists to stop, bought back by the gate that replaced
+it. Both resumes and the gate now build the tail with one function (`aroundTail`).
+
+And a doomed charted try waits for the chart, for her own position, or for the traffic to **report**
+something new - never for a clock, and no longer for the dead-reckoned boxes either. The third
+review measured that one: the signature digested each contact's swept box, which the keep-out layer
+projects forward from the last poll to *now*, so it changed on 32 of 39 consecutive frames for a
+single contact 848 m off and in nobody's way - and a charted hold beside a dock bought **17 fresh
+tries in five seconds** against a hazard that cannot move, each one a synchronous route search on
+the page thread (11 s and 17.8 s measured on the Piscataqua), with the stand-down waiting at 45 s of
+silence. It digests what the contacts *reported* now, sorted, and her own position **live** rather
+than frozen at the moment the rung banked - which had been answering "nothing has moved" to the one
+try that mattered, her first settled station frame, and to a 1.75 kn set carrying her 40 m off the
+hold point. The standoff and the keep-out buffer are in it too, so dropping the transit speed to
+make a way round possible is a fresh question rather than the same one. The episode is classified by whether a contact is at the entry point at all and
 deliberately **not** by `aisCaused`, which carries the contact's velocity and so reads false on
 every on-station frame - the exact frame a hold is judged on - and had been marking a contact's own
 episode charted the moment she stopped. The staleness gate is scoped to contact episodes (a dead
@@ -946,7 +984,18 @@ track" for a line and a leg alike. The first version read `runLineIdx >= 0 && li
 is the state a surveying boat on a line is **already** in when the console moves her: the badge was
 erased by the next card redraw, inside the edge rung's own statement list, and never appeared for a
 deviation or for IN EXTREMIS at all; on a leg `runLineIdx` is `-1` by construction and nothing
-lowered it. Where the route holds no waypoint beyond the rejoin (a one-waypoint tail reports index
+lowered it. **The record carries the waypoint itself, not only its index** (3 November): an index is worth no
+more than the array standing still, and two of your own commands rewrite it without passing through
+`setPlanIntent`. A pause and a resume *insert* a backtrack waypoint in front of everything ahead of
+her, so every index past it shifts by one - measured, a deviation raised at index 12 of 21 whose via
+waypoint moved to 13 of 22, the badge going dark on the very frame she turned off her track and the
+record destroyed, so nothing could put it back. A resume from a chosen point *replaces* the
+remainder, so the index can land past the end and the badge stood through the rest of the survey,
+through arrival and through station-keeping. The reader finds the waypoint again each frame, so an
+insert re-bases itself; a route that no longer holds it cannot answer the question, so the record
+stands, and the two commands that leave the route that way clear it themselves - resume-from-here,
+and `giveUpRoute`, which the Hold, the Stop, the E-STOP, a respawn and a cleared plan all go
+through. Where the route holds no waypoint beyond the rejoin (a one-waypoint tail reports index
 0 for its whole run) it is **arrival** at the pick-up, measured; and the escape, which uploads one
 waypoint and chains nothing, records no index and ends with your next command - which the resume of
 a held survey now counts as, that one command deliberately keeping the run's Intent card and so
@@ -966,9 +1015,27 @@ invisible in every other window - a second chart tab, the controls window, anoth
 the same console. It now rides the supervision heartbeat that was already there (the field's
 *presence*, not its value, so the "about to plan" POST cannot erase a live maneuver), is served to
 every page in the supervision snapshot, is taken from the **holder** only, and is dropped when that
-tab goes stale, says it is leaving, is forgotten or is taken over - a badge whose author has stopped
-reporting is a promise nobody is behind. A view-only page renders the served record and never
-prefers one of its own, whose rejoin index may belong to a route the new holder has replaced.
+tab goes stale, says it is leaving or is forgotten - a badge whose author has stopped reporting is a
+promise nobody is behind. A view-only page renders the served record and never prefers one of its
+own, whose rejoin index may belong to a route the new holder has replaced.
+
+The third review found three more in that half. **Both surfaces now ask one function:** only the
+chart badge had been made supervision-aware, so a view-only tab painted "AVOIDING — ROUTED ROUND
+the tug" over the chart while the Doing row beside it read plain green "surveying", and a tab that
+had been taken over blanked the badge while the row stayed red and unlowerable for the rest of the
+run. **A handover no longer ends the maneuver:** the record used to be dropped the moment the post
+changed hands, so pressing TAKE OVER mid-way-round - or just reloading the supervising tab - took
+the flag off every chart in the building while the console still had her off her planned track, with
+no path back. The console keeps it, marks it inherited, and the new holder adopts it with no index,
+so what ends it there is your next command. **And `busy` no longer certifies it:** a holder that
+said it was planning and then died went on having its badge served for up to a minute - measured at
+t+46 s with no tabs reporting, one second before the supervision stand-down takes the way off an
+armed running boat. The gate is the holder's own reporting age. The wire carries `why` and `kind`
+and nothing else: the console stamps the record's arrival on its own clock and serves the elapsed
+time, which both surfaces show, so two machines agree where the difference of two clocks would not.
+**And the controls window shows it too**, which it could not do while three documents said it did -
+that window opens no stream and hides both of the chart's surfaces, so the badge is drawn from the
+once-a-second check it already makes on the console, as an element its own stylesheet cannot hide.
 
 The flag is asserted in five suites - `ais_avoid` (the maneuvers and the badge's own reader),
 `guard_resume` (the held resume), `clearance_guard` (the escape), `supervisor_page` (which tab

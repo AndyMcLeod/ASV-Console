@@ -301,7 +301,13 @@ function cmd(p, b) {
   // waypoint one her index restarts at. Without this the badge's rejoin index was driven against a `wp_total`
   // left over from the hold, which is exactly the mismatch avoidingNow now refuses to read.
   if (p === "/api/cmd/upload" && b && b.route) { if (S) S.wp_total = b.route.length; window._wpIndex = 0; }
-  if (p === "/api/cmd/amend" && b && b.route && S) S.wp_total = b.route.length;
+  // ⚠⚠ AS Engine.amend SETS IT: `at + len(r)`, the WHOLE spliced plan (2026-11-03, review). Published as the
+  // tail's length alone, every modelled amendment left `S.wp_total < runRoute.length` for the rest of the
+  // scene, so guardTrack's own pairing gate fired and the STRAIGHT-LINE projection stood in where the route
+  // projection was the thing being tested: 239 frames of check 22's own control arm, measured. The page exists
+  // at `spliceAt` precisely because the vessel counts the whole plan, so a world that publishes the tail is a
+  // world where spliceAt has nothing to do.
+  if (p === "/api/cmd/amend" && b && b.route && S) S.wp_total = (window._wpIndex || 0) + b.route.length;
   // ⚠⚠ AND THE PAUSE IS MODELLED TOO, for exactly the reason the hold is - and its absence
   // made check 15b decoration. On the vessel `pause` sets run to "paused", and
   // resumeHeldSurvey pauses FIRST (review #6). guardHeldOffer matches neither "hold" nor
@@ -364,12 +370,27 @@ eval([
   // declaration comes from the page too, so a rename cannot leave the lifted function writing its own global.
   grabDecl("_koLessKey"), grab("koWithoutFeature"),
   // where this frame's contacts are, as one string: the charted half of aisAroundTick's try signature (2026-11-03)
-  grab("aisKoSig"),
+  grab("aisReportSig"),
   grab("aroundOthers"),
+  // ⚠ THE SHARED ANSWERS THE WAY ROUND IS BUILT ON (2026-11-03, the third review). aroundLine is the walk's own
+  // branch test AND the standoff key - one function now, because the commit message claimed they were already
+  // one and they were not; aroundStd is the standoff; aroundTail is the tail a way round uploads, asked by the
+  // no-op gate (aroundTailIsSame) and built by both resumes. LIFTED BESIDE THEIR CALLERS: the review's own
+  // blast-radius lens reported that two suites lift a changed function without the new names it calls, and the
+  // ReferenceError that follows is swallowed by tryIt. The first run of this very edit proved it - the crash
+  // guard caught it, not a check.
+  grab("aroundLine"), grab("aroundStd"), grab("aroundTail"), grab("aroundTailIsSame"),
+  grab("aroundTrySig"), grab("aroundTriedSame"),
   // THE AVOIDING FLAG'S OWN RECORD AND READER (2026-11-02, "Create a flag that attaches to the ASV an
   // reads AVOIDING until it's back on line or natural transit"). LIFTED, not stubbed: this suite is where
   // the flag's behaviour is asserted, and a stubbed raiser would make its checks about the stub.
   grab("avoidingRaise"), grab("avoidingNow"),
+  // ⚠ THE ONE READER BOTH SURFACES ASK, and the words and the duration it builds (2026-11-03, review): the
+  // chart badge and the Mission card's Doing row disagreed because only one of them had been made
+  // supervision-aware. Lifted together, or a scene that reaches one of them is a bare ReferenceError that
+  // tryIt swallows - which is exactly what the first run of this edit produced.
+  grab("avoidingShown"), grab("avoidingSay"), grab("avoidingForS"), grab("avoidingDur"),
+  grabDecl("AVOID_TIP"),
   grab("renderAvoiding"),    // the badge on the chart, so its wording is asserted and not described      // everything except the one thing she is getting past (2026-11-02)   // HER when "she" is charted - the model's own poly (2026-11-02)
   grab("govRaiseHeld"),   // the governor's refusal-to-raise, which the speed-zone release banner asks too (2026-11-02)
   grabDecl("RESUME_BACK_LENGTHS"),
@@ -645,9 +666,17 @@ const paths = () => sent.map(x => x.p);
  * when nothing is happening, so a refusal scene costs no more than it did. The bound is the backstop, not the
  * mechanism: reaching it means the page is wedged, and the scene's own check says so.
  */
+// ⚠⚠ QUIET, AND NEVER SHORTER THAN THE LOOP IT REPLACED (2026-11-03, the third review). The first rewrite
+// started `n` at -1, so iteration 0 ALWAYS took the "something was sent" arm and reset `quiet` - and with every
+// command in this world resolving through Promise.resolve, a whole resume chain drains in microtasks inside the
+// first macrotask tick. Measured: 78 calls, 312 iterations, a maximum of 4 every time; `heldResuming === true`
+// and a later change in `sent.length` were never once observed. So it waited THREE ticks where the loop it
+// replaced waited thirteen, and the flakiness it was written to fix (199 of 200 checks on 5 of 29 runs) was
+// explained by a diagnosis the measurement does not support. `n` starts at the real count and `quiet` is 12, so
+// the wait is at least what it was before and ends early only on a world that is genuinely finished.
 async function settle() {
-  let quiet = 0, n = -1;
-  for (let i = 0; i < 400 && quiet < 3; i++) {
+  let quiet = 0, n = sent.length;
+  for (let i = 0; i < 400 && quiet < 12; i++) {
     await new Promise(r => setTimeout(r, 0));
     if (heldResuming === true || sent.length !== n) { quiet = 0; n = sent.length; }
     else quiet++;
@@ -812,6 +841,60 @@ function guardHeld_at_mark() { return ll(0, 0); }
         + "ends it, here as everywhere else",
         () => avoidAfter === null && avoiding === null && EL["#r_avoid"].style.display === "none",
         () => "record " + JSON.stringify(avoidAfter) + ", badge " + EL["#r_avoid"].style.display);
+  // ⚠⚠ 4j2-4j4. THE REJOIN IS A WAYPOINT, BECAUSE AN INDEX IS ONLY AS GOOD AS THE ARRAY STANDING STILL
+  // (2026-11-03, the third review, measured on the page's own resumeRun and resumeFromHere). Three scenes, one
+  // reader: an INSERT in front of the rejoin, a REPLACEMENT of the remainder, and a route that has stopped
+  // holding the pick-up at all.
+  {
+    const route0 = [ll(-200, 0), ll(0, 0), ll(50, 0), ll(100, 0), ll(200, 0)];
+    const setRoute = (r) => { runRoute = r; S.wp_total = r.length; };
+    S = { armed: true, estop: false, run: "running", behavior: "survey",
+          status: { cog_deg: 90, sog_kn: 6, heading_deg: 90, holding: false, speed_key: "survey" } };
+    asv = ll(-100, 0);
+    setRoute(route0.slice());
+    const via = runRoute[3];                                  // the dog-leg she is being taken round
+    avoiding = null; avoidingRaise("deviated", "a dock / pier", 3, via);
+    window._wpIndex = 2;        const upBefore = avoidingNow();
+    // resumeRun's BACKTRACK: one waypoint inserted in front of everything ahead of her. Engine.amend reports
+    // the whole spliced plan, so wp_total and runRoute still agree and the pairing gate cannot catch this.
+    setRoute([runRoute[0], runRoute[1], ll(-10, 0), ...runRoute.slice(2)]);
+    window._wpIndex = 3;        const atVia = avoidingNow();   // the frame she starts steering for the dog-leg
+    window._wpIndex = 4;        const onVia = avoidingNow();   // and the frame she is AT it
+    window._wpIndex = 5;        const past = avoidingNow();    // past it: back on her plan
+    check("4j2. an operator PAUSE and RESUME while a deviation stands inserts a backtrack waypoint in front of "
+          + "the rejoin - so the index moves and the waypoint does not. The badge used to go dark on the frame "
+          + "she turned off her track, and the record was DESTROYED, so nothing could put it back; the record "
+          + "carries the waypoint, the reader finds it again, and the flag stands until she is past it",
+          () => !!upBefore && !!atVia && !!onVia && past === null && avoiding === null,
+          () => "before the resume " + !!upBefore + "; at the via's new index " + !!atVia
+              + " (was the frame it went dark); on it " + !!onVia + "; past it " + (past === null ? "down" : "UP"));
+    // and a route that no longer holds the pick-up at all cannot be judged: the record STANDS, because lowering
+    // is the destructive direction - and the commands that replace or give up the route clear it themselves.
+    avoiding = null; setRoute(route0.slice());
+    const via2 = runRoute[3];
+    avoidingRaise("routed round", "a shoal", 3, via2);
+    setRoute([ll(-200, 0), ll(0, 0), ll(500, 500)]);          // resumeFromHere: the remainder replaced
+    window._wpIndex = 2;        const gone = avoidingNow();
+    check("4j3. ... and a route that has stopped holding the pick-up at all cannot answer the question, so the "
+          + "record STANDS rather than being spent on a guess - lowering is the destructive direction, and the "
+          + "two commands that can leave the route this way (resumeFromHere, giveUpRoute) clear it themselves",
+          () => !!gone && gone.why === "routed round",
+          () => "record " + JSON.stringify(gone && gone.why));
+    // the page's own clears, read off its text: the three commanded motions that bypass setPlanIntent
+    const fromHere = (H.match(/async function resumeFromHere\([\s\S]*?\n\}/) || [""])[0];
+    const giveUp = (H.match(/function giveUpRoute\(why\)\{[\s\S]*?\n\}/) || [""])[0];
+    const resumeRunBody = (H.match(/async function resumeRun\([\s\S]*?\n\}/) || [""])[0];
+    check("4j4. ... and those clears are in the page: resumeFromHere REPLACES the remainder so it spends the "
+          + "record, giveUpRoute (the Hold, the Stop, the E-STOP, a respawn, a cleared plan) spends it because "
+          + "nothing is going to put her back after any of them - and resumeRun does NOT, because it only "
+          + "inserts, and the waypoint survives an insert",
+          () => /\n  avoiding = null;/.test(fromHere) && /\n  avoiding = null;/.test(giveUp)
+                && !/avoiding = null/.test(resumeRunBody),
+          () => "resumeFromHere clears " + /\n  avoiding = null;/.test(fromHere)
+              + ", giveUpRoute clears " + /\n  avoiding = null;/.test(giveUp)
+              + ", resumeRun clears (it must not) " + /avoiding = null/.test(resumeRunBody));
+    avoiding = null; runLineIdx = -1; lineSwing = -1;
+  }
   const up = sent.find(x => x.p === "/api/cmd/upload");
   const rte = (up && up.route) || [];
   check("4. CONTROL: the operator's RESUME on the same hold backs 12 boat lengths (92.5 m here), latches LOW and records the override - the console's return is the different one",
@@ -948,8 +1031,12 @@ function guardHeld_at_mark() { return ll(0, 0); }
 // synchronous router search this gate exists to ration, re-run more often than the 10 s timer whose deletion was
 // argued safe on exactly this ground ("a pier does not move; the model gate asks once and then waits for
 // something to actually change"). The contacts still matter to a charted try - aroundOthers puts them in
-// `others`, so one sitting on the pick-up refuses it - so they are in the signature by their POSITIONS
-// (aisKoSig) rather than by the clock that says they were asked about.
+// `others`, so one sitting on the pick-up refuses it - so they are in the signature by what they REPORTED
+// (aisReportSig) rather than by the clock that says they were asked about.
+// ⚠⚠ AND BY THE REPORTS, NOT THE SWEPT BOXES (2026-11-03, the third review). The first version digested the
+// boxes, which are dead-reckoned from the last poll to NOW, so they move every frame with the clock: measured at
+// 17 fresh tries in 5 s beside a dock from one contact 848 m off and in nobody's way, each try a synchronous
+// router search on the page thread. 5m3 is that scene.
 // A TRY IS OBSERVED BY `triedOn` BEING REWRITTEN, which is what a try does before it asks anything: the refusal
 // here is the no-op gate, which never reaches the router, so counting router calls would see nothing either way.
 {
@@ -978,19 +1065,273 @@ function guardHeld_at_mark() { return ll(0, 0); }
   // the pick-up refuses a charted try and one that moves off it can answer the same question differently - the
   // one thing the poll clock got RIGHT. Asserted on the signature itself, because a stand-in that answered a
   // constant would pass the scene above while quietly freezing the charted maneuver for as long as she holds.
-  const koA = [{mmsi: 1, bb: {x0: 10, y0: -4, x1: 30, y1: 4}}, {mmsi: 2, bb: {x0: 90, y0: 0, x1: 110, y1: 8}}];
-  const koSame = [{mmsi: 1, bb: {x0: 10.2, y0: -4.1, x1: 30.3, y1: 4.2}},   // under a meter: the same water
-                  {mmsi: 2, bb: {x0: 90, y0: 0, x1: 110, y1: 8}}];
-  const koMoved = [{mmsi: 1, bb: {x0: 14, y0: -4, x1: 34, y1: 4}}, {mmsi: 2, bb: {x0: 90, y0: 0, x1: 110, y1: 8}}];
-  const koGone = [{mmsi: 2, bb: {x0: 90, y0: 0, x1: 110, y1: 8}}];
-  check("5m2. ... and what stands in for the poll clock there is WHERE the contacts are: a fleet that has not "
-        + "moved reads identical, one that has does not, and a contact that comes into range or leaves changes "
-        + "it - so a charted try is still answered again when traffic could have changed the answer",
-        () => aisKoSig(koA) === aisKoSig(koSame) && aisKoSig(koA) !== aisKoSig(koMoved)
-              && aisKoSig(koA) !== aisKoSig(koGone) && aisKoSig([]) === "" && aisKoSig(null) === "",
-        () => "unmoved: " + (aisKoSig(koA) === aisKoSig(koSame)) + ", moved 4 m: "
-            + (aisKoSig(koA) !== aisKoSig(koMoved)) + ", one left: " + (aisKoSig(koA) !== aisKoSig(koGone))
-            + "; '" + aisKoSig(koA) + "'");
+  const vA = [{mmsi: 1, lat: 43.07, lon: -70.76, sog: 6, cog: 90, heading: 92, nav: 0},
+              {mmsi: 2, lat: 43.08, lon: -70.75, sog: 0, cog: null, heading: null, nav: 1}];
+  const vSame = [{...vA[0]}, {...vA[1]}];                         // the same reports, in a new array
+  const vOrder = [vA[1], vA[0]];                                  // the service serves them sorted by report AGE
+  const vMoved = [{...vA[0], lat: 43.0702}, vA[1]];               // ~22 m: a real report
+  const vSlower = [{...vA[0], sog: 2}, vA[1]];                    // same place, a new velocity: a new sweep
+  const vGone = [vA[1]];
+  const vName = [{mmsi: null, name: "A|B~C", lat: 1, lon: 2, sog: 0, cog: null, heading: null, nav: null}];
+  check("5m2. ... and what stands in for the poll clock there is what the contacts REPORTED: a fleet that has "
+        + "not moved reads identical whatever order the service serves it in, one that has moved or changed "
+        + "speed does not, a contact that comes into range or leaves changes it - and a name holding the "
+        + "delimiters cannot shift a field boundary",
+        () => aisReportSig(vA) === aisReportSig(vSame) && aisReportSig(vA) === aisReportSig(vOrder)
+              && aisReportSig(vA) !== aisReportSig(vMoved) && aisReportSig(vA) !== aisReportSig(vSlower)
+              && aisReportSig(vA) !== aisReportSig(vGone) && aisReportSig([]) === "" && aisReportSig(null) === ""
+              && aisReportSig(vName).split("|").length === 1,
+        () => "unmoved: " + (aisReportSig(vA) === aisReportSig(vSame))
+            + ", re-ordered: " + (aisReportSig(vA) === aisReportSig(vOrder))
+            + ", moved 22 m: " + (aisReportSig(vA) !== aisReportSig(vMoved))
+            + ", slowed: " + (aisReportSig(vA) !== aisReportSig(vSlower))
+            + ", one left: " + (aisReportSig(vA) !== aisReportSig(vGone))
+            + "; one contact is " + aisReportSig(vName).split("|").length + " entry; '" + aisReportSig(vA) + "'");
+}
+// ── 5m3. AND THE CLOCK ALONE BUYS NO TRY, WHICH IS WHAT THE FIRST VERSION GOT WRONG ──────
+// ⚠⚠ THE SIGNATURE DIGESTED THE SWEPT BOXES, AND A SWEPT BOX MOVES WITH THE CLOCK (2026-11-03, the third
+// review, measured). aisKeepout dead-reckons each moving contact from `c + vel * min(ageS, AIS_DR_MAX_S)`, and
+// ageS counts from the last poll to NOW - so the box of a contact under way 848 m off and in nobody's way
+// advanced ~0.64 m per frame at 6 kn, the string differed on 32 of 39 consecutive frames, and a charted hold
+// bought 17 fresh tries in five seconds against a hazard that cannot move. Every try that reaches the router is
+// a SYNCHRONOUS search on the page thread (11 s and 17.8 s measured on the Piscataqua): the clearance ladder,
+// the AVOIDING flag, render() and the supervision POST all stop, and at planning.supervisor_lost_s the console
+// stands an armed running boat down. So this scene advances the clock with NO new poll, no new chart read and
+// nothing moved, and counts the tries. The control is the same hold on an empty sea.
+{
+  const tries = async (vessels) => {
+    surveying(6, vessels, { ko: PIER });
+    S.status.cog_deg = 0; S.status.heading_deg = null;      // standing into it: a charted hold
+    frame(); nowHolding(); frame(); await settle();
+    const t0 = aisAvoid && aisAvoid.triedOn;
+    let n = 0, prev = t0;
+    for (let k = 0; k < 20; k++) {                          // 5 s of frames, NO fresh aisPolledAt
+      clock += 250; frame(); await settle();
+      const t = aisAvoid && aisAvoid.triedOn;
+      if (t !== prev) { n++; prev = t; }
+    }
+    return { first: !!t0, extra: n };
+  };
+  // under way, 850 m off on the quarter, in nobody's way: her dead-reckoned box moves every frame
+  const far = [contact(600, -600, { sog: 6, cog: 45, heading: 45 })];
+  const withTraffic = await tries(far);
+  const emptySea = await tries([]);
+  check("5m3. ... and the CLOCK buys none: 5 s of frames with no fresh poll, no chart read and nothing moved "
+        + "earn no second try even with a contact under way in range, whose swept box the model dead-reckons "
+        + "every frame - the signature asks what she REPORTED, not where the clock has carried her box to",
+        () => withTraffic.first && withTraffic.extra === 0 && emptySea.first && emptySea.extra === 0,
+        () => "with a contact under way: first try " + withTraffic.first + ", extra tries in 20 frames "
+            + withTraffic.extra + "; empty sea: first try " + emptySea.first + ", extra " + emptySea.extra);
+}
+// ── 5m4. THE TRY THAT MATTERED: SHE IS CARRIED OFF THE HOLD POINT ────────────────────────
+// ⚠⚠ `g.at` IS FROZEN FOR THE WHOLE EPISODE (2026-11-03, the third review). markGuardHeld writes it once, at the
+// instant the rung banks, and returns at its own first gate on every frame of the hold after that - so the
+// signature's position could not move however far she went, and the `|| asv` arm was dead. The answer DOES move
+// with her: both resumes route the way in from `asv` and certify that leg. Measured consequence: the first try
+// goes with way still on her, ~25 m short of the hold point, is refused, and the first SETTLED station frame -
+// and then a 1.75 kn set carrying her 40 m off - were all answered "nothing has moved". Mutating the page's
+// expression to the live position left all 208 checks green, which is why this one exists.
+{
+  surveying(6, [], { ko: PIER });
+  S.status.cog_deg = 0; S.status.heading_deg = null;
+  frame(); nowHolding(); frame(); await settle();
+  const t1 = aisAvoid && aisAvoid.triedOn, at1 = t1 && t1.at;
+  clock += 1000; frame(); await settle();
+  const t2 = aisAvoid && aisAvoid.triedOn;                  // same place: no try
+  asv = ll(0, -40);                                         // the set has carried her 40 m off the hold point
+  clock += 1000; frame(); await settle();
+  const t3 = aisAvoid && aisAvoid.triedOn, at3 = t3 && t3.at;
+  check("5m4. ... but SHE moving does: a boat held where nothing can change still earns no second try, and the "
+        + "same boat carried 40 m off her hold point by the set earns one - because the way IN is routed from "
+        + "where she is, so her own position is an input to the answer and not a note about it",
+        () => !!t1 && t2 === t1 && !!t3 && t3 !== t1 && at1 !== at3,
+        () => "settled: " + (t2 === t1 ? "no try (right)" : "a try went") + "; after 40 m of set: "
+            + (t3 !== t1 ? "a try went (right)" : "NO try") + "; signature at " + at1 + " -> " + at3);
+}
+// ── 5m5. AND THE STANDOFF IS AN INPUT TOO ────────────────────────────────────────────────
+// ⚠ ONE NUMBER GOVERNS THE WHOLE MANEUVER and it was not in the signature (2026-11-03, review): `std` is derived
+// from the transit speed, the set and nogo.buffer. An operator watching her sit beside a dock drops the transit
+// speed, which takes `std` from 20.6 m to a few meters and can make a pick-up exist - and the tick answered
+// "nothing has moved, and the answer cannot change until something does", which had just stopped being true.
+{
+  surveying(6, [], { ko: PIER });
+  S.status.cog_deg = 0; S.status.heading_deg = null;
+  frame(); nowHolding(); frame(); await settle();
+  const t1 = aisAvoid && aisAvoid.triedOn, std1 = t1 && t1.std;
+  clock += 1000; frame(); await settle();
+  const t2 = aisAvoid && aisAvoid.triedOn;
+  nogo = {...nogo, buffer: 8};                               // the operator widened the keep-out buffer
+  clock += 1000; frame(); await settle();
+  const t3 = aisAvoid && aisAvoid.triedOn;
+  check("5m5. ... and so are the scalars the walk's answer is built from: a change to the keep-out buffer, "
+        + "which moves both the standoff and the clearance the pick-up must keep, earns a fresh try where the "
+        + "same model on the same frame does not",
+        () => !!t1 && std1 != null && t2 === t1 && !!t3 && t3 !== t1,
+        () => "std in the signature " + std1 + "; unchanged frame: " + (t2 === t1 ? "no try (right)" : "a try went")
+            + "; buffer 3 -> 8: " + (t3 !== t1 ? "a try went (right)" : "NO try"));
+}
+// ── 5n/5o/5p. THE OFF-THE-LINES CHARTED WAY ROUND, WHICH IS WHERE ALL THREE CRITICALS LIVED ──
+// A SURVEY held where she is NOT on a coverage line - the run-in to line 1, a turn, the transit into a later
+// survey - is the case aisAroundPlan's `fromTurn` branch exists for (the live 2026-10-16 approach failure), and
+// the case whose standoff is the LEG's 20.6 m rather than the guard's 3.0 m. The suite had no scene with
+// `ep.chart && !g.mark && !g.leg` at all, which is how three separate defects shipped green.
+//
+//   a DOCK FINGER 6 m south of her route, reaching across her projected track, so she holds for it;
+//   the walk's pick-up 50 m on, where the finger is 20.6 m clear and the way on stays clear;
+//   the STRAIGHT RUN IN from her station to that pick-up passing 6 m off the finger's face - clear at the
+//   ladder's 3.0 m buffer, NOT clear at the 20.6 m the maneuver itself demanded.
+function offLines(ko, route) {
+  surveying(7, [], { ko });
+  mission.lines = []; runLineIdx = -1; lineSwing = -1;     // she is NOT on a coverage line: g.mark is null
+  runRoute = route; window._wpIndex = 1; S.wp_total = runRoute.length;
+  // ⚠ heading NULL is the suite's own way of getting the STRAIGHT projection rather than the route's (see
+  // check 5's scene): a boat crabbing down a route 6 m off a pier reads CLEAR, which check 22 exists to prove.
+  S.status.cog_deg = 110; S.status.heading_deg = null;    // standing east-south-east, into the finger
+  asv = ll(0, 0);
+}
+const FINGER = (() => { const r = [{e: 20, n: -40}, {e: 30, n: -40}, {e: 30, n: -6}, {e: 20, n: -6}];
+                        return {polys: [{ring: r, bb: bbOf(r), kind: "a dock / pier"}],
+                                lines: [], points: [], marks: [], sys: [], chans: []}; })();
+const EAST3 = () => [ll(-200, 0), ll(200, 0), ll(200, 60)];
+{
+  offLines(FINGER, EAST3());
+  frame(); nowHolding(); sent = []; banners = []; logged = [];
+  frame(); await settle();
+  const g5p = guardHeld, ep5p = aisAvoid;
+  const la = logged.find(e => e.kind === "ais_around");
+  const up = sent.find(x => x.p === "/api/cmd/upload"), rte = (up && up.route) || [];
+  const std5p = la ? la.data.std_m : null;
+  const station = {lat: 0, lon: 0};                        // ll(0,0) - where nowHolding() left her
+  // THE PROPERTY, not the waypoint count: the FIRST leg she will fly must be certified at the standoff the
+  // plan she is being handed back onto was laid at. Whether that takes a detour or a refusal is the console's
+  // business; driving her up it at the guard's 3.0 m is not.
+  const inAtStd = rte.length ? legClear(ll(0, 0), rte[0], ref, FINGER, std5p || 20.6) : null;
+  const inAtBuf = rte.length ? legClear(ll(0, 0), rte[0], ref, FINGER, 3.0) : null;
+  // THE SCENE'S OWN PREMISE, asserted so the check cannot quietly stop testing anything: the STRAIGHT run from
+  // her station to the walk's pick-up must be clear at the ladder's buffer and NOT clear at the standoff. That
+  // is the only geometry in which the gate's number decides the outcome.
+  const bare = rte.length ? legClear(ll(0, 0), ll(50, 0), ref, FINGER, 3.0) : null;
+  const bareStd = rte.length ? legClear(ll(0, 0), ll(50, 0), ref, FINGER, std5p || 20.6) : null;
+  check("5p. THE RUN IN TO AN OFF-THE-LINES CHARTED PICK-UP IS CERTIFIED AT THE PLAN'S OWN STANDOFF, not at the "
+        + "guard's buffer: resumeHeldRun's wayClear gate asked patClipBufM() while every certification below it "
+        + "asked at.stdM, so a run in merely clear at 3.0 m was driven straight up at a pick-up the maneuver "
+        + "itself had required 20.6 m for - guard.js's founding case, re-made by the console on its own authority",
+        () => !!la && std5p > 15 && rte.length > 0 && inAtStd === true
+              // the premise: a straight run up the plan IS clear at 3 m and is NOT clear at the standoff
+              && bare === true && bareStd === false,
+        () => "std_m " + std5p + ", uploaded " + rte.length + " wpts; the first leg of it is clear at " + std5p
+            + " m: " + inAtStd + " (at 3 m: " + inAtBuf + "); the straight run up the plan is clear at 3 m: "
+            + bare + ", at the standoff: " + bareStd
+            + "; sent " + JSON.stringify(paths()));
+}
+// ── 5o. AND THE REST OF THE CHART IS JUDGED AT THE LADDER'S BUFFER, NOT AT THE STANDOFF ──────
+// ⚠⚠ The pick-up is a point on the OPERATOR'S OWN PLAN, and that plan was punched against the chart already.
+// Demanding the leg's 20.6 m of every other charted feature at that point demands the plan be re-planned, and in
+// ordinary quay water it refuses the whole maneuver: a coverage line clipped 6 m off a quay wall - legal by the
+// planner's own rule - made every candidate point along it "not clear", so the console answered NO WAY ROUND,
+// named the dock (which was 20.6 m clear ten meters further on), and left her station-keeping indefinitely. That
+// is the operator wait he asked to have removed, in the only water a quay survey happens in. See aroundOthers.
+{
+  const QUAY = {ring: [{e: 40, n: 6}, {e: 300, n: 6}, {e: 300, n: 36}, {e: 40, n: 36}]};
+  QUAY.bb = bbOf(QUAY.ring); QUAY.kind = "a quay";
+  const both = {polys: [...FINGER.polys, QUAY], lines: [], points: [], marks: [], sys: [], chans: []};
+  offLines(both, EAST3());
+  frame(); nowHolding(); sent = []; banners = []; logged = [];
+  frame(); await settle();
+  const la5o = logged.find(e => e.kind === "ais_around");
+  const up5o = sent.find(x => x.p === "/api/cmd/upload"), rte5o = (up5o && up5o.route) || [];
+  const pick = rte5o.length ? rte5o[rte5o.length - 1 === 0 ? 0 : 0] : null;   // the first uploaded waypoint
+  const quayOnly = {polys: [QUAY], lines: [], points: []};
+  const quayClr = pick ? clearanceM(ref.toEN(pick), quayOnly, 1e6) : null;
+  check("5o. a dock reached across her way with a QUAY 6 m off the plan beyond it is still routed round: the "
+        + "pick-up must be as clear of every other charted feature as the LADDER asks (3 m), not as clear as the "
+        + "feature she is getting past (20.6 m) - and the scene proves the distinction, because the pick-up is "
+        + "inside the standoff of the quay and outside the buffer",
+        () => !!la5o && rte5o.length > 0 && quayClr != null && quayClr >= 3.0 && quayClr < 20.0
+              && banners.every(b => !/NO WAY ROUND/.test(b)),
+        () => "logged " + !!la5o + ", uploaded " + rte5o.length + " wpts, the pick-up is "
+            + (quayClr == null ? "-" : quayClr.toFixed(1)) + " m off the quay (buffer 3.0, standoff "
+            + (la5o ? la5o.data.std_m : "-") + "); banners " + JSON.stringify(banners.map(b => b.slice(0, 70))));
+}
+// ── 5n. A WAY ROUND WHOSE TAIL IS THE CONDEMNED REMAINDER IS REFUSED ─────────────────────────
+// ⚠⚠ A DISTANCE CANNOT ANSWER THIS (2026-11-03, the third review, measured). Where the walk's first step lands
+// ON her first unflown waypoint, `onWp` nulls `to` and `j` stays at `g.idx`, so the tail IS the remainder the
+// guard condemned - with skipM 5, which the 0.5 m gate waves through. Measured: the uploaded route equal to the
+// condemned one to 1e-12, guardHeld and aisAvoid both nulled, the operator's offer destroyed, under "ROUTED
+// ROUND a rock ... picked up 5.0 m on from where she left it". The gate that replaced `> AIS_AROUND_STEP_M`
+// bought back exactly the hold / ROUTED ROUND / hold loop the old one had refused.
+{
+  const ROCK = {polys: [], lines: [], points: [{e: 0, n: -20.5, r: 0, kind: "a charted rock"}],
+                marks: [], sys: [], chans: []};
+  offLines(ROCK, [ll(-200, 0), ll(5, 0), ll(200, 0), ll(200, 60)]);
+  S.status.cog_deg = 180; S.status.heading_deg = null; S.status.sog_kn = 3;   // standing south, onto the rock
+  frame(); nowHolding(); sent = []; banners = []; logged = [];
+  frame(); await settle();
+  const kept = !!guardHeld, open = !!aisAvoid, said = banners.filter(b => /NO WAY ROUND/.test(b)).length;
+  check("5n. a way round whose TAIL is the very remainder the guard condemned is REFUSED, even though its skipM "
+        + "is a whole walk step: the first step lands on her first unflown waypoint, so nothing moves, and "
+        + "performing it would spend the episode, cancel the hold and hand her back onto the same track - the "
+        + "loop the gate exists to stop. She keeps holding, with the record and the operator's offer intact",
+        () => paths().length === 0 && kept && open && said === 1,
+        () => "sent " + JSON.stringify(paths()) + ", record kept " + kept + ", episode open " + open
+            + ", said " + said + "x; banners " + JSON.stringify(banners.map(b => b.slice(0, 90))));
+}
+// ── 5d2. AND NEITHER BAR PROMISES THE RETURN FOR CHARTED WATER ───────────────────────────
+// ⚠⚠ A NEW REGRESSION, AND THIS COMMIT IS WHAT MADE IT REACHABLE (2026-11-03, the third review). aisReturnTick
+// returns at its own first line on `aisAvoid.chart` - deliberately, because a pier does not pass - so
+// `clearSince` never starts and the 100 m return can never run for a charted episode. Both held bars said
+// "resumes on its own once she is clear of the line" / "carries on by itself once she is clear of the way"
+// anyway, rewritten at 4 Hz in front of an operator watching a boat that was never going to resume on its own.
+// On master the `if(aisAvoid)` block was DEAD for a charted hold, because a charted hold opened no episode at
+// all; opening one is this commit's own change, so the false promise is this commit's own.
+{
+  // ⚠ READ ON THE FIRST STATION FRAME, BEFORE THE MANEUVER. The bar is what the operator reads WHILE she is
+  // stopped, and the very next frame is the way round, which spends the episode - so the bar is rendered by
+  // hand here rather than waiting for a frame that would answer the hold before it could be read.
+  const bars = (ko, vessels, cog) => {
+    surveying(6, vessels, { ko });
+    S.status.cog_deg = cog; S.status.heading_deg = null;
+    frame(); nowHolding();
+    const g = guardHeldOffer();
+    EL["#gb_why"].textContent = "";
+    if (g) renderGuardBar(g);
+    return { why: EL["#gb_why"].textContent || "", charted: !!(aisAvoid && aisAvoid.chart),
+             open: !!aisAvoid };
+  };
+  const chartedBar = bars(PIER, [], 0);
+  // a CONTACT sitting across the line 30 m ahead: the same hold, and she DOES get the 100 m return
+  const contactBar = bars(OPEN, [contact(30, 0, { sog: 0, cog: null, heading: 90 })], 90);
+  check("5d2. the held bar does NOT promise the automatic return for a charted episode, which aisReturnTick "
+        + "refuses outright - it says charted water does not pass and that the console routes round it - while "
+        + "a CONTACT's bar still promises the return, which she still gets",
+        () => chartedBar.charted === true
+              && /does not pass/.test(chartedBar.why) && /routes round it/.test(chartedBar.why)
+              && !/resumes on its own/.test(chartedBar.why)
+              && contactBar.charted === false && /resumes on its own/.test(contactBar.why),
+        () => "charted: '" + chartedBar.why.slice(-150) + "'; contact: '" + contactBar.why.slice(-110) + "'");
+}
+// ── 5e2. AND "THE AIS MODEL IS BLIND" IS NOT LEFT BEHIND BY A FRAME THAT LOST THE FIX ────
+// ⚠ aisKeepoutsNow resets aisKoDrawn, aisKoNote and aisKoStale on its early return and left aisKoBlind standing
+// - and aisKoBlind is only ever recomputed BELOW that return (2026-11-03, review). So a frame with no fix or no
+// chart frame while the feed was blind left `true` behind, and a charted way round once both came back on a
+// fresh poll carried `plan.blindTraffic` into the ROUTED ROUND banner, the flash note, the Intent card and
+// ais_around's `blind_traffic` in the session log: "the traffic was not checked" about a maneuver planned on a
+// fresh model. It over-warns rather than falsely certifying, so it never reached the water - but the log line is
+// the one read back after a field test.
+{
+  // the same recipe as 8-8e: a poll old enough to be stale, then past the feed's grace period under way
+  surveying(7, [CROSSING()], { polledAt: clock - 50000 });
+  frame(); clock += 41000; frame();
+  const blindNow = aisKoBlind;
+  const held = asv;
+  asv = null; aisKeepoutsNow();                   // the frame that lost the fix: the early return
+  const afterLost = aisKoBlind;
+  asv = held;
+  check("5e2. the 'AIS keep-outs BLIND' fact is cleared by the frame that could not measure it, not left "
+        + "standing - so a maneuver planned on a fresh model is never logged as one whose traffic was unchecked",
+        () => blindNow === true && afterLost === false,
+        () => "blind while wanted and stale: " + blindNow + "; after a frame with no fix: " + afterLost);
+  asv = ll(0, 0);
 }
 // ── 5d. THE 100 m RETURN DOES NOT CLAIM A CHARTED WAY BACK ───────────────────────────────
 // A pier does not pass. The return's whole argument is that a CONTACT clears the line by moving, and the
@@ -1170,11 +1511,11 @@ function guardHeld_at_mark() { return ll(0, 0); }
           () => held && !!ep && ep.charted === true && /dock|pier/i.test(ep.kind)
                 && !!chart && chart.pts === KO.lines[0].pts          // the model's OWN line, by identity
                 && hm && hm.lines.length === 1 && hm.polys.length === 0 && hm.points.length === 0
-                && oth && oth.lines.length === 0                      // and taken OUT of `others`
+                && oth && oth.all.lines.length === 0                   // and taken OUT of `others`
                 && paths().includes("/api/cmd/upload") && la && la.data.skip_m > 50,
           () => "episode " + JSON.stringify(ep) + ", same line " + !!(chart && chart.pts === KO.lines[0].pts)
               + ", herOnly " + JSON.stringify(hm && {p: hm.polys.length, l: hm.lines.length, pt: hm.points.length})
-              + ", others.lines " + (oth && oth.lines.length)
+              + ", others.all.lines " + (oth && oth.all.lines.length)
               + ", sent " + JSON.stringify(paths()) + ", skip_m " + (la && la.data.skip_m));
   }
   // (b) A CHARTED ROCK - a POINT with a radius - on the line ahead of her
@@ -1198,12 +1539,12 @@ function guardHeld_at_mark() { return ll(0, 0); }
           () => held && !!ep && ep.charted === true && /rock/i.test(ep.kind)
                 && !!chart && chart === KO.points[0]
                 && hm && hm.points.length === 1 && hm.polys.length === 0 && hm.lines.length === 0
-                && oth && oth.points.length === 0                      // and taken OUT of `others`
+                && oth && oth.all.points.length === 0                  // and taken OUT of `others`
                 && paths().includes("/api/cmd/upload") && la && la.data.skip_m > 50
                 && banners.some(b => /ROUTED ROUND a charted rock/.test(b)),
           () => "episode " + JSON.stringify(ep) + ", the model's own point " + !!(chart === KO.points[0])
               + ", herOnly " + JSON.stringify(hm && {p: hm.polys.length, l: hm.lines.length, pt: hm.points.length})
-              + ", others.points " + (oth && oth.points.length)
+              + ", others.all.points " + (oth && oth.all.points.length)
               + ", sent " + JSON.stringify(paths()) + ", skip_m " + (la && la.data.skip_m)
               + ", banner " + JSON.stringify((banners[0] || "").slice(0, 60)));
   }
@@ -1231,11 +1572,16 @@ function guardHeld_at_mark() { return ll(0, 0); }
           () => held && !!ep && ep.charted === true
                 && /dock|pier/i.test(ep.kind) && !/shoal/i.test(ep.kind)
                 && !!chart && chart.pts === KO.lines[0].pts
-                && oth && oth.polys.length === 1 && oth.lines.length === 0
+                && oth && oth.all.polys.length === 1 && oth.all.lines.length === 0
+                // ⚠ AND IN `all`, NOT IN `std` (2026-11-03): the shoal is water the plan was already punched
+                // against, so the pick-up must be as clear of it as the LADDER asks, not as clear as a contact's
+                // standoff - which is what refused an off-the-lines charted hold in a harbor. See aroundOthers.
+                && oth.std.polys.length === 0 && oth.std.lines.length === 0 && oth.std.points.length === 0
                 && banners.every(b => !/ROUTED ROUND a shoal/.test(b)),
           () => "episode " + JSON.stringify(ep) + ", her bucket "
               + (chart ? (chart.ring ? "POLY - the shoal astern" : chart.pts ? "line" : "point") : "-")
-              + ", others polys/lines " + (oth && oth.polys.length) + "/" + (oth && oth.lines.length)
+              + ", others.all polys/lines " + (oth && oth.all.polys.length) + "/" + (oth && oth.all.lines.length)
+              + ", others.std " + (oth && (oth.std.polys.length + oth.std.lines.length + oth.std.points.length))
               + ", banners " + JSON.stringify(banners.map(b => b.slice(0, 48))));
   }
   // ⚠ UNREAD WATER IS NOT A FEATURE TO ROUTE PAST. blockedInfo answers `{type:'unknown'}` for a point whose
@@ -1306,6 +1652,47 @@ function guardHeld_at_mark() { return ll(0, 0); }
                + "; ladder said 'a dock / pier' -> " + say(mk([shoal]), "a dock / pier")
                + "; ladder said 'a shoal' -> " + say(mk([shoal]), "a shoal");
         });
+  // ⚠⚠ 5l2. AND WHERE THE FALLBACK NAMED IT, THE EPISODE SAYS SO (2026-11-03, the third review). The ambiguity
+  // test above refuses a near-tie, which is all a distance can do; it cannot turn "nearest" into "the cause".
+  // The entry reach CAN - it looks under her projected track, which is the water the rung acted on - so the two
+  // reaches are no longer interchangeable in what they entitle the console to assert. chartedHerPoly reports
+  // which one answered, and aisAvoidOpen appends the hedge to `kind`, where the held bar, the flash note, both
+  // banners, the Intent card and the session log all read it: one edit, and none of those surfaces can be left
+  // behind saying more than the code established.
+  {
+    const shoalR = [{e:-60,n:-20},{e:-20,n:-20},{e:-20,n:20},{e:-60,n:20}];
+    const shoal = {ring: shoalR, bb: bbOf(shoalR), kind: "a shoal"};
+    const one = {polys: [shoal], lines: [], points: [], marks: [], sys: [], chans: []};
+    const atShoal = {e: -40, n: 0};                  // the ENTRY point is inside it: the entry reach answers
+    const far = {e: 4000, n: 4000};                  // nothing at the entry point: only the fallback can
+    const byEntry = {}, byNear = {};
+    const fEntry = chartedHerPoly(atShoal, one, 3, atShoal, 60, null, byEntry);
+    const fNear  = chartedHerPoly(far, one, 3, atShoal, 60, null, byNear);
+    check("5l2. ... and chartedHerPoly reports WHICH REACH named the feature, so the episode can hedge a name "
+          + "the code did not establish: the entry reach looks under her projected track and names a cause, the "
+          + "boat-position fallback answers with the nearest thing and says it is the nearest",
+          () => fEntry === shoal && byEntry.fromEntry === true
+                && fNear === shoal && byNear.fromEntry === false,
+          () => "entry reach: " + (fEntry && fEntry.kind) + " fromEntry " + byEntry.fromEntry
+              + "; fallback: " + (fNear && fNear.kind) + " fromEntry " + byNear.fromEntry);
+  }
+  // and the whole way through: a scene the FALLBACK names carries the hedge into the episode's own kind
+  {
+    const DOCK_ABEAM = (() => {
+      const r = [{e: 18, n: -40}, {e: 34, n: -40}, {e: 34, n: -2}, {e: 18, n: -2}];
+      return {polys: [{ring: r, bb: bbOf(r), kind: "a dock / pier"}],
+              lines: [], points: [], marks: [], sys: [], chans: []};
+    })();
+    surveying(6, [], { ko: DOCK_ABEAM });
+    S.status.cog_deg = 135; S.status.heading_deg = null;      // standing into it: the straight projection
+    frame();
+    const epEntry = aisAvoid && aisAvoid.kind;
+    check("5l3. ... and the hedge rides the episode's KIND, so every surface and the session log inherit it from "
+          + "one place: a feature the projected track found is named plainly, and nothing in the page has to "
+          + "remember to qualify it",
+          () => !!epEntry && /dock|pier/i.test(epEntry) && !/nearest charted feature/.test(epEntry),
+          () => "episode kind '" + epEntry + "'");
+  }
 }
 
 // ── 6. A CONTACT THAT STOPS ON THE LINE NEVER CLEARS IT ──────────────────────────────────
@@ -2679,11 +3066,15 @@ const pausedSetToward = (kn) => { S = { ...S, status: { ...S.status, sog_kn: kn,
 // Claim the CURRENT model as the one a try was already refused on, so aisAroundTick stands aside and the
 // scenario's water is untouched. The four fields are the gate's own (aisAroundTick): a fresh AIS poll, a
 // new chart read or a changed route all break it, which is exactly what the gate is for.
+// ⚠⚠ IT ASKS THE PAGE'S OWN BUILDER (2026-11-03, the third review). This helper used to RE-WRITE aisAroundTick's
+// signature expression by hand, so it was a mirror of the page rather than a use of it - and the moment the page's
+// expression changed (her live position instead of the frozen bank-time one, the standoff and buffer added, the
+// contacts' reports instead of their dead-reckoned boxes) checks 21, 21b and 21c went red with nothing about the
+// hold rung having changed at all. A test that fails when the thing it is not testing changes is a test of the
+// mirror. aroundTrySig is lifted from the page, so the stand-aside claims exactly the model the tick will compute.
 const heldModel = () => {
   if (!aisAvoid || !guardHeld) return;      // no record, nothing to stand aside for (21a clears it on purpose)
-  const h = guardHeld.at || (asv ? { lat: asv.lat, lon: asv.lon } : null);
-  aisAvoid.triedOn = { polled: aisPolledAt, ko: nogo.ko, route: guardHeld.route, idx: guardHeld.idx,
-                       at: h ? Math.round(h.lat * 1e5) + "," + Math.round(h.lon * 1e5) : null };
+  aisAvoid.triedOn = aroundTrySig(guardHeld, aisAvoid);
 };
 // ── 21. THE HOLD THE GUARD COMMANDED STANDS UNTIL SHE LEAVES IT (2026-09-29, the three open items) ────────────────
 // His FRIGGA log again: the clear branch released the hold rung's record six seconds into the hold (a station-keeping
@@ -3409,18 +3800,36 @@ const LEG_NAME = { goto: "Go-To", rth: "Return-to-Home", transit: "transit" };
   // that record the deletion, so this asserts the CODE is clean of it rather than the file.
   const codeOnly = H.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ").replace(/([^:"'])\/\/.*$/gm, "$1");
   const secondsSaid = /routes round her itself in " \+|tries again itself in " \+|s between tries/.test(codeOnly);
+  // ⚠ THE COMPARISON LIVES IN aroundTriedSame NOW (2026-11-03), and the signature in aroundTrySig, because the
+  // suite's own stand-aside helper was re-writing that expression by hand and so reddened whenever the page's
+  // changed. The check follows it rather than loosening: the compare must still be field by field, and `ko` and
+  // `route` must still be matched by IDENTITY - a JSON compare of either would turn an exact test for "the chart
+  // I was refused on" into a deep walk that answers the same for a re-read of water that has moved.
+  const sameAt = H.indexOf("function aroundTriedSame(");
+  const sameCode = sameAt >= 0 ? H.slice(sameAt, H.indexOf("\n}", sameAt)) : "";
+  const sigAt = H.indexOf("function aroundTrySig(");
+  const sigCode = sigAt >= 0 ? H.slice(sigAt, H.indexOf("\n}", sigAt)) : "";
   check("25b. ... and NO TIMER IS LEFT AT ALL: AIS_AROUND_RETRY_MS is gone from the code, aisAroundTick gates a "
-        + "re-try on the MODEL (a fresh poll, a fresh chart read, a changed route) and not on a clock, and not "
-        + "one sentence in the page counts seconds down to a try",
+        + "re-try on the MODEL (what the contacts reported, a fresh chart read, a changed route, where SHE is, "
+        + "the standoff) and not on a clock, and not one sentence in the page counts seconds down to a try",
         () => !/AIS_AROUND_RETRY_MS/.test(codeOnly)
               && !/aroundAt < /.test(tickCode)
-              && /aisAvoid\.triedOn/.test(tickCode) && /t\.polled === onNow\.polled/.test(tickCode)
-              && /t\.ko === onNow\.ko/.test(tickCode)
+              && /aisAvoid\.triedOn/.test(tickCode) && /aroundTriedSame\(/.test(tickCode)
+              && sameCode.length > 0 && !/Date\.now\(\)/.test(sameCode) && !/Date\.now\(\)/.test(sigCode)
+              && /a\.polled === b\.polled/.test(sameCode) && /a\.ko === b\.ko/.test(sameCode)
+              && /a\.route === b\.route/.test(sameCode) && /a\.at === b\.at/.test(sameCode)
+              && /a\.std === b\.std/.test(sameCode)
               && !secondsSaid
               && /keeps trying itself, every frame/.test(H),
         () => "constant in code " + /AIS_AROUND_RETRY_MS/.test(codeOnly)
             + ", clock gate in the tick " + /aroundAt < /.test(tickCode)
+            + ", a clock in the signature or the compare "
+            + (/Date\.now\(\)/.test(sigCode) || /Date\.now\(\)/.test(sameCode))
             + ", model gate " + /aisAvoid\.triedOn/.test(tickCode)
+            + ", asks aroundTriedSame " + /aroundTriedSame\(/.test(tickCode)
+            + ", compares polled/ko/route/at/std "
+            + [/a\.polled === b\.polled/, /a\.ko === b\.ko/, /a\.route === b\.route/, /a\.at === b\.at/,
+               /a\.std === b\.std/].map(r => r.test(sameCode)).join("/")
             + ", a sentence still counting seconds " + secondsSaid
             + "; tooltip " + (tip ? tip.slice(0, 140) : "NOT SET"));
 }
@@ -3682,6 +4091,29 @@ function stationing(beh, sogKn, cogDeg, o = {}) {
               && sent4b.includes("/api/cmd/upload"),
         () => "before " + JSON.stringify(recBefore) + ", after " + JSON.stringify(rec)
             + ", sent " + JSON.stringify(sent4b));
+  // ⚠⚠ 4b2. AND THE INDEX POINTS AT THE PICK-UP, WHICH NOTHING ASSERTED ON THE SURVEY PATH (2026-11-03, the
+  // third review: `rejoinIdx = 0`, `rejoinIdx = via.length + 1` and deleting the assignment outright ALL
+  // survived 208 of 208, where the same three mutations on the LEG path are each killed by 23e2). 4e drives
+  // `_wpIndex` around whatever `rec.rejoin` happens to hold, so it cannot tell a right index from a wrong one -
+  // it is the "setting the fields the predicate reads" shape this file's own comments warn about, one level up.
+  // The index is pinned GEOMETRICALLY here, as 23e2 pins the leg's: the way in's detour comes first, then the
+  // pick-up past her ring at e = 65, then the plan's own remaining waypoints - so `rejoin` must be
+  // `rte.length - 4` and `rte[rejoin]` must BE that pick-up. With `rejoinIdx` 0 it would point at the FIRST
+  // detour waypoint, which is the furthest she gets from her planned track in the whole maneuver.
+  {
+    const up4b = sent.find(x => x.p === "/api/cmd/upload"), rte4b = (up4b && up4b.route) || [];
+    const rj = rec ? rec.rejoin : null;
+    check("4b2. ... and the index it carries is the PICK-UP's in the route the upload sent - after the way in's "
+          + "detour, not the first detour waypoint - with the waypoint itself on the record, so an operator "
+          + "resume that splices in front of it cannot shift the lowering",
+          () => rte4b.length > 4 && rj === rte4b.length - 4 && rj > 0
+                && distTo(rte4b[rj], ll(65, 0)) < 0.5
+                && !!rec.rejoinWp && distTo(rec.rejoinWp, ll(65, 0)) < 0.5,
+          () => "rejoin " + rj + " of " + rte4b.length + " wpts (the pick-up sits at " + (rte4b.length - 4)
+              + "); rte[rejoin] " + (rte4b[rj] ? distTo(rte4b[rj], ll(65, 0)).toFixed(2) + " m from (65,0)" : "none")
+              + "; rejoinWp " + (rec && rec.rejoinWp
+                  ? distTo(rec.rejoinWp, ll(65, 0)).toFixed(2) + " m from (65,0)" : "none"));
+  }
   runLineIdx = -1; lineSwing = -1;            // flying the way in: off her line, which is where the flag is for
   renderAvoiding();
   check("4c. ... and the badge on the chart says so, in words the operator reads",
@@ -3823,22 +4255,38 @@ function stationing(beh, sogKn, cogDeg, o = {}) {
   // class of hole as the held-leg raise no check covered (23e2), and it is closed here by reading the page's
   // own text instead of the harness's world.
   const avoidDiv = (H.match(/<div class="avoidtag" id="r_avoid"[\s\S]{0,1200}?>/) || [""])[0];
-  const avoidTip = (avoidDiv.match(/title="([^"]*)"/) || ["", ""])[1];
+  // ⚠⚠ THE TIP IS NOT ON THE BADGE ANY MORE, AND IT COULD NEVER HAVE BEEN READ THERE (2026-11-03, review).
+  // `.avoidtag` is `pointer-events:none` - deliberately, so a 10 px pill at the top of the chart cannot swallow a
+  // click meant for the chart - so the browser resolves a hover over it to the canvas underneath and the `title`
+  // never opens. The previous round of this very check certified the WORDING of an advisory on a surface the
+  // operator cannot reach, which is the defect class it was added to catch. The sentence is AVOID_TIP now, on the
+  // Mission card's Doing row, which IS a hover target - and the badge must carry no `title` at all, or the
+  // unreachable advisory is simply back.
+  const avoidTip = (H.match(/const AVOID_TIP = ([^;]*);/) || ["", ""])[1]
+                     .replace(/"\s*\+\s*"/g, "").replace(/"/g, "").trim();
+  const doingTip = /avoidingSay\(av\) \+ "\. " \+ AVOID_TIP/.test(H);
   // ⚠ AND THE TIP HAS TO STATE THE RULE THE CODE HAS (2026-11-03, review). It promised the badge "comes down
   // when she is back on her coverage line, or running an ordinary leg again" - the FIRST version of the lowering
   // rule, replaced by the rejoin waypoint on the day it was written - so the operator was being advised of a
   // rule the page no longer had. An advisory naming a cause the code cannot produce is a defect in this project,
   // and a hover tip is an advisory.
-  check("4h. the badge's element, its CSS and its hover tip are in the page, and the tip states the rule the "
-        + "code really has - the rejoin waypoint, and the escape that chains nothing - rather than the coverage "
-        + "line the first draft lowered on",
+  check("4h. the badge's element and its CSS are in the page; its sentence states the rule the code really has "
+        + "- the rejoin waypoint, and the escape that chains nothing - and it lives on a surface the operator "
+        + "can actually hover, which the badge itself is not: .avoidtag takes no pointer events, so a `title` "
+        + "on it can never be opened and must not be there",
         () => /<div class="avoidtag" id="r_avoid"/.test(H)
               && /^\s*\.avoidtag\{/m.test(H)
+              && /\.avoidtag\{[\s\S]{0,200}?pointer-events:none/.test(H)
+              && !/title="/.test(avoidDiv)                       // no advisory on the unreachable surface
               && avoidTip.length > 40
               && /waypoint/.test(avoidTip) && /escape/.test(avoidTip)
-              && !/back on her coverage line/.test(avoidTip),
+              && !/back on her coverage line/.test(avoidTip)
+              && doingTip,                                       // and it IS on the Doing row's hover
         () => (avoidDiv ? "div ok" : "NO #r_avoid div") + "; .avoidtag rule "
-            + (/^\s*\.avoidtag\{/m.test(H) ? "present" : "MISSING") + "; hover tip "
+            + (/^\s*\.avoidtag\{/m.test(H) ? "present" : "MISSING")
+            + ", pointer-events:none " + /\.avoidtag\{[\s\S]{0,200}?pointer-events:none/.test(H)
+            + "; a title on the badge itself " + /title="/.test(avoidDiv)
+            + "; the Doing row carries the sentence " + doingTip + "; sentence "
             + (avoidTip.length > 40 ? "'" + avoidTip.slice(0, 110) + "'" : "MISSING"));
   // The badge is DOM painted per frame, so the call has to be ON the frame path - and INSIDE onFrame's try,
   // or a throw in it would take the whole frame down with it.
@@ -3849,15 +4297,34 @@ function stationing(beh, sogKn, cogDeg, o = {}) {
   const bigTry   = frameBody.indexOf("\n  try{");
   const catchAt  = frameBody.indexOf("\n  }catch(", bigTry + 1);
   const renderAt = frameBody.indexOf("renderAvoiding()");
-  check("4i. the frame path calls the renderer, BRACKETED BY onFrame's try and its catch, and the Mission card's "
-        + "Doing row asks the SAME reader - two surfaces, one record, which is the whole reason avoidingNow exists",
+  // ⚠⚠ AND BOTH SURFACES ASK THE SAME FUNCTION, NOT MERELY THE SAME RECORD (2026-11-03, the third review, found
+  // by two lenses independently). This check used to require the Doing row to call `avoidingNow()`, which is
+  // exactly what it did - and that WAS the defect: the badge had been made supervision-aware and the row had
+  // not. In a view-only tab the chart read "⚠ AVOIDING — ROUTED ROUND the tug SARAH B" while the row in the same
+  // window read plain green "surveying"; in a taken-over tab the badge went blank while the row stayed red and
+  // unlowerable for the rest of the run. Asserted as "neither surface derives an answer of its own", which is
+  // the property, rather than "both call X", which a third surface could pass while contradicting them.
+  // ⚠ COMMENTS STRIPPED for the "derives its own" half: both of these functions now carry a paragraph that
+  // NAMES the function they must not call, and a raw text test reads that paragraph as the call.
+  const noCmt = (t) => t.split("\n").filter(l => !/^\s*\/\//.test(l)).join("\n");
+  const renderBody = noCmt((H.match(/function renderAvoiding\(\)\{[\s\S]*?\n\}/) || [""])[0]);
+  const missionCode = noCmt(missionBody);
+  const derives = /avoidingNow\(\)|S\.supervisor/.test(missionCode)
+               || /avoidingNow\(\)|S\.supervisor/.test(renderBody);
+  check("4i. the frame path calls the renderer, BRACKETED BY onFrame's try and its catch, and the chart badge "
+        + "and the Mission card's Doing row ask ONE function - two surfaces, one record, which is the whole "
+        + "reason the reader exists - with neither of them deriving an answer of its own",
         () => bigTry > 0 && catchAt > bigTry && renderAt > bigTry && renderAt < catchAt
-              && /\bconst av = avoidingNow\(\);/.test(missionBody)
-              && /av \? "AVOIDING/.test(missionBody),
+              && /\bconst av = avoidingShown\(\);/.test(missionCode)
+              && /\bconst a = avoidingShown\(\);/.test(renderBody)
+              && !derives
+              && /av \? "AVOIDING/.test(missionCode),
         () => "onFrame: try@" + bigTry + " renderAvoiding@" + renderAt + " catch@" + catchAt
             + (renderAt > bigTry && renderAt < catchAt ? " (inside)"
                : renderAt < 0 ? " *** THE FRAME PATH DOES NOT CALL IT ***" : " *** OUTSIDE THE TRY ***")
-            + "; the Doing row asks avoidingNow: " + /\bconst av = avoidingNow\(\);/.test(missionBody));
+            + "; the Doing row asks avoidingShown: " + /\bconst av = avoidingShown\(\);/.test(missionCode)
+            + ", the badge asks it: " + /\bconst a = avoidingShown\(\);/.test(renderBody)
+            + ", either derives its own: " + derives);
   avoiding = null; runLineIdx = -1; lineSwing = -1;
 }
 
