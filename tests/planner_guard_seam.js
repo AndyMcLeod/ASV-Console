@@ -241,20 +241,48 @@ check("7. lines, leads and turns take the standoff; hops and transits try it fir
             // (and since 2026-10-03 it says it is a MANEUVER, so the charted lane and the buoys leave it alone)
             && /planNogoRoute\(\{lat:asv\.lat,lon:asv\.lon\}, \{lat:st\.hold\.lat, lon:st\.hold\.lon\},\s*\{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\), ko: koWithAis\(\) \|\| nogo\.ko, maneuver: true\}\)/.test(H)
             // the EIGHTH (2026-09-29): a held Go-To / RTH / transit's way in (resumeHeldLeg) - the leg's way round and
-            // its return ride it - with the contacts in the model and a fly-through target, as the held survey's is
-            && (H.match(/\{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\), ko: koIn, flyThrough: true\}/g) || []).length === 4
-            && /planNogoRoute\(from, tail\[0\], \{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\), ko: koIn, flyThrough: true\}\)/.test(H)
+            // its return ride it - with the contacts in the model and a fly-through target, as the held survey's is.
+            // ⚠⚠ TWO OF THOSE FOUR SITES NOW CARRY THE STANDOFF THE WALK USED, NOT A SECOND patClipBufM() CALL
+            // (2026-11-02, found by adversarial review before the charted way round shipped). The two HELD-RESUME
+            // paths - resumeHeldLeg and resumeHeldRun - already computed `at.stdM` for legClear and tautRoundHer
+            // and then handed the ROUTER its own patClipBufM(), so one maneuver was certified at two different
+            // standoffs. On a CHARTED hold on a leg that mattered: the leg is planned at transitStandoffM()
+            // (20.6 m on the DriX at HIGH) and the router re-derived 3.0 m, so the console would have laid a
+            // pick-up 10 m off a pier - guard.js:207's founding case rebuilt by hand. aisAroundGo now chooses by
+            // the plan (`(ep.chart && (g.leg || !g.mark)) ? transitStandoffM() : patClipBufM()` - keyed on the
+            // COVERAGE LINE, since `g.leg` is never set for a survey and routePlan lays a survey's approach and
+            // its inter-survey transits at the transit standoff as well) and both paths pass it on.
+            // The OTHER TWO keep patClipBufM() and are right to: resumeFromHere is for a held SURVEY, which is a
+            // coverage line (guard.js:210 - coverage keeps the guard's standoff), and aisAroundRunning amends
+            // round a CONTACT, whose ring tops the router up to a ship-length about her center, which is Andy's
+            // 2026-09-28 "make the avoidance maneuver tighter and recover the survey line sooner".
+            && (H.match(/\{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\), ko: koIn, flyThrough: true\}/g) || []).length === 2
+            && /planNogoRoute\(from, tail\[0\], \{\.\.\.holdOpts\(\), standoffM: std, ko: koIn, flyThrough: true\}\)/.test(H)
+            && /planNogoRoute\(backFrom, firstWp, \{\.\.\.holdOpts\(\), standoffM: stdIn, ko: koIn, flyThrough: true\}\)/.test(H)
+            // ⚠ AND IT IS `!g.mark` AS WELL AS `g.leg` (2026-11-02, the rework review). The first fix keyed the
+            // charted standoff on `g.leg`, which markGuardHeld sets for goto/rth/transit and NEVER for a
+            // survey - yet routePlan lays a survey's approach and the transit into each later survey at
+            // transitStandoffM() exactly as a Go-To, so a charted hold off the coverage lines still took the
+            // guard's 3.0 m and the console laid a pick-up 5.0 m off a dock face. `g.mark` is "she is on a
+            // coverage line", which is aisAroundPlan's own branch test, and the coverage line is the one case
+            // that keeps patClipBufM.
+            && /const std = \(ep\.chart && \(g\.leg \|\| !g\.mark\)\) \? transitStandoffM\(\) : patClipBufM\(\);/.test(H)
             && !/planNogoRoute\([^)]*ko: koIn\}\)/.test(H)    // no way-in site is judged as a berth any more
             && /planNogoRoute\(from, target, \{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\), ko: koIn, flyThrough: true\}\)/.test(H)
-            && /planNogoRoute\(backFrom, firstWp, \{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\), ko: koIn, flyThrough: true\}\)/.test(H)
+            // ⚠ the resumeHeldRun line that stood here asserted patClipBufM() at `backFrom, firstWp`; that site
+            // takes `stdIn` since 2026-11-02 and is asserted above. Kept as a note rather than deleted silently,
+            // because this check's whole job is to make a change of standoff impossible to make quietly.
             && /const turnMargin = Math\.max\(2, sp\.spacing\*0\.5\);/.test(H)
             && /legSafe=\(a,b\)=>\{[\s\S]{0,400}?blocked\(\{[^}]*\}, koTurn, buffer\)/.test(H),
       "extendLead (both ends), every turnWithRetry (the first rung, the lead give, the trim "
         + "rung), every judgeJoin and the red-join diagnostic read `clipBuf`; a hop is flown "
         + "straight only when legSafeAt clears the standoff, routed at clipBuf first and at the "
-        + "buffer only as the fallback (nHopInside, said on the card); the approach, RTH, Go-To, "
-        + "the transit line and the resume-from-here way in carry patClipBufM() into routePlan / "
-        + "planNogoRoute. A plan built "
+        + "buffer only as the fallback (nHopInside, said on the card); the approach, RTH, Go-To and "
+        + "the transit line carry transitStandoffM() into routePlan / planNogoRoute, while the "
+        + "resume-from-here way in and a running plan's way round a contact keep patClipBufM(); and "
+        + "since 2026-11-02 the two HELD-RESUME way-in routers take the standoff the walk used "
+        + "(`std` / `stdIn`) instead of calling patClipBufM() again, so a charted way round on a leg "
+        + "is routed at the leg's own 20.6 m and not the guard's 3.0 m. A plan built "
         + "this way cannot have the helm rung fire on a line, a lead, a turn or a hop the water "
         + "had room for; where it had not, the card says so, and the guard covers it");
 

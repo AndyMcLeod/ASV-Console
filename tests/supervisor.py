@@ -407,5 +407,82 @@ check("13c. a report's busy_s is a finite positive number of seconds or nothing 
       lambda: vals["60"] == 60.0 and vals["2.5"] == 2.5 and all(vals[k] is None for k in ("str", "bool", "nan", "neg", "zero", "none")),
       lambda: json.dumps(vals))
 
+# ── 14. THE SUPERVISING TAB'S "AVOIDING" RECORD, SERVED TO EVERY PAGE (2026-11-03) ───────────────────────────
+# Andy, 2026-11-02: "Create a flag that attaches to the ASV an reads AVOIDING until it's back on line or natural
+# transit". Only the supervising page can raise it - it runs the ladder, it moved her, and it holds the route whose
+# waypoint index lowers it again - so review found the badge invisible in every other window: a second chart tab, the
+# controls window, anyone watching the same console. It rides this heartbeat rather than a channel of its own, so it
+# inherits this class's staleness and its prune. The page's half is tests/supervisor_page.js 6c-6f.
+RAISED = {"why": "routed round", "kind": "a dock / pier", "since": 1700000000.0}
+sv7 = A.Supervision()
+sv7.beat("main", now=T)
+pub = sv7.beat("main", avoiding=RAISED, set_avoiding=True, now=T + 1)
+# a tab that is NOT the supervisor cannot write it: it cannot raise the flag, so it must not be able to lower it
+steady(sv7, "other", T + 2)
+notMine = sv7.beat("other", avoiding=None, set_avoiding=True, now=T + 3)
+# a POST that says nothing about it (the "about to plan" one) leaves it alone: PRESENCE, not value
+busyKept = sv7.beat("main", busy_s=60, now=T + 4)
+# ... and the holder's own next beat, with the record down, lowers it
+lowered = sv7.beat("main", avoiding=None, set_avoiding=True, now=T + 5)
+# a record from a STALE holder is not served: nothing is lowering the flag either, so a badge from it would be a
+# claim nobody is behind
+sv8 = A.Supervision()
+sv8.beat("main", now=T)
+sv8.beat("main", avoiding=RAISED, set_avoiding=True, now=T + 1)
+stalePub = sv8.snapshot(now=T + 1 + A.SUPERVISOR_STALE_S + 1)
+# the tab goes away, by saying so and by being forgotten: both drop it
+sv9 = A.Supervision()
+sv9.beat("main", now=T)
+sv9.beat("main", avoiding=RAISED, set_avoiding=True, now=T + 1)
+released = sv9.release("main", now=T + 2)
+sv10 = A.Supervision()
+sv10.beat("main", now=T)
+sv10.beat("main", avoiding=RAISED, set_avoiding=True, now=T + 1)
+forgotten = sv10.check_once(now=T + 1 + A.SUPERVISOR_FORGET_S + 1)
+# and a handover clears it: the new holder's own first beat says what IT has, and the old holder's rejoin index
+# belongs to a route the new one may already have replaced
+sv11 = A.Supervision()
+sv11.beat("main", now=T)
+sv11.beat("main", avoiding=RAISED, set_avoiding=True, now=T + 1)
+handed = sv11.beat("other", take=True, now=T + 2)
+check("14. the supervising tab's AVOIDING record is served to every page - from the HOLDER only, with a POST that says "
+      "nothing about it leaving it alone and the holder's own null lowering it - and it is not served by a tab that has "
+      "gone stale, said it is leaving, been forgotten, or been taken over",
+      lambda: pub["avoiding"] == RAISED and notMine["avoiding"] == RAISED and busyKept["avoiding"] == RAISED
+      and lowered["avoiding"] is None and stalePub["avoiding"] is None and released["avoiding"] is None
+      and forgotten["avoiding"] is None and handed["avoiding"] is None,
+      lambda: json.dumps({"published": pub["avoiding"], "a view-only tab's null": notMine["avoiding"],
+                          "after the busy POST": busyKept["avoiding"], "lowered": lowered["avoiding"],
+                          "stale": stalePub["avoiding"], "released": released["avoiding"],
+                          "forgotten": forgotten["avoiding"], "handed over": handed["avoiding"]}))
+
+# 14b. IT IS CLIENT-SUPPLIED, so it is rebuilt field by field: anything that is not one of the three maneuvers the
+# flag names is nothing, the kind is capped, and nothing a page sends can raise an exception in the heartbeat - which
+# is a safety channel, and the one POST that must never be breakable by a bad body.
+clean = A.Supervision._clean_avoiding
+avVals = {
+    "ok": clean({"why": "deviated", "kind": "a shoal", "since": 1.0}),
+    "unknown why": clean({"why": "wandered off", "kind": "a shoal", "since": 1.0}),
+    "no why": clean({"kind": "a shoal"}),
+    "no kind": clean({"why": "steered clear"}),
+    "long kind": clean({"why": "steered clear", "kind": "x" * 500}),
+    "odd since": clean({"why": "deviated", "kind": "a shoal", "since": "yesterday"}),
+    "extra fields": clean({"why": "deviated", "kind": "a shoal", "since": 1.0, "rejoin": 7, "odd": {"a": [1, 2]}}),
+    "not a dict": clean("AVOIDING"),
+    "none": clean(None),
+}
+check("14b. ... and the record is rebuilt field by field from what the page sent: an unknown maneuver, a missing one and "
+      "a body that is not an object are all nothing; a non-numeric time is dropped; the kind is capped; extra fields go",
+      lambda: avVals["ok"] == {"why": "deviated", "kind": "a shoal", "since": 1.0}
+      and avVals["unknown why"] is None and avVals["no why"] is None and avVals["not a dict"] is None
+      and avVals["none"] is None
+      and avVals["no kind"] == {"why": "steered clear", "kind": "something in her way", "since": None}
+      and len(avVals["long kind"]["kind"]) == 120
+      and avVals["odd since"] == {"why": "deviated", "kind": "a shoal", "since": None}
+      and sorted(avVals["extra fields"].keys()) == ["kind", "since", "why"],
+      lambda: json.dumps({k: (dict(v, kind="<%d chars>" % len(v["kind"]))
+                              if isinstance(v, dict) and len(str(v.get("kind", ""))) > 40 else v)
+                          for k, v in avVals.items()}))
+
 print(("\n%d CHECK(S) FAILED (%d ran)" % (fails, ran)) if fails else ("\nall checks passed (%d)" % ran))
 sys.exit(1 if fails else 0)

@@ -164,6 +164,12 @@
     background:rgba(10,17,25,.92);border:1px solid #e0a53a;border-radius:3px;padding:3px 10px;
     color:#e0a53a;font:600 10px var(--mono);letter-spacing:.06em;white-space:nowrap;}
 
+  /* ⚠ AVOIDING: the same badge, in the guard's own red, one slot lower so the two can both be up. DOM and not canvas text, so it is as fresh as the telemetry frame rather than as fresh as the last
+     render() - and so nothing drawn after the vessel (the wind rose, a refusal highlight) can paint over the one word that says she is being steered off her plan. */
+  .avoidtag{position:absolute;top:116px;left:50%;transform:translateX(-50%);z-index:9;pointer-events:none;
+    background:rgba(10,17,25,.95);border:1px solid var(--bad);border-radius:3px;padding:3px 10px;
+    color:var(--bad);font:700 10px var(--mono);letter-spacing:.08em;white-space:nowrap;}
+
   .readout{position:absolute;left:14px;bottom:84px;z-index:5;font-family:var(--mono);font-size:11px;color:var(--ink-dim);
     background:rgba(10,17,25,.8);border:1px solid var(--line);border-radius:3px;padding:6px 10px;display:flex;gap:16px;}
   .readout b{color:var(--ink);}
@@ -880,6 +886,8 @@
        on a single window the Path planning card sits over the strip's left end, and with the card in the controls
        window this is the only word on the chart that a click will draw. -->
   <div class="drawtag" id="r_draw" style="display:none" title="The chart is armed by the Path planning card: a click draws. Esc (or Draw on the card) puts it back to panning."></div>
+  <div class="avoidtag" id="r_avoid" style="display:none"
+       title="The console has her off her planned track to keep clear of something, and will put her back. It comes down when she passes the waypoint the maneuver puts her back on her plan at - or, after an IN EXTREMIS escape, which chains nothing, when she is next commanded. It stays up while she is paused, and shows nothing at all while she is stopped, e-stopped or disarmed."></div>
   <div class="readout">
     <span>cursor <b id="r_cursor">--</b></span>
     <span>z <b id="r_zoom">13</b></span>
@@ -924,7 +932,7 @@
           <span class="gb-why" id="gb_why"></span>
         </div>
         <div class="gb-row">
-          <button class="ctl small" id="gb_around" style="display:none" title="Route round the contact she is held for NOW - one ship-length off her, carrying on beyond her - rather than waiting for the console to do it itself.">ROUTE ROUND HER NOW</button>
+          <button class="ctl small" id="gb_around" style="display:none" title="Route round what she is held for NOW, carrying on beyond it - a contact at one ship-length from her center, a charted feature at the standoff her plan was laid at - rather than waiting for the console to do it itself.">ROUTE ROUND HER NOW</button>
           <button class="ctl small" id="gb_low" title="Keep surveying, but slowly. The console stops STOPPING the boat for this situation and holds it at LOW speed until you press RELEASE LOW on this bar or change a speed selector. It keeps watching, keeps reporting, keeps deviating where there is water, and still takes the helm in extremis.">CONTINUE AT LOW SPEED</button>
           <button class="ctl small" id="gb_proceed" title="You have assessed the water ahead and are taking responsibility for it. The console stops slowing and stopping the boat for this situation. It keeps watching, keeps reporting, and still takes the helm in extremis.">PROCEED — I have assessed it</button>
           <button class="ctl small" id="gb_cancel" style="display:none" title="Hand the situation back to the console. Ends the low speed you asked for as well.">CANCEL OVERRIDE</button>
@@ -2320,6 +2328,7 @@ function setPlanIntent(kind, plan, route){
   // the hold rung's own per-episode record, and they go with it.
   guardOverride = null; edgeSpentM = 0; edgeCount = 0; guardActedAt = 0; holdWant = null;
   edgeSearchAt = 0;                    // ... and the deviation search is due again (2026-09-26)
+  avoiding = null;                     // ... and a fresh plan has not been deviated at all yet (2026-11-02)
   planIntent = {kind: kind, at: Date.now(), route: (route||[]).length,
                 why: [], target: null, unsafe: 0, degraded: !!(plan && plan.degraded),
                 heldOff: (plan && plan.heldOff) || null,
@@ -2774,8 +2783,10 @@ function renderHeldBar(bar, g){
       + "; right-click the line BEYOND her to resume there (routed round her), or the console routes round her itself "
       + ((S && S.run === "paused") ? "once you resume the hold" : "now");
   }
-  // ROUTE ROUND HER NOW (2026-09-27): a try on demand - since 2026-11-01 nothing is waited out, so what the press
-  // asks for is ANOTHER try inside the retry spacing - while she is held for a contact still on the line
+  // ROUTE ROUND HER NOW (2026-09-27): a try on demand - while she is held for a contact still on the line. Since
+  // 2026-11-01 nothing is waited out and since 2026-11-02 there is no spacing left either, so what the press buys
+  // is a try on THIS frame that SPEAKS: the console's own tries are silent until the model moves (`triedOn`), and
+  // `manual` both bypasses that gate and un-latches `aroundSaid`, so the operator always gets an answer.
   { const ga = $("#gb_around"); if(ga) ga.style.display = (aisAvoid && !aisAvoid.clearSince) ? "" : "none"; }
   $("#gb_low").textContent = "RESUME SURVEY AT LOW SPEED";
   $("#gb_low").style.display     = "";
@@ -2789,7 +2800,8 @@ function renderHeldBar(bar, g){
 /**
  * THE BAR AFTER A GO-TO, A RETURN-TO-HOME OR A TRANSIT WAS STOPPED FOR A CONTACT (2026-09-29) - renderHeldBar's box
  * and its three answers, in the leg's words: what stopped her, how far the leg has still to go, and the two ways on
- * the console takes itself (on once she is clear of the way; round her once the operator's wait is up). A leg has no
+ * the console takes itself (on once she is clear of the way; round her as soon as she is on station - there has been
+ * no operator's wait since 2026-11-01, and a CHARTED feature opens the same maneuver since 2026-11-02). A leg has no
  * line to right-click beyond her, so that answer is not offered; ROUTE ROUND HER NOW, RESUME <leg> AT LOW SPEED and
  * LEAVE IT HOLDING are.
  */
@@ -3627,8 +3639,13 @@ function markGuardHeld(c, ais){
   // maneuver used on survey lines for avoidance of AIS contact should have identical avoidance behavior when running
   // a GOTO, RTH or transit line"). Until then a leg held for a contact banked nothing, so no episode opened and she
   // sat holding until the operator re-commanded her. `leg` names the command the leg was flown by, so the way round
-  // and the return re-issue THAT command (resumeHeldLeg) - never a survey. A leg held for a CHARTED feature still
-  // banks nothing: that offer to the operator is unchanged.
+  // and the return re-issue THAT command (resumeHeldLeg) - never a survey.
+  // ⚠ AND SINCE 2026-11-02 A LEG HELD FOR A CHARTED FEATURE IS BANKED TOO (Andy: "any contact including charted
+  // on legs too"), which is why this parameter is no longer named for AIS alone: both call sites pass
+  // `aisCaused || !!chartHer`, so `ais` means "something the console will route her round", contact or chart.
+  // The sentence here used to say a charted leg banked nothing, and by then the code said otherwise - the one
+  // thing a docstring must never do (2026-11-03, review). What a charted episode does NOT get is the 100 m
+  // return: a pier does not leave, so the way round or the operator's resume is the only way off that hold.
   const beh = S && S.behavior;
   const leg = !!ais && (beh === "goto" || beh === "rth" || beh === "transit");
   if(!(beh === "survey" || leg) || !runRoute || !runRoute.length) return;
@@ -3680,6 +3697,18 @@ let aisAvoid = null;                // {kind, rung, since, clearSince, line} whi
 // THE GUARD'S AIS MODEL ON THE LAST FRAME, for the chart and the bar: the polygons, the note that says
 // why there are none, and whether the feed is stale. aisKeepoutsNow() rewrites all three every frame.
 let aisKoDrawn = [], aisKoNote = null, aisKoStale = false, aisKoBlindSaid = false, aisKoWantedAt = 0;
+/**
+ * BLIND TO TRAFFIC - THE FACT, and the ONE place it is decided (2026-11-02, review).
+ *
+ * `aisKoStale` is "this frame's model is older than AIS_KO_STALE_S", which is ALSO true of a console that has
+ * simply never polled - AIS off, or the service not up - because aisKeepouts answers `stale: true` on
+ * `polledAt == 0`. BLIND is the narrower and more useful fact: the console WANTED the contacts (armed, not
+ * e-stopped, a run under way), has given the feed its grace period, and still has nothing. It is exactly the
+ * condition the AIS KEEP-OUTS BLIND banner fires on, and it is pulled out here so the banner and the way round
+ * ask the same function rather than two expressions that can drift apart - the discipline govHeldBy was written
+ * for after the release note announced a throttle command nobody sent.
+ */
+let aisKoBlind = false;
 function aisKeepoutsNow(){
   if(!asv || !nogo.frame){ aisKoDrawn = []; aisKoNote = null; aisKoStale = false; return []; }
   const now = Date.now();
@@ -3693,7 +3722,8 @@ function aisKeepoutsNow(){
   const wanted = aisGuardWanted() && !!(S && S.run === "running");
   if(wanted && !aisKoWantedAt) aisKoWantedAt = now;
   if(!wanted) aisKoWantedAt = 0;
-  if(wanted && r.stale && now - aisKoWantedAt > AIS_KO_STALE_S * 1000){
+  aisKoBlind = !!(wanted && r.stale && now - aisKoWantedAt > AIS_KO_STALE_S * 1000);
+  if(aisKoBlind){
     if(!aisKoBlindSaid){ aisKoBlindSaid = true;
       showBanner("⚠ AIS KEEP-OUTS BLIND — " + r.note + ". Contacts are NOT being avoided until the "
         + "AIS feed answers again; the charted keep-outs are still enforced."); }
@@ -3715,20 +3745,33 @@ function aisNearestPoly(p, aisKo){
   }
   return best;
 }
-function aisAvoidOpen(c, a, aisKind, aisHer){
+function aisAvoidOpen(c, a, aisKind, aisHer, chartHer){
   if(!guardHeld || aisAvoid) return;   // nothing banked (not a survey, or nothing unflown), or one already open
+  if(!aisHer && !chartHer) return;     // nothing identified to be about: no episode, exactly as before
   // `mmsi` NAMES HER (2026-09-28): the way round gives HER alone the ship-length ring, and finds her again by it
   // in a later frame - the contact at the point the ladder acted on (aisHer), not merely the nearest to the boat.
-  aisAvoid = {kind: aisKind || (c && c.kind) || "an AIS contact", rung: a && a.level,
-              since: Date.now(), clearSince: 0, line: guardHeld.mark ? guardHeld.mark.line : null,
-              mmsi: aisHer && aisHer.mmsi != null ? aisHer.mmsi : null};
+  // ⚠⚠ OR `chart` NAMES IT, AND THE EPISODE IS OTHERWISE THE SAME ONE (2026-11-02, "or any other contact"). A
+  // charted feature has no mmsi and does not move, so it is carried as the MODEL'S OWN POLY and found again by
+  // identity (chartedHerPoly). Everything downstream reads `her` rather than a kind - the walk is already blind
+  // to what she is, and sameContact tests identity before mmsi - so the two differ in exactly three ways, each
+  // of them real: a charted feature gets no ship-length ring (there is no ship), the 100 m return does not own
+  // the way back from one (what clears is the CHART, not a contact passing), and the AIS feed's staleness
+  // cannot gate a maneuver that does not depend on the feed.
+  aisAvoid = {kind: aisKind || (c && c.kind) || (chartHer && chartHer.kind) || "a keep-out",
+              rung: a && a.level, since: Date.now(), clearSince: 0,
+              line: guardHeld.mark ? guardHeld.mark.line : null,
+              mmsi: aisHer && aisHer.mmsi != null ? aisHer.mmsi : null,
+              chart: chartHer || null};
   logClient("ais_avoid", {kind: aisAvoid.kind, rung: aisAvoid.rung, mmsi: aisAvoid.mmsi,
+            charted: !!aisAvoid.chart,
             line: aisAvoid.line != null ? lineNo(aisAvoid.line) : null,
             t_entry_s: (a && a.tEntry != null) ? Math.round(a.tEntry) : null});
   flashNote((aisAvoid.rung === "helm" ? "Steered clear of " : "Holding for ") + aisAvoid.kind
     + (guardHeld.leg
-       ? " — the " + legName(guardHeld.leg) + " carries on by itself once she is clear of the way, and goes round her"
-         + " as soon as she is on station if she is not."
+       ? " — the " + legName(guardHeld.leg) + " carries on by itself once she is clear of the way, and goes round "
+         + (aisAvoid.chart ? "it" : "her") + " as soon as she is on station if she is not."
+       : aisAvoid.chart
+       ? " — the console routes round it as soon as she is on station and picks the survey up beyond it."
        : " — the survey resumes on its own once she is clear of the line, " + AIS_RETURN_BACK_M + " m back down it."));
 }
 function aisReturnTick(p, aisKo, buf, now){
@@ -3739,6 +3782,13 @@ function aisReturnTick(p, aisKo, buf, now){
   // ⚠ NEVER ON A STALE MODEL. A feed that has stopped answering EMPTIES the model, and an empty model
   // reads "clear of the line" - a dead feed as a quiet sea, one door over from the fault that once read a
   // dead AIS key that way. She keeps holding until the feed answers again (tests/ais_avoid.js 6c).
+  // ⚠⚠ THE 100 m RETURN OWNS A CONTACT'S WAY BACK, NEVER A CHARTED ONE (2026-11-02). Its whole argument is that
+  // a contact PASSES: she clears the line by moving, and the coverage is taken back over water already run. A
+  // pier does not pass. Reading one "clear of the line" would mean the chart changed under her or she was set
+  // off it - neither of which is a reason to drive back DOWN the line - so a charted episode is left entirely to
+  // the way round, which walks the plan PAST the feature and picks it up beyond. One episode, two ways back, and
+  // only ever one of them in play.
+  if(aisAvoid.chart) return;
   if(aisKoStale){ aisAvoid.clearSince = 0; return; }
   if(!(S && S.run === "running")){ aisAvoid.clearSince = 0; return; }   // paused by the operator: theirs to end
   if(g.leg) return aisReturnLegTick(g, aisKo, buf, now);   // a held Go-To / RTH / transit: its own way back (2026-09-29)
@@ -3800,15 +3850,29 @@ function aisReturnLegTick(g, aisKo, buf, now){
  * remaining waypoints, its end point last. {error} when even the end point is inside her ring: she is lying on it,
  * and that is the operator's to answer.
  */
-function aisAroundLegPlan(g, aisKo, std, herMmsi){
+function aisAroundLegPlan(g, aisKo, std, herMmsi, herChart){
   if(!nogo.frame) return {error: "the keep-out model is not loaded"};
   const start = g.at || (asv ? {lat: asv.lat, lon: asv.lon} : null);
   const pts = start ? [start, ...g.route.slice(g.idx)] : [];
   if(pts.length < 2) return {error: "the " + legName(g.leg) + " has no waypoint left to pick up"};
-  const her = aisHerPoly(aisKo, herMmsi, pts[0], pts[1], std);
-  const ring = her ? aisRoundKeepout(her, std, nogo.buffer || 0) : null;
-  const herOnly = {polys: ring ? [ring] : [], lines: [], points: []};                        // a ship-length round HER
-  const others = {polys: (aisKo || []).filter(q => !sameContact(q, her)), lines: [], points: []};   // the guard's hulls
+  const her = herChart || aisHerPoly(aisKo, herMmsi, pts[0], pts[1], std);
+  // ⚠⚠ A CHARTED FEATURE IS ITS OWN RING, AND GETS NO SHIP LENGTH (2026-11-02, "any contact including charted on
+  // legs too"). aisRoundKeepout grows a CONTACT by her own length, because a ship swings and may be under way;
+  // a pier does neither, and inflating it would be the console inventing water. What keeps her off it is `std`,
+  // and `std` ALONE - aisRoundKeepout returns the poly untouched when it has no hull or box, so there is no
+  // second rule here to catch a standoff that is too small.
+  // ⚠ WHICH IS WHY THE CALLER CHOOSES IT BY THE PLAN (aisAroundGo). An earlier draft of this comment claimed
+  // `std` is "patClipBufM(), the planner's own standoff, so the way round keeps exactly the clearance the plan
+  // was punched with". That is true of a COVERAGE LINE and false of a LEG, which is laid at transitStandoffM() -
+  // 20.6 m against 3.0 m on the DriX at HIGH in calm water - and the sentence was the whole justification for
+  // the no-growth rule, so it hid a 3 m pick-up past a pier behind a correct-sounding argument. Review caught it
+  // before it shipped; aisAroundGo's header has the measured case.
+  const ring = her ? (herChart ? her : aisRoundKeepout(her, std, nogo.buffer || 0)) : null;
+  // ⚠ A CHARTED FEATURE GOES IN THE BUCKET ITS TYPE BELONGS TO (2026-11-02, review): a line in `polys` has no
+  // `ring`, and clearanceM would read "clear" on the very thing that stopped her. A CONTACT is always a poly.
+  const herOnly = herChart ? herOnlyModel(ring)
+                           : {polys: ring ? [ring] : [], lines: [], points: []};             // what she must get PAST
+  const others = aroundOthers(aisKo, her, herChart);         // everything else the pick-up must be clear of
   const runOutM = GUARD_HOLD_S * roleSpeedMS("transit");     // the hold horizon beyond the pick-up, at the leg's speed
   const w = aisWalkPast(pts, Infinity, herOnly, others, std, runOutM);
   if(w){
@@ -3911,6 +3975,15 @@ function aisWalkPast(pts, endS, herOnly, others, std, runOutM){
  */
 // (AIS_AROUND_RETRY_MS is GONE, 2026-11-02 - see the paragraph above. There is no timer in this maneuver.)
 const AIS_AROUND_STEP_M = 5;         // the walk along the held line, looking for the first clear point beyond her
+// ⚠⚠ "THE SAME PLACE", AND IT IS NOT THE GRID STEP (2026-11-03, review). The charted no-op gate below was written
+// as `skipM > AIS_AROUND_STEP_M`, which refuses the FIRST point the walk can ever return: it steps in
+// AIS_AROUND_STEP_M from where she stopped, so a legitimate one-step pick-up comes back as exactly 5 m and was
+// refused under a banner asserting the plan "already runs where the way round would put her" - which was then
+// false. Measured: held 2 m off a pier face with the next clear point one step on, the console refused its own
+// maneuver on every try and she held indefinitely, which is the state he asked to remove. What the gate is about
+// is a pick-up AT the point she stopped at - skipM 0, the walk's first candidate being her own position - so the
+// threshold is float noise and nothing more.
+const AIS_AROUND_NOOP_M = 0.5;       // a pick-up nearer than this to where she left the plan IS where she left it
 let aisAroundBusy = false;           // the running plan's way round (aisAroundRunning): one in flight at a time
 /** The charted model plus the contacts of this frame - the guard's own koAll for the routers; with `avoid`,
  *  each contact grown by her own length (aisAvoidKeepouts): the ESCAPE's model, the one maneuver whose job is
@@ -3922,6 +3995,139 @@ function koWithAis(aisKo, avoid){
 }
 /** One contact, two frames: the same object, or the same MMSI. */
 function sameContact(a, b){ return !!(a && b && (a === b || (a.mmsi != null && a.mmsi === b.mmsi))); }
+/**
+ * HER, WHEN "SHE" IS CHARTED (Andy, 2026-11-02: "do not wait for operator input to avoid an AIS or any other
+ * contact"). The way round was built for contacts and is almost entirely kind-blind already - aisWalkPast takes
+ * two opaque keep-out models and knows nothing about AIS, and sameContact tests OBJECT IDENTITY before it tests
+ * mmsi - so all a charted feature needed was to be handed over as "her".
+ * ⚠ THE MODEL'S OWN POLY, NOT A COPY OF ITS RING. blockedInfo hands back `ring: poly.ring`, the very array the
+ * model holds, so the poly is found again by identity - which is what lets `others` subtract her with no mmsi
+ * and no id, and what makes a later frame agree about which feature this episode is about.
+ * ⚠ AND IT IS ASKED AT THE LADDER'S ENTRY POINT, not at the boat: guardHazardKey already does exactly this to
+ * NAME the hazard, and the entry point is the water the rung acted on. A hold 30 m off a pier is not inside the
+ * buffer, so `clearance.info` is null there (updateClearance fills it only within the buffer) and cannot serve.
+ */
+function chartedHerPoly(at, ko, buf, p, clearM, herKind){
+  // ⚠⚠ TWO REACHES, IN guardHazardKey's OWN ORDER, and the first alone found nothing. At the ladder's ENTRY
+  // point the feature is under the boat's projected track and a buffer's reach finds it - but a hold has no
+  // entry point on every frame, and then `at` falls back to the boat, who is standing 30 m OFF the thing she
+  // was stopped for: a 3.5 m reach from there finds open water and the episode never opened. The second reach
+  // is the clearance the ladder actually measured (`c.m`), which is the distance to the feature by definition.
+  // guardHazardKey has had exactly this pair since it was written; this had only the first.
+  // ⚠⚠ EVERY TYPE THE CHART HAS, NOT ONLY POLYGONS (2026-11-02, review). This read `if(!bi || !bi.ring)` and
+  // gave up, and blockedInfo returns NO ring for `type:'line'` or `type:'point'` - so a pier drawn as a line, a
+  // dock line, the shoreline, a rock, a wreck, an obstruction and a shoal sounding all opened no episode at all
+  // and went on waiting for the operator indefinitely, which is the one thing he asked to remove. The walk
+  // needed no change for them: aisWalkPast takes opaque {polys, lines, points} models and clearanceM and
+  // legClear read all three buckets, so a line or a point in the right bucket is routed past exactly as a
+  // polygon is. What was missing was only naming it. The model's OWN object is returned in each case, so
+  // `others` can subtract her by identity and a later frame agrees which feature this episode is about.
+  const find = (pt, cap) => {
+    const bi = (ko && pt) ? blockedInfo(pt, ko, cap) : null;
+    if(!bi) return null;
+    if(bi.ring) return (ko.polys || []).find(q => q && q.ring === bi.ring) || null;
+    if(bi.pts)  return (ko.lines || []).find(q => q && q.pts === bi.pts) || null;
+    // ⚠ A POINT IS MATCHED BY ITS COORDINATES, because blockedInfo hands back a COPY of them ({e, n}) rather
+    // than the model's own object - the one type where identity is not available. Its radius is matched too, so
+    // a sounding and a wreck at the same spot are not confused; two features identical in all three are
+    // genuinely indistinguishable here, and the first wins.
+    if(bi.pt)   return (ko.points || []).find(q => q && q.e === bi.pt.e && q.n === bi.pt.n
+                                                && (q.r || 0) === (bi.r || 0)) || null;
+    return null;        // `type:'unknown'` is unread water - a thing to refuse to enter, never one to route past
+  };
+  // ⚠⚠ AND THE BOAT-POSITION REACH MUST NAME WHAT THE LADDER MEASURED (2026-11-02, review). The entry-point
+  // reach is sound: it looks under her own projected track, which is the water the rung acted on. The fallback
+  // is not - it asks at the BOAT with the measured clearance `c.m`, and blockedInfo answers with the FIRST
+  // feature it finds in model order (polygons, then lines, then points), which need not be the nearest and need
+  // not be the one ahead. Probed by the reviewer: a pier drawn as a LINE 30 m ahead with a shoal POLYGON 28 m
+  // astern opened the episode as "a shoal", promised to route round a shoal, measured "she is behind it"
+  // against a feature she was never held for, and named the real hazard nowhere. So the fallback is accepted
+  // only when its kind is the kind the ladder itself reported; where they differ the honest answer is no
+  // episode, which leaves the operator the offer rather than a confident wrong name. guardHazardKey's own
+  // docstring says why the entry point matters: the feature abeam is not the one ahead.
+  // ⚠⚠ AND THAT KIND TEST ALONE WAS INERT (2026-11-03, the rework review). `herKind` is `clearance.kind`, and
+  // updateClearance sets that ONLY where the measured clearance is inside the buffer (`info` is asked on
+  // `m <= buf`) - which is never true of a boat standing 30 m off the thing she was stopped for. The reviewer
+  // measured it null in all 207 actionable frames: `herKind == null` accepted every fallback unchecked, so the
+  // guard changed no answer anywhere and 5l was passing on arguments the page cannot produce. It is KEPT, since
+  // it is right on the frames it can speak at all - inside the buffer, where the ladder does name a kind - and
+  // the test that does the work is put beside it: the fallback may name a feature only where NOTHING ELSE is as
+  // close. That is the ambiguity the first-in-model-order reach really has, stated as a measurement instead of
+  // as a kind. In the reviewer's own scene both features are inside the reach, so there is no identification to
+  // be had and the answer is no episode - the operator keeps the offer, which is what this file already says is
+  // the honest ending. One extra blockedInfo over the three buckets with her taken out, on the frames the entry
+  // reach found nothing, and `deep` is deliberately not in the second model: margin water is not a hazard that
+  // can make a pier ambiguous.
+  const atEntry = find(at, (buf || 0) + 0.5);
+  if(atEntry) return atEntry;
+  if(clearM == null) return null;
+  const nearBoat = find(p || at, clearM + 0.5);
+  if(!nearBoat) return null;
+  if(blockedInfo(p || at, koWithoutFeature(ko, nearBoat), clearM + 0.5)) return null;
+  return (herKind == null || nearBoat.kind === herKind) ? nearBoat : null;
+}
+// THE MODEL MINUS ONE FEATURE, MEMOIZED ON THE PAIR (2026-11-03). chartedHerPoly's ambiguity test runs on every
+// frame of a charted hold, and keepouts.js indexes a feature list by its ARRAY IDENTITY (gridOf's WeakMap), so a
+// freshly filtered array each frame would rebuild that index each frame. `nogo.ko` is replaced wholesale by a
+// chart read and the feature stays the same for the length of an episode, so one slot hits on every frame after
+// the first.
+// ⚠ EXCEPT WHILE A LAUNCH GRANT STANDS, where the caller hands in `grantFilter(nogo.ko, ...)` - a fresh object
+// per frame - and this misses every time: one O(n) filter per frame of a charted hold inside a berth. Stated
+// rather than engineered around, because the ladder already walks the whole model on the same frame.
+/**
+ * WHERE THIS FRAME'S CONTACTS ARE, as one short string (2026-11-03) - the only part of a CHARTED way round's
+ * model that can change, and so the part of aisAroundTick's `triedOn` signature that stands in for the poll
+ * clock there. Each contact by name and by its swept bounding box to the meter: the swept box is what refuses a
+ * pick-up, so the box is what is compared; a fleet that has not moved reads identical, one that has does not,
+ * and a contact coming into range or leaving changes the string by changing the list.
+ */
+function aisKoSig(list){
+  return (list || []).map(q => (q.mmsi != null ? q.mmsi : (q.name || q.kind)) + ":"
+    + (q.bb ? Math.round(q.bb.x0) + "," + Math.round(q.bb.y0) + "," + Math.round(q.bb.x1) + "," + Math.round(q.bb.y1)
+            : "?")).join("|");
+}
+let _koLessKey = null, _koLess = null;
+function koWithoutFeature(ko, f){
+  if(_koLessKey && _koLessKey.ko === ko && _koLessKey.f === f) return _koLess;
+  _koLess = {polys: (ko.polys || []).filter(q => q !== f),
+             lines: (ko.lines || []).filter(q => q !== f),
+             points: (ko.points || []).filter(q => q !== f)};
+  _koLessKey = {ko, f};
+  return _koLess;
+}
+/**
+ * THE ONE-FEATURE MODEL the walk gets as `herOnly` - the thing she has to get PAST - in the bucket its type
+ * belongs to (2026-11-02). A charted feature can be a polygon, a line or a point, and putting a line into
+ * `polys` would have clearanceM and legClear read its `ring` as undefined and answer "clear" on the feature
+ * that stopped her: the most dangerous shape of bug this file can have.
+ */
+function herOnlyModel(f){
+  if(!f) return {polys: [], lines: [], points: []};
+  if(f.ring) return {polys: [f], lines: [], points: []};
+  if(f.pts)  return {polys: [], lines: [f], points: []};
+  return {polys: [], lines: [], points: [f]};
+}
+/**
+ * EVERYTHING EXCEPT THE ONE THING SHE IS GETTING PAST - the walk's `others`, which the pick-up point must be
+ * clear of (2026-11-02). For a CONTACT that is the other contacts, as it always was: the charted model is not in
+ * it because the plan was punched against the chart already, and her ring is the only thing that moved.
+ * ⚠ FOR A CHARTED FEATURE IT HAS TO BE THE CHART AS WELL, minus her. The pick-up is a point further along a plan
+ * that is being walked PAST charted water - so the next pier along is exactly the thing that must not be adopted
+ * as a pick-up, and it is not a contact. Subtracted by OBJECT IDENTITY, which is why chartedHerPoly hands back
+ * the model's own poly rather than a copy of its ring.
+ */
+function aroundOthers(aisKo, her, herChart){
+  const contacts = (aisKo || []).filter(q => !sameContact(q, her));
+  if(!herChart) return {polys: contacts, lines: [], points: []};
+  const ko = nogo.ko || {polys: [], lines: [], points: []};
+  // ⚠ SUBTRACTED FROM WHICHEVER BUCKET SHE IS IN (2026-11-02, review). Only `polys` was filtered, so a charted
+  // LINE or POINT she is being routed past stayed in `others` as well as in `herOnly` - and `others` is what the
+  // pick-up must be CLEAR of, so every candidate point was rejected for the very feature she is getting past and
+  // the way round could never find one. Filtering all three costs nothing and cannot be wrong.
+  return {polys: [...(ko.polys || []).filter(q => q !== herChart), ...contacts],
+          lines: (ko.lines || []).filter(q => q !== herChart),
+          points: (ko.points || []).filter(q => q !== herChart)};
+}
 /**
  * HER - the contact a way round goes round - out of this frame's contacts: the one named by `mmsi` (the episode's,
  * or the one right-clicked), else the FIRST whose hull comes within `std` of the straight run fromLL -> toLL (the
@@ -4029,7 +4235,7 @@ function tautRoundHer(fromLL, toLL, herRing, ko, std){
  * of EVERY contact's ship-length ring: FRIGGA, anchored 35 m off the far end of line 6, kept every point before
  * her "not clear", and the survey was picked up 14 m from the line's end, 375 m of it skipped.)
  */
-function aisAroundPlan(g, aisKo, std, herMmsi){
+function aisAroundPlan(g, aisKo, std, herMmsi, herChart){
   const L = g.mark ? (mission.lines || [])[g.mark.line] : null;
   if(!nogo.frame) return {error: "the keep-out model is not loaded"};
   // STOPPED OFF THE COVERAGE LINES - on a turn (2026-09-27, the second rehearsal: held swinging onto line 8, 13.5 m off
@@ -4044,10 +4250,22 @@ function aisAroundPlan(g, aisKo, std, herMmsi){
     const start = g.at || (asv ? {lat: asv.lat, lon: asv.lon} : null);
     const pts = start ? [start, ...g.route.slice(g.idx)] : [];
     if(pts.length < 2) return {error: "she was not stopped on a coverage line, and the plan has no waypoint left to pick up"};
-    const herT = aisHerPoly(aisKo, herMmsi, pts[0], pts[1], std);
-    const ringT = herT ? aisRoundKeepout(herT, std, nogo.buffer || 0) : null;
-    const herOnlyT = {polys: ringT ? [ringT] : [], lines: [], points: []};
-    const othersT = {polys: (aisKo || []).filter(q => !sameContact(q, herT)), lines: [], points: []};
+    const herT = herChart || aisHerPoly(aisKo, herMmsi, pts[0], pts[1], std);
+    // a charted feature is its own ring and gets no ship length - see aisAroundLegPlan's note (2026-11-02)
+    const ringT = herT ? (herChart ? herT : aisRoundKeepout(herT, std, nogo.buffer || 0)) : null;
+    // ⚠⚠ THE THIRD SITE, AND IT WAS MISSED (2026-11-02, caught by BOTH reviewers of the rework). herOnlyModel
+    // was wired into aisAroundLegPlan and into the coverage-line branch below, and not into this one, because
+    // this one names its locals `ringT`/`herOnlyT` and the edit that fixed the other two matched on the shared
+    // spelling instead of grepping. The consequence is worse than the docstring's "reads clear": a charted LINE
+    // or POINT has no `ring` and a point has no `bb`, so clearanceM/blocked read `poly.bb.x0` on undefined and
+    // THROW out of clearanceGuard - which onFrame calls above accumLineTime, the governor, updateMissionCard
+    // and render, so the whole frame's ladder and drawing are lost. It recurs once per AIS poll (~5 s), a
+    // cadence below FRAME_FAULT_AFTER, so the CONSOLE FAULT banner never fires: the guard silently loses a
+    // frame every five seconds beside a charted rock. This is the branch for a boat held OFF her coverage
+    // lines, which exists because of the live 2026-10-16 approach failure - not a corner.
+    const herOnlyT = herChart ? herOnlyModel(ringT)
+                              : {polys: ringT ? [ringT] : [], lines: [], points: []};
+    const othersT = aroundOthers(aisKo, herT, herChart);
     // the stretch walked ends where the first coverage line it reaches ends: a line further on that passes her is the
     // line walk's to answer when she gets there, and must not make every point of this stretch "not clear"
     let lineK = 0, lineHit = null;
@@ -4072,10 +4290,14 @@ function aisAroundPlan(g, aisKo, std, herMmsi){
   const at = (s) => { const t = Math.max(0, Math.min(1, s / len));
                       return {lat: L.a.lat + (L.b.lat - L.a.lat) * t, lon: L.a.lon + (L.b.lon - L.a.lon) * t}; };
   const s0 = g.mark.along, dir = g.mark.fwd > 0 ? 1 : -1;
-  const her = aisHerPoly(aisKo, herMmsi, at(s0), leg.end, std);
-  const ring = her ? aisRoundKeepout(her, std, nogo.buffer || 0) : null;
-  const herOnly = {polys: ring ? [ring] : [], lines: [], points: []};                        // a ship-length round HER
-  const others = {polys: (aisKo || []).filter(q => !sameContact(q, her)), lines: [], points: []};   // the guard's hulls
+  const her = herChart || aisHerPoly(aisKo, herMmsi, at(s0), leg.end, std);
+  // a charted feature is its own ring and gets no ship length - see aisAroundLegPlan's note (2026-11-02)
+  const ring = her ? (herChart ? her : aisRoundKeepout(her, std, nogo.buffer || 0)) : null;
+  // ⚠ A CHARTED FEATURE GOES IN THE BUCKET ITS TYPE BELONGS TO (2026-11-02, review): a line in `polys` has no
+  // `ring`, and clearanceM would read "clear" on the very thing that stopped her. A CONTACT is always a poly.
+  const herOnly = herChart ? herOnlyModel(ring)
+                           : {polys: ring ? [ring] : [], lines: [], points: []};             // what she must get PAST
+  const others = aroundOthers(aisKo, her, herChart);         // everything else the rejoin must be clear of
   // THE HOLD HORIZON AHEAD OF THE REJOIN, at the speed the line is flown: another hull on the line inside it and the
   // guard holds her again the moment she is back - so the way round goes past that one too.
   const runOutM = GUARD_HOLD_S * roleSpeedMS("survey");
@@ -4105,7 +4327,27 @@ function aisAroundTick(aisKo, now){
   if(!g) return "she is not on station yet";
   if(heldResuming) return "a resume is already in flight";
   if(!(S && S.run === "running")) return "she is paused - press PAUSE again to resume the hold first";   // theirs to end
-  if(aisKoStale) return "the AIS feed is stale, so the contacts are not known";   // never on a stale model (aisReturnTick's rule)
+  // ⚠⚠ THE FEED'S STALENESS GATES A CONTACT'S WAY ROUND ABSOLUTELY; FOR A CHARTED ONE IT GATES THE CLAIM, NOT
+  // THE MANEUVER (2026-11-02, and the first version of this comment was wrong). It said a dead AIS feed "says
+  // nothing about a pier, so gating it here would be a wait with no argument behind it". That is true of the
+  // HAZARD and false of the WATER: on a stale feed aisKeepoutsNow() returns [], so `others` carries no
+  // contacts, and the pick-up and the way in are then certified "clear of traffic" by a model that cannot know
+  // - which is this project's named failure mode, the wrong water measured confidently, said under the
+  // console's own AIS KEEP-OUTS BLIND banner.
+  //
+  // A CONTACT's way round stays refused outright: the hazard IS a contact, and a model that cannot say where
+  // she is cannot be walked past her.
+  //
+  // A CHARTED one is PERFORMED and the claim withheld, and that is a judgment worth stating. Refusing it would
+  // reinstate exactly the indefinite wait he asked to remove, on every AIS outage - and `stale` is also true of
+  // a console that has never polled at all (aisKeepouts answers `stale: true` on `polledAt == 0`), so refusing
+  // would disable the charted maneuver outright wherever AIS is off or the service is down. Against that: the
+  // pick-up is a point further along HER OWN PLAN, which was routed against the chart and never against moving
+  // contacts in the first place, and the operator's own resume would take her through the same water with the
+  // same blindness. So the risk is not created here; what was created here was a false certification. The
+  // maneuver goes, every surface says the traffic was NOT checked, and the guard - which is what answers a
+  // contact - is blind either way and says so in its own banner.
+  if(aisKoStale && !aisAvoid.chart) return "the AIS feed is stale, so the contacts are not known";
   // THE LINE READS CLEAR: the 100 m return's dwell is running, and the return - over water already run,
   // so the coverage overlaps - is the better answer to a contact that has just moved off. The way round is
   // for one that STAYS.
@@ -4132,6 +4374,15 @@ function aisAroundTick(aisKo, now){
   // router search against one every 10 s for as long as she held; the model gate asks once and then waits for
   // something to actually change. `nogo.ko` is REPLACED wholesale by each chart read, so object identity is an
   // exact test for "the charted model is the one I was refused on" - no revision counter needed.
+  // ⚠⚠ ... BUT ONLY ONCE THE POLL CLOCK IS OUT OF A CHARTED SIGNATURE (2026-11-03, review: the first version of
+  // this gate did not gate a charted episode at all). `aisPolledAt` advances on EVERY poll whether anything
+  // moved or not, so a charted try - the one case where the hazard provably cannot move - earned a fresh try on
+  // the poll clock: the doomed walk, and on the tries that reach it the synchronous router search this gate
+  // exists to ration, re-run more often than the 10 s timer whose deletion was argued safe on exactly this
+  // ground. The contacts still matter to a charted try, because aroundOthers puts them in `others` and one
+  // sitting on the pick-up refuses it - so they stay in the signature by what can change the answer, their
+  // POSITIONS, instead of by the clock that says they were asked about. A contact episode keeps the poll clock:
+  // there her ring IS the model, every report is a new answer, and that spacing is measured and tuned.
   // ⚠⚠ HER OWN POSITION IS PART OF THE MODEL, and leaving it out was a real fault found by this suite.
   // The walk starts from where she IS, so a try refused while she was still running in to the hold point -
   // guardHeldOffer deliberately does not wait for `holding`, so the offer is live with way still on her -
@@ -4139,7 +4390,7 @@ function aisAroundTick(aisKo, now){
   // mattered: the first SETTLED station frame. Rounded to the meter, so a drifting boat earns a fresh try
   // as she moves and a stationary one on unchanged water does not.
   const here = g.at || (asv ? {lat: asv.lat, lon: asv.lon} : null);
-  const onNow = {polled: aisPolledAt, ko: nogo.ko, route: g.route, idx: g.idx,
+  const onNow = {polled: aisAvoid.chart ? aisKoSig(aisKo) : aisPolledAt, ko: nogo.ko, route: g.route, idx: g.idx,
                  at: here ? Math.round(here.lat * 1e5) + "," + Math.round(here.lon * 1e5) : null};
   const t = aisAvoid.triedOn;
   if(!forced && t && t.polled === onNow.polled && t.ko === onNow.ko
@@ -4151,10 +4402,91 @@ function aisAroundTick(aisKo, now){
 }
 /** The held path's way round: the plan beyond her (aisAroundPlan), then resumeHeldSurvey from it. `ep` is the
  *  AIS episode; `manual` says the operator asked (the banner says so, and a refusal is said every time). */
+/**
+ * HOW FAR THE WAY ROUND KEEPS, IN WORDS - and the ONE place it is said (2026-11-02, review).
+ *
+ * Four surfaces asserted "one ship-length off her": the leg's pick-up sentence, the survey's banner, the plan
+ * intent's note and the held bar's button. That is a CONTACT's rule - aisRoundKeepout is built so the router's
+ * standoff tops up to her length about her center - and a charted feature has no length to broadcast and gets
+ * no ring growth at all, so for a pier the console was promising a margin the code never gives it.
+ *
+ * `at.roundM` is the discriminator already in the plan: aisRoundKeepout sets it, and a raw charted poly has
+ * none. So a contact keeps her words and a feature is told the truth, which is the standoff the plan it is
+ * resuming was laid at.
+ */
+function aroundMarginSay(at){
+  if(at && at.roundM != null) return "one ship-length off her";
+  if(at && at.stdM != null) return fmtDist(at.stdM) + " off it - the standoff the plan was laid at";
+  return "clear of it";
+}
 function aisAroundGo(g, polys, ep, manual){
-  const std = patClipBufM();
+  // ⚠⚠ THE STANDOFF IS THE ONE THE PLAN BEING RESUMED WAS LAID AT, AND FOR A CHARTED FEATURE ON A LEG THAT IS
+  // NOT patClipBufM (2026-11-02, caught by review BEFORE this shipped). One number governs the whole maneuver -
+  // the pick-up must be `std` clear of the feature (aisWalkPast), `at.stdM` carries it, and resumeHeldLeg
+  // certifies the way IN at it - and a Go-To, an RTH, a drawn transit and an Upload's transit legs are all
+  // planned at transitStandoffM(), the turn radius at the transit speed: 20.6 m on the DriX at HIGH against
+  // patClipBufM's 3.0 m in calm water. Handing the maneuver patClipBufM would have had the console lay a detour
+  // 3 m off a pier face, on its own authority, where the plan it is picking up required 20.6 m - which is
+  // guard.js's own founding case (his 10:32:20 Go-To at 13.7 kn, 5.9 m off a charted rock's disc in a river
+  // 400 m wide), re-created by the console deliberately. Worse, 3 m IS the ladder's buffer, so the guard would
+  // hold her on the detour it had just commanded: hold -> way round at 3 m -> hold, beside the pier.
+  // ⚠ SCOPED TO A CHARTED EPISODE, AND THAT IS NOT AN OVERSIGHT. A COVERAGE LINE keeps patClipBufM because
+  // coverage is the operator's and a line's turns are built on the radius already (guard.js:210, in those
+  // words). A CONTACT keeps it because her ring is her own: aisRoundKeepout is built so the router's standoff
+  // tops up to one ship-length from her center, which is Andy's 2026-09-28 instruction - "make the avoidance
+  // maneuver tighter and recover the survey line sooner" - and widening it here would quietly reverse him. A
+  // charted feature is the one case with no second rule: aisRoundKeepout returns the poly UNTOUCHED when it has
+  // no hull or box, so `std` is the entire margin.
+  // ⚠⚠ KEYED ON THE LEG THE PLAN WAS LAID AT, NOT ON `g.leg` (2026-11-02, the rework review: the first fix
+  // still contained the critical it answered). `g.leg` is set by markGuardHeld for goto/rth/transit only and
+  // NEVER for a survey - but routePlan lays a survey's approach (leg 0) and the transit into each later survey
+  // at transitStandoffM() exactly as a Go-To, so a charted hold off the coverage lines took patClipBufM and the
+  // console laid a pick-up 5.0 m off a dock face where its own planner had required 20.6 m. Measured. A
+  // COVERAGE LINE is the one case that keeps the guard's standoff - coverage is the operator's and a line's
+  // turns are built on the radius already (guard.js:210) - and `g.mark` is exactly "she is on one", which is
+  // what aisAroundPlan's own branch test uses.
+  const std = (ep.chart && (g.leg || !g.mark)) ? transitStandoffM() : patClipBufM();
   // A HELD LEG (2026-09-29) walks the leg, not a line, and is handed back by its own command (resumeHeldLeg).
-  const plan = g.leg ? aisAroundLegPlan(g, polys, std, ep.mmsi) : aisAroundPlan(g, polys, std, ep.mmsi);
+  // ⚠⚠ THE EPISODE SAYS WHAT SHE IS GETTING PAST (2026-11-02). `ep.chart` is the model's own poly for a
+  // charted feature and null for a contact; the plan functions prefer it over the mmsi search, and aroundOthers
+  // puts the rest of the CHART into `others` when it is set - the next pier along must not be adopted as a
+  // pick-up. Nothing else in the walk knows, or needs to know, which it is.
+  let plan = g.leg ? aisAroundLegPlan(g, polys, std, ep.mmsi, ep.chart)
+                   : aisAroundPlan(g, polys, std, ep.mmsi, ep.chart);
+  // ⚠⚠⚠ A CHARTED WAY ROUND THAT PICKS UP WHERE SHE STOPPED IS NOT A WAY ROUND, AND PERFORMING IT IS WORSE
+  // THAN REFUSING IT (2026-11-02, the second critical finding of the review, measured in the suite's own
+  // check-5 scene: skipM 0, the pick-up 30 m off the pier - which is exactly the clearance the line ALREADY
+  // had - and the console nonetheless paused, re-uploaded the identical remainder, commanded LOW, started her,
+  // nulled `guardHeld` and `aisAvoid`, cleared `guardActedAt` and announced "ROUTED ROUND a dock / pier ...
+  // picked up 0 m on from where she left it").
+  //
+  // WHY IT HAPPENS: the walk asks about the ROUTE's geometry, and the planner clipped that route at the same
+  // `std` the walk keeps - so on a line already clear of the feature the very first candidate, the point she
+  // stopped at, passes every one of the walk's tests and `skipM` comes back 0. But the LADDER held her for her
+  // PROJECTED TRACK - heading and drift - which walking along the route does not change. The two models are
+  // asking different questions, and where they disagree the maneuver cannot answer the hold.
+  //
+  // WHY REFUSING IS THE FIX AND NOT MERELY TIDIER: performing it is what SPENDS the episode and cancels the
+  // guard's own hold, which is the whole mechanism of the loop the review reported - hold, "ROUTED ROUND",
+  // hold again, with nothing moved and the operator's offer destroyed each time round. A pier, unlike a
+  // contact, never passes, so nothing breaks that cycle by itself. Refusing keeps her stopped, keeps the
+  // remainder banked, keeps the offer live and latches the banner once per episode, which is the stable state
+  // the console had before this feature existed.
+  //
+  // ⚠ SCOPED TO A CHARTED EPISODE, and that distinction is the point rather than caution: a CONTACT can clear
+  // by moving, so a pick-up at her own position can be the honest answer a moment after she got under way -
+  // aisReturnTick exists for exactly that - and his 2026-09-28 tuning of the contact maneuver is not something
+  // to re-open from here. A charted feature cannot move, so a zero-length way round past one can only ever be
+  // the console telling itself it did something.
+  // ⚠⚠ AND THE TEST IS "AT THE SAME PLACE", NOT "WITHIN ONE STEP OF IT" (2026-11-03, review): the first version
+  // of this gate read `> AIS_AROUND_STEP_M` and so refused the nearest pick-up the walk can ever offer. See
+  // AIS_AROUND_NOOP_M, which is what "the same place" means and why.
+  if(!plan.error && ep.chart && !(plan.skipM > AIS_AROUND_NOOP_M)){
+    plan = {error: "the plan already runs where the way round would put her - she would be handed back onto the "
+          + "same track the guard just stopped her on, at the same place. The hold is not about the route's "
+          + "distance from " + ep.kind + " (it keeps " + fmtDist(plan.stdM != null ? plan.stdM : std)
+          + "): it is about where she is being carried, or a chart read that has moved since the plan was built"};
+  }
   if(plan.error){
     if(manual || !ep.aroundSaid){ ep.aroundSaid = true;
       showBanner('⚠ NO WAY ROUND ' + ep.kind + ' — ' + plan.error + (g.leg
@@ -4162,6 +4494,11 @@ function aisAroundGo(g, polys, ep, manual){
         : ". She keeps holding; resume from the bar, right-click a line beyond her, or Go-To.")); }
     return false;
   }
+  // ⚠ AND THE CLAIM THE MODEL CANNOT MAKE TRAVELS WITH THE PLAN (2026-11-02, review). `others` carried no
+  // contacts if the feed is blind, so "the pick-up is clear" and "the way in is clear of her" were measured
+  // against an empty sea. The flag reaches every surface the resume speaks through - the banner, the flash note,
+  // the Intent card and the session log - because a certification nobody can check is worse than none.
+  if(ep.chart && aisKoBlind) plan.blindTraffic = true;
   resumeHeldSurvey({at: plan, ko: koRoundHer(polys, plan.her, std), auto: ep, around: true, manual: !!manual})
     .catch(e => showBanner('⚠ THE WAY ROUND FAILED — ' + (e && e.message)
                            + ". The remainder is still held; resume it from the guard bar."));
@@ -4170,7 +4507,9 @@ function aisAroundGo(g, polys, ep, manual){
 /** ROUTE ROUND HER NOW: a try on demand - the held bar's button, and the chart-menu row over a contact
  *  while the guard holds the survey for her. Says why when it cannot. */
 function aisAroundNow(polys){
-  if(!guardHeldOffer() || !aisAvoid){ flashNote("Nothing to route round: the guard is not holding the survey, a Go-To, a Return-to-Home or a transit for a contact."); return false; }
+  // ⚠ "FOR A CONTACT" WAS THE WHOLE CAUSE UNTIL 2026-11-02, and an episode opens for a charted feature now too,
+  // so the refusal named a cause the code no longer has (2026-11-03, review).
+  if(!guardHeldOffer() || !aisAvoid){ flashNote("Nothing to route round: the guard is not holding the survey, a Go-To, a Return-to-Home or a transit for a contact or a charted feature."); return false; }
   aisAvoid.forceAround = true;
   const r = aisAroundTick(polys || aisKoDrawn, Date.now());
   if(r !== true){ flashNote("Not routed round " + (aisAvoid ? aisAvoid.kind : "her") + " — " + r + "."); return false; }
@@ -4469,10 +4808,35 @@ function clearanceGuard(){
   const a = onStation ? onStationWhy(a0) : a0;
   // WHICH WORLD THE LADDER IS ANSWERING (2026-09-25). Asked only when it is not clear, and asked of
   // the CHARTED model alone: if that reads clear, the contact is the whole of it, and aisReturnTick
-  // owns the way back once she has passed. A charted feature keeps today's offer to the operator.
+  // owns the way back once she has passed.
+  // ⚠⚠ AND A CHARTED FEATURE NO LONGER "KEEPS TODAY'S OFFER TO THE OPERATOR" (Andy, 2026-11-02: "do not wait
+  // for operator input to avoid an AIS or any other contact"). That sentence used to end this paragraph, and it
+  // was the whole of the remaining wait: aisAroundTick's first line asks for `aisAvoid`, the episode was opened
+  // only `if(aisCaused)`, so a hold for a pier, a shoal or a restricted area reached no automatic maneuver at
+  // all and the console held INDEFINITELY. `aisCaused` still forks WHICH world answered - the readouts, the
+  // 100 m return and the ring's size all need to know - but it no longer decides WHETHER the console acts.
   const aisCaused = aisLadder.length > 0 && !!aVel && a.level !== "clear" && a.level !== "blind"
     && guardAssess(p, aVel, drift, gNow ? grantFilter(nogo.ko, gNow.covered) : nogo.ko, buf,
                    {...(trk||{}), edge: false}).level === "clear";
+  // HER, WHEN THE CHARTED MODEL IS THE ONE THAT ANSWERED: the feature the rung is acting on, as the model's own
+  // poly, so a later frame agrees about it by identity (chartedHerPoly). Asked at the ladder's entry point, the
+  // same water guardHazardKey names the hazard from - and only when the level is one the rungs act on, because
+  // "clear" and "blind" have no feature to be about.
+  // ⚠⚠ GATED ON THERE BEING NO CONTACT AT THAT POINT, NOT ON `!aisCaused`, and the difference cost the whole AIS
+  // half of this suite before it was found. `aisCaused` carries `!!aVel`, so it is FALSE whenever the boat has no
+  // way on - which is every ON-STATION frame, i.e. exactly the frames the way round runs in. Keyed on it, a
+  // contact's episode in water that also has a pier nearby was reclassified as CHARTED on the first station
+  // frame: the 100 m return stood down, the walk was handed the wrong "her", and checks 2, 2c, 6, 14 and 14b
+  // went red together. The honest question is guardHazardKey's own, in its own order: is the thing at the point
+  // the rung acted on a CONTACT or the CHART?
+  const herAt = aisLadder.length ? aisNearestPoly((a && a.entry) || p, aisLadder) : null;
+  const contactAtEntry = !!(herAt && clearanceM((a && a.entry) || p,
+                                                {polys: [herAt], lines: [], points: []}, buf + 1) <= buf + 0.5);
+  const chartHer = (!contactAtEntry && !aisCaused && a.level !== "clear" && a.level !== "blind")
+    ? chartedHerPoly((a && a.entry) || p, gNow ? grantFilter(nogo.ko, gNow.covered) : nogo.ko, buf,
+                     p, c && c.m != null ? c.m : null,
+                     // the kind the LADDER measured: the boat-position fallback may not name anything else
+                     c && c.kind != null ? c.kind : null) : null;
   const aisKind = aisCaused ? aisNearestKind(p, aisLadder) : null;
   // HER, for the episode: the contact at the point the ladder is acting on (the assessment's entry point), which
   // is the one a way round goes round (2026-09-28). The boat's own position where there is no entry point.
@@ -4760,6 +5124,14 @@ function clearanceGuard(){
         // route that no longer existed, for the rest of the run. See dropCornerSlow.
         dropCornerSlow("the clearance guard deviated the plan " + edgeText(a.edge));
         edgeSpentM += a.edge.offsetM; edgeCount++;
+        // ⚠ THE FLAG GOES UP WHERE THE DEVIATION WAS TAKEN, in this statement list with the rest of the
+        // episode's record - the amend's answer has already been read by the time this runs.
+        // ⚠⚠ AND ITS REJOIN IS THE DOG-LEG'S OWN INDEX: `tail` puts the via waypoint `w` at `at`, and the
+        // vessel spliced `tail` in at `spliced`, so `w` is at `spliced + at` of runRoute and she is back on her
+        // planned track the moment her index passes it. Raised with `null` this said AVOIDING for the rest of
+        // every leg (a leg has no coverage line to come back to) and nothing at all on a survey (the lowering
+        // was the state she was already in). Both of those are what review caught - see avoidingNow.
+        avoidingRaise("deviated", c.kind || "a keep-out", spliced + at);
         if(planIntent) planIntent.why.push({t:"warn", s:"DEVIATED " + edgeText(a.edge)
           + " — the projected track was entering " + (c.kind||"a keep-out") + " in "
           + (a.tEntry||0).toFixed(0) + " s; there is " + a.edge.water.toFixed(1)
@@ -5001,8 +5373,15 @@ function clearanceGuard(){
       // between an operator resuming the remainder and re-running the whole survey: the
       // hold uploads a one-waypoint plan over theirs, and after that `window._wpIndex`
       // counts the hold, not the survey.
-      markGuardHeld(c, aisCaused);                         // a leg is kept only for a contact (2026-09-29)
-      if(aisCaused) aisAvoidOpen(c, a, aisKind, aisHer);   // a contact stopped her: the console brings her back
+      // ⚠⚠ A LEG IS NOW KEPT FOR A CHARTED FEATURE TOO (2026-11-02). `markGuardHeld` banks a Go-To, an RTH or a
+      // transit only when a CONTACT held her (its own `!!ais &&`), so a leg held for a pier banked nothing and there
+      // was no record for anything to resume from - which is half of why a charted hold waited for the operator.
+      markGuardHeld(c, aisCaused || !!chartHer);
+      // ⚠ GUARDED AS IT ALWAYS WAS, with the charted case ADDED - not opened on every frame. Called
+      // unconditionally it opened the episode a frame or two earlier, the way round's first try went while she
+      // still had way on, it failed for want of a settled start, and the model gate then refused the try that
+      // mattered. tests/ais_avoid.js 2, 2c, 6, 14 and 14b all went red together on that.
+      if(aisCaused || chartHer) aisAvoidOpen(c, a, aisKind, aisHer, chartHer);
       // ⚠⚠ AND A HOLD THE VESSEL NEVER TOOK MAY NOT OUTLIVE THE REFUSAL. This posted and
       // never looked, then said "HOLDING" and "the survey is kept" about a boat that was
       // still surveying. What a refusal costs, on the lieuFailed path, is worse than the
@@ -5167,7 +5546,18 @@ function clearanceGuard(){
                      // refused escape must leave the record that was standing before this
                      // rung ran. The hold rung's `heldBefore.kept` is the same line for the
                      // same reason.
-                     kept: guardHeld};
+                     kept: guardHeld,
+                     // ⚠⚠ AND SO IS THE AVOIDING BADGE (2026-11-02, review). The raise below runs
+                     // synchronously, 40 lines above the POST, and this retraction put back twelve
+                     // records and not that one - so a REFUSED escape left "AVOIDING - STEERED CLEAR
+                     // OF <x>" on the chart over a boat nothing was steering, beneath a banner
+                     // correctly saying THE HELM WAS NOT TAKEN. Captured here rather than raised in
+                     // the reply on purpose: this is the one surface that says the console has her off
+                     // her track, and making it wait a network round-trip on every REAL escape is the
+                     // wrong trade for an annunciator. Restored only on `r.refused` - a lost reply is
+                     // not a refusal and a boat that never answered may HAVE the escape, exactly as
+                     // `throttle` and `kept` are treated six lines up.
+                     avoid: avoiding};
     clearance.slowed = false; commandedSpeed = null;
     escapeThrottle = true;                      // the governor may not bid until this episode ends
     commandSpeed("high");                       // steerage authority to beat the set
@@ -5188,10 +5578,13 @@ function clearanceGuard(){
     //
     // ⚠ IT MUST BE ABOVE THE OVERWRITE, not merely before the POST. `markGuardHeld` reads
     // `runRoute` and `window._wpIndex`, and one line down both describe the escape.
-    markGuardHeld(c, aisCaused);                           // a leg is kept only for a contact (2026-09-29)
-    if(aisCaused) aisAvoidOpen(c, a, aisKind, aisHer);     // a contact drove her off: the console brings her back
+    markGuardHeld(c, aisCaused || !!chartHer);               // a leg is kept for a charted feature too (2026-11-02)
+    if(aisCaused || chartHer) aisAvoidOpen(c, a, aisKind, aisHer, chartHer);   // contact or charted (2026-11-02)
     runRoute = [{lat:to.lat, lon:to.lon}]; runUnsafe = [];
     setPlanIntent("escape", null, runRoute);
+    // ⚠ AFTER setPlanIntent, WHICH CLEARS THE FLAG: a new commanded motion drops every per-episode record,
+    // and the escape IS a new commanded motion - so this raise has to come after it or it would clear itself.
+    avoidingRaise("steered clear", aisKind || (chartHer && chartHer.kind) || c.kind || "a keep-out", null);
     // ⚠⚠ SAY WHAT WAS MEASURED, NOT WHAT IT LOOKS LIKE. Andy, 2026-09-19: *"a cause the
     // banner asserts that the code hasn't established."* Both of these read "being set onto
     // <kind>", and the console had established no such thing. What it establishes is that
@@ -5301,7 +5694,8 @@ function clearanceGuard(){
       // remainder was thrown away and the offer never appeared. The two halves of the same
       // retraction disagreed about the same unknown, and this one guessed in the direction
       // that loses the survey.
-      if(r && r.refused) guardHeld = heldEsc.kept;
+      // ⚠ AND THE BADGE WITH IT, on a refusal only, for the reason the capture states.
+      if(r && r.refused){ guardHeld = heldEsc.kept; avoiding = heldEsc.avoid; }
       const say = notTookSay(r, "IN EXTREMIS ESCAPE");
       // ⚠⚠ THE SUFFIX FOLLOWS THE ANSWER, NOT THE FAILURE - the same fault #b_stop and
       // #b_start already had fixed, in the one banner the operator acts on. "THE HELM WAS
@@ -7929,6 +8323,129 @@ const LINE_MATCH_M = 5;                        // endpoint match tolerance (m)
 // aligned with it). -1 whenever the line is being run, or no line is in question. Set by
 // accumLineTime each frame; read by currentActivity, which flies those frames as a TURN.
 let lineSwing = -1;
+
+/**
+ * AVOIDING - the flag on the chart (Andy, 2026-11-02: "Create a flag that attaches to the ASV an reads
+ * AVOIDING until it's back on line or natural transit").
+ *
+ * ⚠⚠ RECORDED WHERE A DEVIATION WAS **ACCEPTED**, NEVER DERIVED. Every raise below sits inside a
+ * `took(r)` branch, so the flag cannot claim a maneuver the vessel refused - which is the whole difference
+ * between a state and a wish, and the fault shape the guard's own release note had until today. The three
+ * sites are the three things the console does to her track on its own authority: the edge rung's amendment,
+ * the helm rung's escape, and the way round.
+ * ⚠ AND IT IS NOT A FIELD ON currentActivity(). That function answers "what is she doing" and the whole
+ * speed governor reads it; eight suites lift it by name. Giving it a "why" would make this flag's correctness
+ * a property of the function the throttle depends on. One record, one reader, read by both surfaces.
+ */
+let avoiding = null;   // {why, kind, since, rejoin} - why: "deviated" | "steered clear" | "routed round"
+function avoidingRaise(why, kind, rejoin){
+  avoiding = {why, kind: kind || "something in her way", since: Date.now(),
+              rejoin: (rejoin == null ? null : rejoin)};
+  logClient("avoiding", {why, kind: avoiding.kind, rejoin: avoiding.rejoin});
+}
+/**
+ * IS SHE STILL OFF HER PLANNED TRACK? The record, or null once she is back.
+ *
+ * ⚠⚠ THE LEVER IS A WAYPOINT INDEX IN THE ROUTE THE COMMAND UPLOADED, AND THE FIRST VERSION'S WAS
+ * `runLineIdx >= 0 && lineSwing < 0`, WHICH WAS WRONG IN BOTH DIRECTIONS (2026-11-02, found by adversarial
+ * review before this shipped, and invisible to ten green checks because they stubbed updateMissionCard and
+ * asserted the raw record instead of this function).
+ *
+ *   * ON A SURVEY IT ERASED THE RAISE IN THE SAME FRAME. accumLineTime sets exactly `runLineIdx >= 0` and
+ *     `lineSwing < 0` on every frame a surveying boat is on a coverage line, which is the state the edge rung
+ *     and the helm rung FIRE IN - and the edge rung calls updateMissionCard() seven lines after its own raise,
+ *     so the record was undone inside its own statement list. The badge never appeared for a deviation or for
+ *     IN EXTREMIS: the two maneuvers it exists for.
+ *   * ON A LEG IT NEVER FIRED AT ALL. accumLineTime writes `runLineIdx = -1` unconditionally unless the
+ *     behavior is "survey", so on a Go-To, an RTH or a transit nothing lowered it and a 3 m dog-leg left the
+ *     badge up for the rest of the leg, through arrival and station-keeping.
+ *   * AND `lineSwing < 0` WAS DEAD. The comment it carried claimed it stopped the flag dropping on the
+ *     reversal onto a rejoin point; the swing cannot coincide with `runLineIdx >= 0`, which is what "running
+ *     the line" means, so the clause never changed an answer.
+ *
+ * "Back on her track" cannot be the state she was ALREADY IN when the console moved her. What is true of all
+ * four raises is that each one uploads or amends a route and knows which waypoint of it is the rejoin: the
+ * edge rung's spliced dog-leg, and the pick-up the walk chose (which is `via.length`, NOT 0, once the way in's
+ * detour has been unshifted in front of it). Once her index is past that waypoint she is flying her plan again,
+ * on a line and on a leg alike, with one notion of "on track" rather than two.
+ *
+ * ⚠ `rejoin == null` MEANS "NO INDEX CAN ANSWER THIS", and only the escape uses it: that rung uploads ONE
+ * waypoint and deliberately chains nothing, so what ends it is the operator re-commanding her - which
+ * setPlanIntent already clears. A record with no reachable lowering must not be raisable, so this is the one
+ * case where that is the intended behavior and it is stated here rather than left as an accident.
+ * ⚠ AND WHERE THE ROUTE HAS NO WAYPOINT BEYOND THE REJOIN, an index can never advance past it: a
+ * one-waypoint tail (aisAroundLegPlan's atEnd branch, and its coincident-waypoint branch) reports index 0 for
+ * its whole run - the page's own measurement, see the escape's note on `_wpIndex`. There the answer is arrival
+ * at the pick-up, measured, not an index that cannot move.
+ * ⚠ AND A BOAT NOTHING IS DRIVING IS NOT BEING PUT BACK. Stopped, e-stopped or disarmed, the badge would go on
+ * promising a return that nothing is going to perform, and the Doing row it shares is hidden on a stop - so this
+ * ANSWERS null and does not SPEND the record (2026-11-03, review: it used to destroy it). One frame of
+ * `armed:false` - a partial frame, a re-arm, the moment between an e-stop and its reset - permanently erased a
+ * maneuver that was still being flown, and nothing could put it back; guardHeldOffer, which asks the same
+ * question about the same boat eight hundred lines up, makes exactly this distinction in its own first
+ * paragraph, and for the same reason. "Not on this frame" must not answer FOR EVER. What ends the record is the
+ * rejoin index, arrival at the pick-up, or the next commanded motion (setPlanIntent) - all three of them facts
+ * about her track rather than about one frame's state word. A PAUSE is shown as well as kept: the plan is
+ * intact, the guard resumes its own hold, and she is still off her track.
+ * ⚠ AND AN ORDINARY TRANSIT IS NOT AVOIDING. With nothing recorded this answers null, which is the
+ * natural-transit case he named: the flag is about the console having moved her, not about where she is.
+ */
+function avoidingNow(){
+  if(!avoiding) return null;
+  if(!(S && S.armed) || S.estop || !(S.run === "running" || S.run === "paused")) return null;
+  if(avoiding.rejoin == null) return avoiding;              // the escape: ended by a command, not an index
+  const rr = indexedRoute() || [];
+  // ⚠⚠ THE INDEX MUST COUNT INTO THIS ROUTE, AND THAT TEST WAS MISSING (2026-11-03, review). `_wpIndex` is the
+  // VESSEL's number and `rr` is this page's array; every other indexed reader on the page pairs them only when
+  // the frame's `wp_total` agrees with the array's length (guardTrack's own note on Andy's 10:32:45 hold,
+  // indexedRoute, cardRoute), and this one simply indexed. The guard's own HOLD is the case that bites: it
+  // uploads a ONE-waypoint plan over the plan she was flying, so the vessel reports wp 1/1 while this page still
+  // holds the 4-, 400- or 645-waypoint route the maneuver's rejoin index belongs to - and `1 > 0` lowered the
+  // badge on the first station frame of every way round whose detour added nothing in front of the pick-up.
+  // It also fires inside the raise's own statement list: the edge rung calls updateMissionCard() seven lines
+  // after its own raise, and the vessel's index is still the PREVIOUS plan's there, the dog-leg having only just
+  // been sent.
+  // ⚠ AND WHEN THEY DISAGREE THE ANSWER IS THE RECORD, NOT null. Lowering is the destructive direction: an
+  // unpaired index knows nothing about her rejoin, and a badge that stays up one frame too long is a worse
+  // annunciator than one that comes down while the console still has her off her track. Stricter than
+  // cardRoute's `wp_total > 0 &&` for the same reason: a frame with no count at all cannot certify the pairing.
+  if(!(rr.length && S.wp_total === rr.length)) return avoiding;
+  const idx = window._wpIndex || 0;
+  if(idx > avoiding.rejoin){ avoiding = null; return null; }   // past the rejoin: she is flying her plan again
+  // no waypoint beyond it, so the index cannot advance - arrival at the pick-up is the only honest answer
+  if(rr.length <= avoiding.rejoin + 1 && asv && rr[avoiding.rejoin]
+     && distTo({lat: asv.lat, lon: asv.lon}, rr[avoiding.rejoin]) <= Math.max(mission.arrival_radius_m || 2, 5)){
+    avoiding = null; return null;
+  }
+  return avoiding;
+}
+/**
+ * The badge over the chart. DOM, so it is as fresh as the frame - see .avoidtag's own note.
+ *
+ * ⚠⚠ AND IT IS NOT ONLY THIS PAGE'S RECORD ANY MORE (2026-11-03). The flag can only be RAISED by the
+ * supervising tab - it is the page running the ladder, the page that moved her, and the page holding the route
+ * its rejoin index counts into - so the badge was invisible in every other window: a second chart tab, the
+ * controls window, and anyone watching the same console from another machine saw no sign that the console had
+ * her off her planned track. The supervising tab publishes its record on the heartbeat it already sends
+ * (avoidingWire), the console serves it to every page in the supervision snapshot, and a VIEW-ONLY page shows
+ * that instead of asking a question it cannot answer. Up to one beat behind (SUPERVISOR_BEAT_S, 2 s), which is
+ * the same lag every other thing this page says about supervision carries.
+ * ⚠ AND A VIEW-ONLY PAGE NEVER PREFERS ITS OWN. A tab that was supervising and has been taken over still holds
+ * the record it raised, and nothing in it can lower that any more: its ladder is standing down and its rejoin
+ * index belongs to a route the new holder may already have replaced. So the question is which page is in
+ * charge, not which page has a record - and the console drops the published one on a handover for the same
+ * reason (Supervision.beat).
+ */
+function renderAvoiding(){
+  const el = $("#r_avoid"); if(!el) return;
+  const sup = S && S.supervisor;
+  const a = supervising() ? avoidingNow() : ((sup && sup.avoiding) || null);
+  if(!a){ el.style.display = "none"; el.textContent = ""; return; }
+  const what = a.why === "deviated" ? "DEVIATED ROUND"
+             : a.why === "steered clear" ? "STEERED CLEAR OF" : "ROUTED ROUND";
+  el.textContent = "⚠ AVOIDING — " + what + " " + a.kind;
+  el.style.display = "block";
+}
 let _legLine = {key:"", line:-1};              // memo per (route, leg)
 function currentLegLine(){
   const rr=indexedRoute()||[];   // a page that did not upload this route cannot name its legs
@@ -18985,10 +19502,24 @@ function applySupervisor(sup){
   // The controls window goes with supervision (2026-10-10): only the supervising chart drives it.
   if(supervising() !== supWas){ supWas = supervising(); uiSupervisionChanged(supWas); }
 }
+// ⚠⚠ AND THE AVOIDING FLAG RIDES THE HEARTBEAT (2026-11-03). The badge is a judgment only the supervising page
+// can make - it is the page that moved her and the page whose rejoin index lowers it again - so it was DOM in
+// that page alone, and a second chart tab, the controls window and anyone else watching the same boat showed
+// nothing while the console had her off her planned track. Sent from the SUPERVISING tab only, and on every one
+// of its beats including the ones carrying null, because "she is back on her track" has to be able to arrive.
+// The record and not `avoiding`: avoidingNow() is the one reader, so the badge on another page can never say
+// something this page's own badge would not (and asking it here is harmless - updateMissionCard asks it every
+// frame). `rejoin` is deliberately left out: it is an index into THIS page's route and means nothing elsewhere.
+function avoidingWire(){
+  if(!supervising()) return null;
+  const a = avoidingNow();
+  return a ? {why: a.why, kind: a.kind, since: a.since} : null;
+}
 async function supervisorBeat(take){
   try{
     const r = await fetch("/api/supervisor", {method:"POST", headers:{"Content-Type":"application/json"},
-                                              body: JSON.stringify({id: CLIENT_ID, take: !!take})});
+                                              body: JSON.stringify({id: CLIENT_ID, take: !!take,
+                                                                    avoiding: avoidingWire()})});
     const j = await r.json().catch(()=>({}));
     if(j && j.supervisor) applySupervisor(j.supervisor);
     return j;
@@ -20391,7 +20922,12 @@ function contactAt(ll){
 function avoidWhy(){
   if(!canCommand()) return "arm first";
   if(!asv) return "no fix";
-  if(guardHeldOffer()) return aisAvoid ? "" : "held for a charted feature - resume from the bar";
+  // ⚠ THE EPISODE'S KIND, NOT MERELY THAT ONE IS OPEN (2026-11-02, review). This read `aisAvoid ? ""` and was
+  // right only while a charted hold left `aisAvoid` null. Opening an episode for charted water made the row
+  // LIVE during one - so a right-click on a ship read "Route round MARY ANN" and then routed round the PIER,
+  // announcing the pier's name over a contact the operator had picked. The row is about the thing that stopped
+  // her, and a contact is not it.
+  if(guardHeldOffer()) return (aisAvoid && !aisAvoid.chart) ? "" : "held for a charted feature - resume from the bar";
   // A GO-TO, A RETURN-TO-HOME OR A TRANSIT UNDER WAY is amended round her too (2026-09-29): the leg from where she is.
   const beh = S && S.behavior;
   if((beh === "goto" || beh === "rth" || beh === "transit") && (S.run === "running" || S.run === "paused"))
@@ -20486,9 +21022,21 @@ async function aisAroundRunning(polys, q, why){
     const spliced = spliceAt(r, idx, route.length);   // where the VESSEL spliced (spliceAt) - the planner's seconds are the window
     runRoute = [...rr.slice(0, spliced), ...route];
     legStartsHere(spliced, r);                         // her leg to the first via begins where she is (SimVcu.amend_plan)
+    // ⚠⚠ THE FLAG, AND THIS SITE HAD NONE (2026-11-03, review). This is the fourth thing the console does to her
+    // track on its own authority - the RUNNING plan's amendment, where she never stops at all - and the badge
+    // was down throughout it: the one maneuver the operator watches happen in real time was the one the chart
+    // said nothing about. Inside `took(r)`, like the other three, so it cannot claim an amendment she refused.
+    // The rejoin is the pick-up's index in the array she is now flying: the amendment splices at `spliced`, the
+    // detour's `via` waypoints go in front, so `tail[0]` - the point beyond her - sits at `spliced + via.length`
+    // of the `runRoute` built one line above. The edge rung reads its own index the same way (`spliced + at`).
+    avoidingRaise("routed round", kind, spliced + via.length);
     dropCornerSlow("the plan was routed round " + kind);
     flashNote("Routed round " + kind + " (" + why + ") — " + said + ".");
-    if(planIntent) planIntent.why.push({t:"warn", s:"ROUTED ROUND " + kind + " " + why + " — " + said + "; one ship-length off her; the console is still watching"});
+    // ⚠ AND THE MARGIN IS SAID BY THE ONE FUNCTION THAT KNOWS IT (aroundMarginSay). This was the FOURTH surface
+    // asserting "one ship-length off her" flat, which is a contact's rule and not a charted feature's; three
+    // were fixed on 2026-11-02 and this one was missed (2026-11-03, review).
+    if(planIntent) planIntent.why.push({t:"warn", s:"ROUTED ROUND " + kind + " " + why + " — " + said + "; "
+      + aroundMarginSay(plan) + "; the console is still watching"});
     logClient("ais_around", {kind, line, skip_m: Math.round(plan.skipM || 0), skip_line: !!plan.skipLine, held_s: null,
               mmsi: plan.her ? plan.her.mmsi : null, round_m: plan.roundM, std_m: Math.round(std * 10) / 10,
               wpts: route.length, manual: true, running: true, ...(leg ? {leg: leg.behavior} : {})});
@@ -20544,7 +21092,13 @@ $("#gb_around").onclick = ()=>{ aisAroundNow(); };
 // round her as soon as she is on station and asks again on every frame, so this no longer short-cuts anything.
 // What is left for it is the two states the automatic try will not act in - PAUSED, which is the operator's own
 // hold on the maneuver, and a point the operator chose that `forced` overrides - plus simply doing it on demand.
-$("#gb_around").title = "Route round the contact she is held for NOW - one ship-length off her, carrying on beyond her."
+// ⚠ AND IT IS NOT ONLY A CONTACT ANY MORE (2026-11-03, review). The bar shows this button for any open episode,
+// and since 2026-11-02 one opens for a charted feature too ("any contact including charted on legs too") - so a
+// title promising "one ship-length off her" was asserting a CONTACT's rule over a pier, which gets no ring growth
+// at all and is kept off at the standoff its own plan was laid at. aroundMarginSay is the one place that knows
+// which; a static title cannot ask it, so it says both.
+$("#gb_around").title = "Route round what she is held for NOW, carrying on beyond it - a contact at one "
+  + "ship-length from her center, a charted feature at the standoff her plan was laid at."
   + " The console does this itself as soon as she is on station, and keeps trying; press this to ask while she is "
   + "paused, or to force a try the automatic one has refused.";
 
@@ -20783,11 +21337,20 @@ async function resumeHeldLeg(opts){
   const std = (at && at.stdM != null) ? at.stdM : patClipBufM();
   const who = auto ? auto.kind : (g.kind || "the contact");
   let inNote = null;
+  // ⚠⚠ WHERE THE PICK-UP ENDS UP IN THE ROUTE THIS COMMAND UPLOADS, which is what lowers the AVOIDING badge.
+  // `tail[0]` IS the pick-up only until the way in's detour is unshifted in front of it below; after that it
+  // sits at `via.length`. The badge was raised with a hard-coded 0, so it came down the moment she passed the
+  // FIRST detour waypoint - the furthest she gets from her planned track in the whole maneuver (2026-11-02,
+  // review). Hoisted out of that block so the raise can read it.
+  let rejoinIdx = 0;
   const wayClear = !!(nogo.ready && nogo.frame && koIn && from
                       && legClear(from, tail[0], nogo.frame, koIn, at ? std : (nogo.buffer || 0)));
   if(from && !wayClear){
+    // ⚠ THE ROUTER GETS `std`, NOT patClipBufM() (2026-11-02, review). It had its own call, so the taut way
+    // round and the way the router found were certified at DIFFERENT standoffs - and on a charted leg the
+    // router's was the plan's own 20.6 m re-derived as 3 m. `std` is at.stdM, which is what the walk used.
     const pin = (at && at.her ? tautRoundHer(from, tail[0], aisRoundKeepout(at.her, std, nogo.buffer || 0), koIn, std) : null)
-             || planNogoRoute(from, tail[0], {...holdOpts(), standoffM: patClipBufM(), ko: koIn, flyThrough: true});
+             || planNogoRoute(from, tail[0], {...holdOpts(), standoffM: std, ko: koIn, flyThrough: true});
     if(pin.error || pin.heldOff){
       sayRefusal("⚠ CANNOT RESUME THE " + NAME + " FROM HERE — " + (planWhy(pin) || heldOffWhy(pin.heldOff))
         + ". She is still station-keeping and the " + name + " is still held; "
@@ -20798,15 +21361,21 @@ async function resumeHeldLeg(opts){
     else {
       const via = pin.route.slice(0, -1);            // the router's route ENDS at tail[0]: only its detour goes in front
       if(via.length) tail.unshift(...via);
+      rejoinIdx = via.length;                        // the pick-up moved back by the detour - see rejoinIdx
       inNote = via.length ? "via " + via.length + " waypoint" + (via.length === 1 ? "" : "s") + " clear of her"
                           : "direct - the way in is clear";
     }
   }
   // Named once, by the sentence that carries this: "Routed round <her> — the <leg> carries on, picked up ... off her".
-  const pick = at ? (at.atEnd ? "straight on to its end point, one ship-length off her"
-                              : "picked up " + fmtDist(at.skipM) + " on from where she left it, one ship-length off her")
+  const pick = at ? (at.atEnd ? "straight on to its end point, " + aroundMarginSay(at)
+                              : "picked up " + fmtDist(at.skipM) + " on from where she left it, " + aroundMarginSay(at))
                   : "on from where she stopped";
-  const note = inNote ? pick + ", " + inNote : pick;
+  // ⚠ THE TRAFFIC CHECK IS NOT CLAIMED WHERE IT COULD NOT BE MADE (2026-11-02, review): with the AIS model
+  // blind, `others` held no contacts, so the pick-up and the way in were judged against an empty sea.
+  const blindSay = (at && at.blindTraffic)
+    ? "the AIS model is BLIND, so neither the pick-up nor the way in was checked against traffic - the charted "
+      + "keep-outs were" : null;
+  const note = [pick, inNote, blindSay].filter(Boolean).join(", ");
   // THE LATCHES, as the survey's: the operator's press records the override and holds LOW; the console's return and
   // way round take neither, and keep a LOW the operator had standing before the hold.
   const hadLow = resumeSlow, ov = (!auto && !at) ? {t: Date.now(), level: "hold", clearM: g.clearM, slow: true} : null;
@@ -20880,6 +21449,17 @@ async function resumeHeldLeg(opts){
   guardActedAt = 0; holdWant = null; guardLevel = "clear"; holdBackAt = 0;
   const left = tail.length, heldS = (ep || auto) ? Math.round((Date.now() - (ep || auto).since) / 1000) : null;
   if(around){
+    // ⚠⚠ THE FLAG, AFTER setPlanIntent CLEARED IT AND ONLY WHEN THE WAY ROUND ACTUALLY WENT. `ep` is
+    // read above before the episode is nulled, so the flag inherits the name of the thing she was held for
+    // rather than re-deriving it; `at.j` is the route index the walk picked up at, which is what lowers it
+    // on a leg (a leg has no coverage line). A survey lowers on runLineIdx - see avoidingNow.
+    // ⚠ THE PICK-UP IS `rejoinIdx` OF THE ROUTE THIS COMMAND UPLOADS, and `at.j` is the SURVEY plan's field -
+    // aisAroundLegPlan returns no `j`, so reading it left the leg with no lever at all and the flag stayed up
+    // for the rest of the leg (tests/ais_avoid.js 23e2). A leg's way round re-issues the leg's own command
+    // with `tail`, and the pick-up past her is `tail[0]` ONLY until the way in's detour is unshifted in front
+    // of it - so a hard-coded 0 lowered the badge at the first detour waypoint, mid-maneuver (2026-11-02,
+    // review). `rejoinIdx` is set beside that unshift and is 0 exactly when nothing went in front.
+    avoidingRaise("routed round", who, rejoinIdx);
     flashNote("Routed round " + who + " — the " + name + " carries on, " + note + ".");
     if(planIntent) planIntent.why.push({t:"warn", s:"ROUTED ROUND " + who + " after " + (heldS != null ? heldS : "?") + " s holding for her"
       + (manual ? " (at your word)" : " with no answer from the operator") + " — " + note + "; the console is still watching"});
@@ -20890,7 +21470,9 @@ async function resumeHeldLeg(opts){
       + (hadLow ? ", still at LOW on your authority (RELEASE LOW on the bar for the plan's speed)" : "") + ". Recorded in the session log.");
     logClient("ais_around", {kind: who, leg: beh, line: null, skip_m: Math.round((at && at.skipM) || 0), skip_line: false,
               mmsi: at && at.her ? at.her.mmsi : null, round_m: at && at.roundM != null ? at.roundM : null,
-              std_m: at && at.stdM != null ? Math.round(at.stdM * 10) / 10 : null, held_s: heldS, wpts: left, manual});
+              std_m: at && at.stdM != null ? Math.round(at.stdM * 10) / 10 : null, held_s: heldS, wpts: left, manual,
+              // whether the traffic check could be made at all - read back from the session log afterwards
+              blind_traffic: !!(at && at.blindTraffic)});
   } else if(auto){
     flashNote("The " + name + " carries on — " + who + " is clear of the way; " + note + ".");
     if(planIntent) planIntent.why.push({t:"warn", s:"CARRIED ON after " + who + " cleared the way — " + note + "; the console is still watching"});
@@ -20986,6 +21568,9 @@ async function resumeHeldRun(opts){
   const backFrom = asv ? {lat: asv.lat, lon: asv.lon} : g.at;
   const firstWp = tail[0];
   let inNote = null;
+  // Where the pick-up lands in the route this command uploads - the AVOIDING badge's lever. See resumeHeldLeg's
+  // own `rejoinIdx`: `tail[0]` is the pick-up only until the way in's detour is unshifted in front of it.
+  let rejoinIdx = 0;
   // backtrackClear's own test, against the model the way in is routed by - the charted one, or the
   // charted one plus the contacts when a chosen point brought them (koIn). No model is not clear.
   // AT THE STANDOFF when a chosen point brought the contacts in (2026-09-28): her ring is tight now, and a straight
@@ -20995,8 +21580,15 @@ async function resumeHeldRun(opts){
   if(firstWp && !wayClear){
     // TAUT ROUND HER FIRST when a way round brought her (2026-09-28); the router's own search where that cannot be certified.
     const stdIn = (at && at.stdM != null) ? at.stdM : patClipBufM();
+    // ⚠ THE ROUTER GETS `stdIn` TOO (2026-11-02, review). The first version of this comment claimed "on this
+    // path - a SURVEY, always a coverage line - at.stdM is patClipBufM() by construction"; that is FALSE, and
+    // aisAroundPlan's off-the-lines branch is the counter-example - a survey held on its approach or on the
+    // transit into a later survey is not on a coverage line, and its plan was laid at transitStandoffM(). So
+    // `stdIn` is genuinely load-bearing here and not a tidy-up; it is changed because the two
+    // certifications reading different standoffs is the trap that cost the leg path above a 3 m detour past a
+    // pier, and a divergence that is harmless only by coincidence is worth closing while the reason is written.
     const pin = (at && at.her ? tautRoundHer(backFrom, firstWp, aisRoundKeepout(at.her, stdIn, nogo.buffer || 0), koIn, stdIn) : null)
-             || planNogoRoute(backFrom, firstWp, {...holdOpts(), standoffM: patClipBufM(), ko: koIn, flyThrough: true});
+             || planNogoRoute(backFrom, firstWp, {...holdOpts(), standoffM: stdIn, ko: koIn, flyThrough: true});
     if(pin.error){
       sayRefusal("⚠ CANNOT RESUME FROM HERE - " + planWhy(pin) + ". The boat is still "
         + "station-keeping and the remainder is still held; Go-To open water first, or Stop "
@@ -21022,6 +21614,7 @@ async function resumeHeldRun(opts){
       // straight there.
       const via = pin.route.slice(0, -1);
       if(via.length) tail.unshift(...via);
+      rejoinIdx = via.length;                        // the pick-up moved back by the detour - see rejoinIdx
       inNote = "routed " + fmtDist(distTo(backFrom, firstWp)) + " back to the line"
              + (via.length ? " via " + via.length + " waypoint" + (via.length === 1 ? "" : "s")
                              + " clear of " + (g.kind || "the keep-out")
@@ -21029,6 +21622,12 @@ async function resumeHeldRun(opts){
     }
   }
   if(inNote) note = note ? note + "; " + inNote : inNote;
+  // ⚠ AND THE TRAFFIC CHECK IS NOT CLAIMED WHERE IT COULD NOT BE MADE - resumeHeldLeg's own `blindSay`, for the
+  // same reason: with the AIS model blind, `others` held no contacts and the pick-up was judged on an empty sea.
+  if(at && at.blindTraffic)
+    note = (note ? note + "; " : "")
+         + "the AIS model is BLIND, so neither the pick-up nor the way back in was checked against traffic - "
+         + "the charted keep-outs were";
   // THE OPERATOR'S resume records their override and holds LOW until they say otherwise. The AIS
   // return is the console's own: no override - the next contact has to be answered afresh - and no
   // LOW hold, because there is no charted feature to be cautious past; the governor has the throttle
@@ -21181,25 +21780,49 @@ async function resumeHeldRun(opts){
   // ends the hold, a new commanded motion, ends its record, and the ladder judges the new track afresh: a HOLD on it
   // is a first action, not a "hold not taken - re-sending" about a hold she was meant to leave.
   guardActedAt = 0; holdWant = null; guardLevel = "clear"; holdBackAt = 0;
+  // ⚠⚠ AND THE BADGE WITH IT, BECAUSE THIS COMMAND DOES NOT GO THROUGH setPlanIntent (2026-11-03, review).
+  // Every other commanded motion drops the per-episode records there - "a new commanded motion is a new
+  // decision" - and the escape's raise is built on exactly that: it records `rejoin: null` deliberately, because
+  // it uploads ONE waypoint and chains nothing, so the only thing that can lower it is the next command. This
+  // resume IS the next command. It keeps the run's own Intent card on purpose, appending to `planIntent.why`
+  // rather than replacing it, so the picture of the survey survives the hold - which means the clearing
+  // setPlanIntent would have done has to be done here instead. Without it the operator's RESUME after an IN
+  // EXTREMIS escape, and the console's own 100 m return, carried "AVOIDING - STEERED CLEAR OF <x>" into a
+  // brand-new plan and left it up for the rest of the run, over a boat that was back on her line.
+  // ⚠ ABOVE THE `around` BRANCH, WHICH RAISES ITS OWN AFTERWARDS: a way round IS this console moving her off her
+  // track, and its record is the new one, with the pick-up's index to lower it (avoidingRaise below).
+  avoiding = null;
   if(at){
     // The contact episode, if one was open, is answered - by the operator or by the console.
     const ep = aisAvoid; aisAvoid = null;
     const around = !!(opts && opts.around);
     if(around){
       const who = auto ? auto.kind : "the contact";
+      // ⚠⚠ THE SURVEY'S OWN RAISE, and it is a SECOND site on purpose: a held LEG and a held SURVEY are handed
+      // back by different commands (resumeHeldLeg / resumeHeldRun) and each has its own `around` branch. The
+      // flag was first put in the leg's alone, and tests/ais_avoid.js 4b caught that the survey - the common
+      // case - raised nothing at all. `at.j` is the route index the walk picked up at; for a survey it is the
+      // leg branch's lever and unused here, because a survey lowers on runLineIdx (see avoidingNow).
+      // ⚠ THE SURVEY'S WAY ROUND HAS A REJOIN INDEX TOO, and raising it with `null` was the other half of the
+      // lowering defect (2026-11-02, review): `null` fell through to `runLineIdx >= 0`, which is the state a
+      // surveying boat on a line is ALREADY in, so the badge was erased by the first updateMissionCard after
+      // it. The upload restarts her index at 0 and `rejoinIdx` is where the pick-up sits in it.
+      avoidingRaise("routed round", who, rejoinIdx);
       flashNote("Routed round " + who + " — " + (note || "carrying on") + ".");
       if(planIntent) planIntent.why.push({t:"warn", s:"ROUTED ROUND " + who + " after " + (ep ? Math.round((Date.now() - ep.since)/1000) : "?")
         + " s holding for her " + '—' + " " + (note || "carrying on") + "; " + left + " waypoint"
         + (left === 1 ? "" : "s") + " re-uploaded; the console is still watching"});
       showBanner("ROUTED ROUND " + who + " — " + ((opts && opts.manual)
-          ? "at your word, one ship-length off her: "
+          ? "at your word, " + aroundMarginSay(at) + ": "
           : "she was still in the way, so the survey goes on beyond her without waiting: ")
         + (note || "carrying on") + ". " + left + " waypoint" + (left === 1 ? "" : "s") + " to fly"
         + (hadLow ? ", still at LOW on your authority (RELEASE LOW on the bar for the plan's speed)" : "") + ". Recorded in the session log.");
       logClient("ais_around", {kind: who, line: at.line != null ? lineNo(at.line) : null, skip_m: Math.round(at.skipM || 0), skip_line: !!at.skipLine,
                 mmsi: at.her ? at.her.mmsi : null, round_m: at.roundM != null ? at.roundM : null,
                 std_m: at.stdM != null ? Math.round(at.stdM * 10) / 10 : null,
-                held_s: ep ? Math.round((Date.now() - ep.since) / 1000) : null, wpts: left, manual: !!(opts && opts.manual)});
+                held_s: ep ? Math.round((Date.now() - ep.since) / 1000) : null, wpts: left, manual: !!(opts && opts.manual),
+                // whether the traffic check could be made at all - read back from the session log afterwards
+                blind_traffic: !!at.blindTraffic});
     } else {
       flashNote("Survey resumed " + (note || "from the point you chose") + ". The transit is at the transit speed and the line at "
         + "the survey speed" + (resumeSlow ? " once your LOW hold is released" : "") + " — set a slower speed if you want it slow.");
@@ -21848,6 +22471,7 @@ function onFrame(ev){
     // a throw here must be a counted CONSOLE FAULT, said out loud, and not an escape from the frame handler -
     // that is this block's own rule (review #12), and tests/frame_health.js check 1 is what holds it.
     supHeldSay();                       // the console's own supervision stand-down, said on the chart
+    renderAvoiding();                   // the AVOIDING flag on the chart (2026-11-02)
     adoptRunRoute();                    // a page loaded mid-run asks the console for the route she is flying
     if(frameFaults && ++frameClean >= FRAME_CLEAR_AFTER){ frameFaults = 0; frameClean = 0; frameFaultLogged = false; }
   }catch(e){
@@ -22303,11 +22927,18 @@ function updateMissionCard(){
   // this is what the boat is doing at this instant, and only "surveying" means coverage.
   {
     const act = currentActivity(), el = $("#mi_activity");
+    // ⚠⚠ THE SAME RECORD THE CHART BADGE READS, SO THE TWO CANNOT DISAGREE (2026-11-02). Both ask
+    // avoidingNow(); neither derives it. It is prepended rather than written into currentActivity, because
+    // that function answers "what is she doing" and the whole speed governor depends on it - see the note
+    // above `avoiding`. The Doing row keeps saying what she is doing; this says the console moved her off it.
+    const av = avoidingNow();
     if(el){
-      el.textContent = act.activity;
-      el.title = act.detail + (act.surveying ? " — acquiring coverage"
-                                             : " — under way, NOT acquiring coverage");
-      el.style.color = act.surveying ? "#7fd6a0" : (act.activity==="idle" ? "" : "#e8c07a");
+      el.textContent = (av ? "AVOIDING · " : "") + act.activity;
+      el.title = (av ? "The console is keeping her clear of " + av.kind + ", and will put her back. "
+                     : "") + act.detail + (act.surveying ? " — acquiring coverage"
+                                                        : " — under way, NOT acquiring coverage");
+      el.style.color = av ? "var(--bad)"
+                          : act.surveying ? "#7fd6a0" : (act.activity==="idle" ? "" : "#e8c07a");
     }
     const d = $("#mi_activity_detail"); if(d) d.textContent = act.detail;
   }

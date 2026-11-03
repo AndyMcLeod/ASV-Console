@@ -100,6 +100,11 @@ function __crash(e) {
 process.on("uncaughtException", __crash);
 process.on("unhandledRejection", __crash);
 
+// ⚠⚠ `avoiding` IS DECLARED HERE WITH `var`, AND NOT LIFTED. A `let` inside a direct eval is scoped
+// TO THE EVAL, so lifting the page's declaration gives the lifted avoidingRaise/avoidingNow their own binding
+// and check 22c cannot see what the guard recorded. Same trap, same answer, as ais_avoid.js's.
+var avoiding = null;
+
 const fs = require("fs");
 const path = require("path");
 
@@ -335,6 +340,18 @@ eval([
   // inside the suite's own no-model scenario and was reported as the console assuming water it cannot chart.
   grabDecl("SUP_RELEASE"),
   grab("govHeldBy"),
+  grab("chartedHerPoly"),
+  // ⚠ WHAT THOSE TWO CALL, LIFTED EVEN THOUGH NO SCENE HERE REACHES IT YET (2026-11-03). chartedHerPoly's
+  // ambiguity test asks koWithoutFeature on the frames its entry reach finds nothing, and a CHARTED try's
+  // signature asks aisKoSig; a bundle without them is a bare ReferenceError the moment a scene does reach one -
+  // and clearanceGuard's own tryIt SWALLOWS that, which is how a missing constant reddened ten charted checks
+  // in ais_avoid today with no stack to say why.
+  grabDecl("_koLessKey"), grab("koWithoutFeature"), grab("aisKoSig"),
+  grab("aroundOthers"),
+  // THE AVOIDING FLAG'S OWN RECORD AND READER (2026-11-02, "Create a flag that attaches to the ASV an
+  // reads AVOIDING until it's back on line or natural transit"). LIFTED, not stubbed: this suite is where
+  // the flag's behaviour is asserted, and a stubbed raiser would make its checks about the stub.
+  grab("avoidingRaise"), grab("avoidingNow"),      // everything except the one thing she is getting past (2026-11-02)   // HER when "she" is charted - the model's own poly (2026-11-02)
   grab("govRaiseHeld"),   // the governor's refusal-to-raise, which the speed-zone release banner asks too (2026-11-02)
   grabDecl("RESUME_BACK_LENGTHS"),
   grabDecl("OVERRIDE_GIVE_M"),
@@ -402,7 +419,8 @@ eval([
   grab("aisReturnTick"), grab("logClient"),
   // the way round a contact that stays (2026-09-27) - asked every frame beside the return; no episode ever
   // opens in this world, so it returns at its first line, and these are the names it would reach
-  grabDecl("AIS_AROUND_STEP_M"), grab("koWithAis"), grab("aisAroundPlan"), grab("aisWalkPast"), grab("aisAroundTick"),
+  grabDecl("AIS_AROUND_STEP_M"), grabDecl("AIS_AROUND_NOOP_M"),   // the walk's step, and what "the same place" means (2026-11-03)
+  grab("koWithAis"), grab("aisAroundPlan"), grab("aisWalkPast"), grab("aisAroundTick"),
   grab("sameContact"), grab("aisHerPoly"), grab("koRoundHer"), grab("tautRoundHer"),   // the tighter way round (2026-09-28)
   grabDecl("LINE_MATCH_M"), grab("onLineM"), grab("legOfLine"), grab("lineOfLeg"),
   grabDecl("AIS_RETURN_BACK_M"), grabDecl("AIS_RETURN_DWELL_MS"),
@@ -614,10 +632,22 @@ console.log("The guard stopped the survey, and the operator has to be able to ca
   standingIn(6); window._wpIndex = 4;             // the last waypoint is flown
   tryIt(() => clearanceGuard());
   const afterDone = guardHeld;
-  check("7. and nothing is kept for a run that is not a survey, or one with nothing unflown",
-        () => afterGoto === null && afterDone === null,
-        "a held Go-To is re-commanded in one click, and offering to \"resume\" a survey with "
-        + "no remainder would upload an empty plan");
+  // ⚠⚠ THIS CHECK WAS SPLIT, NOT DELETED (2026-11-02). It asserted two things in one sentence and only one of
+  // them is still true. "Nothing unflown" stands, and its reason stands with it: offering to resume a survey
+  // with no remainder would upload an empty plan. "Not a survey" does NOT - Andy: "yes, any contact including
+  // charted on legs too", so a Go-To, an RTH or a transit held for a CHARTED feature is now banked exactly as
+  // one held for a contact is, and handed back by its own command (resumeHeldLeg). A leg being re-commandable
+  // in one click was the old argument for banking nothing; it is not an argument for making the operator do it.
+  check("7. nothing is kept for a run with nothing unflown - offering to \"resume\" a survey with no remainder "
+        + "would upload an empty plan",
+        () => afterDone === null,
+        "the last waypoint is flown, so there is no remainder to bank");
+  check("7b. ... but a LEG held for a charted feature IS kept now, as one held for a contact always was: the "
+        + "record is the leg's, so the console can route round the feature and hand the leg back by its own "
+        + "command instead of waiting for the operator (2026-11-02)",
+        () => !!afterGoto && !!afterGoto.leg && afterGoto.leg.behavior === "goto",
+        () => "record " + JSON.stringify(afterGoto && {leg: afterGoto.leg, idx: afterGoto.idx,
+              wpts: afterGoto.route && afterGoto.route.length}));
 }
 
 // ── 8. THE OFFER IS ABOUT THE BOAT IN FRONT OF THE OPERATOR ────────────────────────
@@ -1473,6 +1503,30 @@ function finish() {
               + "\". Andy asked for this rung on 2026-09-04 - \"forcing slight deviations to "
               + "prevent holds when there is still plenty of available water\" - and a console "
               + "made timid about a deviation the vessel ACCEPTED is the wrong fix");
+
+  // ⚠⚠ 22b. AND THE AVOIDING FLAG GOES UP ON IT (Andy, 2026-11-02: "Create a flag that attaches to the
+  // ASV an reads AVOIDING until it's back on line or natural transit"). The edge rung is one of the four
+  // places the console moves her off her planned track on its own authority, and the raise sits in the SAME
+  // statement list as the budget it spends - so a deviation the vessel REFUSED cannot flag one, which check 22
+  // above drives. Verified by mutation: delete the raise and this is the check that reddens.
+  // ⚠⚠ ASKED THROUGH avoidingNow(), AND IT PINS THE REJOIN INDEX, WHICH IS WHAT REVIEW CAUGHT (2026-11-02).
+  // This asserted the raw `avoiding` record, and the record was always right - the READER was broken two ways.
+  // It lowered on `runLineIdx >= 0 && lineSwing < 0`, exactly the state a surveying boat on a line is in when
+  // this rung fires, and the rung calls updateMissionCard() seven lines after its own raise, so the badge was
+  // erased inside the rung's own statement list and NEVER APPEARED for a deviation. On a leg the opposite: the
+  // raise passed `rejoin: null`, runLineIdx is -1 on a Go-To by construction, and the badge latched up for the
+  // whole remaining leg. So the scene is set on-a-line on purpose, and the index is asserted to be the
+  // DOG-LEG'S OWN - the one waypoint the amendment changed, which check 22 above identifies by diffing the route.
+  const devIdx = yes2.route.findIndex((w, i) => w !== yes2.before[i]);
+  runLineIdx = 0; lineSwing = -1;        // on her line, making way: the state the edge rung fires in
+  const seen22 = avoidingNow();
+  check("22e. ... and the AVOIDING flag goes up with it, through avoidingNow and in the on-a-line state the "
+        + "rung fires in, carrying the DOG-LEG'S own index as the waypoint she is back on her plan past - a "
+        + "lowering keyed on where she is rather than on what the console did reddens this",
+        () => !!seen22 && seen22.why === "deviated" && !!seen22.kind
+              && devIdx >= 0 && seen22.rejoin === devIdx,
+        () => "reader " + JSON.stringify(seen22) + "; the amendment changed waypoint " + devIdx
+            + " of " + yes2.route.length + ", rejoin " + (seen22 && seen22.rejoin));
 
   // ── 23. THE DEVIATION SEARCH IS ON THE CLOCK, NOT ONLY ITS ANSWER (2026-09-26) ─────────────────────
   // Andy: "The current instance of ASV Console has frozen. This has happened the last few times." A search that

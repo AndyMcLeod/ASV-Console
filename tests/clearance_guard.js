@@ -129,13 +129,19 @@ function __crash(e) {
 process.on("uncaughtException", __crash);
 process.on("unhandledRejection", __crash);
 
+// the AVOIDING record the guard, the resumes and setPlanIntent now touch (2026-11-02):
+// a stub, because this suite owns none of the flag's behaviour - tests/ais_avoid.js does.
+let avoiding = null; const avoidingRaise = (why, kind, rejoin) => { avoiding = {why, kind, rejoin}; }; const avoidingNow = () => avoiding;
+
 const fs = require("fs");
 const path = require("path");
 
 // THE REAL MODULES. clearanceM must be the shipped one, and it must sit beside the
 // shipped `blocked` - checks 1-2 compare them against each other, which only means
 // anything if both come from the file the console loads.
-const { blocked, clearanceM } = require("../static/js/keepouts.js");
+// blockedInfo (2026-11-02): chartedHerPoly asks it for the feature the rung is acting on, and takes the model's
+// OWN poly back by ring identity - which is what lets a charted hold be an episode the console can act on.
+const { blocked, blockedInfo, clearanceM } = require("../static/js/keepouts.js");
 const { planeFrame } = require("../static/js/geodesy.js");
 const { bbOf } = require("../static/js/geometry.js");
 const { teardropTurn, turnWithRetry, minTurnRadiusM } = require("../static/js/turns.js");
@@ -725,6 +731,10 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
                      + "let routeCmdsInFlight = 0, legStart = null, lastWpIndex = null;" + NL2 + grab(H, "spliceAt") + NL2
                      + "function legStartsHere(){}" + NL2
                      + grab(H, "guardTrack") + NL2 + grab(H, "releaseSettled") + NL2
+                     // HER when "she" is charted - the model's own poly, so the episode can be about a pier
+                     // and not only a contact (2026-11-02, "or any other contact")
+                     + grab(H, "chartedHerPoly") + NL2
+                     + grab(H, "aroundOthers") + NL2
                      // ON STATION the ladder judges the drift and says so in its own words (2026-09-30)
                      + grab(H, "guardOnStation") + NL2 + grab(H, "onStationWhy") + NL2
                      + grab(H, "helmSettled") + NL2
@@ -1370,6 +1380,12 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
     // and "never touched" look identical and the check cannot tell them apart.
     guardOverride = { said: "proceed" }; edgeSpentM = 42; edgeCount = 3;
     commandedSpeed = "low";
+    // ⚠ AND THE AVOIDING BADGE IS SEEDED FOR THE SAME REASON (2026-11-02, review): the escape's raise runs
+    // synchronously 40 lines above its POST, and the refusal retraction put back twelve records and not this
+    // one - so a REFUSED escape left "AVOIDING - STEERED CLEAR OF <x>" on the chart over a boat nothing was
+    // steering, beneath a banner correctly saying THE HELM WAS NOT TAKEN. Seeded with a DISTINCTIVE record
+    // rather than null, because null cannot tell "restored what was standing" from "written to null".
+    avoiding = { why: "deviated", kind: "SEEDED BEFORE THE ESCAPE", rejoin: 9 };
     guardLevel = "clear"; clearHoldAt = 0; guardActedAt = 0; holdWant = null;
     helmHoldAt = 0; guardEscapeAt = 0; clearance.slowed = false;
     nogo = { ready: true, frame: ref, ko: wall(18), buffer: 5 };
@@ -1397,7 +1413,7 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
              // The NOTES as well as the banners: the release branch speaks through flashNote,
              // and what it promises about the throttle is a different claim from the alarm.
              noted: notes.join(" | "),
-             route: runRoute, throttle: escapeThrottle,
+             route: runRoute, throttle: escapeThrottle, avoid: avoiding,
              episode: { override: guardOverride, spentM: edgeSpentM, count: edgeCount,
                         commanded: commandedSpeed } };
   };
@@ -1556,6 +1572,29 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
             + (/THE HELM WAS NOT TAKEN/.test(lostEsc.said)
                ? "still asserts the helm was not taken, one clause after saying it cannot tell"
                : "asserts nothing about the vessel after the ignorance clause"));
+
+    // ⚠⚠ 15z10b. AND THE AVOIDING BADGE FOLLOWS THE SAME ASYMMETRY (2026-11-02, found by adversarial review
+    // before the badge shipped). It is the one surface that tells the operator the console has her off her
+    // planned track, and the escape raises it SYNCHRONOUSLY, 40 lines above the POST - correctly, because
+    // making a safety annunciator wait a network round-trip on every real escape is the wrong trade. What was
+    // missing is that the refusal retraction restored runRoute, runUnsafe, planIntent, planGen,
+    // clearance.slowed, commandedSpeed, escapeThrottle, guardOverride, edgeSpentM, edgeCount, guardActedAt,
+    // holdWant and guardHeld - thirteen records - and not this one. So a refused escape left "AVOIDING -
+    // STEERED CLEAR OF a dock / pier" on the chart, and the Doing row said it too, over a boat nothing was
+    // steering, directly beneath a banner correctly reading THE HELM WAS NOT TAKEN. TAKE MANUAL CONTROL.
+    // The three replies are checked together because the asymmetry IS the rule: only a refusal is a fact
+    // about the vessel, and a boat that never answered may HAVE the escape.
+    rcheck("15z10b. the AVOIDING badge is the escape's claim too: an ACCEPTED escape raises it, a REFUSED one "
+          + "puts back the record that was standing before the rung ran, and a LOST one KEEPS it - she may "
+          + "have the helm, and a badge retracted on silence would say the console had her on her track",
+          okEsc.avoid && okEsc.avoid.why === "steered clear"
+          && noEsc.avoid && noEsc.avoid.kind === "SEEDED BEFORE THE ESCAPE" && noEsc.avoid.rejoin === 9
+          && lostEsc.avoid && lostEsc.avoid.why === "steered clear",
+          "accepted " + JSON.stringify(okEsc.avoid && okEsc.avoid.why)
+            + ", refused " + JSON.stringify(noEsc.avoid && noEsc.avoid.kind)
+            + ", lost " + JSON.stringify(lostEsc.avoid && lostEsc.avoid.why)
+            + (noEsc.avoid && noEsc.avoid.why === "steered clear"
+               ? " — A REFUSED ESCAPE IS STILL FLAGGING ONE" : ""));
 
     // ⚠⚠ 15z11. AND A RETRACTION RETRACTS ITS OWN CLAIM, NOT WHATEVER IT FINDS. The door
     // is HOLDING: once she station-keeps at the escape point guardTrack bails on
@@ -1948,7 +1987,7 @@ check("17. the guard runs on every telemetry frame, before the readouts are draw
 // ⚠ WAIT FOR THE ASYNC SECTION. Five of the checks above resolve on a microtask (the
 // guard's rungs retract a refused command in a `.then`), and a summary printed before they
 // have run would report a pass for checks that never executed.
-const RAN_FLOOR = 13;                // the retraction block's own, 15z4b/15z10-14 included
+const RAN_FLOOR = 14;                // the retraction block's own, 15z4b/15z10-14 and 15z10b included
 // ... and 19f reads routeCmd's counter once its two round trips have settled (2026-10-06)
 Promise.all([Promise.resolve(globalThis.__guardRetract), Promise.resolve(globalThis.__routeCmdSettled)]).then(([n]) => {
   if (n !== RAN_FLOOR) {

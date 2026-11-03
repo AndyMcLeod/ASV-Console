@@ -896,6 +896,87 @@ own command - 10 s later then, at once now. The rehearsal found one more thing: 
 50 m at LOW - the guard released her, she sped back into her 70 m and was slowed again; the
 release now asks the reach at the speed it would restore.
 
+**A hold for CHARTED water is routed round too, and an AVOIDING badge says when she is off her
+track** (2 November, his "do not wait for operator input to avoid an AIS or any other contact...
+yes, any contact including charted on legs too"). Everything above was built for traffic; a pier, a
+shoal, a wreck or a restricted area that stopped her still waited for the operator. Now a charted
+hold opens the same maneuver, on a coverage line and on a Go-To, an RTH or a transit leg alike. The
+feature is the ring the **ladder already blocked on**, not a second search of the model:
+`chartedHerPoly` asks `blockedInfo` at the ladder's entry point with the buffer and then, because a
+hold has no entry point on most of its frames and the boat lying 30 m off reads open water, at the
+boat with the clearance the readout measured - `guardHazardKey`'s own two reaches, in its order. The
+walk lays the way past that one feature with the rest of the model standing (`aroundOthers`, by
+**object identity**, so a second feature sharing a ring's numbers is not dropped with it, and in
+every bucket: a pier drawn as a LINE or a rock as a POINT is her too, and `polys` would have the
+clearance read its missing ring as open water), and a charted feature gets **no ship-length
+growth** - so `std` is the entire margin, and it is the standoff the plan being resumed was laid
+at: `(ep.chart && (g.leg || !g.mark)) ? transitStandoffM() : patClipBufM()`. A coverage line keeps
+the guard's 3.0 m, because coverage is yours and a line's turns are built on the radius already; a
+leg - a Go-To, an RTH, a transit, **and a survey's own approach and inter-survey transits**, which
+`g.leg` does not name - keeps the 20.6 m its planner required. Review caught both halves of that:
+the first version would have laid a pick-up 10 m off a pier where the plan needed 20.6 m, and the
+first fix still laid one 5.0 m off a dock face on a survey's approach. A way round that would pick
+her up **where she stopped** is refused and said, because performing it cancels the guard's own
+hold and spends the remainder with nothing moved; one walk step on is a real maneuver and is
+flown, which the first gate refused too (`> AIS_AROUND_STEP_M` rejects the nearest point the walk
+can ever return). And a doomed charted try waits for the chart, her position or the traffic's
+positions - never for the AIS clock, which advances whether or not anything moved. The episode is classified by whether a contact is at the entry point at all and
+deliberately **not** by `aisCaused`, which carries the contact's velocity and so reads false on
+every on-station frame - the exact frame a hold is judged on - and had been marking a contact's own
+episode charted the moment she stopped. The staleness gate is scoped to contact episodes (a dead
+feed cannot move a pier) and the 100 m automatic return stands aside for a charted one (a pier does
+not clear the line). **The limit is in both manuals:** the planner clipped that line at the same
+standoff the walk keeps, so a charted hold usually means the two models have come apart - the chart
+read moved, was discarded, or she is off her line - and walking the same line past the feature can
+repeat whatever the plan got wrong. What it adds is distance from the feature the guard is
+measuring; it is not a second opinion about the chart.
+
+The badge is one record (`avoiding`) read through one function (`avoidingNow`), because two surfaces
+show it - the chart badge and the Mission card's Doing row - and a flag that contradicts itself
+about whether she is off her track is worse than none. It reads `⚠ AVOIDING — DEVIATED ROUND <what>`
+/ `STEERED CLEAR OF <what>` / `ROUTED ROUND <what>`. **Five raises**, each inside the branch where
+the vessel **accepted** the maneuver: the edge rung's amend, the helm rung's escape, both
+held-resume ways round, and the running plan's amendment - which review found raising nothing, so
+the one maneuver you watch happen in real time was the one the chart said nothing about.
+
+**It comes down at a waypoint index in the route the raise itself uploaded** - the spliced dog-leg's
+rejoin, the pick-up the walk chose (`via.length`, not `0`, once the way in has been unshifted in
+front of it), the splice plus the detour for a running amendment - which is one notion of "on
+track" for a line and a leg alike. The first version read `runLineIdx >= 0 && lineSwing < 0`, which
+is the state a surveying boat on a line is **already** in when the console moves her: the badge was
+erased by the next card redraw, inside the edge rung's own statement list, and never appeared for a
+deviation or for IN EXTREMIS at all; on a leg `runLineIdx` is `-1` by construction and nothing
+lowered it. Where the route holds no waypoint beyond the rejoin (a one-waypoint tail reports index
+0 for its whole run) it is **arrival** at the pick-up, measured; and the escape, which uploads one
+waypoint and chains nothing, records no index and ends with your next command - which the resume of
+a held survey now counts as, that one command deliberately keeping the run's Intent card and so
+never passing through `setPlanIntent`.
+
+Two more came out of the second review. The reader paired the vessel's `wp_index` with this page's
+`runRoute` **without the length test** every other indexed reader applies: the guard's own hold
+uploads a one-waypoint plan, so a station-keeping vessel reports wp 1/1 while the page still holds
+the route the rejoin belongs to, and `1 > 0` lowered the badge on the first station frame of every
+way round whose detour added nothing in front of the pick-up. And a single bad frame **spent** the
+record rather than merely answering null - one `armed:false`, a re-arm, the moment between an
+e-stop and its reset - erasing a maneuver still being flown with nothing able to put it back; it is
+derived every frame now, as the held offer's own predicate is.
+
+**Since 3 November it is not page-local.** Only the supervising tab can raise it, so the badge was
+invisible in every other window - a second chart tab, the controls window, another machine watching
+the same console. It now rides the supervision heartbeat that was already there (the field's
+*presence*, not its value, so the "about to plan" POST cannot erase a live maneuver), is served to
+every page in the supervision snapshot, is taken from the **holder** only, and is dropped when that
+tab goes stale, says it is leaving, is forgotten or is taken over - a badge whose author has stopped
+reporting is a promise nobody is behind. A view-only page renders the served record and never
+prefers one of its own, whose rejoin index may belong to a route the new holder has replaced.
+
+The flag is asserted in five suites - `ais_avoid` (the maneuvers and the badge's own reader),
+`guard_resume` (the held resume), `clearance_guard` (the escape), `supervisor_page` (which tab
+speaks) and `supervisor.py` (the console's half) - and **seventeen mutants of the raises, the
+lowering, the index pairing, the non-destruction and the console's half were run against them,
+all seventeen killed**: thirteen on the page through a sidecar copy, four on the console's own
+class. Nine more were run against the first design, two of which were bugs review had missed.
+
 **On station the guard judges the drift; the hold disc is re-measured while she holds; a way round
 that fails says so** (30 September, items 1, 2, 5 and 7 of his list). A boat already
 station-keeping - at a plan's end point, on the operator's Hold, at an escape's point - is being

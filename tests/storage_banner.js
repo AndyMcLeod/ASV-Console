@@ -31,6 +31,10 @@ function __crash(e) {
 process.on("uncaughtException", __crash);
 process.on("unhandledRejection", __crash);
 
+// the AVOIDING record the guard, the resumes and setPlanIntent now touch (2026-11-02):
+// a stub, because this suite owns none of the flag's behaviour - tests/ais_avoid.js does.
+const renderAvoiding = () => {};
+
 const fs = require("fs");
 const path = require("path");
 

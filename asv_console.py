@@ -9808,7 +9808,10 @@ class Handler(BaseHTTPRequestHandler):
             # A tab reporting in (review #14). `take` claims the post; `release` gives it up on unload.
             cid = body.get("id")
             snap = (SUPERVISION.release(cid) if body.get("release")
-                    else SUPERVISION.beat(cid, take=bool(body.get("take")), busy_s=_busy_seconds(body.get("busy_s"))))
+                    else SUPERVISION.beat(cid, take=bool(body.get("take")), busy_s=_busy_seconds(body.get("busy_s")),
+                                          # the supervising page's AVOIDING flag, for every other page (2026-11-03).
+                                          # PRESENCE, not value: only the beat speaks about it - see beat's note.
+                                          avoiding=body.get("avoiding"), set_avoiding=("avoiding" in body)))
             return 200, {"ok": True, "supervisor": snap, "you": bool(cid and snap.get("holder") == str(cid)[:64])}
         if path == "/api/logevent":
             # Client-supplied structured event for the session log (e.g. the
@@ -10788,19 +10791,59 @@ class Supervision:
         # also the test for "has a page EVER supervised this session" - 0.0 means no, and a console nobody has
         # opened a page on is a harness, not an unwatched boat.
         self._last_any = 0.0
+        # ⚠⚠ THE SUPERVISING TAB'S "AVOIDING" RECORD, SO EVERY OTHER PAGE CAN SHOW IT (2026-11-03). The flag is a
+        # judgment only the supervising page can make - it is the one running the ladder and the one that moved
+        # her - so it was DOM in that page alone: a second chart tab, the controls window and a supervisor
+        # watching the same boat showed nothing while the console had her off her planned track. It rides the
+        # heartbeat that is already there rather than a channel of its own, which also means it inherits this
+        # class's staleness and its prune: a record whose author stops reporting stops being published, and the
+        # stand-down says the rest. Published for every page; only the HOLDER may write it.
+        self._avoiding = None
+
+    def _drop_holder(self):
+        """The post is open again - and the holder's AVOIDING record goes with it, because nobody is left who
+        can lower it. Written once rather than at the three sites that used to do it by hand."""
+        self._holder, self._since, self._said_stale = None, None, False
+        self._busy_until, self._said_busy = 0.0, False
+        self._avoiding = None
+
+    @staticmethod
+    def _clean_avoiding(a):
+        """CLIENT-SUPPLIED, so it is rebuilt field by field rather than stored (the page could be anything on the
+        other end of a POST). None for anything that is not one of the three maneuvers the flag names - and never
+        an exception: this is the heartbeat, and a safety channel must not be breakable by a bad body."""
+        try:
+            if not isinstance(a, dict):
+                return None
+            why = str(a.get("why") or "")[:32]
+            if why not in ("deviated", "steered clear", "routed round"):
+                return None
+            kind = str(a.get("kind") or "something in her way")[:120]
+            since = a.get("since")
+            return {"why": why, "kind": kind,
+                    "since": float(since) if isinstance(since, (int, float)) else None}
+        except Exception:
+            return None
 
     def _prune(self, now):
         for cid in [c for c, t in self._seen.items() if now - t > SUPERVISOR_FORGET_S]:
             del self._seen[cid]
             if cid == self._holder:  # the supervising tab was closed or crashed: the post is open again
-                self._holder, self._since, self._said_stale = None, None, False
-                self._busy_until, self._said_busy = 0.0, False
+                self._drop_holder()
 
-    def beat(self, client_id, take=False, busy_s=None, now=None):
+    def beat(self, client_id, take=False, busy_s=None, avoiding=None, set_avoiding=False, now=None):
         """A tab reports in. It becomes the supervisor if the post is empty, if it asked to TAKE OVER, or if the
         holder has gone stale while this tab has been reporting steadily - a tab that is not running its ladder
         cannot keep the post from one that is, and a tab that has only just come back from its own silence is not
-        yet one that is. A holder that has SAID it is planning (`busy_s`) is not stale until that runs out."""
+        yet one that is. A holder that has SAID it is planning (`busy_s`) is not stale until that runs out.
+
+        `avoiding` is the holder's AVOIDING record, or None when it has none - see _avoiding. Taken from the
+        HOLDER ONLY, and from every one of its beats including the empty ones, because "she is back on her track"
+        has to be able to arrive: a view-only tab cannot raise the flag and must not be able to lower it.
+        ⚠ AND ONLY WHERE THE CALLER MADE A STATEMENT (`set_avoiding`), which is the key being PRESENT in the body
+        rather than its value. The page POSTs this endpoint for three different things - the beat, a TAKE OVER
+        and "I am about to plan" (SUPERVISOR_BUSY_MAX_S) - and a None default would have let the busy POST, which
+        says nothing about the flag, erase a maneuver that was still being flown."""
         now = time.time() if now is None else now
         cid = str(client_id or "")[:64]
         if not cid:
@@ -10820,6 +10863,7 @@ class Supervision:
             if held != cid and (held is None or take or (stale and steady)):
                 self._holder, self._since, self._said_stale = cid, now, False
                 self._busy_until, self._said_busy = 0.0, False
+                self._avoiding = None     # the new holder's own first beat says what IT has, if anything
                 why = "took over from a tab that had stopped reporting" if stale else (
                     "took over" if take else "is supervising")
                 print("[supervisor] a browser tab %s (%s)" % (why, cid[:8]), flush=True)
@@ -10830,6 +10874,8 @@ class Supervision:
                 self._busy_until = now + min(float(busy_s), SUPERVISOR_BUSY_MAX_S) if busy_s else 0.0
                 if not busy_s:
                     self._said_busy = False
+                if set_avoiding:
+                    self._avoiding = self._clean_avoiding(avoiding)
         return self.snapshot(now)
 
     def quiet_s(self, now=None):
@@ -10853,8 +10899,7 @@ class Supervision:
         with self._lock:
             self._seen.pop(cid, None)
             if self._holder == cid:
-                self._holder, self._since, self._said_stale = None, None, False
-                self._busy_until, self._said_busy = 0.0, False
+                self._drop_holder()
                 if LOG is not None:
                     LOG.event("supervisor_released", tab=cid[:8])
         return self.snapshot(now)
@@ -10866,9 +10911,16 @@ class Supervision:
             last = self._seen.get(held) if held else None
             tabs = sum(1 for t in self._seen.values() if now - t <= SUPERVISOR_STALE_S)
             busy = bool(held is not None and now < self._busy_until)
+            av = self._avoiding
         age = round(now - last, 1) if last else None
+        stale = bool(held is not None and age is not None and age > SUPERVISOR_STALE_S and not busy)
         return {"holder": held, "since": since, "age_s": age, "tabs": tabs, "busy": busy,
-                "stale": bool(held is not None and age is not None and age > SUPERVISOR_STALE_S and not busy),
+                "stale": stale,
+                # ⚠ NOT PUBLISHED FROM A TAB THAT HAS STOPPED REPORTING. The record is a promise that something
+                # is putting her back, and the one thing that can do that is the ladder in the tab that raised
+                # it; while that tab is stale nothing is lowering the flag either, so a badge from it would be a
+                # claim nobody is behind. The supervision banners and the stand-down are what speak then.
+                "avoiding": (av if (held is not None and not stale) else None),
                 "beat_s": SUPERVISOR_BEAT_S, "stale_s": SUPERVISOR_STALE_S, "busy_max_s": SUPERVISOR_BUSY_MAX_S}
 
     def is_holder(self, client_id):

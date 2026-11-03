@@ -90,7 +90,9 @@ function makeWorld(role) {
                         classList: { toggle(){}, add(){}, remove(){} } });
   const buttons = ["b_arm", "b_upload", "b_start", "b_pause", "b_stop", "b_hold", "b_rth", "b_estop", "b_reset"]
     .map((id) => Object.assign(el(id), { className: "cbtn" }));
-  const els = { "#supPill": el("supPill"), "#encbanner": el("encbanner"), "#note": el("note") };
+  // "#r_avoid" is the AVOIDING badge over the chart: this suite owns WHICH TAB speaks it (2026-11-03).
+  const els = { "#supPill": el("supPill"), "#encbanner": el("encbanner"), "#note": el("note"),
+                "#r_avoid": el("r_avoid") };
   const posts = [], banners = [], notes = [], recorded = [];
   let clock = 1000000, visibility = "hidden";        // a tab that missed its beats was, as a rule, not on screen
   const body = [
@@ -121,9 +123,19 @@ function makeWorld(role) {
     decl(/^let supPlanEnd = [^;]*;/m),
     "const AbortController = function(){ this.signal = {aborted: false}; this.abort = () => { this.signal.aborted = true; }; };",
     "const setTimeout = () => 0, clearTimeout = () => {};",
+    // THE AVOIDING FLAG ACROSS TABS (2026-11-03). Only the supervising tab can RAISE it - it runs the ladder and
+    // holds the route its rejoin index counts into - so the badge was DOM in that tab alone and every other
+    // window showed nothing while the console had her off her planned track. The supervising tab publishes it on
+    // the beat it already sends and a view-only one renders what the console serves: both of those decisions are
+    // the page's own functions, LIFTED. `avoidingNow` is this world's stand-in, because what is asserted here is
+    // WHICH TAB SPEAKS; the record's own raising and lowering is tests/ais_avoid.js's subject and is lifted there.
+    "let avoiding = null;",
+    "const avoidingNow = () => avoiding;",
     ["supervising", "applySupervisor", "supervisorBeat", "supervisorBusy", "supervisorStreamed", "supervisorStreamLost",
-     "supervisorReport", "supervisorSlept", "cmd", "cmdLabel", "canCommand", "applyViewOnly"].map(grab).join("\n"),
+     "supervisorReport", "supervisorSlept", "cmd", "cmdLabel", "canCommand", "applyViewOnly",
+     "avoidingWire", "renderAvoiding"].map(grab).join("\n"),
     "return { CLIENT_ID, supervising, applySupervisor, cmd, canCommand, applyViewOnly, supervisorBusy,",
+    "         setAvoiding: (a) => { avoiding = a; }, renderAvoiding, avoidingWire,",
     "         planned: () => { supPlanEnd = Date.now(); },",
     // what onFrame does for a frame the ladder ran on, and what the console's idle tick does
     "         stream: () => { supervisorStreamed(); supervisorReport(); },",
@@ -233,6 +245,64 @@ check("6b. the CONTROLS window never reports in and never holds the post, even w
             && WC.notes.some((n) => /chart window/.test(n)) && !WC.notes.some((n) => /TAKE OVER/.test(n)),
       () => WC.reports().length + " report(s); supervising=" + WC.supervising() + "; said '"
             + (WC.notes[0] || "(nothing)").slice(0, 70) + "'; sent " + WC.posts.map((p) => p.url).join(", "));
+
+// ── 6c-6f. THE AVOIDING FLAG IS THE SUPERVISING TAB'S, AND EVERY TAB SHOWS IT (2026-11-03) ───────────────────
+// Andy, 2026-11-02: "Create a flag that attaches to the ASV an reads AVOIDING until it's back on line or natural
+// transit". The flag can only be RAISED where the ladder runs, so review found it invisible in every other window:
+// a second chart tab, the controls window and a supervisor watching the same console showed nothing at all while
+// the console had her off her planned track. It now rides the heartbeat that is already there (avoidingWire) and
+// a view-only page renders what the console serves (renderAvoiding) - so these four checks are about WHICH TAB
+// SPEAKS, which is this suite's subject. The record's own raising and lowering is tests/ais_avoid.js's.
+const WAV = makeWorld("main");
+WAV.applySupervisor({ holder: WAV.CLIENT_ID, stale: false, tabs: 2 });
+WAV.setAvoiding({ why: "routed round", kind: "a dock / pier", since: 123, rejoin: 7 });
+WAV.advance(5000); WAV.stream();
+const bAv = JSON.parse(WAV.reports().slice(-1)[0].opt.body);
+WAV.setAvoiding(null);                       // she is back on her track: the next beat has to say so
+WAV.advance(5000); WAV.stream();
+const bClear = JSON.parse(WAV.reports().slice(-1)[0].opt.body);
+check("6c. the SUPERVISING tab publishes its AVOIDING record on the beat it already sends - why and what, never the "
+      + "rejoin index, which is an index into ITS route and means nothing in another page - and the beat that "
+      + "follows the record coming down carries null, so 'she is back on her track' can reach the other tabs",
+      () => bAv.avoiding && bAv.avoiding.why === "routed round" && bAv.avoiding.kind === "a dock / pier"
+            && bAv.avoiding.since === 123 && bAv.avoiding.rejoin === undefined
+            && "avoiding" in bClear && bClear.avoiding === null,
+      () => "raised " + JSON.stringify(bAv.avoiding) + "; lowered " + JSON.stringify(bClear.avoiding));
+
+const WAV2 = makeWorld("main");
+WAV2.applySupervisor({ holder: "another-tab", stale: false, tabs: 2 });
+WAV2.setAvoiding({ why: "steered clear", kind: "ITS OWN STALE RECORD", since: 1 });
+WAV2.advance(5000); WAV2.stream();
+const bView = JSON.parse(WAV2.reports().slice(-1)[0].opt.body);
+check("6d. a VIEW-ONLY tab publishes nothing, even holding a record of its own from before it was taken over: it "
+      + "cannot raise the flag and must not be able to lower the holder's",
+      () => "avoiding" in bView && bView.avoiding === null,
+      () => "sent " + JSON.stringify(bView.avoiding));
+
+WAV2.setS({ supervisor: { holder: "another-tab", stale: false, tabs: 2,
+                          avoiding: { why: "deviated", kind: "a shoal", since: 2 } } });
+WAV2.renderAvoiding();
+const tagView = { text: WAV2.els["#r_avoid"].textContent, display: WAV2.els["#r_avoid"].style.display };
+check("6e. ... and it RENDERS what the console serves instead, in the console's own words - the badge appears in a "
+      + "window that is watching rather than commanding, which is the whole point of the fix",
+      () => tagView.display === "block" && /AVOIDING/.test(tagView.text) && /DEVIATED ROUND/.test(tagView.text)
+            && /a shoal/.test(tagView.text) && !/ITS OWN STALE RECORD/.test(tagView.text),
+      () => "'" + tagView.text + "' display " + tagView.display);
+
+const WAV3 = makeWorld("main");
+WAV3.applySupervisor({ holder: WAV3.CLIENT_ID, stale: false, tabs: 1 });
+WAV3.setAvoiding({ why: "steered clear", kind: "a rock", since: 3 });
+WAV3.setS({ supervisor: { holder: WAV3.CLIENT_ID, stale: false, tabs: 1,
+                          avoiding: { why: "deviated", kind: "A BEAT OLD", since: 1 } } });
+WAV3.renderAvoiding();
+const tagHold = WAV3.els["#r_avoid"].textContent;
+WAV3.setAvoiding(null); WAV3.renderAvoiding();
+const tagDown = { text: WAV3.els["#r_avoid"].textContent, display: WAV3.els["#r_avoid"].style.display };
+check("6f. the SUPERVISING tab shows its OWN record and not the served one, which is up to a beat old - and when its "
+      + "record comes down the badge goes with it, rather than being held up by the console's copy of it",
+      () => /STEERED CLEAR OF a rock/.test(tagHold) && !/A BEAT OLD/.test(tagHold)
+            && tagDown.text === "" && tagDown.display === "none",
+      () => "holding '" + tagHold + "'; after '" + tagDown.text + "' display " + tagDown.display);
 
 // 7. a tab that the browser put to sleep says so when it comes back
 const W7 = makeWorld("main");
@@ -352,6 +422,7 @@ const onFrame = new Function("calls", "flags", [
   // stand-down itself; tests/governor_says.js owns the route the governor needs).
   "const supHeldSay = () => { calls.push('standdown'); };",
   "const adoptRunRoute = () => { calls.push('route'); };",
+  "const renderAvoiding = () => { calls.push('avoiding'); };",
   decl(/^const FRAME_FAULT_AFTER = [^;]*;/m),
   decl(/^let frameFaults = [^;]*;/m),
   grab("onFrame"),
@@ -365,7 +436,7 @@ onFrame({ data: JSON.stringify({ type: "tick" }) });
 onFrame({ data: "not a frame" });
 check("8c. every state frame is a pulse, taken BEFORE the ladder runs; a report goes only after the ladder ran on the "
       + "frame - one whose ladder threw is no report - and what is not a state frame is neither",
-      () => calls.join(",") === "pulse,ladder,report,standdown,route,pulse,ladder",
+      () => calls.join(",") === "pulse,ladder,report,standdown,avoiding,route,pulse,ladder",
       () => calls.join(","));
 // ⚠ 8e. AND THE CONSOLE'S OWN CONDITIONS ARE READ INSIDE THE TRY (2026-11-02, HONOLULU). The stand-down alert and
 // the mid-run route fetch were first written into onState, where everything is gated on a RUNNING boat - and a
@@ -373,11 +444,12 @@ check("8c. every state frame is a pulse, taken BEFORE the ladder runs; a report 
 // onFrame's TAIL, where consoleHealth and the rest live; a throw there ESCAPES the frame handler, which
 // tests/frame_health.js check 1 exists to forbid. They belong after the report and inside the try: a frame whose
 // ladder threw runs neither of them and is counted as a CONSOLE FAULT, said out loud, which is review #12's rule.
-check("8e. the stand-down alert and the mid-run route read come AFTER the report and INSIDE the try - a frame "
+check("8e. the stand-down alert, the AVOIDING flag and the mid-run route read all come AFTER the report and "
+      + "INSIDE the try - a frame "
       + "whose ladder threw runs neither, and a throw in either is a counted fault rather than an escape",
-      () => calls.join(",").indexOf("ladder,report,standdown,route") >= 0
+      () => calls.join(",").indexOf("ladder,report,standdown,avoiding,route") >= 0
             && calls.join(",").lastIndexOf("standdown") < calls.join(",").lastIndexOf("pulse")
-            && /supervisorReport\(\);[\s\S]{0,900}?supHeldSay\(\);\s*[^\n]*\n\s*adoptRunRoute\(\);/.test(H)
+            && /supervisorReport\(\);[\s\S]{0,1200}?supHeldSay\(\);[\s\S]{0,220}?renderAvoiding\(\);[\s\S]{0,220}?adoptRunRoute\(\);/.test(H)
             && !/storageCheck\(\);\s*\n\s*supHeldSay\(\)/.test(H),
       () => calls.join(","));
 // 8d. THE AIS POLL RIDES THE STREAM TOO (Andy, 2026-10-13: "AIS KEEP-OUTS BLIND" ... "Drove right through it"): a covered
