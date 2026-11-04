@@ -939,13 +939,22 @@ about a contact's way round moves. A way round that would pick
 her up **where she stopped** is refused and said, because performing it cancels the guard's own
 hold and spends the remainder with nothing moved; one walk step on is a real maneuver and is
 flown, which the first gate refused too (`> AIS_AROUND_STEP_M` rejects the nearest point the walk
-can ever return). **The gate asks the tail, not the distance** - the third review's finding: two
+can ever return). **The gate asked the tail and could not see the way in** - the third review's finding: two
 branches of the walk return a non-zero `skipM` with a tail *identical* to the remainder the guard
 condemned, because a step that lands on her first unflown waypoint nulls `to` and leaves `j` where
 it was. Measured at `skipM` 5, with the uploaded route equal to the condemned one, the episode and
 your offer both spent, under "ROUTED ROUND a rock ... picked up 5.0 m on from where she left it":
 the hold / ROUTED ROUND / hold loop the gate exists to stop, bought back by the gate that replaced
-it. Both resumes and the gate now build the tail with one function (`aroundTail`).
+it. Both resumes build the tail with one function (`aroundTail`) and refuse through one more
+(`aroundNoOpWhy`) - **in the resume, not in the gate**, which is the fourth review's finding: the
+tail is only half the route the resume uploads, and `via`, the routed way in, is where a charted
+maneuver does its work. Measured: a quay read across line 1 ahead of her with the line's own end
+point as her first unflown waypoint, so the tail WAS the condemned remainder - and the gate refused
+a maneuver whose way in the router laid round the quay in four waypoints, which 0d5a5d0 had
+performed, under a banner whose stated cause was false. The gate keeps the distance test only,
+which a zero-length way in cannot change. And where the router could find the way in only at the
+bare keep-clear buffer - no water for the plan's own margin - both resumes now SAY so
+(`insideStandoff`), as the Go-To, RTH and Upload banners have since 6 October 2026.
 
 And a doomed charted try waits for the chart, for her own position, or for the traffic to **report**
 something new - never for a clock, and no longer for the dead-reckoned boxes either. The third
@@ -1014,10 +1023,12 @@ derived every frame now, as the held offer's own predicate is.
 invisible in every other window - a second chart tab, the controls window, another machine watching
 the same console. It now rides the supervision heartbeat that was already there (the field's
 *presence*, not its value, so the "about to plan" POST cannot erase a live maneuver), is served to
-every page in the supervision snapshot, is taken from the **holder** only, and is dropped when that
-tab goes stale, says it is leaving or is forgotten - a badge whose author has stopped reporting is a
-promise nobody is behind. A view-only page renders the served record and never prefers one of its
-own, whose rejoin index may belong to a route the new holder has replaced.
+every page in the supervision snapshot, is taken from the **holder** only, and is not served while
+that tab is stale or forgotten - a badge whose author has stopped reporting is a promise nobody is
+behind. A tab that says it is LEAVING is a different event, because a reload says exactly the same
+thing: the record is kept, bounded by the same two-minute clock a silent tab is forgotten on, so
+the tab that comes back inherits it and a console whose last chart window was closed forgets it. A view-only page renders the served record and holds none of its own at all: the record goes with
+the post, in both directions, cleared on the event rather than on a frame's state word.
 
 The third review found three more in that half. **Both surfaces now ask one function:** only the
 chart badge had been made supervision-aware, so a view-only tab painted "AVOIDING — ROUTED ROUND
@@ -1026,11 +1037,13 @@ had been taken over blanked the badge while the row stayed red and unlowerable f
 run. **A handover no longer ends the maneuver:** the record used to be dropped the moment the post
 changed hands, so pressing TAKE OVER mid-way-round - or just reloading the supervising tab - took
 the flag off every chart in the building while the console still had her off her planned track, with
-no path back. The console keeps it, marks it inherited, and the new holder adopts it with no index,
-so what ends it there is your next command. **And `busy` no longer certifies it:** a holder that
+no path back. The console keeps it, marks it inherited, and the new holder adopts it with the pick-up's
+POSITION (`rejoin_ll`) and the console's own clock - no index, because an index counts into one
+page's array - so it comes down when she passes the pick-up, exactly as it would have in the tab
+that raised it, and the elapsed time it shows is the maneuver's, not the handover's. **And `busy` no longer certifies it:** a holder that
 said it was planning and then died went on having its badge served for up to a minute - measured at
 t+46 s with no tabs reporting, one second before the supervision stand-down takes the way off an
-armed running boat. The gate is the holder's own reporting age. The wire carries `why` and `kind`
+armed running boat. The gate is the holder's own reporting age. The wire carries `why`, `kind` and the pick-up's bare `rejoin_ll`
 and nothing else: the console stamps the record's arrival on its own clock and serves the elapsed
 time, which both surfaces show, so two machines agree where the difference of two clocks would not.
 **And the controls window shows it too**, which it could not do while three documents said it did -

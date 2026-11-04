@@ -121,6 +121,9 @@ function makeWorld(role) {
     // the busy report before a route search, and the stamp its end leaves (2026-10-12)
     decl(/^const SUPERVISOR_BUSY_S = [^;]*;/m),
     decl(/^let supPlanEnd = [^;]*;/m),
+    // the page remembers which inherited record it has already ADOPTED, so a handover's offer is taken
+    // once rather than on every frame of the console's orphan window (2026-11-03, the fourth review)
+    decl(/^let supAdopted = [^;]*;/m),
     "const AbortController = function(){ this.signal = {aborted: false}; this.abort = () => { this.signal.aborted = true; }; };",
     "const setTimeout = () => 0, clearTimeout = () => {};",
     // THE AVOIDING FLAG ACROSS TABS (2026-11-03). Only the supervising tab can RAISE it - it runs the ladder and
@@ -131,10 +134,12 @@ function makeWorld(role) {
     // WHICH TAB SPEAKS; the record's own raising and lowering is tests/ais_avoid.js's subject and is lifted there.
     "let avoiding = null;",
     "const avoidingNow = () => avoiding;",
-    // the RAISER is a stand-in for the same reason the reader is - what is asserted here is which tab speaks -
-    // and applySupervisor needs it, because it is what ADOPTS a record inherited at a handover (2026-11-03).
-    "const avoidingRaise = (why, kind, rejoin, wp) => { avoiding = {why, kind, since: Date.now(),"
-      + " rejoin: (rejoin == null ? null : rejoin), rejoinWp: wp || null}; };",
+    // ⚠ the RAISER is LIFTED, not mirrored (2026-11-03, the fourth review): the adoption now passes a FIFTH
+    // argument - the console's clock, backdated from the served for_s - and a 4-arg stand-in swallowed it, so
+    // 6g's duration assertion would have passed on nothing. A mirror that can drift is the harness defect that
+    // reddened three checks in round three; logClient is the one thing the real raiser needs stubbed.
+    "const logClient = () => {};",
+    grab("avoidingRaise"),
     // the sentence that says when the flag comes down, declared by the page (so a rename cannot leave this
     // suite asserting its own copy) - and the CONTROLS window's own badge, which reads it (2026-11-03)
     decl(/^const AVOID_TIP = [\s\S]*?;$/m),
@@ -301,12 +306,16 @@ WAV2.applySupervisor({ holder: "another-tab", stale: false, tabs: 2 });
 WAV2.setAvoiding({ why: "steered clear", kind: "ITS OWN STALE RECORD", since: 1 });
 WAV2.advance(5000); WAV2.stream();
 const bView = JSON.parse(WAV2.reports().slice(-1)[0].opt.body);
+// ⚠ 6d IS DEFENSE-IN-DEPTH NOW (2026-11-03, the fourth review): the transition clear in applySupervisor
+// means a view-only page cannot HOLD a record of its own any more - the harness injects one with setAvoiding
+// AFTER the view-only frame, a state the page can only reach through a late reply's write. What this check
+// pins from here on is avoidingWire's OWN supervising() gate, the second lock on the same door.
 check("6d. a VIEW-ONLY tab publishes nothing, even holding a record of its own from before it was taken over: it "
       + "cannot raise the flag and must not be able to lower the holder's",
       () => "avoiding" in bView && bView.avoiding === null,
       () => "sent " + JSON.stringify(bView.avoiding));
 
-WAV2.setS({ supervisor: { holder: "another-tab", stale: false, tabs: 2,
+WAV2.setS({ armed: true, estop: false, run: "running", supervisor: { holder: "another-tab", stale: false, tabs: 2,
                           avoiding: { why: "deviated", kind: "a shoal", since: 2 } } });
 WAV2.renderAvoiding();
 const tagView = { text: WAV2.els["#r_avoid"].textContent, display: WAV2.els["#r_avoid"].style.display };
@@ -319,7 +328,7 @@ check("6e. ... and it RENDERS what the console serves instead, in the console's 
 const WAV3 = makeWorld("main");
 WAV3.applySupervisor({ holder: WAV3.CLIENT_ID, stale: false, tabs: 1 });
 WAV3.setAvoiding({ why: "steered clear", kind: "a rock", since: 3 });
-WAV3.setS({ supervisor: { holder: WAV3.CLIENT_ID, stale: false, tabs: 1,
+WAV3.setS({ armed: true, estop: false, run: "running", supervisor: { holder: WAV3.CLIENT_ID, stale: false, tabs: 1,
                           avoiding: { why: "deviated", kind: "A BEAT OLD", since: 1 } } });
 WAV3.renderAvoiding();
 const tagHold = WAV3.els["#r_avoid"].textContent;
@@ -344,10 +353,12 @@ const WAV4 = makeWorld("main");
 WAV4.applySupervisor({ holder: "the-old-tab", stale: false, tabs: 2 });     // this tab is view-only to begin with
 const adoptedWhileView = WAV4.getAvoiding();
 WAV4.applySupervisor({ holder: WAV4.CLIENT_ID, stale: false, tabs: 2,
-                       avoiding: { why: "routed round", kind: "a dock / pier", for_s: 12.5, inherited: true } });
+                       avoiding: { why: "routed round", kind: "a dock / pier", for_s: 12.5, inherited: true,
+                                   rejoin_ll: { lat: 43.07, lon: -70.75 } } });
 const adopted = WAV4.getAvoiding();
-WAV4.setS({ supervisor: { holder: WAV4.CLIENT_ID, stale: false, tabs: 2,
-                          avoiding: { why: "routed round", kind: "a dock / pier", for_s: 12.5, inherited: true } } });
+WAV4.setS({ armed: true, estop: false, run: "running", supervisor: { holder: WAV4.CLIENT_ID, stale: false, tabs: 2,
+                          avoiding: { why: "routed round", kind: "a dock / pier", for_s: 12.5, inherited: true,
+                                      rejoin_ll: { lat: 43.07, lon: -70.75 } } } });
 WAV4.renderAvoiding();
 const tagAdopt = WAV4.els["#r_avoid"].textContent;
 // and a record the console does NOT mark inherited is not adopted: that is the holder's own, already its own
@@ -355,15 +366,141 @@ const WAV5 = makeWorld("main");
 WAV5.applySupervisor({ holder: WAV5.CLIENT_ID, stale: false, tabs: 1,
                        avoiding: { why: "deviated", kind: "a shoal", for_s: 3, inherited: false } });
 check("6g. the tab that TAKES OVER mid-maneuver adopts the flag the console kept for it - so AVOIDING stays up in "
-      + "the window now in charge, and is lowerable there - with no index, because the index counted into the "
-      + "other page's route; a record the console does not mark `inherited` is not adopted by anybody",
+      + "the window now in charge, and is lowerable there - with no index (it counted into the other page's "
+      + "route) but WITH the pick-up's POSITION from the wire, so avoidingNow lowers it like any raised record "
+      + "(the fourth review), and WITH the console's clock: the badge reads the real elapsed time, not 0:00; "
+      + "a record the console does not mark `inherited` is not adopted by anybody",
       () => adoptedWhileView === null
             && adopted && adopted.why === "routed round" && adopted.kind === "a dock / pier"
-            && adopted.rejoin === null && adopted.rejoinWp === null
+            && adopted.rejoin === null
+            && adopted.rejoinWp && Math.abs(adopted.rejoinWp.lat - 43.07) < 1e-9
+            && Math.abs(adopted.rejoinWp.lon + 70.75) < 1e-9
             && /AVOIDING/.test(tagAdopt) && /ROUTED ROUND a dock \/ pier/.test(tagAdopt)
+            && /\u00b7 0:1[0-9]/.test(tagAdopt)
             && WAV5.getAvoiding() === null,
       () => "while view-only " + JSON.stringify(adoptedWhileView) + "; adopted " + JSON.stringify(adopted)
           + "; badge '" + tagAdopt + "'; not-inherited " + JSON.stringify(WAV5.getAvoiding()));
+
+// ── 6j. THE RECORD GOES WITH THE POST, IN BOTH DIRECTIONS (2026-11-03, the fourth review's C3) ──────────────
+// A tab that loses the post keeps nothing it can no longer lower: fourteen minutes later, with the plan's
+// length moved on, taking the post back used to resurrect the stale record - preferred over the console's by
+// the `!avoiding` gate, republished by the heartbeat, and unlowerable because adoptRunRoute will not re-adopt
+// a route this page installed itself.
+const WJ = makeWorld("main");
+WJ.applySupervisor({ holder: WJ.CLIENT_ID, stale: false, tabs: 2 });
+WJ.setAvoiding({ why: "deviated", kind: "a dock / pier", since: 123, rejoin: 12 });
+WJ.applySupervisor({ holder: "chart-B", stale: false, tabs: 2 });
+const lostPost = WJ.getAvoiding();
+const lostWire = WJ.avoidingWire();
+WJ.applySupervisor({ holder: WJ.CLIENT_ID, stale: false, tabs: 2,
+                     avoiding: { why: "routed round", kind: "AIS: TUG SARAH B", for_s: 7, inherited: true } });
+const retaken = WJ.getAvoiding();
+check("6j. a tab that LOSES the post holds no record at all - and taking the post back adopts the CONSOLE's, "
+      + "never its own fourteen-minute-old one: the record belongs to the tenure that raised it, dropped on "
+      + "the EVENT and not on a frame's state word",
+      () => lostPost === null && lostWire === null
+            && retaken && retaken.why === "routed round" && retaken.kind === "AIS: TUG SARAH B",
+      () => "after losing the post " + JSON.stringify(lostPost) + ", wired " + JSON.stringify(lostWire)
+          + "; taken back " + JSON.stringify(retaken && retaken.kind));
+
+// ── 6j2. AND A REFUSED ESCAPE WRITES NOTHING BACK INTO A PAGE NO LONGER IN CHARGE ───────────────────────────
+// The escape's retraction fires on `r.refused` - and a 409 from a post that changed hands between the POST and
+// the reply IS a refusal (supervisor_refusal), so that one line could restore a record AFTER the transition
+// clear took it away. The statement is lifted BY TEXT: a retyped copy would pass on a page where the guard had
+// been reverted, and this suite already carries one mirror too many.
+{
+  const esc = (H.match(/^\s*if\(r && r\.refused\)\{ guardHeld = heldEsc\.kept; avoiding = .*$/m) || [""])[0];
+  check("6j2. the escape's refusal retraction restores the guard's record ALWAYS and the badge only while this "
+        + "page still holds the post - a 409 from a lost post is a refusal too, and it must not resurrect a "
+        + "record the transition clear just dropped",
+        () => /guardHeld = heldEsc\.kept/.test(esc) && /supervising\(\) \? heldEsc\.avoid : null/.test(esc),
+        () => "the page's own line: " + JSON.stringify(esc.trim().slice(0, 140)));
+}
+
+// ── 6j3. AND ADOPTING AN OFFER IS ONE ACT (the fourth review's C9, the page half) ───────────────────────────
+// applySupervisor runs on every state frame and the console goes on offering the inherited record for a short
+// window - so a Hold pressed just after a take-over had its own clear UNDONE on the next frame, re-raised into
+// a record nothing could lower. The offer is remembered; the SAME offer is taken once; a LATER offer is new.
+const WJ3 = makeWorld("main");
+WJ3.applySupervisor({ holder: WJ3.CLIENT_ID, stale: false, tabs: 2,
+                      avoiding: { why: "routed round", kind: "a dock / pier", for_s: 2, inherited: true } });
+const j3adopted = WJ3.getAvoiding();
+WJ3.setAvoiding(null);                                 // the operator pressed Hold: giveUpRoute cleared it
+WJ3.applySupervisor({ holder: WJ3.CLIENT_ID, stale: false, tabs: 2,
+                      avoiding: { why: "routed round", kind: "a dock / pier", for_s: 3, inherited: true } });
+const j3after = WJ3.getAvoiding();
+WJ3.applySupervisor({ holder: WJ3.CLIENT_ID, stale: false, tabs: 2, avoiding: null });
+WJ3.applySupervisor({ holder: WJ3.CLIENT_ID, stale: false, tabs: 2,
+                      avoiding: { why: "deviated", kind: "a shoal", for_s: 1, inherited: true } });
+const j3fresh = WJ3.getAvoiding();
+check("6j3. adopting an offer is ONE act: the operator's Hold inside the console's offer window STAYS DOWN - the "
+      + "same record still marked inherited on the next frame is not re-adopted - while a LATER, different offer "
+      + "(the console stopped offering, then a new handover) is adopted fresh",
+      () => j3adopted && j3adopted.why === "routed round" && j3after === null
+            && j3fresh && j3fresh.why === "deviated",
+      () => "adopted " + JSON.stringify(j3adopted && j3adopted.why) + "; after the Hold "
+          + JSON.stringify(j3after) + "; a later offer " + JSON.stringify(j3fresh && j3fresh.why));
+
+// ── 6c2. THE WIRE CARRIES THE PICK-UP'S POSITION - AND NOTHING PAGE-LOCAL (the fourth review's R5) ──────────
+const WC2 = makeWorld("main");
+WC2.applySupervisor({ holder: WC2.CLIENT_ID, stale: false, tabs: 2 });
+WC2.setAvoiding({ why: "routed round", kind: "a dock / pier", since: 123, rejoin: 7,
+                  rejoinWp: { lat: 43.07, lon: -70.75, e: 5, n: 9, seg: 2 } });
+WC2.advance(5000); WC2.stream();
+const bWp = JSON.parse(WC2.reports().slice(-1)[0].opt.body);
+check("6c2. a record with a pick-up puts rejoin_ll on the wire - lat and lon ONLY, never the waypoint object, "
+      + "whose e/n/seg are one page's frame - and the keys are exactly kind, rejoin_ll, why",
+      () => bWp.avoiding && Object.keys(bWp.avoiding).sort().join(",") === "kind,rejoin_ll,why"
+            && Object.keys(bWp.avoiding.rejoin_ll).sort().join(",") === "lat,lon"
+            && Math.abs(bWp.avoiding.rejoin_ll.lat - 43.07) < 1e-9,
+      () => "wired " + JSON.stringify(bWp.avoiding));
+
+// ── 6k. NOTHING AT ALL OVER A BOAT THAT IS STOPPED, E-STOPPED OR DISARMED - ON A VIEW-ONLY PAGE TOO ─────────
+// AVOID_TIP and the ops manual promise it, avoidingNow enforces it for the holder, and the served record had
+// no such gate: for up to a beat (and for as long as a holder's lowering was in flight) a view-only chart
+// showed AVOIDING over a stopped boat (the fourth review's census - masked only by the WRITER applying the
+// gate, which is this feature's recurring failure shape).
+const WK = makeWorld("main");
+WK.applySupervisor({ holder: "another-tab", stale: false, tabs: 2 });
+WK.setS({ armed: true, estop: false, run: "stopped",
+          supervisor: { holder: "another-tab", stale: false, tabs: 2,
+                        avoiding: { why: "routed round", kind: "a tug", for_s: 42 } } });
+WK.renderAvoiding();
+const tagStopped = WK.els["#r_avoid"].style.display;
+WK.setS({ armed: true, estop: false, run: "running",
+          supervisor: { holder: "another-tab", stale: false, tabs: 2,
+                        avoiding: { why: "routed round", kind: "a tug", for_s: 42 } } });
+WK.renderAvoiding();
+const tagRunning = WK.els["#r_avoid"].textContent;
+check("6k. a view-only page shows NOTHING over a stopped boat even while the console still serves a record - "
+      + "the same state gate the holder's reader applies, so AVOID_TIP's promise is true on every surface",
+      () => tagStopped === "none" && /AVOIDING/.test(tagRunning),
+      () => "stopped: display '" + tagStopped + "'; running: '" + tagRunning + "'");
+
+// ── 6g2. THE RELOAD'S PAGE HALF: a FRESH page adopts on its FIRST snapshot (the fourth review's C4/C8/C11) ──
+// 6g's page had been VIEW-ONLY first, so supHolder was already set when the inherited record arrived. A
+// reloaded tab is nothing of the kind: supHolder is null, `avoiding` is null, and the record arrives on the
+// reply to its very first beat - the exact scene the reload repair exists for, and no check covered it.
+const WRL = makeWorld("main");
+const firstWire = WRL.avoidingWire();
+WRL.applySupervisor({ holder: WRL.CLIENT_ID, stale: false, tabs: 1,
+                      avoiding: { why: "routed round", kind: "a dock / pier", for_s: 9.0, inherited: true } });
+const reloadAdopted = WRL.getAvoiding();
+WRL.setS({ armed: true, run: "running", estop: false,
+           supervisor: { holder: WRL.CLIENT_ID, stale: false, tabs: 1,
+                         avoiding: { why: "routed round", kind: "a dock / pier", for_s: 9.0, inherited: true } } });
+WRL.renderAvoiding();
+const reloadTag = WRL.els["#r_avoid"].textContent;
+const reloadWire = WRL.avoidingWire();
+check("6g2. a RELOADED supervising tab - no previous record, no view-only frame, supHolder null - adopts the "
+      + "record the console kept across the release on the reply to its FIRST beat, paints the badge, and "
+      + "re-publishes it as its own on the next beat",
+      () => firstWire === null
+            && reloadAdopted && reloadAdopted.why === "routed round" && reloadAdopted.rejoin === null
+            && /AVOIDING/.test(reloadTag) && /ROUTED ROUND a dock \/ pier/.test(reloadTag)
+            && reloadWire && reloadWire.why === "routed round" && reloadWire.kind === "a dock / pier",
+      () => "first wire " + JSON.stringify(firstWire) + "; adopted " + JSON.stringify(reloadAdopted)
+          + "; badge '" + reloadTag + "'; next wire " + JSON.stringify(reloadWire));
 
 // ── 6h. AND THE OPERATOR IS TOLD HOW LONG, FROM ONE CLOCK ────────────────────────────────────────────────────
 // `since` is the raising page's clock and no page ever read it; the console stamps the record's arrival on its
@@ -371,11 +508,11 @@ check("6g. the tab that TAKES OVER mid-maneuver adopts the flag the console kept
 // machines watching one console agree, which they could not have done from `since` (2026-11-03, review).
 const WAV6 = makeWorld("main");
 WAV6.applySupervisor({ holder: "another-tab", stale: false, tabs: 2 });
-WAV6.setS({ supervisor: { holder: "another-tab", stale: false, tabs: 2,
+WAV6.setS({ armed: true, estop: false, run: "running", supervisor: { holder: "another-tab", stale: false, tabs: 2,
                           avoiding: { why: "routed round", kind: "a tug", for_s: 42 } } });
 WAV6.renderAvoiding();
 const tagFor = WAV6.els["#r_avoid"].textContent;
-WAV6.setS({ supervisor: { holder: "another-tab", stale: false, tabs: 2,
+WAV6.setS({ armed: true, estop: false, run: "running", supervisor: { holder: "another-tab", stale: false, tabs: 2,
                           avoiding: { why: "routed round", kind: "a tug", for_s: 2 } } });
 WAV6.renderAvoiding();
 const tagShort = WAV6.els["#r_avoid"].textContent;

@@ -247,7 +247,7 @@ function planNogoRoute(from, to, opts) {
   if (pinNext) return pinNext;
   if (!nogo.ready || !nogo.ko || !nogo.frame)
     return { route: [{ lat: to.lat, lon: to.lon }], direct: true, degraded: true };
-  return { route: [{ lat: to.lat, lon: to.lon }], direct: true, routed: false };
+  return { route: [{ lat: to.lat, lon: to.lon }], direct: true, routed: false, insideStandoff: false };
 }
 function guiConfirm() { confirmAsked++; return Promise.resolve(confirmAnswer); }
 globalThis.window = globalThis;
@@ -375,16 +375,19 @@ eval([
   // ⚠ THE SHARED ANSWERS THE WAY ROUND IS BUILT ON (2026-11-03, the third review). aroundLine is the walk's own
   // branch test AND the standoff key - one function now, because the commit message claimed they were already
   // one and they were not; aroundStd is the standoff; aroundTail is the tail a way round uploads, asked by the
-  // no-op gate (aroundTailIsSame) and built by both resumes. LIFTED BESIDE THEIR CALLERS: the review's own
+  // RESUMES' no-op refusal (aroundNoOpWhy - the fourth review moved it out of the gate, which cannot see the
+  // way in) and built by both resumes. LIFTED BESIDE THEIR CALLERS: the review's own
   // blast-radius lens reported that two suites lift a changed function without the new names it calls, and the
   // ReferenceError that follows is swallowed by tryIt. The first run of this very edit proved it - the crash
   // guard caught it, not a check.
   grab("aroundLine"), grab("aroundStd"), grab("aroundTail"), grab("aroundTailIsSame"),
+  grab("aroundNoOpWhy"),   // the no-op refusal, asked by both resumes where `via` is known (2026-11-03)
   grab("aroundTrySig"), grab("aroundTriedSame"),
   // THE AVOIDING FLAG'S OWN RECORD AND READER (2026-11-02, "Create a flag that attaches to the ASV an
   // reads AVOIDING until it's back on line or natural transit"). LIFTED, not stubbed: this suite is where
   // the flag's behaviour is asserted, and a stubbed raiser would make its checks about the stub.
   grab("avoidingRaise"), grab("avoidingNow"),
+  grab("rejoinIdxIn"),   // avoidingNow's position match - an adopted or rebuilt route has no identity (2026-11-03)
   // ⚠ THE ONE READER BOTH SURFACES ASK, and the words and the duration it builds (2026-11-03, review): the
   // chart badge and the Mission card's Doing row disagreed because only one of them had been made
   // supervision-aware. Lifted together, or a scene that reaches one of them is a bare ReferenceError that
@@ -895,6 +898,65 @@ function guardHeld_at_mark() { return ll(0, 0); }
               + ", resumeRun clears (it must not) " + /avoiding = null/.test(resumeRunBody));
     avoiding = null; runLineIdx = -1; lineSwing = -1;
   }
+  // ⚠⚠ 4j5-4j8. AN ADOPTED RECORD CARRIES A POSITION, NOT AN INDEX (2026-11-03, the fourth review, measured).
+  // The adoption raises with `rejoin` null and the pick-up's lat/lon from the wire (`rejoin_ll`), and
+  // adoptRunRoute REBUILDS the route array with value-equal objects of its own (:9490) - so the lever is found
+  // by POSITION, each frame, in whatever route this page holds (rejoinIdxIn). Four scenes, one reader.
+  {
+    const route0 = [ll(-200, 0), ll(0, 0), ll(50, 0), ll(100, 0), ll(200, 0)];
+    const wpSave = mission.waypoints;
+    const setRoute = (r) => { runRoute = r; S.wp_total = r.length; };
+    S = { armed: true, estop: false, run: "running", behavior: "survey",
+          status: { cog_deg: 90, sog_kn: 6, heading_deg: 90, holding: false, speed_key: "survey" } };
+    asv = ll(-100, 0);
+    // 4j5: the adoption's own shape - no index, a POSITION - against a route rebuilt by adoptRunRoute's map
+    avoiding = null;
+    avoidingRaise("routed round", "a dock / pier", null, {lat: route0[3].lat, lon: route0[3].lon});
+    setRoute(route0.map(p => ({lat: p.lat, lon: p.lon})));
+    window._wpIndex = 2;  const adUp = avoidingNow();
+    window._wpIndex = 3;  const adAt = avoidingNow();
+    window._wpIndex = 4;  const adPast = avoidingNow();
+    check("4j5. an ADOPTED record - rejoin null, the pick-up's POSITION from the wire - lowers at the pick-up "
+          + "in the route the new holder recovered, although every object in that array is a value-equal "
+          + "rebuild: the match is by position (rejoinIdxIn), because identity cannot survive adoptRunRoute",
+          () => !!adUp && !!adAt && adPast === null && avoiding === null,
+          () => "short of it " + !!adUp + "; at it " + !!adAt + "; past it " + (adPast === null ? "down" : "UP"));
+    // 4j6: a route that holds a waypoint NEAR where the pick-up was is not the pick-up - 0.5 m, not 5 m
+    avoiding = null;
+    avoidingRaise("routed round", "a dock / pier", null, {lat: route0[3].lat, lon: route0[3].lon});
+    setRoute([ll(-200, 0), ll(103, 0), ll(400, 0)]);
+    window._wpIndex = 2;  const nearMiss = avoidingNow();
+    check("4j6. ... and a waypoint 3 m from where the pick-up was is NOT the pick-up: the tolerance is "
+          + "AIS_AROUND_NOOP_M (0.5 m, float slack - the wire is lossless), not LINE_MATCH_M's 5 m, so the "
+          + "record STANDS on a route that stopped holding it - lowering is the destructive direction",
+          () => !!nearMiss && nearMiss.why === "routed round",
+          () => "record " + JSON.stringify(nearMiss && nearMiss.why));
+    // 4j7: one position held TWICE - a reversal - and the tie goes to the LATER index
+    avoiding = null;
+    const twice = [ll(0, 0), ll(100, 0), ll(200, 0), ll(300, 0), ll(100, 0), ll(500, 0)];
+    avoidingRaise("routed round", "a shoal", null, {lat: twice[1].lat, lon: twice[1].lon});
+    setRoute(twice.map(p => ({lat: p.lat, lon: p.lon})));
+    window._wpIndex = 2;  const tUp = avoidingNow();
+    window._wpIndex = 4;  const tAt = avoidingNow();
+    window._wpIndex = 5;  const tPast = avoidingNow();
+    check("4j7. ... and a route holding the same position TWICE ties to the LATER index - a reversal must not "
+          + "lower the badge the first time she passes the spot",
+          () => !!tUp && !!tAt && tPast === null,
+          () => "mid-route " + !!tUp + "; at the second visit " + !!tAt
+              + "; past it " + (tPast === null ? "down" : "UP"));
+    // 4j8: a page with NO route to count into (a real link cannot read its plan back) lowers on ARRIVAL
+    avoiding = null;
+    avoidingRaise("routed round", "a dock / pier", null, {lat: route0[3].lat, lon: route0[3].lon});
+    runRoute = null; mission.waypoints = []; S.wp_total = 5;
+    asv = ll(50, 0);      const farOff = avoidingNow();
+    asv = ll(100, 0);     const arrived = avoidingNow();
+    check("4j8. ... and a page with NO route to count into at all - VcuLink cannot read its plan back, so a "
+          + "reloaded page on a real link never gets one - still lowers the adopted record on ARRIVAL at the "
+          + "position, the same measurement the one-waypoint tail makes below",
+          () => !!farOff && arrived === null && avoiding === null,
+          () => "50 m short " + !!farOff + "; at the pick-up " + (arrived === null ? "down" : "UP"));
+    avoiding = null; runLineIdx = -1; lineSwing = -1; mission.waypoints = wpSave;
+  }
   const up = sent.find(x => x.p === "/api/cmd/upload");
   const rte = (up && up.route) || [];
   check("4. CONTROL: the operator's RESUME on the same hold backs 12 boat lengths (92.5 m here), latches LOW and records the override - the console's return is the different one",
@@ -1268,10 +1330,11 @@ const EAST3 = () => [ll(-200, 0), ll(200, 0), ll(200, 60)];
   frame(); nowHolding(); sent = []; banners = []; logged = [];
   frame(); await settle();
   const kept = !!guardHeld, open = !!aisAvoid, said = banners.filter(b => /NO WAY ROUND/.test(b)).length;
-  check("5n. a way round whose TAIL is the very remainder the guard condemned is REFUSED, even though its skipM "
-        + "is a whole walk step: the first step lands on her first unflown waypoint, so nothing moves, and "
-        + "performing it would spend the episode, cancel the hold and hand her back onto the same track - the "
-        + "loop the gate exists to stop. She keeps holding, with the record and the operator's offer intact",
+  check("5n. a way round whose TAIL is the very remainder the guard condemned AND whose way in prepends nothing "
+        + "is REFUSED - by the RESUME, where `via` is known (the fourth review moved the question out of the "
+        + "gate: the router here answers direct, so the upload would be the condemned route unchanged, and "
+        + "performing it would spend the episode, cancel the hold and hand her back onto the same track). She "
+        + "keeps holding, with the record and the operator's offer intact; 5n2 is the acceptance twin",
         () => paths().length === 0 && kept && open && said === 1,
         () => "sent " + JSON.stringify(paths()) + ", record kept " + kept + ", episode open " + open
             + ", said " + said + "x; banners " + JSON.stringify(banners.map(b => b.slice(0, 90))));
@@ -2134,8 +2197,8 @@ const wayInOf = (rte, from, tail = 3) => [from, ...viaOf(rte, tail), rejoinOf(rt
   const onSent = paths().slice(), onSaid = banners.filter(b => /NEAR SIDE/.test(b));
   await resumeFromHere(ll(55, 2));                  // 10 m beyond her hull, inside a ship-length of her CENTER (e = 60)
   const inLenSent = paths().slice(), inLenSaid = banners.filter(b => /NEAR SIDE/.test(b));
-  check("15d. a point on the NEAR side of her, on her, or within her own length of her is refused in words - she would only be stopped again - and the refusal says the console routes round her itself NOW, there being nothing left to wait out; nothing is sent, the offer and the episode stand",
-        () => nearSent.length === 0 && nearSaid.length === 1 && /routes round her itself, on every frame until it finds a way\./.test(nearSaid[0])
+  check("15d. a point on the NEAR side of her, on her, or within her own length of her is refused in words - she would only be stopped again - and the refusal says the console routes round her itself, trying again whenever the answer could have changed - no clock left to wait out; nothing is sent, the offer and the episode stand",
+        () => nearSent.length === 0 && nearSaid.length === 1 && /routes round her itself, trying again whenever anything that could change the answer changes\./.test(nearSaid[0])
               && !/routes round her itself in \d+ s/.test(nearSaid[0])
               && onSent.length === 0 && onSaid.length === 2 && inLenSent.length === 0 && inLenSaid.length === 3
               && !!guardHeld && !!aisAvoid && pinCalls.length === 0,
@@ -2955,9 +3018,9 @@ const pausedSetToward = (kn) => { S = { ...S, status: { ...S.status, sog_kn: kn,
   sent = []; banners = []; notes = []; logged = [];
   const r20c = aisAroundNow(); await settle();
   replyState = {};
-  check("20c. the Start answers with the vessel's STATION-KEEP plan: no way round is announced - it says the way round is NOT RUNNING, why, and that the console keeps trying itself, every frame - and the held survey, the episode and the logged record stand",
+  check("20c. the Start answers with the vessel's STATION-KEEP plan: no way round is announced - it says the way round is NOT RUNNING, why, and that the console tries again when anything that could change the answer changes - and the held survey, the episode and the logged record stand",
         () => r20c === true && paths().includes("/api/cmd/start") && !banners.some(b => /ROUTED ROUND/.test(b))
-              && banners.some(b => /THE WAY ROUND IS NOT RUNNING/.test(b) && /answered Start with its station-keep plan/.test(b) && /keeps trying itself, every frame/.test(b))
+              && banners.some(b => /THE WAY ROUND IS NOT RUNNING/.test(b) && /answered Start with its station-keep plan/.test(b) && /tries again itself as soon as anything that could change the answer has changed/.test(b))
               && guardHeld === kept && aisAvoid === ep && runRoute === route20c && !logged.some(e => e.kind === "ais_around")
               && logged.some(e => e.kind === "resume_not_running" && /station-keep/.test(e.data.why)),
         () => "returned " + r20c + "; sent " + JSON.stringify(paths()) + "; banners " + JSON.stringify(banners.map(b => b.slice(0, 120)))
@@ -3338,10 +3401,10 @@ const LEG_NAME = { goto: "Go-To", rth: "Return-to-Home", transit: "transit" };
   const kept = guardHeld, ep = aisAvoid;
   sent = []; banners = []; logged = [];
   const r = aisAroundNow(); await settle();
-  check("23h. the Go-To's answer names the vessel's STATION-KEEP plan: no way round is announced - THE WAY ROUND IS NOT RUNNING, why, and that the console keeps trying itself, every frame - and the held Go-To and the episode stand, the attempt logged with the leg",
+  check("23h. the Go-To's answer names the vessel's STATION-KEEP plan: no way round is announced - THE WAY ROUND IS NOT RUNNING, why, and that the console tries again when anything that could change the answer changes - and the held Go-To and the episode stand, the attempt logged with the leg",
         () => r === true && paths().includes("/api/cmd/goto") && !banners.some(b => /ROUTED ROUND/.test(b))
               && banners.some(b => /THE WAY ROUND IS NOT RUNNING/.test(b) && /answered with its station-keep plan, not the Go-To/.test(b)
-                                   && /keeps trying itself, every frame/.test(b))
+                                   && /tries again itself as soon as anything that could change the answer has changed/.test(b))
               && guardHeld === kept && aisAvoid === ep && logged.some(e => e.kind === "resume_not_running" && e.data.leg === "goto"),
         () => "returned " + r + ", sent " + JSON.stringify(paths()) + ", banners " + JSON.stringify(banners.map(b => b.slice(0, 130)))
             + ", record " + (guardHeld === kept ? "kept" : "CHANGED") + ", episode " + (aisAvoid === ep ? "kept" : "CHANGED"));
@@ -3820,7 +3883,8 @@ const LEG_NAME = { goto: "Go-To", rth: "Return-to-Home", transit: "transit" };
               && /a\.route === b\.route/.test(sameCode) && /a\.at === b\.at/.test(sameCode)
               && /a\.std === b\.std/.test(sameCode)
               && !secondsSaid
-              && /keeps trying itself, every frame/.test(H),
+              && /tries again itself as soon as anything that could change the answer has changed/.test(H)
+              && !/keeps trying itself, every frame/.test(H) && !/on every frame until it finds a way/.test(H),
         () => "constant in code " + /AIS_AROUND_RETRY_MS/.test(codeOnly)
             + ", clock gate in the tick " + /aroundAt < /.test(tickCode)
             + ", a clock in the signature or the compare "
@@ -4326,6 +4390,115 @@ function stationing(beh, sogKn, cogDeg, o = {}) {
             + ", the badge asks it: " + /\bconst a = avoidingShown\(\);/.test(renderBody)
             + ", either derives its own: " + derives);
   avoiding = null; runLineIdx = -1; lineSwing = -1;
+}
+
+// ⚠⚠ 5n2/5q/5q2: THE NO-OP QUESTION IS ANSWERED BY THE ROUTE THE RESUME WOULD UPLOAD, NOT BY ITS TAIL ALONE
+// (2026-11-03, the fourth review, measured - its critical). The third review's gate asked aroundTailIsSame of
+// the walk's answer, and the tail is only HALF the route: both resumes build [...via, ...tail], and `via` - the
+// routed way IN, where a charted maneuver does its work - is planned inside the resume. So a quay read ACROSS
+// the plan, with the first clear point landing on her first unflown waypoint, read as "nothing would change"
+// while the resume would have prepended a routed detour: she held indefinitely under a banner whose stated
+// cause was false, and 0d5a5d0 had performed that maneuver. 5n keeps the REFUSAL side (a direct answer
+// prepends nothing); these three pin the acceptance side and the leg path's twin, from both directions.
+{
+  // 5n2: 5n's own geometry - the tail IS the condemned remainder - but the router answers with a detour.
+  const ROCK2 = {polys: [], lines: [], points: [{e: 0, n: -20.5, r: 0, kind: "a charted rock"}],
+                 marks: [], sys: [], chans: []};
+  offLines(ROCK2, [ll(-200, 0), ll(5, 0), ll(200, 0), ll(200, 60)]);
+  S.status.cog_deg = 180; S.status.heading_deg = null; S.status.sog_kn = 3;
+  frame(); nowHolding(); sent = []; banners = []; logged = []; pinCalls = [];
+  pinNext = {route: [ll(-30, 40), ll(-10, 20), ll(5, 0)], direct: false, routed: true};
+  frame(); await settle();
+  pinNext = null;
+  const up52 = sent.find(x => x.p === "/api/cmd/upload"), rte52 = (up52 && up52.route) || [];
+  check("5n2. the tail is the condemned remainder BUT the router prepends a way in: the maneuver is PERFORMED "
+        + "- the no-op question is asked in the resume, of the route it would upload, never of the tail alone "
+        + "(the fourth review's critical: the gate's tail test refused a routed way round a quay, which "
+        + "0d5a5d0 had performed, under a banner whose stated cause was false)",
+        () => paths().length === 4 && rte52.length > 2 && !guardHeld,
+        () => "sent " + JSON.stringify(paths()) + ", uploaded " + rte52.length + " wpts, router asked "
+            + pinCalls.length + "x, record kept " + !!guardHeld
+            + "; banners " + JSON.stringify(banners.map(b => b.slice(0, 80))));
+}
+{
+  // 5q/5q2/5t: the LEG path's twin sites (resumeHeldLeg's own refusal and disclosure). The quay lies ACROSS
+  // the last leg of a Go-To from e=20 to e=177; her first unflown waypoint is the leg's end point at e=200, so
+  // the walk advances, `atEnd` is true, and aisAroundLegPlan's tail is [pts[last]] - the condemned remainder
+  // by object identity. ⚠ The quay must END between 174.4 and 179.4 m: the walk's first clear point has to
+  // land within LINE_MATCH_M (5 m) of the leg's end point while that point stays >= 20.6 m clear.
+  const QRING = [{e: 20, n: -12}, {e: 177, n: -12}, {e: 177, n: 12}, {e: 20, n: 12}];
+  const QKO = {polys: [{ring: QRING, bb: bbOf(QRING), kind: "a dock / pier"}],
+               lines: [], points: [], marks: [], sys: [], chans: []};
+  const legNoOp = async (pin) => {
+    surveying(7, [], { ko: QKO, behavior: "goto" });
+    mission.lines = []; runLineIdx = -1; lineSwing = -1;
+    runRoute = [ll(-200, 0), ll(200, 0)]; window._wpIndex = 1; S.wp_total = runRoute.length;
+    replyState["/api/cmd/goto"] = { behavior: "goto" };
+    asv = ll(0, 0);
+    S.status.cog_deg = 90; S.status.heading_deg = 90;
+    frame();
+    nowHolding(); sent = []; banners = []; notes = []; logged = []; pinCalls = []; pinNext = pin || null;
+    frame(); await settle();
+    pinNext = null;
+    return {paths: paths().slice(), kept: !!guardHeld, open: !!aisAvoid, router: pinCalls.length,
+            // the WHOLE strings - a truncated capture hid the very clause 5t asserts on its first run
+            said: banners.concat(notes).slice(),
+            la: logged.find(e => e.kind === "ais_around")};
+  };
+  const q1 = await legNoOp(null);
+  check("5q. a held LEG whose tail is the condemned remainder and whose router answers DIRECT is REFUSED - "
+        + "nothing sent, the record and the episode stand, one NO WAY ROUND banner",
+        () => q1.paths.length === 0 && q1.kept && q1.open
+              && q1.said.filter(b => /NO WAY ROUND/.test(b)).length === 1,
+        () => JSON.stringify(q1.said) + "; sent " + JSON.stringify(q1.paths) + ", kept " + q1.kept
+            + ", open " + q1.open);
+  const q2 = await legNoOp({route: [ll(100, 60), ll(200, 0)], direct: false, routed: true});
+  check("5q2. ... and the SAME leg with the router prepending a way in is PERFORMED - the leg half of the "
+        + "fourth review's regression, which no earlier check touched",
+        () => q2.paths.includes("/api/cmd/goto") && !q2.kept,
+        () => "sent " + JSON.stringify(q2.paths) + ", kept " + q2.kept + "; " + JSON.stringify(q2.said));
+  const q3 = await legNoOp({route: [ll(100, 60), ll(200, 0)], direct: false, routed: true,
+                            insideStandoff: true, standoffM: 20.63});
+  check("5t. ... and a LEG way in the router could find only at the bare buffer is PERFORMED and SAID - "
+        + "resumeHeldLeg's own copy of the insideStandoff disclosure, because one surface fixed and its twin "
+        + "missed is this feature's recurring defect",
+        () => q3.paths.includes("/api/cmd/goto")
+              && q3.said.some(b => /NOT at the/.test(b) && /keep-clear buffer only/.test(b))
+              && !!q3.la && q3.la.data.inside_standoff === true,
+        () => "sent " + JSON.stringify(q3.paths) + "; logged inside_standoff "
+            + (q3.la ? JSON.stringify(q3.la.data.inside_standoff) : "(no record)")
+            + "; " + JSON.stringify(q3.said));
+}
+{
+  // 5s/5s2: the SURVEY path's insideStandoff disclosure (resumeHeldRun). 5o's geometry - the dock finger plus
+  // a quay - is the one where tautRoundHer returns null and the router's stub stands in.
+  const QUAY5 = {ring: [{e: 40, n: 6}, {e: 300, n: 6}, {e: 300, n: 36}, {e: 40, n: 36}]};
+  QUAY5.bb = bbOf(QUAY5.ring); QUAY5.kind = "a quay";
+  const both5 = {polys: [...FINGER.polys, QUAY5], lines: [], points: [], marks: [], sys: [], chans: []};
+  offLines(both5, EAST3());
+  frame(); nowHolding(); sent = []; banners = []; notes = []; logged = []; pinCalls = [];
+  pinNext = {route: [ll(50, 0)], direct: true, routed: false, insideStandoff: true, standoffM: 20.63};
+  frame(); await settle();
+  pinNext = null;
+  const la5 = logged.find(e => e.kind === "ais_around");
+  const b5 = banners.concat(notes).filter(b => /ROUTED ROUND/.test(b)).join(" | ");
+  check("5s. the router's own 'I could not keep that standoff' (insideStandoff) is SAID by the survey resume "
+        + "and logged - the Go-To, RTH and Upload have reported it since 2026-09-26, and this path announced "
+        + "'direct - the leg is clear' with insideStandoff true in hand",
+        () => /NOT at the/.test(b5) && /keep-clear buffer only/.test(b5)
+              && !!la5 && la5.data.inside_standoff === true,
+        () => "logged inside_standoff " + (la5 ? JSON.stringify(la5.data.inside_standoff) : "(no record)")
+            + "; banner " + JSON.stringify(b5.slice(0, 320)));
+  offLines(both5, EAST3());
+  frame(); nowHolding(); sent = []; banners = []; notes = []; logged = []; pinCalls = [];
+  frame(); await settle();
+  const la5b = logged.find(e => e.kind === "ais_around");
+  const b5b = banners.concat(notes).filter(b => /ROUTED ROUND/.test(b)).join(" | ");
+  check("5s2. ... and with the standoff KEPT nothing of the kind is said, and the log says false - the "
+        + "control without which 5s would pass on a hard-coded sentence",
+        () => !/NOT at the/.test(b5b) && !!la5b && la5b.data.inside_standoff === false,
+        () => "logged inside_standoff " + (la5b ? JSON.stringify(la5b.data.inside_standoff) : "(no record)")
+            + "; banner " + JSON.stringify(b5b.slice(0, 220)));
 }
 
 Date.now = realNow;

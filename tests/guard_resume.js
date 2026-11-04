@@ -353,11 +353,12 @@ eval([
   // round's fixes, and the same argument covers them.
   grabDecl("_koLessKey"), grab("koWithoutFeature"), grab("aisReportSig"),
   grab("aroundOthers"), grab("aroundLine"), grab("aroundStd"), grab("aroundTail"), grab("aroundTailIsSame"),
+  grab("aroundNoOpWhy"),
   grab("aroundTrySig"), grab("aroundTriedSame"), grab("aroundMarginSay"), grab("herOnlyModel"),
   // THE AVOIDING FLAG'S OWN RECORD AND READER (2026-11-02, "Create a flag that attaches to the ASV an
   // reads AVOIDING until it's back on line or natural transit"). LIFTED, not stubbed: this suite is where
   // the flag's behaviour is asserted, and a stubbed raiser would make its checks about the stub.
-  grab("avoidingRaise"), grab("avoidingNow"),
+  grab("avoidingRaise"), grab("avoidingNow"), grab("rejoinIdxIn"),
   grab("avoidingShown"), grab("avoidingSay"), grab("avoidingForS"), grab("avoidingDur"), grabDecl("AVOID_TIP"),      // everything except the one thing she is getting past (2026-11-02)   // HER when "she" is charted - the model's own poly (2026-11-02)
   grab("govRaiseHeld"),   // the governor's refusal-to-raise, which the speed-zone release banner asks too (2026-11-02)
   grabDecl("RESUME_BACK_LENGTHS"),

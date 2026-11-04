@@ -452,13 +452,19 @@ sv10.beat("main", now=T)
 sv10.beat("main", avoiding=RAISED, set_avoiding=True, now=T + 1)
 forgotten = sv10.check_once(now=T + 1 + A.SUPERVISOR_FORGET_S + 1)
 check("14. the supervising tab's AVOIDING record is served to every page - from the HOLDER only, with a POST that says "
-      "nothing about it leaving it alone and the holder's own null lowering it - and it is not served by a tab that has "
-      "gone stale, said it is leaving, or been forgotten",
+      "nothing about it leaving it alone and the holder's own null lowering it - and it is not SERVED by a tab that "
+      "has gone stale, said it is leaving, or been forgotten: a release KEEPS the record (a reload says it is "
+      "leaving too), the forget DROPS it, and the gate is what answers null meanwhile",
       # the record was stamped at T+1, so `for_s` counts from there on the CONSOLE's clock
       lambda: served(pub, for_s=0.0, inherited=False) and served(notMine, for_s=2.0, inherited=False)
       and served(busyKept, for_s=3.0, inherited=False)
       and lowered["avoiding"] is None and stalePub["avoiding"] is None and released["avoiding"] is None
-      and forgotten["avoiding"] is None,
+      and forgotten["avoiding"] is None
+      # ⚠ TEETH (2026-11-03, the fourth review): the released null is the REPORTING GATE's answer - the record
+      # itself is KEPT across a release, because a reload says "I am leaving" in exactly the same beacon as a
+      # close. The forgotten null is the DROP's. Without these two internals the whole repair can be undone and
+      # this check stays green - measured, 22/22 on the undone sidecar.
+      and sv9._avoiding is not None and sv10._avoiding is None,
       lambda: json.dumps({"published": pub["avoiding"], "a view-only tab's null": notMine["avoiding"],
                           "after the busy POST": busyKept["avoiding"], "lowered": lowered["avoiding"],
                           "stale": stalePub["avoiding"], "released": released["avoiding"],
@@ -476,26 +482,40 @@ check("14. the supervising tab's AVOIDING record is served to every page - from 
 sv11 = A.Supervision()
 sv11.beat("main", now=T)
 sv11.beat("main", avoiding=RAISED, set_avoiding=True, now=T + 1)
-handed = sv11.beat("other", take=True, now=T + 2)              # the TAKE OVER post: its own `avoiding` is null
-handedAgain = sv11.beat("other", avoiding=None, set_avoiding=True, now=T + 3)   # and its next empty beat
+# ⚠ THE FAITHFUL GRANT BEAT (2026-11-03, the fourth review): supervisorBeat always sends `avoiding:
+# avoidingWire()`, and a view-only page's wire is null - so the TAKE OVER post carries a null STATEMENT,
+# composed before its own reply handed the page the record. That one beat must not erase; the page adopts in
+# that very reply (applySupervisor), so every LATER statement from the holder has seen the record and is real.
+handed = sv11.beat("other", take=True, avoiding=None, set_avoiding=True, now=T + 2)
 adopted = sv11.beat("other", avoiding={"why": "routed round", "kind": "a dock / pier"},
-                    set_avoiding=True, now=T + 4)              # the page adopted it: now it is the holder's own
-afterAdopt = sv11.beat("other", avoiding=None, set_avoiding=True, now=T + 5)    # ... and can be lowered
-# and a holder that NEVER adopts cannot strand the flag: past the orphan window its empty beats erase it
+                    set_avoiding=True, now=T + 3)              # the page adopted it: now it is the holder's own
+afterAdopt = sv11.beat("other", avoiding=None, set_avoiding=True, now=T + 4)    # ... and can be lowered
+# ⚠ AND A NULL ON THE HOLDER'S NEXT BEAT IS THE OPERATOR'S OWN LOWERING, HONORED (the fourth review's C9: the
+# old orphan window held every null off for 10 s, so a Hold pressed just after a take-over was DISCARDED by the
+# console and then UNDONE by the page's re-adoption - measured at for_s 3599 an hour on)
+sv11b = A.Supervision()
+sv11b.beat("main", now=T)
+sv11b.beat("main", avoiding=RAISED, set_avoiding=True, now=T + 1)
+sv11b.beat("other", take=True, avoiding=None, set_avoiding=True, now=T + 2)
+lowered14c = sv11b.beat("other", avoiding=None, set_avoiding=True, now=T + 3)
+# and a holder that NEVER adopts cannot strand the flag: its first post-grant statement erases it
 sv12 = A.Supervision()
 sv12.beat("main", now=T)
 sv12.beat("main", avoiding=RAISED, set_avoiding=True, now=T + 1)
 sv12.beat("other", take=True, now=T + 2)
 neverAdopt = sv12.beat("other", avoiding=None, set_avoiding=True, now=T + 2 + A.SUPERVISOR_STALE_S + 1)
 check("14c. a HANDOVER keeps the record and offers it to the new holder, marked `inherited` - the flag is a fact "
-      "about the BOAT, not about which tab is reporting - and the new holder's empty beats cannot erase a record "
-      "it has not adopted yet, while one that never adopts cannot strand it past the orphan window",
-      lambda: served(handed, for_s=1.0, inherited=True) and served(handedAgain, for_s=2.0, inherited=True)
-      and served(adopted, for_s=3.0, inherited=False) and afterAdopt["avoiding"] is None
+      "about the BOAT, not about which tab is reporting. The beat that TAKES the post cannot erase a record it "
+      "was composed before seeing; the holder's NEXT statement is honored both ways - an adoption keeps the "
+      "console's clock running, and a null is the operator's own lowering, no longer discarded for a window",
+      lambda: served(handed, for_s=1.0, inherited=True)
+      and served(adopted, for_s=2.0, inherited=False) and afterAdopt["avoiding"] is None
+      and lowered14c["avoiding"] is None
       and neverAdopt["avoiding"] is None,
-      lambda: json.dumps({"handed over": handed["avoiding"], "its next empty beat": handedAgain["avoiding"],
+      lambda: json.dumps({"handed over": handed["avoiding"],
                           "adopted": adopted["avoiding"], "then lowered": afterAdopt["avoiding"],
-                          "never adopted, past the window": neverAdopt["avoiding"]}))
+                          "lowered straight after the grant": lowered14c["avoiding"],
+                          "never adopted": neverAdopt["avoiding"]}))
 
 # ── 14d. AND `busy` DOES NOT CERTIFY A PROMISE (2026-11-03, review, measured) ─────────────────────────────────
 # `stale` carries `and not busy`, and `busy` is what the page POSTs for SUPERVISOR_BUSY_MAX_S immediately before
@@ -523,6 +543,102 @@ check("14d. ... and a holder that said it was PLANNING and then died stops havin
                                        "stale": busyAt46["stale"], "tabs": busyAt46["tabs"],
                                        "age_s": busyAt46["age_s"]}}))
 
+# ── 14e. A RELOAD DOES NOT END THE MANEUVER EITHER (2026-11-03, the fourth review: C4/C8/C11, one defect
+# three lenses found independently). `pagehide` fires on F5 as readily as on a close and sends the same
+# {release: true} beacon; the reloaded page mints a new CLIENT_ID, takes the empty post, and nothing in it can
+# raise the flag - every raise sits inside a command's own reply handler. The record is a fact about the BOAT:
+# kept across the release, offered `inherited` to the tab that comes back, adopted, lowerable, on the console's
+# own clock throughout. This is the scenario the README, both manuals and the class's own comment said was
+# fixed, cemented the other way by this very suite - the fourth review measured check 14 green either way.
+sv13 = A.Supervision()
+sv13.beat("tabA", now=T)
+sv13.beat("tabA", avoiding=RAISED, set_avoiding=True, now=T + 1)
+relSnap = sv13.release("tabA", now=T + 4)
+keptAcrossRelease = sv13._avoiding is not None     # captured HERE: the lowering leg below nulls it, rightly
+reborn = sv13.beat("tabA2", avoiding=None, set_avoiding=True, now=T + 6)      # the reloaded page's first beat
+rebornAdopt = sv13.beat("tabA2", avoiding=RAISED, set_avoiding=True, now=T + 8)
+rebornLower = sv13.beat("tabA2", avoiding=None, set_avoiding=True, now=T + 20)
+# ... and with a SECOND chart tab still open, closing the supervising one offers the record to the survivor
+sv14 = A.Supervision()
+sv14.beat("tabA", now=T)
+sv14.beat("tabB", now=T)
+sv14.beat("tabA", avoiding=RAISED, set_avoiding=True, now=T + 1)
+sv14.beat("tabB", now=T + 2)
+sv14.release("tabA", now=T + 3)
+survivor = sv14.beat("tabB", avoiding=None, set_avoiding=True, now=T + 4)
+check("14e. a RELOAD keeps the record: the release's own snapshot serves nothing (nobody is reporting), the "
+      "reloaded tab's FIRST beat takes the empty post and is served the record `inherited` with the console's "
+      "clock still running, its adoption makes it the holder's own, its null lowers it - and a second chart "
+      "tab closing the supervising one is offered the same record",
+      lambda: relSnap["avoiding"] is None and keptAcrossRelease
+      and served(reborn, for_s=5.0, inherited=True)
+      and served(rebornAdopt, for_s=7.0, inherited=False)
+      and rebornLower["avoiding"] is None
+      and served(survivor, for_s=3.0, inherited=True),
+      lambda: json.dumps({"the release's snapshot": relSnap["avoiding"],
+                          "the reloaded tab's first beat": reborn["avoiding"],
+                          "adopted": rebornAdopt["avoiding"], "lowered": rebornLower["avoiding"],
+                          "the surviving tab": survivor["avoiding"]}))
+
+# ── 14f. AND THE KEPT RECORD IS BOUNDED, FROM THE INSTANT THE POST WENT EMPTY (the fourth review) ─────────────
+# SUPERVISOR_FORGET_S, the same clock a silent tab is forgotten on: without it a console whose last chart window
+# was closed serves a 24-hour-old maneuver to the first tab opened the next morning (measured, for_s 86521).
+# Three legs and the one NON-OBVIOUS writer: `beat` must stop the no-holder clock when a tab takes the post, or
+# a live maneuver's record is pruned out from under a reporting holder at 120 s - measured, dark at T+124 with
+# the clock restarted at 38 s. That one line is the load-bearing pair of this check.
+FORGET = A.SUPERVISOR_FORGET_S
+svf = A.Supervision()
+svf.beat("tabA", now=T)
+svf.beat("tabA", avoiding=RAISED, set_avoiding=True, now=T + 1)
+svf.release("tabA", now=T + 4)
+justIn = svf.beat("late-tab", avoiding=None, set_avoiding=True, now=T + 4 + FORGET - 2)   # still offered
+svf2 = A.Supervision()
+svf2.beat("tabA", now=T)
+svf2.beat("tabA", avoiding=RAISED, set_avoiding=True, now=T + 1)
+svf2.release("tabA", now=T + 4)
+svf2.check_once(now=T + 4 + FORGET + 1)                                       # the 1 Hz watch, nobody about
+tooLate = svf2.beat("morning-tab", avoiding=None, set_avoiding=True, now=T + 4 + FORGET + 3)
+# the live-holder leg: a reload inside the window, then a maneuver flown long past FORGET_S
+svf3 = A.Supervision()
+svf3.beat("tabA", now=T)
+svf3.beat("tabA", avoiding=RAISED, set_avoiding=True, now=T + 1)
+svf3.release("tabA", now=T + 4)
+svf3.beat("tabA2", avoiding=None, set_avoiding=True, now=T + 6)
+svf3.beat("tabA2", avoiding=RAISED, set_avoiding=True, now=T + 8)             # adopted: a holder answers for it
+_t = T + 8
+while _t < T + 8 + FORGET + 40:                                               # reporting every 2 s, well past the bound
+    _t += 2
+    longHaul = svf3.beat("tabA2", avoiding=RAISED, set_avoiding=True, now=_t)
+check("14f. the record kept across a release is forgotten SUPERVISOR_FORGET_S after the post went empty - a tab "
+      "inside the bound inherits it, one past the bound gets nothing and the record is gone (the watch's own "
+      "1 Hz prune, no beat needed) - while a tab that TOOK the post stops that clock, so a live maneuver flown "
+      "long past the bound never loses its badge and never restarts its elapsed time",
+      lambda: served(justIn, for_s=FORGET + 1.0, inherited=True)
+      and tooLate["avoiding"] is None and svf2._avoiding is None
+      and served(longHaul, for_s=_t - (T + 1), inherited=False),
+      lambda: json.dumps({"inside the bound": justIn["avoiding"], "past it": tooLate["avoiding"],
+                          "a live holder at +%.0f s" % (_t - T): longHaul["avoiding"]}))
+
+# ── 14g. ONE MANEUVER SUCCEEDING ANOTHER RE-STAMPS THE CLOCK (the fourth review's rig found the gap) ──────────
+# Nothing drove one record straight to a DIFFERENT record, so _same_avoiding's own body had no coverage: it
+# could answer True always and 22 checks stayed green. A new maneuver must not inherit the old one's elapsed
+# time - the page's raiser overwrites unconditionally, so back-to-back maneuvers are one wire transition.
+svg = A.Supervision()
+svg.beat("main", now=T)
+svg.beat("main", avoiding=RAISED, set_avoiding=True, now=T + 1)
+svg.beat("main", avoiding=RAISED, set_avoiding=True, now=T + 300)             # the same maneuver: clock runs
+sameLong = svg.snapshot(now=T + 300)
+nextMan = svg.beat("main", avoiding={"why": "deviated", "kind": "a shoal"},
+                   set_avoiding=True, now=T + 301)                            # a DIFFERENT one: clock restarts
+check("14g. the elapsed time is per MANEUVER: the same record beat after beat keeps one clock, and a different "
+      "why/kind arriving on the next beat - one maneuver chained straight into another, no null between - "
+      "restarts it at zero rather than inheriting five minutes",
+      lambda: sameLong["avoiding"] is not None and sameLong["avoiding"]["for_s"] == 299.0
+      and nextMan["avoiding"] is not None and nextMan["avoiding"]["why"] == "deviated"
+      and nextMan["avoiding"]["for_s"] == 0.0,
+      lambda: json.dumps({"the same maneuver at +300 s": sameLong["avoiding"],
+                          "the next maneuver's first frame": nextMan["avoiding"]}))
+
 # 14b. IT IS CLIENT-SUPPLIED, so it is rebuilt field by field: anything that is not one of the three maneuvers the
 # flag names is nothing, the kind is capped, and nothing a page sends can raise an exception in the heartbeat - which
 # is a safety channel, and the one POST that must never be breakable by a bad body.
@@ -541,9 +657,21 @@ avVals = {
     "extra fields": clean({"why": "deviated", "kind": "a shoal", "since": 1.0, "rejoin": 7, "odd": {"a": [1, 2]}}),
     "not a dict": clean("AVOIDING"),
     "none": clean(None),
+    # ⚠ rejoin_ll IS THE ONE CLIENT FIELD THAT IS KEPT (2026-11-03, the fourth review) - two floats, finite and
+    # in range, rebuilt rather than stored, the key ABSENT when there is none (this dict is compared and served
+    # WHOLE). The unvalidated-storage mutant passed this suite 22/22 before these cases existed - measured.
+    "a pick-up": clean({"why": "routed round", "kind": "a pier", "rejoin_ll": {"lat": 43.07, "lon": -70.75}}),
+    "ll not a dict": clean({"why": "routed round", "kind": "a pier", "rejoin_ll": "over there"}),
+    "ll half": clean({"why": "routed round", "kind": "a pier", "rejoin_ll": {"lat": 43.0}}),
+    "ll nan": clean({"why": "routed round", "kind": "a pier", "rejoin_ll": {"lat": float("nan"), "lon": 1}}),
+    "ll inf": clean({"why": "routed round", "kind": "a pier", "rejoin_ll": {"lat": float("inf"), "lon": 1}}),
+    "ll out of range": clean({"why": "routed round", "kind": "a pier", "rejoin_ll": {"lat": 991, "lon": 1}}),
+    "ll nested junk": clean({"why": "routed round", "kind": "a pier", "rejoin_ll": {"lat": {"a": [1]}, "lon": 1}}),
 }
 check("14b. ... and the record is rebuilt field by field from what the page sent: an unknown maneuver, a missing one and "
-      "a body that is not an object are all nothing; the kind is capped; and every other field a page sends - `since` "
+      "a body that is not an object are all nothing; the kind is capped; a valid rejoin_ll is kept as two bare "
+      "floats and every malformed one - a string, half a pair, NaN, infinity, out of range, nested junk - is "
+      "dropped with the KEY ABSENT and no exception; and every other field a page sends - `since` "
       "and `rejoin` included - is simply not stored",
       lambda: avVals["ok"] == {"why": "deviated", "kind": "a shoal"}
       and avVals["unknown why"] is None and avVals["no why"] is None and avVals["not a dict"] is None
@@ -552,7 +680,11 @@ check("14b. ... and the record is rebuilt field by field from what the page sent
       and len(avVals["long kind"]["kind"]) == 120
       and avVals["a since is dropped"] == {"why": "deviated", "kind": "a shoal"}
       and avVals["odd since"] == {"why": "deviated", "kind": "a shoal"}
-      and sorted(avVals["extra fields"].keys()) == ["kind", "why"],
+      and sorted(avVals["extra fields"].keys()) == ["kind", "why"]
+      and avVals["a pick-up"] == {"why": "routed round", "kind": "a pier",
+                                  "rejoin_ll": {"lat": 43.07, "lon": -70.75}}
+      and all(avVals[k] == {"why": "routed round", "kind": "a pier"}
+              for k in ("ll not a dict", "ll half", "ll nan", "ll inf", "ll out of range", "ll nested junk")),
       lambda: json.dumps({k: (dict(v, kind="<%d chars>" % len(v["kind"]))
                               if isinstance(v, dict) and len(str(v.get("kind", ""))) > 40 else v)
                           for k, v in avVals.items()}))

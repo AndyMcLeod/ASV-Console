@@ -189,7 +189,7 @@ function makePage(role, id, born, opts) {
   const f = new Function(...names,
     "const UI_BORN = born;\n" + STATE + "\n" +
     "let tipEl = null; const tipSay = () => {};\n" +     // nothing hovered here: the tip's half is ui_tooltips 13-18
-    "const SUPERVISES = UIROLE === \"main\"; let supHolder = null, supStale = false, supSaidViewOnly = false, supWas = true;\n" +
+    "const SUPERVISES = UIROLE === \"main\"; let supHolder = null, supStale = false, supSaidViewOnly = false, supWas = true, supAdopted = null;\n" +
     "let supBeatMs = 2000, supStaleMs = 10000;\n" + grabDecl("uiSyncLast") + "\n" + SRC + "\n" +
     "return { setupUISplit, pushUISync, applySupervisor, peers: () => [...uiPeers.keys()], yielded: () => uiYielded, " +
     "home: () => uiCardsHome };");

@@ -10808,18 +10808,47 @@ class Supervision:
         # the AVOIDING flag off EVERY chart in the building while the console still had her off her planned
         # track, with no path back: every raise sits inside a command's own reply handler, and the new holder
         # commanded nothing. The flag is a fact about the BOAT, so it is kept and offered to the new holder,
-        # which adopts it on its next frame and can lower it like any other afterwards. This window bounds that:
-        # until it runs out the new holder's empty beats cannot erase a record it has not adopted yet, and after
-        # it they can - so a page that never adopts (an old build, a harness) cannot strand the flag for ever.
+        # which adopts it on its next frame and can lower it like any other afterwards. This window is how long
+        # the record is OFFERED as `inherited` - long enough for a new holder that is mid route search (11 s and
+        # 17.8 s measured, on its own thread) to come back and take it.
+        # ⚠⚠ AND IT IS NOT WHAT PROTECTS THE RECORD FROM AN EMPTY BEAT: exactly ONE beat needs that, the
+        # one that GRANTS the post, because that beat was built before its reply carried the record (the page
+        # adopts in that very reply handler, applySupervisor). Every later beat from the new holder has seen
+        # the record, so its null is a real lowering - and holding those off for the whole window DISCARDED
+        # the operator's own Hold, Stop, Resume-from-here or upload, which the page's adoption then put back
+        # (2026-11-03, the fourth review, measured). See `granted` in beat.
         self._avoiding_orphan_until = 0.0
+        # ⚠⚠ AND A RECORD WITH NO HOLDER AT ALL IS FORGOTTEN ON THE SAME CLOCK A SILENT TAB IS (the fourth
+        # review). `release` keeps the record, because `pagehide` fires on a RELOAD and sends the same beacon as
+        # a close; this is when that kept record stops being a fact about the boat. SUPERVISOR_FORGET_S after the
+        # post went empty - exactly the bound the forgotten-holder path has always imposed, measured from the
+        # same instant: a tab killed mid-maneuver keeps its record until _prune forgets it, 120 s after its last
+        # beat. Without it a console whose last chart window was closed serves a 24-hour-old maneuver to the
+        # first tab opened the next morning (measured). 0.0 means a tab holds the post and answers for it.
+        self._avoiding_forget_at = 0.0
 
-    def _drop_holder(self):
-        """The post is open again - and the holder's AVOIDING record goes with it, because nobody is left who
-        can lower it. Written once rather than at the three sites that used to do it by hand.
-        ⚠ A HANDOVER is NOT this: there the record is KEPT for the new holder to adopt (see beat)."""
+    def _drop_holder(self, keep_avoiding_until=None):
+        """The post is open again. Written once rather than at the sites that used to do it by hand - but the
+        AVOIDING record does NOT go with it unconditionally, because the two callers are not the same event:
+        `keep_avoiding_until` is the instant a kept record stops being one (see _avoiding_forget_at).
+
+        ⚠⚠ A TAB SAYING IT IS LEAVING IS NOT A TAB THAT IS GONE (2026-11-03, the fourth review, measured).
+        `pagehide` fires on a RELOAD as readily as on a close and sends the same beacon, so nulling the record
+        here took AVOIDING off every chart in the building the moment the operator pressed F5 - the one case
+        this class's comment, the README, both built manuals and the commit message all said it kept. The
+        reloaded page mints a new CLIENT_ID, takes the empty post and has no path back: every raise sits inside
+        a command's own reply handler and a fresh page commanded nothing. So RELEASE keeps it, bounded, and
+        the PRUNE - a holder silent for SUPERVISOR_FORGET_S - drops it, which is where "nobody is left who can
+        lower it" is actually true. Nothing is published to nobody meanwhile: snapshot's `reporting` gate
+        serves no record while there is no holder.
+        ⚠ A HANDOVER is NOT this at all: there the post never opens (see beat)."""
         self._holder, self._since, self._said_stale = None, None, False
         self._busy_until, self._said_busy = 0.0, False
-        self._avoiding, self._avoiding_at, self._avoiding_orphan_until = None, 0.0, 0.0
+        self._avoiding_orphan_until = 0.0     # the adoption handshake belonged to the holder that just went
+        if keep_avoiding_until is None or self._avoiding is None:
+            self._avoiding, self._avoiding_at, self._avoiding_forget_at = None, 0.0, 0.0
+        else:
+            self._avoiding_forget_at = keep_avoiding_until
 
     @staticmethod
     def _clean_avoiding(a):
@@ -10838,7 +10867,27 @@ class Supervision:
             # whatever two clocks disagree by. The console stamps the record's arrival itself (see beat) and
             # serves `for_s`, so every reader gets one clock's answer - and that is one fewer client-supplied
             # number stored on a safety channel, which is the standard the rest of this class holds to.
-            return {"why": why, "kind": kind}
+            out = {"why": why, "kind": kind}
+            # ⚠⚠ AND THE REJOIN POSITION, WHICH IS WHAT MAKES AN ADOPTED RECORD LOWERABLE AT ALL
+            # (2026-11-03, the fourth review). The holder's rejoin INDEX is still refused - it counts into one
+            # page's array and means nothing in another's - but the lat/lon it points at is a fact about the
+            # water, so the page that INHERITS the record finds the same waypoint in the route it holds and
+            # lowers the flag at the pick-up like any other. Without it an adopted record had no lever the
+            # maneuver itself could pull: measured at waypoints 0-4 of a five-waypoint route with for_s past
+            # 7199 s, over a boat back on her planned track since minute one. Two floats, finite and in range,
+            # rebuilt field by field like everything else here - and the key is OMITTED rather than stored as
+            # None where there is none, because this dict is compared and served WHOLE (_same_avoiding,
+            # snapshot), and the escape legitimately has no pick-up.
+            ll = a.get("rejoin_ll")
+            if isinstance(ll, dict):
+                try:
+                    lat, lon = float(ll.get("lat")), float(ll.get("lon"))
+                except (TypeError, ValueError):
+                    lat, lon = None, None
+                # the range test refuses NaN and both infinities on its own: every comparison with them is False
+                if lat is not None and -90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0:
+                    out["rejoin_ll"] = {"lat": lat, "lon": lon}
+            return out
         except Exception:
             return None
 
@@ -10853,7 +10902,13 @@ class Supervision:
         for cid in [c for c, t in self._seen.items() if now - t > SUPERVISOR_FORGET_S]:
             del self._seen[cid]
             if cid == self._holder:  # the supervising tab was closed or crashed: the post is open again
-                self._drop_holder()
+                self._drop_holder()      # ... and ITS record goes with it: see _drop_holder, this is that case
+        # ⚠ AND THE BOUND ON A RECORD KEPT ACROSS A RELEASE IS HERE, not on a holder's silence - there is no
+        # holder to forget. Same constant, same origin: see _avoiding_forget_at. This runs on the 1 Hz watch as
+        # well as in beat() (see check_once, HONOLULU), so a console nobody ever opens a page on again still
+        # forgets it - which is the whole of the closed-the-last-window case.
+        if self._avoiding_forget_at and now > self._avoiding_forget_at:
+            self._avoiding, self._avoiding_at, self._avoiding_forget_at = None, 0.0, 0.0
 
     def beat(self, client_id, take=False, busy_s=None, avoiding=None, set_avoiding=False, now=None):
         """A tab reports in. It becomes the supervisor if the post is empty, if it asked to TAKE OVER, or if the
@@ -10884,12 +10939,18 @@ class Supervision:
             # stale, took the post, and went quiet again - ten handovers in twelve minutes. A tab's first report after
             # a silence of its own proves it is back, not that it will stay; its next one, within a beat, does.
             steady = prev is not None and now - prev <= SUPERVISOR_STALE_S
+            granted = False          # this beat is the one that handed this tab the post - see set_avoiding
             if held != cid and (held is None or take or (stale and steady)):
                 self._holder, self._since, self._said_stale = cid, now, False
                 self._busy_until, self._said_busy = 0.0, False
+                granted = True
                 # ⚠ THE RECORD IS KEPT AND OFFERED, NOT DROPPED - see _avoiding_orphan_until for the measurement.
-                # The new holder adopts it on its next frame; until this window runs out its empty beats cannot
-                # erase it, because its first beat is sent BEFORE it has seen the record at all.
+                # The new holder adopts it in THIS beat's own reply; the window is how long it is offered for.
+                # ⚠ AND THE NO-HOLDER CLOCK STOPS HERE (see _avoiding_forget_at). A record kept across a
+                # release is forgotten SUPERVISOR_FORGET_S later; from this frame a tab holds the post and
+                # answers for it, and leaving that clock running prunes a LIVE maneuver's record out from under
+                # a reporting holder at 120 s - measured on a way round flown across a reload.
+                self._avoiding_forget_at = 0.0
                 if self._avoiding is not None:
                     self._avoiding_orphan_until = now + SUPERVISOR_STALE_S
                 why = "took over from a tab that had stopped reporting" if stale else (
@@ -10904,8 +10965,8 @@ class Supervision:
                     self._said_busy = False
                 if set_avoiding:
                     new = self._clean_avoiding(avoiding)
-                    if new is None and self._avoiding is not None and now < self._avoiding_orphan_until:
-                        pass        # inherited at a handover and not adopted yet - see _avoiding_orphan_until
+                    if new is None and self._avoiding is not None and granted:
+                        pass        # the beat that granted the post was built before it saw the record
                     else:
                         if not self._same_avoiding(new, self._avoiding):
                             self._avoiding_at = now if new is not None else 0.0
@@ -10928,15 +10989,17 @@ class Supervision:
             return max(0.0, now - self._last_any)
 
     def release(self, client_id, now=None):
-        """A tab says it is going away (the operator closed it). The post is open for the next heartbeat."""
+        """A tab says it is going away. The post is open for the next heartbeat - and the AVOIDING record is
+        KEPT for SUPERVISOR_FORGET_S, because this is a RELOAD as often as it is a close: `pagehide` fires on
+        both and sends the same beacon, and the page cannot tell them apart. See _drop_holder."""
         now = time.time() if now is None else now
         cid = str(client_id or "")[:64]
         with self._lock:
             self._seen.pop(cid, None)
             if self._holder == cid:
-                self._drop_holder()
+                self._drop_holder(keep_avoiding_until=now + SUPERVISOR_FORGET_S)
                 if LOG is not None:
-                    LOG.event("supervisor_released", tab=cid[:8])
+                    LOG.event("supervisor_released", tab=cid[:8], kept_avoiding=self._avoiding is not None)
         return self.snapshot(now)
 
     def snapshot(self, now=None):
