@@ -142,7 +142,7 @@ for (const d of ["CHART_DISPLAY_UNITS", "CHART_DATA_UNITS", "CATZOC_LBL", "ENC_U
 // ptInGeom and qualityAt are REQUIRED at the top of this file, so the sandbox is handed
 // the real ones through its parameter list rather than a second copy eval'd beside them.
 for (const d of ["CHART_RETRY_MS", "CHART_PART_WORDS"]) code += grabDecl(d) + "\n";
-for (const f of ["cellName", "fmtEncDate", "chartPartialSay", "updateChartCard"]) code += grab(f) + "\n";
+for (const f of ["bandWord", "cellName", "fmtEncDate", "chartPartialSay", "updateChartCard"]) code += grab(f) + "\n";
 code += "(function(cells, quality, at, retrying){\n"
       + "  asv = at; sea.chartInfo = cells === null ? null\n"
       + "        : {band:'enc_harbour', cells:cells, quality:quality||[], note:'no ENC coverage here', retrying: retrying};\n"

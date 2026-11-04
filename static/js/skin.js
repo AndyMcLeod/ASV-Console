@@ -32,7 +32,7 @@
 //
 // ⚠⚠ A PARTIAL EXTRACT IS REFUSED, NOT READ. For every other layer a missing one is the dangerous direction - a
 // pier not drawn is a pier not avoided. Here it is the opposite and just as bad: a depth layer that failed to
-// arrive would make the whole area read as one gap, a keep-out the size of the harbour. `partial` names the failed
+// arrive would make the whole area read as one gap, a keep-out the size of the harbor. `partial` names the failed
 // classes; one Group 1 class among them and the answer is "not read", in words.
 //
 // NOTHING HERE TOUCHES THE PAGE. Features in, gaps out - tests/skin_gaps.js holds it without a browser.
@@ -265,9 +265,9 @@ export function skinGapFeature(gap) {
 }
 
 /**
- * THE SEABED'S GAPS OVER THE HARBOUR CHART ALONE (static/asv.html's until 2026-10-17, moved here so the page and
+ * THE SEABED'S GAPS OVER THE HARBOR CHART ALONE (static/asv.html's until 2026-10-17, moved here so the page and
  * skin_worker.js run ONE copy - the worker walks it off the page's thread, the page when there is no worker). In a
- * layered extract (asv_console.py fetch_enc_layered) the seabed is the harbour chart's: a coarser chart is cut to the
+ * layered extract (asv_console.py fetch_enc_layered) the seabed is the harbor chart's: a coarser chart is cut to the
  * squares it applies in, and its pieces' cut edges are not floats - and a gap the coarser chart's own seabed fills is not
  * taken for one. An extract that is not layered is read whole, as it always was.
  */

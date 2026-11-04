@@ -176,12 +176,12 @@ export function zoneLeadM(vMs, slowM, latencyS){
 }
 
 // ── NOAA's own: a restricted area whose text gives a speed (the chart's only encoding of one) ───────────────────────────
-// Measured 2026-10-16 over ENCDirect's harbour band: ~330 areas US-wide carry a speed in INFORM - nearly all the right
+// Measured 2026-10-16 over ENCDirect's harbor band: ~330 areas US-wide carry a speed in INFORM - nearly all the right
 // whale Seasonal Management Areas ("All vessels greater than or equal to 65ft/19.8m in length must slow to speeds of 10
 // knots or less"), a few regulated areas ("speed restricted, 5 knot speed limit"; "Regulated area;Speed restricted").
 // The chart has a "no wake area" category (CATREA 24) and ENCDirect publishes it on no area in the US.
 // ⚠ A REGULATED AREA THE CHART NAMES ONLY BY ITS CITATION. 33 CFR 165.101, Kittery, Maine - the water off the Naval
-// Shipyard beside New Castle - is in the harbour chart as a restricted area whose text is "Regulated navigation area, 33
+// Shipyard beside New Castle - is in the harbor chart as a restricted area whose text is "Regulated navigation area, 33
 // CFR 165.101: Navigation regulations are published in Chapter 2 of the U.S. Coast Pilot", no category, no number; the
 // regulation itself says "(b) No vessel may operate in this area at a speed in excess of five miles per hour" (eCFR, read
 // 2026-10-16). A citation listed here is read as its rule; the text of one that is not is read as it is.

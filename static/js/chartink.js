@@ -20,7 +20,7 @@
 // ⚠ AND THERE IS NO FINER BAND TO FALL BACK ON. `enc_berthing` exists - usage band 6, the
 // finest S-57 defines, and one this console never asked for - so that was checked first as
 // the cheaper answer. It has NO COVERAGE at New Castle: even `Coverage_area` comes back
-// empty. The harbour band is the finest cell there is here, and the feature is not in it.
+// empty. The harbor band is the finest cell there is here, and the feature is not in it.
 //
 // So the chart image is a real source of navigational fact that the vector extract does not
 // contain, and this module reads it. NOTHING HERE TOUCHES A CANVAS OR THE NETWORK - it takes

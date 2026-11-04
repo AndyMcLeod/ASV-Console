@@ -231,9 +231,17 @@ console.log("American spellings, everywhere the console speaks in its own voice:
                     || (/^static\/asv\.html:\d+ /.test(x.e) && /^const CORRIDOR_SCALES = \[/.test(x.ln.trim()));
   // S-57's Harbour_Facility class, named in the server alone (_ENC_RULE_CLASSES and its note, the 2026-10-18 review)
   const isClass = (x) => /^asv_console\.py:\d+ /.test(x.e) && /\bHarbour_Facility/.test(x.ln) && !/^ENC_BANDS/.test(x.ln.trim());
+  // The ONE respell line in each word function (bandWord / _band_word, 2026-11-04), and the one
+  // documentation line above each that quotes the key it respells - pinned to those exact shapes,
+  // so the exemption cannot quietly cover a new line that merely mentions the key.
+  const isWordFn = (x) => (/^static\/asv\.html:\d+ /.test(x.e) && /^return w === "harbour" \? "harbor" : w;$/.test(x.ln.trim()))
+                       || (/^asv_console\.py:\d+ /.test(x.e) && /^return "harbor" if w == "harbour" else w$/.test(x.ln.trim()));
+  const isWordDoc = (x) => /NOAA spells its harbor-scale band "harbour" and the operator reads "harbor"/.test(x.ln);
   check("6. ... and NOAA's name exemption covers exactly the lines that carry its names - the server's ENC_BANDS and the page's "
-        + "CORRIDOR_SCALES (its band key), and the server's lines naming S-57's Harbour_Facility class - nothing wider",
-        () => noaa.filter(isKey).length === 2 && noaa.some(isClass) && noaa.every(x => isKey(x) || isClass(x)),
+        + "CORRIDOR_SCALES (its band key), the one respell line and its doc line in each of bandWord and _band_word (where "
+        + "the key becomes the operator's word), and the server's lines naming S-57's Harbour_Facility class - nothing wider",
+        () => noaa.filter(isKey).length === 2 && noaa.filter(isWordFn).length === 2 && noaa.filter(isWordDoc).length === 2
+           && noaa.some(isClass) && noaa.every(x => isKey(x) || isClass(x) || isWordFn(x) || isWordDoc(x)),
         () => "noaa-name-exempt: " + (noaa.map(x => x.e).join(" | ") || "NOTHING")
             + ". enc_harbour is ENCDirect's band name; renaming it would break every chart read");
 
@@ -254,6 +262,10 @@ console.log("American spellings, everywhere the console speaks in its own voice:
     ['_ENC_RULE_CLASSES = ("Small_Craft_Facility_area", "Harbour_Facility_area", "Harbour_Facility_point")', "noaa-name"],
     ["the harbour facility's class, Harbour_Facility_area", "HIT"],
     ["the harbor chart is served whole", "clean"],
+    // the word functions' respell lines (2026-11-04): the quoted key is NOAA's name, the rest is clean
+    ['return w === "harbour" ? "harbor" : w;', "noaa-name"],
+    ['return "harbor" if w == "harbour" else w', "noaa-name"],
+    ["the band word map turns harbour into harbor", "HIT"],
   ];
   const wrong = probe.filter(([ln, want]) => P(ln) !== want);
   check("6b. ... and the rule has teeth: prose `harbour` is caught in every case, and beside "
@@ -261,6 +273,69 @@ console.log("American spellings, everywhere the console speaks in its own voice:
         () => wrong.length === 0,
         () => wrong.length ? wrong.map(([ln, w]) => JSON.stringify(ln) + " -> " + P(ln) + ", want " + w).join(" | ")
                            : probe.length + " lines judged as intended");
+}
+
+// -- 7-7c. THE BAND KEY BECOMES A WORD IN CODE, WHERE NO SCAN CAN SEE IT (2026-11-04) -----
+// A band key arrives at RUN TIME (nogo.band, the corridor tally's wire keys), so a word scan
+// of the tree proves nothing about what the operator reads - the page sat green for weeks
+// while its banners said "band harbour". These checks ask the CODE: the page's bandWord and
+// the server's _band_word are the one place a key becomes a word, and no string-building site
+// bypasses them (the strip idiom is counted, so a reverted site is a visible edit here).
+{
+  // ASV_HTML points this at a SIDECAR copy for a mutation run (tests/precommit_hook.py check 8)
+  const H = fs.readFileSync(process.env.ASV_HTML || path.join(ROOT, "static/asv.html"), "utf8");
+  const S = fs.readFileSync(path.join(ROOT, "asv_console.py"), "utf8");
+  // lift bandWord the sibling suites' way (corridor_read.js / chart_source_card.js grab):
+  // find the declaration, brace-walk its body, evaluate it as an expression.
+  let bandWord = null, liftErr = "";
+  try {
+    const start = H.indexOf("function bandWord(");
+    if (start < 0) throw new Error("function bandWord not found in the page (renamed?)");
+    let k = H.indexOf("{", start), depth = 0;
+    for (;;) { const c = H[k]; if (c === "{") depth++; else if (c === "}") { depth--; if (!depth) break; } k++; }
+    bandWord = new Function("return (" + H.slice(start, k + 1) + ")")();
+  } catch (e) { liftErr = "lift THREW: " + e.message; }
+  check("7. the page's bandWord says the operator's word for every key, in both shapes the "
+      + "console carries (enc_harbour and the corridor tally's stripped harbour), and passes an "
+      + "unknown band through stripped - asked of the LIFTED function",
+        () => bandWord && bandWord("enc_harbour") === "harbor" && bandWord("harbour") === "harbor"
+           && ["berthing", "approach", "coastal", "general", "overview"]
+                .every(w => bandWord("enc_" + w) === w && bandWord(w) === w)
+           && bandWord("enc_5") === "5" && bandWord("enc_other") === "other"
+           && bandWord(null) === "?" && bandWord("") === "?",
+        () => liftErr || ('bandWord("enc_harbour") -> ' + JSON.stringify(bandWord("enc_harbour"))
+            + ', bandWord("harbour") -> ' + JSON.stringify(bandWord("harbour"))
+            + ', bandWord("enc_5") -> ' + JSON.stringify(bandWord("enc_5"))));
+
+  // The server mirror, pinned in source here; tests/enc_acquire.py RUNS it (import asv_console).
+  const si = S.indexOf("def _band_word(band):");
+  const sfn = si < 0 ? "" : S.slice(si, S.indexOf("\ndef ", si + 1));
+  check("7b. the server's _band_word mirrors it, and every served note asks it: the respell and "
+      + "the \"?\" fallback are in its body, and no note builder formats a raw band in any more "
+      + "(the old shapes are pinned ABSENT; the call-site count is pinned too)",
+        () => /return "harbor" if w == "harbour" else w/.test(sfn)
+           && /return "\?"/.test(sfn)
+           && (S.match(/_band_word\(/g) || []).length >= 12
+           && !/" % \(ENC_BANDS\[0\], cov_failed/.test(S)
+           && !/read here \(%s\)" % \(band,/.test(S)
+           && !/read here \(%s\)" % \(ENC_BERTHING,/.test(S)
+           && !/could not be read" % band\}/.test(S),
+        () => "def _band_word found: " + (si >= 0) + ", _band_word( sites: "
+            + (S.match(/_band_word\(/g) || []).length + " (needs >= 12)");
+
+  // Every site goes THROUGH the functions: the strip idiom survives exactly where it is the
+  // function's own body - plus the server's corridor tally, which strips a key to make a WIRE
+  // key (the page renders it through bandWord at the corridor banner).
+  const strips = H.split(/\r?\n/).map((l, i) => [i + 1, l]).filter(([, l]) => l.includes('replace("enc_'));
+  const pyStrips = S.split(/\r?\n/).map((l, i) => [i + 1, l]).filter(([, l]) => l.includes('replace("enc_'));
+  check("7c. no site strips a key itself: the page's one replace(\"enc_\") is bandWord's own, and "
+      + "the server keeps exactly two - _band_word's own and the corridor tally's wire key",
+        () => strips.length === 1 && /const w = String\(b\)\.replace\("enc_", ""\);/.test(strips[0][1])
+           && pyStrips.length === 2
+           && pyStrips.some(([, l]) => /w = str\(band\)\.replace\("enc_", "", 1\)/.test(l))
+           && pyStrips.some(([, l]) => /key = \(fin or "none"\)\.replace\("enc_", ""\)/.test(l)),
+        () => "page strip lines: " + (strips.map(([n]) => n).join(",") || "none")
+            + "; server strip lines: " + (pyStrips.map(([n]) => n).join(",") || "none"));
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED" : "\nall checks passed (" + ran + ")");

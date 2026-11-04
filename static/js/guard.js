@@ -240,7 +240,7 @@ export const ESCAPE_HARD_M = 0.5;
  * Candidate deviation bearings, every this many degrees.
  *
  * ⚠ COARSER THAN THE ESCAPE SEARCH'S 15°, AND THE REASON IS MEASURED. `blocked` costs about
- * 800 µs against a real harbour extract - New Castle NH carries 34,579 ring vertices, and
+ * 800 µs against a real harbor extract - New Castle NH carries 34,579 ring vertices, and
  * one shoreline polygon alone has 7,034 - so a projection is ~9 ms and a full sweep at 15°
  * over two bases and six radii measured **1,060 ms of frozen tab**. The escape search can
  * afford 24 headings because it walks a straight line once each; this one walks a whole

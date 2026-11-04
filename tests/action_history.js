@@ -226,12 +226,12 @@ const rowText = (r) => r.lastChild.textContent;
   // 5b. a banner posted again later moves up; commands keep their order
   const W5b = makeWorld(makeStore());
   W5b.showBanner("Extracting ENC nogo boundaries for the operating area…");
-  W5b.showBanner("Nogo established (585 nogo zone(s) · band harbour).");
+  W5b.showBanner("Nogo established (585 nogo zone(s) · band harbor).");
   W5b.flashNote("Speed changed");
   const loadRow = rowsOf(W5b)[2];                        // the first banner's row, before the page loads again
   W5b.els["#encbanner"].style.display = "none";
   W5b.showBanner("Extracting ENC nogo boundaries for the operating area…");     // the next load posts both again ...
-  W5b.showBanner("Nogo established (737 nogo zone(s) · band harbour).");        // ... the count grown since
+  W5b.showBanner("Nogo established (737 nogo zone(s) · band harbor).");        // ... the count grown since
   const texts5b = rowsOf(W5b).map(rowText);
   await W5b.cmd("/api/cmd/start"); await W5b.cmd("/api/cmd/pause"); await W5b.cmd("/api/cmd/start");
   const order = W5b.log.slice(0, 3).map((a) => a.label).join(", ");
@@ -239,7 +239,7 @@ const rowText = (r) => r.lastChild.textContent;
         + "numbers set aside in the match and the newest words shown - so the load-time banners of four reloads are two "
         + "lines, not eight; commands are never merged past the newest line, so Start, Pause, Start stays three lines in "
         + "that order",
-        () => texts5b.length === 3 && texts5b[0] === "Nogo established (737 nogo zone(s) · band harbour). ×2"
+        () => texts5b.length === 3 && texts5b[0] === "Nogo established (737 nogo zone(s) · band harbor). ×2"
               && texts5b[1] === "Extracting ENC nogo boundaries for the operating area… ×2" && texts5b[2] === "Speed changed"
               && rowsOf(W5b)[4] === loadRow && order === "Start, Pause, Start",
         () => texts5b.join(" | ") + "; then " + order + "; moved row is the same node: " + (rowsOf(W5b)[4] === loadRow));

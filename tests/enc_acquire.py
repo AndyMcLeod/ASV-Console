@@ -690,7 +690,8 @@ check("12. A TILE IS READ WITH WHAT IS KNOWN OF ITS BANDS' COVERAGE: coastal's c
               and t2.get("coverage_stale") == ["enc_coastal"] and not t2.get("coverage_failed") and not t2.get("complete")
               and t2.get("unread_failed") == [] and t2.get("unread") == [] and len(t2["features"]) >= 2
               and "older read" in t2["note"]
-              and t3.get("unread_failed") == [TILE12] and "enc_harbour" in t3["note"] and "Could not find service" in t3["note"]
+              and t3.get("unread_failed") == [TILE12] and "harbor:" in t3["note"] and "enc_harbour" not in t3["note"]
+              and "Could not find service" in t3["note"]
               and t4.get("complete") is True and t4.get("coverage_failed") == [] and t4.get("unread_failed") == []
               and abs(area(t4["unread"]) - half) < 0.02 * tile_area,
       lambda: json.dumps({"t1": {k: t1.get(k) for k in ("coverage_failed", "complete", "note")}, "t1_failed_area": round(area(t1["unread_failed"]) / tile_area, 3),
@@ -726,6 +727,19 @@ check("8. every chart class Massachusetts' facility rule reads is ACTED ON by th
       and set(A._ENC_RULE_CLASSES) == {"Small_Craft_Facility_area", "Small_Craft_Facility_point", "Harbour_Facility_area", "Harbour_Facility_point"}
       and len(_prefixes) >= 4 and all(any(c.startswith(p) for c in A._ENC_ACTED_ON) for p in _prefixes),
       lambda: "prefixes %s; rule classes %s" % (_prefixes, sorted(A._ENC_RULE_CLASSES)))
+
+# 14. THE BAND KEY BECOMES A WORD IN THE SERVED NOTES (2026-11-04, Andy 2026-11-01: "Change them").
+# _band_word is the ONE place a key becomes the operator's word; tests/spelling.js 7b pins its source
+# and that no note builder bypasses it - this check RUNS it, both shapes, respell, and fallback.
+check("14. _band_word says the operator's word for every band key - harbor for NOAA's harbour, the "
+      "other five stripped, an unknown band passed through, and '?' for none",
+      lambda: A._band_word("enc_harbour") == "harbor" and A._band_word("harbour") == "harbor"
+      and all(A._band_word("enc_" + w) == w and A._band_word(w) == w
+              for w in ("berthing", "approach", "coastal", "general", "overview"))
+      and A._band_word("enc_5") == "5" and A._band_word("x") == "x"
+      and A._band_word(None) == "?" and A._band_word("") == "?",
+      lambda: "enc_harbour -> %r, harbour -> %r, enc_5 -> %r, None -> %r"
+      % (A._band_word("enc_harbour"), A._band_word("harbour"), A._band_word("enc_5"), A._band_word(None)))
 
 print("\n" + ("%d CHECK(S) FAILED (%d ran)" % (fails, ran) if fails else "all checks passed (%d)" % ran))
 sys.exit(1 if fails else 0)

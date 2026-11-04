@@ -121,6 +121,8 @@ function setInk(m){ chartInk = Object.assign(
 function setNogo(m){ for (const k of Object.keys(nogo)) delete nogo[k];
                      return Object.assign(nogo, m); }
 // eslint-disable-next-line no-eval
+eval(grab("bandWord"));                 // nogoReadout says the band through it (2026-11-04)
+// eslint-disable-next-line no-eval
 eval(grab("nogoReadout"));
 
 // `ran` is printed in the summary on purpose. The last half of this suite is async, and a
@@ -409,7 +411,7 @@ var chartReads = [], inkRefused = null;
 // ⚠ AND A FAILED READ'S RETRY (2026-10-18, A3) and the partial `keep` read's merge (A1): read from the page too.
 const NOGO_RETRY_MS = +(H.match(/const NOGO_RETRY_MS = (\d+)/) || [])[1];
 eval("const NOGO_QUEUE_MAX_MS = " + NOGO_QUEUE_MAX_MS + ";" + "\n" +
-     "const NOGO_RETRY_MS = " + NOGO_RETRY_MS + ";" + "\n" + grab("keepEarlierClasses") + "\n" +
+     "const NOGO_RETRY_MS = " + NOGO_RETRY_MS + ";" + "\n" + grab("bandWord") + "\n" + grab("keepEarlierClasses") + "\n" +
      "const ENC_MAX_SPAN_DEG = " + ENC_MAX_SPAN_DEG + ";" + "\n" + grab("encSpanRefusal") + "\n" +
      grab("refoldInk") + "\n" + grab("inkNote") + "\n" +
      // rebuildNogo builds from modelFeatures since 2026-10-18 (less a waived lock's gates - tests/lock_transit.js): the real one

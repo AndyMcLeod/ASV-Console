@@ -101,7 +101,7 @@ const wet = { state: "ok", stalled: false, quiet_s: 1, stall_retries: 0, note: "
   await W.api.poll();
   const s2 = { state: W.api.state(), note: W.api.note(), banners: W.banners.length };
   // ANOTHER BANNER COVERS IT (the chart read's, measured live): the next poll of the same try says nothing; the next try does
-  W.slot.textContent = "Nogo established (1469 nogo zone(s) · band harbour).";
+  W.slot.textContent = "Nogo established (1469 nogo zone(s) · band harbor).";
   W.answer = answer({ aisstream: dry(140, 2) });
   await W.api.poll();
   const sameTry = W.banners.length;

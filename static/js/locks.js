@@ -7,7 +7,7 @@
 // gate passed only on the operator's word (the page's lock transit, asv.html). Pure: features in, geometry out.
 //
 // HOW A LOCK IS FOUND. NOAA charts the Canaveral lock as two Gate_line features - CATGAT "lock gate", HORCLR 27.4 m (the
-// chamber's width), INFORM "Length is 182.8 meters/600 feet", 200 m apart - and NO Lock_Basin_area (measured, harbour and
+// chamber's width), INFORM "Length is 182.8 meters/600 feet", 200 m apart - and NO Lock_Basin_area (measured, harbor and
 // approach bands, 2026-10-18). So a lock is a PAIR of gates: LOCK.MIN_LEN_M to LOCK.MAX_LEN_M apart, near-parallel
 // (LOCK.PARALLEL_DEG), each lying ACROSS the line between them (LOCK.AXIS_DEG) - the chamber's axis. A gate that says
 // what it is (CATGAT) and is not a lock gate is never paired; one that says nothing (a tile read before CATGAT was kept)

@@ -76,7 +76,7 @@ const world = (o) => {
     + "const CORRIDOR_HALF_KM = " + constOf("CORRIDOR_HALF_KM") + ", CORRIDOR_POLL_MS = 0, CORRIDOR_AHEAD_M = " + AHEAD
     + ", CORRIDOR_AHEAD_EVERY_M = " + EVERY + ";\n"
     + "const CORRIDOR_SCALES = [\"harbour\", \"approach\", \"coastal\", \"general\"];\n"
-    + [grab("toCorridor"), grab("corridorSummary"), grab("readCorridor"), grab("routeAhead"), grab("corridorAheadTick")].join("\n")
+    + [grab("bandWord"), grab("toCorridor"), grab("corridorSummary"), grab("readCorridor"), grab("routeAhead"), grab("corridorAheadTick")].join("\n")
     + "\nreturn {readCorridor, corridorSummary, routeAhead, corridorAheadTick, toCorridor, state: () => ({corridorRead, corridorBusy, corridorAhead})};";
   w.api = new Function("asv", "passageWps", "postCorridor", "getCorridor", "updateTransitPanel", "render", "showBanner", "flashNote",
     "logClient", "fmtMS", "distTo", "supervising", "indexedRoute", "window", "NOGO_RADIUS_M", src)(
@@ -121,7 +121,11 @@ const world = (o) => {
   const w3 = say({ state: "done", total: 3, done: 3, half_km: 5, seconds: 2, bands: { coastal: 3 }, unread_n: 0, failed: [] });
   check("2. THE WORDS: the scales in order with their tiles, the tiles no chart covers, the unread water drawn gray and "
         + "refused, the tiles not read with what to do, a stopped read, and a clean one",
-        () => /charted at harbour 9, coastal 50, general 6/.test(w1) && /2 tile\(s\) with no chart at any scale/.test(w1)
+        // the tally's WIRE key is "harbour" (the server's _corridor_run strips the enc_ prefix and
+        // nothing more); the SENTENCE says the operator's word through bandWord (2026-11-04) - so
+        // this check pins both: harbor said, harbour not said.
+        () => /charted at harbor 9, coastal 50, general 6/.test(w1) && !/harbour/.test(w1)
+              && /2 tile\(s\) with no chart at any scale/.test(w1)
               && /UNREAD water in 14 square\(s\) near the line, drawn gray - a route through it is refused/.test(w1)
               && /1 tile\(s\) could NOT be read - press Read chart again/.test(w1) && /STOPPED after 20 of 67/.test(w2)
               && /no unread water near the line/.test(w3) && /offline too/.test(w3),

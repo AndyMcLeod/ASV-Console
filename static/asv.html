@@ -12149,6 +12149,20 @@ function featuresBboxRef(feats){                // ENU reference = centroid of t
     eachRing(g,r=>r.forEach(scan)); eachPath(g,p=>p.forEach(scan)); eachPoint(g,scan); }
   return any ? {lat:(s0+n0)/2, lon:(w0+e0)/2} : null;
 }
+/** The operator's word for an ENC band key: the key stripped of its enc_ prefix, respelled American -
+ *  NOAA spells its harbor-scale band "harbour" and the operator reads "harbor" (Andy, 2026-11-01, on the
+ *  page strings printing the key as it comes: "Change them"). It takes the key either way the console
+ *  carries it - prefixed (nogo.band) or stripped (the corridor tally's wire keys) - and an
+ *  unknown key passes through stripped, because suites and future bands feed names the respell cannot
+ *  know ("enc_5", "enc_other"). Keys stay keys everywhere data flows: wire fields, cache paths, the
+ *  "ENC %s/%d" faults, and CORRIDOR_SCALES' lookups. This is the ONE place a key becomes a word the
+ *  operator reads; the server's _band_word is its mirror for served notes, and the words agree with
+ *  ENC_USAGE_LBL's. tests/spelling.js checks 7-7c ask this function and pin that no site bypasses it. */
+function bandWord(b){
+  if(!b) return "?";
+  const w = String(b).replace("enc_", "");
+  return w === "harbour" ? "harbor" : w;
+}
 /** The features the keep-out model is built from: the chart's, less the gates of the lock she is being taken through
  *  (lockWaiver - the operator's word at each gate, 2026-10-18). Every builder of the guard's and the planner's model
  *  reads them here, so the two cannot disagree about a gate. */
@@ -12185,7 +12199,7 @@ function rebuildNogo(){                         // (re)build the keep-out model 
   const inkN = foldChartInk(nogo.ko, nogo.frame);
   const n = nogo.ko.polys.length + nogo.ko.lines.length + nogo.ko.points.length;
   nogo.ready = n>0;
-  nogo.note = (n>0 ? `${n} nogo zone(s) · band ${(nogo.band||"?").replace("enc_","")}`
+  nogo.note = (n>0 ? `${n} nogo zone(s) · band ${bandWord(nogo.band)}`
                     + (inkN ? ` · +${inkN} read off the chart` : ``)
                   : "no nogo features in this area")
     // a read that FAILED since this model was built: said beside it - these are the earlier read's zones (2026-10-18 review)
@@ -12410,7 +12424,7 @@ async function refreshNogo(centerLL, bbox, ask){     // extract ENC for the oper
                                 + " did not arrive - that water is unread until it is read again." : "")
                + (keptN ? " The earlier read's " + keptN + " feature(s) of those layers are kept." : "")
                // a band whose COVERAGE could not be read (2026-10-19): the server names it; its squares are unread_failed
-               + (encC.length ? " COVERAGE NOT READ: " + (enc.note || "the " + encC.map(b => b.replace("enc_", "")).join(" / ")
+               + (encC.length ? " COVERAGE NOT READ: " + (enc.note || "the " + encC.map(bandWord).join(" / ")
                                                            + " chart's coverage could not be read") + "." : "")
                + (encS.length ? " OLDER CHART IN USE: " + encS[0] : ""));
     render();
@@ -12476,7 +12490,7 @@ function nogoReadout(){
   }
   const counts = nogoKindCounts(), kinds = Object.keys(counts);
   const n = kinds.reduce((t, k)=> t + counts[k], 0);
-  const band = String(nogo.band || "?").replace("enc_", "");
+  const band = bandWord(nogo.band);
   if(!n) return {text: "clear — none charted", cls: "",
     title: "The chart was read (ENC band " + band + ") and there is nothing to avoid within "
          + "the operating area - open water. This is NOT the same as having no chart data." + why};
@@ -12545,7 +12559,7 @@ function nogoReadout(){
   // THE CHART IN LAYERS (2026-10-11): which scales were read, and the water none of them covers - said where the model
   // is, because a square nobody charted holds nothing and the planners refuse to route through it.
   const encNow = sea.enc || {}, bandsTxt = (encNow.layered && encNow.bands && encNow.bands.length > 1
-    ? " with " + encNow.bands.slice(1).map(x => String(x).replace("enc_", "")).join(" and ") + " filling in where it has no chart" : "")
+    ? " with " + encNow.bands.slice(1).map(bandWord).join(" and ") + " filling in where it has no chart" : "")
     + ((encNow.supplement || []).length ? ", and the berthing chart beside it where one is published" : "");
   // HOW OLD THE CHART IS, AND WHETHER IT ARRIVED WHOLE (2026-10-12). A tile was kept for ever and NOAA corrects its
   // cells week by week; one past a week is read again behind the copy served. An OLDER READER'S copy is served only
@@ -13375,7 +13389,7 @@ const CORRIDOR_SCALES = ["harbour", "approach", "coastal", "general"];
 /** A read's status, in words: what it read, at which scales, what it could not, and the water no chart covers. */
 function corridorSummary(st){
   if(!st || st.error) return "Chart NOT read along the line: " + ((st && st.error) || "no answer") + ".";
-  const scales = CORRIDOR_SCALES.filter(k => st.bands && st.bands[k]).map(k => k + " " + st.bands[k]).join(", ");
+  const scales = CORRIDOR_SCALES.filter(k => st.bands && st.bands[k]).map(k => bandWord(k) + " " + st.bands[k]).join(", ");
   const none = st.bands && st.bands.none ? "; " + st.bands.none + " tile(s) with no chart at any scale" : "";
   if(st.state === "canceled")
     return "Chart read along the line STOPPED after " + st.done + " of " + st.total + " tile(s).";
@@ -17143,7 +17157,7 @@ async function punchOut(){
     $("#v_approach").textContent = approachTxt;
     const depthLbl = dr.max>0 ? `${dr.min}-${dr.max} m` : `≥ ${dr.min} m`;
     $("#sp_hint").textContent=`Punched: ${src.length} lines → ${patClip.length} segments `+
-      `(${depthLbl}, ${buffer} m buffer, −${turnMargin.toFixed(0)} m turn margin, nogo band ${(nogo.band||"?").replace("enc_","")})`+
+      `(${depthLbl}, ${buffer} m buffer, −${turnMargin.toFixed(0)} m turn margin, nogo band ${bandWord(nogo.band)})`+
       // ⚠⚠ AND WHEN THE SET WIDENED THE CLIP, SAY SO AND SAY WHY (2026-09-19, item 3).
       // Clipping the coverage at more than the operator asked for COSTS THEM SURVEY, and
       // this console's standing rule is that dropping coverage somebody asked for is said
@@ -19759,7 +19773,7 @@ function updateChartCard(){
                   : "the vessel is not inside any of these cells")
        + '</div>';
     if(title) h += row("Title", title);
-    h += row("Usage", (usage || "--") + (band ? ` <span style="color:var(--ink-faint);">(${band.replace("enc_","")})</span>` : ""),
+    h += row("Usage", (usage || "--") + (band ? ` <span style="color:var(--ink-faint);">(${bandWord(band)})</span>` : ""),
              "ENC usage band from the cell name's 3rd character");
     // Units, stated explicitly for both sides - the operator reads the chart in
     // FEET while every number the console computes is METERS. The nogo floor is

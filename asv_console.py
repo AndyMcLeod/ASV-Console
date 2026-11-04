@@ -2657,6 +2657,20 @@ def _enc_count(band, layer_id, bbox):
     return int(_enc_query(band, layer_id, bbox, count_only=True).get("count", 0))
 
 
+def _band_word(band):
+    """The operator's word for an ENC band key: the key stripped of its enc_ prefix, respelled American -
+    NOAA spells its harbor-scale band "harbour" and the operator reads "harbor" (Andy, 2026-11-01, on the
+    strings printing the key as it comes: "Change them"). Served NOTES say the word; keys stay keys
+    everywhere data flows - wire fields ("band"/"bands"/"coverage_failed", the corridor tally), cache
+    paths, URLs, and the "ENC %s/%d" fault family. An unknown key passes through stripped (suites feed
+    synthetic bands). The page's bandWord is this function's mirror for page-built strings, and
+    tests/spelling.js 7b + tests/enc_acquire.py pin both the map and that no served note bypasses it."""
+    if not band:
+        return "?"
+    w = str(band).replace("enc_", "", 1)
+    return "harbor" if w == "harbour" else w
+
+
 def _enc_pick_band(bbox, errors=None):
     """Finest ENC band with Depth_Area or Land_Area coverage in the bbox - or None: no band reaches it, OR a band's probe
     FAILED (noted in `errors`, a list, when given: band and fault), so a caller can tell "no chart here" from "the
@@ -2669,7 +2683,7 @@ def _enc_pick_band(bbox, errors=None):
         lm = _enc_layer_map(band)
         if not lm:
             if errors is not None:
-                errors.append("%s: its layer list could not be read" % band)
+                errors.append("%s: its layer list could not be read" % _band_word(band))
             return None
         for cls in ("Depth_Area", "Land_Area"):
             lid = lm.get(cls)
@@ -2680,7 +2694,7 @@ def _enc_pick_band(bbox, errors=None):
                     return band
             except (OSError, ValueError, http.client.HTTPException) as e:
                 if errors is not None:
-                    errors.append("%s: %s" % (band, _enc_fault_say(e)))
+                    errors.append("%s: %s" % (_band_word(band), _enc_fault_say(e)))
                 return None
     return None
 
@@ -2748,7 +2762,7 @@ def fetch_enc_features(bbox, min_depth=0.0, band=None, extras=True, use_cache=Tr
         lm = _enc_layer_map(band)
         if not lm:
             # A forced band whose layer list cannot be had is a failed read, not an empty one.
-            return {"band": None, "features": [], "note": "the %s layer list could not be read" % band}
+            return {"band": None, "features": [], "note": "the %s layer list could not be read" % _band_word(band)}
         jobs = [(role, cls, lm[cls]) for role, classes in ENC_ROLES.items()
                 for cls in classes if cls in lm]
         # ── EVERY OTHER PUBLISHED LAYER, FETCHED AND CACHED (Andy, 2026-08-31: "download
@@ -2977,14 +2991,14 @@ def _enc_coverage(band, tile):
         pass
     lm = _enc_layer_map(band)
     if not lm:
-        raise OSError("the %s layer list could not be read" % band)
+        raise OSError("the %s layer list could not be read" % _band_word(band))
     lid = lm.get("Coverage_area")
     if lid is None:
-        raise ValueError("%s publishes no Coverage_area layer" % band)
+        raise ValueError("%s publishes no Coverage_area layer" % _band_word(band))
     ids = _enc_retry(_enc_query_ids, band, lid, tile)
     feats = _enc_retry(_enc_query_by_ids, band, lid, ids) if ids else []
     if len(feats) < len(ids):
-        raise ValueError("%s coverage arrived short (%d of %d)" % (band, len(feats), len(ids)))
+        raise ValueError("%s coverage arrived short (%d of %d)" % (_band_word(band), len(feats), len(ids)))
     polys = []
     for ft in feats:
         # Every M_COVR the service serves carries CATCOV; one that says anything but "no coverage" is coverage.
@@ -3318,7 +3332,7 @@ def _enc_tile_build(tile):
                 cov_failed[b] = _enc_fault_say(e)
     berth = covs.pop()
     if covs[0] is None:
-        return dict(fail, note="the chart's coverage could not be read here (%s: %s)" % (ENC_BANDS[0], cov_failed[ENC_BANDS[0]]))
+        return dict(fail, note="the chart's coverage could not be read here (%s: %s)" % (_band_word(ENC_BANDS[0]), cov_failed[ENC_BANDS[0]]))
     idx = [_cov_index(c) if c is not None else None for c in covs]
     leaves = _enc_leaves(tile, idx)
     feats, failed, present = [], set(), []
@@ -3330,7 +3344,7 @@ def _enc_tile_build(tile):
                   min(tile[2], max(b[2] for b in bb)), min(tile[3], max(b[3] for b in bb))]
         d = fetch_enc_features(region, 0.0, band=ENC_BERTHING, extras=True, use_cache=False)
         if d.get("band") is None:
-            return dict(fail, note="the %s chart could not be read here (%s)" % (ENC_BERTHING, d.get("note") or "no answer"))
+            return dict(fail, note="the %s chart could not be read here (%s)" % (_band_word(ENC_BERTHING), d.get("note") or "no answer"))
         failed.update(d.get("partial") or [])
         present.append(ENC_BERTHING)
         for ft in d.get("features") or []:
@@ -3346,7 +3360,7 @@ def _enc_tile_build(tile):
         # Every band's every layer (the block header, 2026-10-12): the finest whole, a coarser one cut to its squares.
         d = fetch_enc_features(region, 0.0, band=band, extras=True, use_cache=False)
         if d.get("band") is None:
-            return dict(fail, note="the %s chart could not be read here (%s)" % (band, d.get("note") or "no answer"))
+            return dict(fail, note="the %s chart could not be read here (%s)" % (_band_word(band), d.get("note") or "no answer"))
         failed.update(d.get("partial") or [])
         present.append(band)
         for ft in d.get("features") or []:
@@ -3365,9 +3379,9 @@ def _enc_tile_build(tile):
            "coverage_failed": sorted(cov_failed), "coverage_stale": sorted(cov_stale)}
     if cov_failed:
         out["note"] = "read without the %s chart's coverage (%s): what it would cover is unread" % (
-            " / ".join(b.replace("enc_", "") for b in sorted(cov_failed)), next(iter(cov_failed.values())))
+            " / ".join(_band_word(b) for b in sorted(cov_failed)), next(iter(cov_failed.values())))
     elif cov_stale:
-        out["note"] = "the %s chart's coverage from an older read (its live read failed)" % " / ".join(b.replace("enc_", "") for b in cov_stale)
+        out["note"] = "the %s chart's coverage from an older read (its live read failed)" % " / ".join(_band_word(b) for b in cov_stale)
     if failed or cov_failed or cov_stale:
         print("[enc] REFUSING TO CACHE tile %s: %d layer(s) failed (%s)%s%s - served once and re-read next time"
               % (_bbox_key(tile), len(failed), ", ".join(sorted(failed)[:6]),

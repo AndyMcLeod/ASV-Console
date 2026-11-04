@@ -368,6 +368,8 @@ console.log("Charted point-hazard extent — a wreck is a POSITION, not a 3 m do
 // sentence would leave every string a source check looks for exactly where it was.
 {
   const RO = grab("nogoReadout");
+  // eslint-disable-next-line no-eval
+  eval(grab("bandWord"));               // the readout says the band through it (2026-11-04)
   const nogo = { band: "enc_harbour", busy: false, ko: { passed: 3 } };
   const chartInk = { lines: [], areas: [], note: null };
   const nogoKindCounts = () => ({ land: 40, "a charted hazard": 7 });
