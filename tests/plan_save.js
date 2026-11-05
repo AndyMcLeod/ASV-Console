@@ -427,6 +427,37 @@ console.log("Saving the plan - against a revision, one at a time, and said when 
                 + " banner: " + (banners[0] || "none").slice(0, 90));
   }
 
+  // ── 13. THE STRUCK COVERAGE COMES IN WITH THE PLAN (2026-11-05, the re-fly offer's first defect) ──────────
+  // fea88fb banked strikes on the plan (bankStrike -> mission.strikes, server round-trip proven by
+  // tests/mission_store.py 18) but left `strikes` OUT of loadMission's whitelist rebuild - so a reloaded page
+  // forgot the bank and its first save wiped it server-side: the `speeds` defect, found by the re-fly census.
+  // Driven through the page's own loadMission, then the next save is read for what it posts back.
+  {
+    const SK = { id: "k13", t: 1700000000000, n: 2, m: 55, lines: [2, 3], by: ["AIS: X (30 x 8 m, moored)"],
+                 wps: [{ lat: 44.9001, lon: -67.0 }, { lat: 44.9002, lon: -67.0 }] };
+    // a fresh page world: `page` stopped saving at check 3's conflict, which is its own proven behavior
+    const page7 = loadingPage();
+    await tryLoad(page7, [200, { waypoints: [], lines: [], rev: 50, strikes: [SK] }]);
+    const kept = Array.isArray(mission.strikes) && mission.strikes.length === 1
+                 && mission.strikes[0].id === "k13" && mission.strikes[0].wps.length === 2;
+    const nf = calls.length;
+    const ff = page7.flushMission();
+    await settle();
+    const body = calls.length > nf ? calls[nf].body : null;
+    const postedBack = !!(body && Array.isArray(body.strikes) && body.strikes.length === 1
+                          && body.strikes[0].id === "k13");
+    if (calls.length > nf) answer(nf, 200, { ok: true, rev: 51 });
+    await within(ff);
+    await tryLoad(page7, [200, { waypoints: [], lines: [], rev: 52 }]);
+    const emptied = Array.isArray(mission.strikes) && mission.strikes.length === 0
+                    && page7.get().missionRev === 52;
+    check("13. the STRUCK COVERAGE comes in through loadMission's whitelist - the bank survives the reload - and the "
+          + "next save posts it back whole; a plan carrying none loads an empty bank, not an undefined one",
+          () => kept && postedBack && emptied,
+          () => "kept=" + kept + " postedBack=" + postedBack + " (body.strikes "
+                + JSON.stringify(body && body.strikes) + ") emptied=" + emptied);
+  }
+
   __finished = true;
   console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
   process.exit(fails ? 1 : 0);

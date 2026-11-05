@@ -792,9 +792,18 @@ is clear by the standoff with the rest of the line clear too, and carries on. A 
 the rest of the line leaves that line whole, and - since 4 November - the plan is picked up at the
 first next waypoint **nobody is sitting on**: waypoints a vessel not under way occupies are
 **struck** (the test is the refusal's own, so exactly what would have been refused is struck), said
-with their line numbers, logged (`struck_wpts`) and banked on the plan (`mission.strikes`) to
-re-fly when the berth clears; with every remaining waypoint occupied the refusal stands, in those
-words, because abandoning the whole remainder is the operator's call.
+with their line numbers, logged (`struck_wpts`) and banked on the plan (`mission.strikes`); with
+every remaining waypoint occupied the refusal stands, in those words, because abandoning the whole
+remainder is the operator's call. Since 5 November the banked coverage is **offered back**:
+**Re-fly** appears beside Continue at the strike, and the console watches the water over **every**
+banked stretch by the strike's own test — when a stretch's waypoints read clear of moored traffic
+on a fresh AIS read it says so once (a berth that re-occupies re-arms the announcement) and the
+button lights and flashes. The press routes her from wherever she is to the struck stretch and
+flies it, with Continue's own questions and re-checks: the water is asked again after the route
+plans, so a vessel that berths back meanwhile refuses the upload, and while the guard holds the
+plan she was flying Re-fly stands down rather than spend that banked remainder. Flying it is still
+the operator's press, never automatic; a torn, stale or unanswered feed reads "cannot tell", never
+"clear"; the × drops a record, and every failure keeps it.
 
 **It no longer waits to be asked** (1 November: *"remove the wait for operator rule for ais target
 avoiding. go to immediate maneuver to avoid"*). There was a decision budget - a minute until 28

@@ -1015,6 +1015,11 @@
     <button class="cbtn" id="b_contDrop" style="display:none" title="Drop this survey break-off: Continue will no longer offer it">&#215;</button>
     <button class="cbtn go" id="b_passage" style="display:none" disabled>Continue passage</button>
     <button class="cbtn" id="b_passDrop" style="display:none" title="Drop the passage being sailed: no further section is sent (she is not stopped)">&#215;</button>
+    <!-- RE-FLY (2026-11-05): coverage struck for a vessel sitting on it, offered back when the water tests clear.
+         Shown only while the plan banks a strike; the selector only when it banks more than one. -->
+    <button class="cbtn go" id="b_refly" style="display:none" disabled>Re-fly</button>
+    <select id="b_reflySel" style="display:none" title="Which struck stretch Re-fly flies"></select>
+    <button class="cbtn" id="b_reflyDrop" style="display:none" title="Drop this struck-coverage record: Re-fly will no longer offer it">&#215;</button>
     <button class="cbtn" id="b_pause" disabled>Pause</button>
     <button class="cbtn" id="b_stop" disabled>Stop</button>
     <span class="cdiv"></span>
@@ -4415,7 +4420,8 @@ function strikeSay(sk){
   const who = [...new Set(sk.struck.map(s => s.kind))].join(", ");
   return "struck " + sk.n + " waypoint" + (sk.n === 1 ? "" : "s")
        + (sk.lines.length ? " on line" + (sk.lines.length === 1 ? " " : "s ") + sk.lines.join(", ") : "")
-       + (sk.m ? " (" + fmtDist(sk.m) + " of coverage)" : "") + " — " + who + " sits on them; re-fly when clear";
+       + (sk.m ? " (" + fmtDist(sk.m) + " of coverage)" : "") + " — " + who
+       + " sits on them; Re-fly, beside Start, offers them back when the water clears";
 }
 /**
  * THE WAY ROUND THAT WOULD MOVE NOTHING - asked where the answer exists, which is inside the resume, after the way
@@ -7316,6 +7322,10 @@ async function loadMission(){
                  surveys:Array.isArray(m.surveys) ? m.surveys : [],
                  // ... and THE SURVEY BREAK-OFFS (2026-10-11), for the same reason: Continue's records ride the plan.
                  breaks:Array.isArray(m.breaks) ? m.breaks : [],
+                 // ... and THE STRUCK COVERAGE (2026-11-05, the re-fly offer's first defect: fea88fb banked strikes
+                 // on the plan but left them OUT of this whitelist, so the first save after a reload wiped the bank -
+                 // the `speeds` defect again, found by the census before the offer was built).
+                 strikes:Array.isArray(m.strikes) ? m.strikes : [],
                  // ... the hold a dropped passage left her at (dropPassage, 2026-10-16: the chain stands down there) ...
                  passage_hold:(m.passage_hold && typeof m.passage_hold === "object") ? m.passage_hold : null,
                  // ... and THE PASSAGE BEING SAILED (2026-10-12): which section she is on, where she left it.
@@ -14898,7 +14908,10 @@ async function pollAIS(){ if(UIROLE === "controls" || !aisWanted() || aisBusy) r
     // the charted depth under each vessel moored or at anchor, and how far a moored hull lies from a charted berth
     // (ais_keepout.js aisWithChart, 2026-11-01)
     aisVessels = (d && Array.isArray(d.vessels)) ? aisWithChart(d.vessels, nogo.features, sea.waterOffset || 0) : [];
-    aisTorn = false;                             // the pair is whole again: this list is the poll's own
+    // the pair is whole again ONLY when the poll ANSWERED: an ok:false reply (the service unreachable behind a
+    // 200) empties the list WITHOUT moving aisPolledAt - the third tear writer (review C8, 2026-11-05): for the
+    // 40 s grace a reader of the pair alone saw a FRESH EMPTY sea and the re-fly claimed a dead berth clear.
+    aisTorn = !(d && d.ok);
     aisBeyondRpts = (d && Array.isArray(d.beyond)) ? d.beyond : [];
     // THE SERVICE ANSWERED (contacts, or none in range): the DR clock moves. This is the AIS proxy's own
     // reply, not a command result - `ok` is the service's word for "I am up" - so it is read as such,
@@ -21000,13 +21013,16 @@ function breakList(){
 }
 // ── STRUCK COVERAGE, BANKED ──────────────────────────────────────────────────────────────
 // A forward-strike (strikePastOccupied) abandons coverage a vessel sits on; the record of WHAT was
-// abandoned goes on the plan so it survives a reload and can be re-flown later by hand. It is NOT a
+// abandoned goes on the plan so it survives a reload and can be re-flown later. It is NOT a
 // break record: mission.breaks keeps one record per survey for Continue (his settled word keeps
-// Continue to broken-off surveys), while strikes accumulate and nothing re-offers them automatically -
-// re-flying a struck berth is the operator's call, made when the water is actually clear. Each record
-// copies its own waypoints and line numbers (a later re-clip renumbers mission.lines; a banked record
-// must not drift with it - the break records' own rule). Server-side: "strikes" is whitelisted beside
-// "breaks" in asv_console.py or the next save silently drops it.
+// Continue to broken-off surveys), while strikes accumulate under their OWN control - Re-fly, beside
+// Continue (2026-11-05). The console watches the water and PRESENTS the offer when every banked
+// waypoint tests clear of moored contacts by the strike's own standard (strikeReady); flying it is
+// still the operator's press, never automatic. Each record copies its own waypoints and line numbers
+// (a later re-clip renumbers mission.lines; a banked record must not drift with it - the break
+// records' own rule). Server-side: "strikes" is whitelisted beside "breaks" in asv_console.py AND in
+// loadMission's rebuild above, or the next save silently drops it (the second half was the defect:
+// fea88fb shipped without the loadMission line and a reload wiped the bank).
 const STRIKES_MAX = 12;              // the plan keeps this many, newest first (asv_console.py STRIKES_MAX)
 function bankStrike(sk){
   if(!sk || !sk.n) return;
@@ -21175,6 +21191,238 @@ $("#tr_sail").onclick = () => sailPassage();
 $("#tr_sail").addEventListener("click", () => pathStopDrawing());   // the Path planning card: sailing ends the drawing
 $("#b_contSel").onchange = (e) => { breakSel = e.target.value; applyCmdState(S); };
 $("#b_contDrop").onclick = () => dropBreak();
+
+// ── THE RE-FLY OFFER (2026-11-05) ────────────────────────────────────────────────────────
+// Coverage struck for a vessel sitting on it (bankStrike above) is OFFERED BACK when the water tests
+// clear: Re-fly, beside Continue, modeled on it control for control. The console only watches and
+// presents - flying the struck stretch is the operator's press, with Continue's own gates and the
+// same post-await re-checks, PLUS a re-run of the water test itself (a ship can berth back in the
+// seconds the way in takes to plan - the post-await lesson: re-read, never assume).
+let strikeSel = null, reflyBusy = false;
+const strikeReadySaid = new Set();   // record ids whose "water clear" banner was said (page session)
+function strikeList(){
+  return Array.isArray(mission.strikes) ? mission.strikes.filter(k => k && Array.isArray(k.wps) && k.wps.length) : [];
+}
+function strikeSelected(){ const L = strikeList(); return L.find(k => k.id === strikeSel) || L[0] || null; }
+function strikeLabel(k){
+  const n = k.wps.length;
+  return n + " waypoint" + (n === 1 ? "" : "s")
+       + (Array.isArray(k.lines) && k.lines.length ? " on line" + (k.lines.length === 1 ? " " : "s ") + k.lines.join(", ") : "");
+}
+/**
+ * MAY THE STRUCK STRETCH BE RE-FLOWN NOW? {ok, why} - breakReady's slot, answered from the water.
+ *
+ * THE TEST IS THE STRIKE'S OWN STANDARD and no other: blockedInfo at nogo.buffer over the moored
+ * contacts (aisMooredClipKeepouts - mmsi-carrying, never moving), the same call strikePastOccupied
+ * makes. A waypoint that call would still strike is not re-flyable; one it would pass is. Honest
+ * order: no chart frame means the contacts cannot be PLACED (aisMooredKeepouts answers a frameless
+ * ask with stale:false - an answer that reads as clear and must not); a torn or stale feed answers
+ * "cannot tell" with its own note, never "clear"; only a fresh read over every banked waypoint says ok.
+ *
+ * It runs at 4 Hz (renderStrikeControls rides applyCmdState), so the answer is memoized on what can
+ * change it and nothing else: the poll's clock, the torn flag, the vessel list, the frame, the buffer
+ * and the bank - all by identity - plus a 5 s time bucket so a silently stopped poll loop still ages
+ * into stale (the age test inside aisMooredKeepouts reads Date.now, which identity alone cannot see).
+ */
+let strikeReadyMemo = null;
+function strikeReady(k){
+  if(!k) return {ok: false, why: "no struck coverage is banked"};
+  if(!nogo.frame) return {ok: false, why: "no chart model is loaded yet, so the moored contacts cannot be placed"};
+  const buf = nogo.buffer || 0, now5 = Math.floor(Date.now() / 5000);
+  let mm = strikeReadyMemo;
+  if(!(mm && mm.polledAt === aisPolledAt && mm.torn === aisTorn && mm.vessels === aisVessels
+       && mm.frame === nogo.frame && mm.buf === buf && mm.bank === mission.strikes && mm.now5 === now5)){
+    mm = strikeReadyMemo = {polledAt: aisPolledAt, torn: aisTorn, vessels: aisVessels, frame: nogo.frame,
+                            buf, bank: mission.strikes, now5, clip: aisMooredClipKeepouts(nogo.frame), byRec: new Map()};
+  }
+  const hit = mm.byRec.get(k);
+  if(hit) return hit;
+  let rd;
+  if(mm.clip.stale) rd = {ok: false, why: mm.clip.note || "the AIS read is stale"};
+  else {
+    const shipsKo = {polys: mm.clip.polys, lines: [], points: []};
+    let left = 0; const kinds = new Set();
+    for(const wp of k.wps){
+      const info = blockedInfo(nogo.frame.toEN(wp), shipsKo, buf);
+      if(info && info.type === "poly"){ left++; kinds.add(info.kind); }
+    }
+    rd = left ? {ok: false, occupied: true,   // `occupied` re-arms the said-once banner: water is not monotonic (C5)
+                 why: left + " of " + k.wps.length + " struck waypoint" + (k.wps.length === 1 ? "" : "s")
+                                 + " still occupied — " + [...kinds].join(", ")}
+              : {ok: true, why: ""};
+  }
+  mm.byRec.set(k, rd);
+  return rd;
+}
+/** Re-fly, the selector and the drop, beside Continue (applyCmdState) - renderBreakControls' mirror. */
+function renderStrikeControls(armed, estop, underWay){
+  const rb = $("#b_refly"), sel = $("#b_reflySel"), drop = $("#b_reflyDrop"); if(!rb) return;
+  const list = strikeList(), k = strikeSelected(), rd = strikeReady(k);
+  rb.style.display = k ? "" : "none";
+  if(drop){
+    drop.style.display = k ? "" : "none";
+    // written every frame, like rb's own disabled: applyViewOnly disables every .cbtn in a view-only tab and
+    // re-enables NOTHING on a takeover (review C7) - a control that wants to live again must say so itself
+    drop.disabled = !k;
+    drop.title = "Drop this struck-coverage record: Re-fly will no longer offer it";
+  }
+  if(sel){
+    sel.style.display = list.length > 1 ? "" : "none";
+    const key = list.map(x => x.id).join(",");
+    if(sel.dataset.key !== key){
+      sel.dataset.key = key; sel.textContent = "";
+      for(const x of list){
+        const o = document.createElement("option"), d = new Date(x.t || 0), p2 = n => String(n).padStart(2, "0");
+        o.value = x.id; o.textContent = strikeLabel(x) + " · " + p2(d.getHours()) + ":" + p2(d.getMinutes());
+        sel.appendChild(o);
+      }
+    }
+    if(k && sel.value !== k.id) sel.value = k.id;
+  }
+  if(!k) return;
+  const why = !rd.ok ? rd.why : reflyBusy ? "re-flying" : estop ? "clear E-STOP first" : !armed ? "arm her first"
+            : !supervising() ? "this window is not supervising" : underWay ? "she is under way - stop her or let the RTH finish"
+            // ⚠ THE GUARD'S BANK OUTRANKS THE OFFER (review C1): a station-keeping boat reads as not under way,
+            // and starting a re-fly from a guard hold would spend guardHeld - the held plan's ONLY copy - unsaid
+            // on the next frame's guardHeldOffer. The SYNCHRONOUS marker is read beside the derived offer.
+            : (guardHeld || guardHeldOffer()) ? "the guard holds the plan she was flying - resume it, or drop its remainder, first" : "";
+  rb.disabled = !!why;
+  rb.classList.toggle("flash", !why);
+  const who = Array.isArray(k.by) && k.by.length ? k.by.join(", ") : "a vessel", d = new Date(k.t || 0);
+  setTip(rb, (why ? "RE-FLY - NOT YET: " + why + ".\n\n" : "RE-FLY ")
+    + "the struck coverage - " + strikeLabel(k) + (k.m ? " (" + fmtDist(k.m) + ")" : "") + ", struck at "
+    + d.toLocaleTimeString() + " when " + who + " sat on it. She is routed from wherever she is to the struck "
+    + "stretch, then flies it - " + k.wps.length + " waypoint(s) - and End of plan. The × beside it drops the record."
+    + (list.length > 1 ? " The selector picks which struck stretch." : ""));
+  // THE WATER CLEARED, SAID ONCE PER CLEARING (breakReadySaid's idiom, widened by the review's C4/C5): EVERY
+  // banked record is watched, not only the selected one - the memo answers per record, so the extra asks cost
+  // nothing - and a berth that RE-OCCUPIES re-arms its banner, because water, unlike a refuel, is not
+  // monotonic: the clearing the operator can actually use must never be the one left unsaid.
+  for(const x of list){
+    if(x.id == null) continue;
+    const rx = x === k ? rd : strikeReady(x);
+    if(rx.occupied) strikeReadySaid.delete(x.id);
+    else if(rx.ok && !strikeReadySaid.has(x.id)){
+      strikeReadySaid.add(x.id);
+      const whoX = Array.isArray(x.by) && x.by.length ? x.by.join(", ") : "a vessel";
+      showBanner("WATER CLEAR — the struck coverage (" + strikeLabel(x) + ") no longer has " + whoX
+        + " sitting on it: RE-FLY, beside Start, routes her to the struck stretch and flies it."
+        + (x !== k ? " The selector beside Re-fly picks it." : ""));
+    }
+  }
+}
+async function reflyStrike(){
+  const k = strikeSelected();
+  if(!k || reflyBusy) return;
+  const rd = strikeReady(k);
+  if(!rd.ok){ flashNote("Re-fly: " + rd.why + "."); return; }
+  if(!canCommand()){ flashNote("Re-fly: arm her first."); return; }
+  const underWay = () => !!(S && S.run === "running" && !((S.status || {}).holding));
+  if(underWay()){ flashNote("Re-fly: she is under way - stop her, or let the RTH finish, first."); return; }
+  if(guardHeld || guardHeldOffer()){
+    flashNote("Re-fly: the guard holds the plan she was flying - resume it, or drop its remainder, first."); return;
+  }
+  if(!asv){ flashNote("Re-fly: no position fix yet."); return; }
+  reflyBusy = true; applyCmdState(S);
+  try{
+    const tail = k.wps.map(w => ({lat: w.lat, lon: w.lon})), label = strikeLabel(k);
+    const who = Array.isArray(k.by) && k.by.length ? k.by.join(", ") : "a vessel";
+    if(!await guiConfirm("Re-fly the struck coverage", "Re-fly " + label + ", struck when " + who + " sat on it: "
+        + "she is routed from here to the struck stretch, then flies it - " + tail.length + " waypoint(s) - and "
+        + "End of plan. Confirm the route looks safe and no uncharted obstacle is in the way.")) return;
+    const from = {lat: asv.lat, lon: asv.lon}, target = tail[0];
+    showBanner("Routing to the struck coverage… a long way round obstacles can take several seconds.");
+    await ensureNogoCovers([from, ...tail]);
+    const pin = await planInsideChart([from, target], undefined, () => {
+      const o = {...holdOpts(), standoffM: patClipBufM(), flyThrough: true};
+      return planOffThread({op: "nogo", args: {from, to: target, opts: o}}, () => planNogoRoute(from, target, o));   // the route worker
+    }, "Re-fly");
+    if(pin.withdrawn) return;            // a Stop pressed while it planned (planInsideChart says so); the record is kept
+    takeDownBanner(/^Routing to the struck coverage/);
+    if(pin.error){
+      showBanner("⚠ CANNOT RE-FLY " + label + " — " + (planWhy(pin) || pin.error) + ". Nothing was sent; the struck coverage stays banked.");
+      render(); return;
+    }
+    if(pin.heldOff){
+      showBanner("⚠ CANNOT RE-FLY " + label + " — " + heldOffWhy(pin.heldOff) + ", so the way in cannot be certified. "
+        + "Nothing was sent; the struck coverage stays banked.");
+      render(); return;
+    }
+    const via = pin.degraded ? [] : pin.route.slice(0, -1), route = [...via, ...tail];
+    if(routeTooLong(route.length)) return;
+    // ⚠ ASKED AGAIN AFTER THE AWAITS - Continue's rule word for word, and then the water's own: the confirm is
+    // unbounded and the routing takes seconds; she may have been commanded, disarmed or put in E-STOP meanwhile,
+    // AND a vessel may have come back to the berth while the way in was being planned.
+    if(!canCommand() || underWay()){
+      showBanner("⚠ NOT RE-FLOWN — she was commanded, disarmed or stopped while the way in was being planned. Nothing "
+        + "was sent; the struck coverage stays banked.");
+      render(); return;
+    }
+    // ⚠ THE GUARD'S BANK, READ BY ITS SYNCHRONOUS MARKER (review C1, the FRIGGA shape again): a hold won while
+    // the way in was being planned banks the plan's remainder in guardHeld - the ONLY copy - and guardHeldOffer
+    // answers null for the hold's grace window, so guardHeld is read beside it. An upload now would start the
+    // re-fly and the next frame's guardHeldOffer would spend that remainder unsaid.
+    if(guardHeld || guardHeldOffer()){
+      showBanner("⚠ NOT RE-FLOWN — the guard now holds the plan she was flying, and starting the re-fly would spend "
+        + "its banked remainder unsaid. Resume that plan, or drop its remainder, first. Nothing was sent; the "
+        + "struck coverage stays banked.");
+      render(); return;
+    }
+    // ... and the RECORD itself (review C3): the x beside Re-fly can be pressed while the way in plans, and the
+    // operator's own confirmed withdrawal is the one post-await change the water test cannot see.
+    if(!strikeList().includes(k)){
+      showBanner("⚠ NOT RE-FLOWN — the record was dropped while the way in was being planned. Nothing was sent.");
+      render(); return;
+    }
+    const rd2 = strikeReady(k);
+    if(!rd2.ok){
+      showBanner("⚠ NOT RE-FLOWN — the water changed while the way in was being planned: " + rd2.why + ". Nothing "
+        + "was sent; the struck coverage stays banked.");
+      render(); return;
+    }
+    const up = await cmd("/api/cmd/upload", {route, hold_clear_m: holdClearAt(route[route.length - 1]),
+                                             ...(tailEndsAtHold(route) ? {completion: "loiter"} : {})});
+    if(!took(up)){
+      const say = notTookSay(up, "UPLOAD");
+      showBanner((say || "⚠ THE UPLOAD DID NOT LAND") + " - NOT RE-FLOWN; the struck coverage stays banked.");
+      render(); return;
+    }
+    runRoute = route; runUnsafe = [];
+    dropCornerSlow("the struck coverage was re-flown as a new plan of " + route.length + " waypoint(s)");
+    setPlanIntent("survey", {routed: via.length > 0, degraded: !!pin.degraded}, route);
+    if(planIntent) planIntent.why.push({t: "route", s: "RE-FLYING the struck coverage (" + label + ") banked when "
+      + who + " sat on it - the water tests clear now"});
+    legStartsHere(0, up);
+    const started = await startRun({confirmed: true, fresh: true});
+    if(!started){
+      showBanner("⚠ NOT RE-FLOWN — " + label + " is UPLOADED but did NOT start (see above). The struck coverage "
+        + "stays banked: press Start to fly what is aboard, or Re-fly again.");
+      return;
+    }
+    mission.strikes = strikeList().filter(x => x !== k); saveMission();
+    const way = via.length ? "routed " + fmtDist(distTo(from, target)) + " to it via " + via.length + " waypoint(s) clear of the keep-outs"
+              : pin.degraded ? "the way in NOT certified (the keep-out model is not loaded)" : "the way in is direct";
+    showBanner("STRUCK COVERAGE RE-FLOWN — " + label + ", banked when " + who + " sat on it; " + way + ". "
+      + tail.length + " waypoint(s) to fly, then End of plan. Recorded in the session log.");
+    logClient("strike_refly", {id: k.id, wpts: tail.length, m: k.m, lines: k.lines, via: via.length,
+              route_wpts: route.length, degraded: !!pin.degraded});
+  } finally {
+    reflyBusy = false; applyCmdState(S); render();
+  }
+}
+/** The ×: the selected struck-coverage record dropped, at the operator's word - Re-fly no longer offers it. */
+async function dropStrike(){
+  const k = strikeSelected(); if(!k) return;
+  if(!await guiConfirm("Drop the struck coverage", "Drop " + strikeLabel(k) + "'s record? Re-fly will no longer "
+      + "offer it; the coverage can still be flown again by hand from a fresh plan.", {always: true})) return;
+  mission.strikes = strikeList().filter(x => x !== k); strikeSel = null; saveMission();
+  logClient("strike_drop", {id: k.id, wpts: k.wps.length, lines: k.lines});
+  flashNote("Struck-coverage record dropped: " + strikeLabel(k) + ".");
+  applyCmdState(S);
+}
+$("#b_refly").onclick = () => reflyStrike();
+$("#b_reflySel").onchange = (e) => { strikeSel = e.target.value; applyCmdState(S); };
+$("#b_reflyDrop").onclick = () => dropStrike();
 
 /**
  * WHERE THE BOAT IS ON ITS COVERAGE LINE AT THIS INSTANT, or null when it is not on one.
@@ -22692,8 +22940,12 @@ async function resumeHeldRun(opts){
         + "the survey speed" + (resumeSlow ? " once your LOW hold is released" : "") + " — set a slower speed if you want it slow.");
       if(planIntent) planIntent.why.push({t:"warn", s:"RESUMED FROM A CHOSEN POINT while the guard held the survey " + '—' + " "
         + (note || "carrying on") + "; " + left + " waypoint" + (left === 1 ? "" : "s") + " re-uploaded; the governor has the throttle"});
+      // The chosen-point resume strikes too (its koIn carries the contact), so its strike BANKS like every other
+      // branch's - this was the one strike said in words that Re-fly could never offer back (review C2, 2026-11-05).
+      if(sk.n) bankStrike(sk);
       logClient("resume", {line: lineNo(at.line), from_point: true, held: true, along_m: at.fromStart != null ? Math.round(at.fromStart) : null,
-                kind: (ep && ep.kind) || g.kind || null, wpts: left, note: note || null});
+                kind: (ep && ep.kind) || g.kind || null, wpts: left,
+                struck_wpts: sk.n || 0, struck_lines: sk.lines, note: note || null});
     }
     updateMissionCard(); render();
     return;
@@ -23051,6 +23303,7 @@ function applyCmdState(s){
   if(uploadBusy) $("#b_upload").title = "Measuring the plan’s corners — the route has not been sent yet.";
   $("#b_start").disabled = !armed || estop || !s.plan_uploaded || (run==="running" && !s.plan_staged);
   renderBreakControls(armed, estop, underWay);   // Continue, beside Start (2026-10-11)
+  renderStrikeControls(armed, estop, underWay);  // Re-fly, beside Continue (2026-11-05)
   renderPassageControls(armed, estop, underWay); // ... and Continue passage (2026-10-12)
   updateSailButton();                            // ... and Sail passage on the transit panel
   // ⚠ PAUSE IS ENABLED WHILE PAUSED, BECAUSE IT IS THE WAY BACK. It used to gray out the

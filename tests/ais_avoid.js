@@ -397,6 +397,10 @@ eval([
   grab("aisAroundUnderwayTick"),
   // the punch's moored clip (2026-11-04): lifted real, driven by check 32
   grab("aisMooredClipKeepouts"), grab("aisClipSig"),
+  // THE RE-FLY OFFER'S WATER TEST (2026-11-05): lifted real with its memo's declaration - the ladder
+  // (frame, torn/stale, occupied) and the identity memo are check 33's subject; the cluster, the press
+  // and the wiring are tests/survey_break.js's.
+  grabDecl("strikeReadyMemo"), grab("strikeReady"),
   "async function planOffThread(job, here){ workerAsks++; if(workerDead) return here(); if(workerHold) await workerHold; "
   + "return planNogoRoute(job.args.from, job.args.to, job.args.opts); }",
   grab("aroundTrySig"), grab("aroundTriedSame"),
@@ -4821,6 +4825,33 @@ function stationing(beh, sogKn, cogDeg, o = {}) {
           () => "moving n=" + skM.n + " (moving flag " + movP.moving + "), stopped n=" + skS.n);
   }
 
+  // 31e. THE CHOSEN POINT BANKS ITS STRIKE TOO (review C2, 2026-11-05): the operator's Resume from here on a
+  // held survey walks the same strike, and its struck coverage must land in mission.strikes - this was the one
+  // branch that said the strike in words (with Re-fly's own promise in them) and banked NOTHING, so the offer
+  // could never deliver what the note named. Driven on the chosen-point branch: she keeps holding (the console's
+  // own try refused), then the operator picks a point under one moored workboat with the second on the next
+  // waypoint - struck 2, BANKED, logged with its struck fields, the resume flying the rest.
+  surveying(7, [LONG31, B31, C31]);
+  mission.lines = [LINE_E, { a: ll(200, 60), b: ll(-200, 60) }, { a: ll(-200, 120), b: ll(200, 120) }];
+  mission.strikes = [];
+  runRoute = [ll(-200, 0), LINE_E.b, ll(200, 60), ll(-200, 60), ll(-200, 120), ll(200, 120)];
+  window._wpIndex = 1; S.wp_total = runRoute.length;
+  pinNext = NO_ROUTE;                                   // the console's own way round refuses: she KEEPS HOLDING
+  frame(); nowHolding(); clock += 1000; aisPolledAt = clock; frame(); await settle();
+  pinNext = null; sent = []; logged = []; banners = [];
+  const KO31E = { polys: aisKeepouts([B31, C31], ref, { now: clock, polledAt: clock }).polys, lines: [], points: [] };
+  await resumeHeldRun({ at: { to: ll(200, 60), j: 3, atEnd: false, line: 1, fromStart: 0 }, ko: KO31E, manual: true });
+  await settle();
+  const lr31e = logged.find(e => e.kind === "resume" && e.data && e.data.from_point);
+  check("31e. the chosen-point resume BANKS its strike (review C2): struck 2 on the operator's own pick-up, "
+        + "banked on the plan and logged with its struck fields - so the words' promise (Re-fly offers them "
+        + "back) is real on every branch that strikes",
+        () => Array.isArray(mission.strikes) && mission.strikes.length === 1 && mission.strikes[0].n === 2
+              && lr31e && lr31e.data.struck_wpts === 2
+              && paths().includes("/api/cmd/upload"),
+        () => "strikes " + JSON.stringify(mission.strikes) + "; log " + JSON.stringify(lr31e ? lr31e.data : null)
+            + "; sent " + JSON.stringify(paths()) + "; banners " + JSON.stringify(banners.slice(-2)));
+
   // 31leg. THE LEG SITE: a Go-To held for a 200 m ship whose hull covers the leg's own end point - the
   // walk's tail is the end point, the strike takes it (the ship sits on it), the tail empties, and the
   // leg refuses in the strike's own words with the record and the episode standing.
@@ -4885,15 +4916,98 @@ function stationing(beh, sogKn, cogDeg, o = {}) {
   aisTorn = false; aisVessels = [PARKED()]; aisPolledAt = clock;   // the poll's own write re-seeds the pair
   const whole32 = aisMooredClipKeepouts(ref);
   check("32d. a TORN vessels/polledAt pair answers 'no AIS read in hand' with stale said - never a fresh "
-        + "empty sea - and both tear writers set the flag (source-pinned), the poll's own write clearing it",
+        + "empty sea - and ALL THREE tear writers set the flag (source-pinned): the poll's catch, the layer-off "
+        + "unarmed, and the ok:false reply that empties the list behind a 200 (review C8, 2026-11-05) - the "
+        + "poll's own ANSWERED write alone clearing it",
         () => torn32.polys.length === 0 && torn32.stale === true && /no AIS read in hand/.test(torn32.note || "")
               && whole32.polys.length === 1
               && /\}catch\(e\)\{ aisVessels=\[\]; aisTorn=true;/.test(H)
               && /if\(!aisGuardWanted\(\)\)\{ aisVessels=\[\]; aisTorn=true; \}/.test(H)
-              && /aisTorn = false; .*the pair is whole again/.test(H),
+              && H.includes("aisTorn = !(d && d.ok);"),
         () => "torn " + JSON.stringify({n: torn32.polys.length, stale: torn32.stale, note: torn32.note})
-            + "; whole " + whole32.polys.length + "; writers pinned "
-            + /\}catch\(e\)\{ aisVessels=\[\]; aisTorn=true;/.test(H));
+            + "; whole " + whole32.polys.length + "; the ok:false writer pinned "
+            + H.includes("aisTorn = !(d && d.ok);"));
+}
+
+// ═══ 33. THE RE-FLY OFFER'S WATER TEST (2026-11-05, "build the re-fly offer"): strikeReady answers {ok, why}
+// from the water by the strike's own standard - blockedInfo at nogo.buffer over the moored set - behind the
+// honest ladder: no chart frame is "cannot place" (a frameless aisMooredKeepouts answers stale:false, which
+// would read as clear), a TORN or STALE feed is "cannot tell" with its own note, an occupied waypoint is
+// counted and named, and only a fresh read over every banked waypoint answers ok. ═══
+{
+  surveying(7, [PARKED()]);
+  // two banked waypoints on the line: the first inside her moored clear water, the second 45 m past her hull
+  const REC = { id: "k33", t: clock, n: 2, m: 60, lines: [1], by: ["AIS: WORKBOAT (30 x 8 m, moored)"],
+                wps: [ll(30, 0), ll(90, 0)] };
+  mission.strikes = [REC];
+  const occ = tryIt(() => strikeReady(REC));
+  const fr = nogo.frame; nogo.frame = null;
+  const noFrame = tryIt(() => strikeReady(REC));
+  nogo.frame = fr;
+  aisTorn = true;                                   // the torn pair is in the memo's key, not only the clip's
+  const torn = tryIt(() => strikeReady(REC));
+  aisTorn = false;
+  clock += 61000;                                   // the read ages past AIS_KO_STALE_S: "cannot tell", never clear
+  const stale = tryIt(() => strikeReady(REC));
+  aisVessels = []; aisPolledAt = clock;             // she sailed, and the poll's own write says so
+  const clear = tryIt(() => strikeReady(REC));
+  check("33. strikeReady's honest ladder: an occupied waypoint answers not-ready, counted and NAMED; no chart "
+        + "frame answers 'cannot place'; a TORN feed 'no AIS read in hand', a STALE one its age - never clear "
+        + "from a dead read - and the berth actually empty answers ok",
+        () => occ.v && occ.v.ok === false && /1 of 2/.test(occ.v.why) && /WORKBOAT/.test(occ.v.why)
+              && noFrame.v && noFrame.v.ok === false && /chart model/.test(noFrame.v.why)
+              && torn.v && torn.v.ok === false && /no AIS read in hand/.test(torn.v.why)
+              && stale.v && stale.v.ok === false && /\d+ s old/.test(stale.v.why)
+              && clear.v && clear.v.ok === true && clear.v.why === "",
+        () => JSON.stringify({ occ: occ.v || occ.raised, noFrame: (noFrame.v || {}).why, torn: (torn.v || {}).why,
+                               stale: (stale.v || {}).why, clear: clear.v || clear.raised }));
+
+  // 33b. THE MEMO IS IDENTITY, NEVER THE CLOCK ALONE: the same answer OBJECT while nothing that can change it
+  // has (strikeReady runs at 4 Hz under applyCmdState - an un-memoized test rebuilds the moored model per
+  // frame); a new 5 s bucket, a new poll or a new vessel list each recompute - the bucket so a silently
+  // stopped poll loop still AGES into stale, which identity alone cannot see.
+  clock = Math.ceil(clock / 5000) * 5000;           // align the 5 s bucket so the arithmetic below is exact
+  surveying(7, [PARKED()]);
+  mission.strikes = [REC];
+  const r1 = tryIt(() => strikeReady(REC)).v, r2 = tryIt(() => strikeReady(REC)).v;
+  clock += 4000;                                    // same bucket: still the same answer object
+  const r3 = tryIt(() => strikeReady(REC)).v;
+  clock += 1000;                                    // the bucket turns: recomputed (same value, new object)
+  const r4 = tryIt(() => strikeReady(REC)).v;
+  aisVessels = []; aisPolledAt = clock;             // the poll's own write: recomputed, and the answer FLIPS
+  const r5 = tryIt(() => strikeReady(REC)).v;
+  // ... and the FRAME and the BUFFER are keys too (review C15): a chart re-read REPLACES nogo.frame, and a
+  // cached clip's EN polys read against a new frame's toEN are geometric garbage - for up to one bucket a
+  // dropped frame term could call an occupied berth clear and spend its banner for the session.
+  nogo.frame = planeFrame({ lat: 43.07, lon: -70.76 });   // the re-read: a NEW frame object, same origin
+  const r6 = tryIt(() => strikeReady(REC)).v;
+  nogo.buffer = 4;                                        // the operator's keep-clear moved
+  const r7 = tryIt(() => strikeReady(REC)).v;
+  check("33b. the memo serves the SAME answer object while nothing that can change it has, and recomputes on "
+        + "the 5 s bucket, the poll clock, the vessel list, the FRAME's identity and the BUFFER - the cleared "
+        + "berth flips the answer at the poll",
+        () => r1 && r2 === r1 && r3 === r1 && r4 && r4 !== r1 && r4.ok === false
+              && r5 && r5 !== r4 && r5.ok === true
+              && r6 && r6 !== r5 && r6.ok === true && r7 && r7 !== r6,
+        () => JSON.stringify({ hit: r2 === r1, sameBucket: r3 === r1, newBucket: r4 !== r1,
+                               occStays: r4 && r4.ok, cleared: r5 && r5.ok,
+                               frameKey: r6 !== r5, bufKey: r7 !== r6 }));
+
+  // 33c. ONE STANDARD, PINNED IN SOURCE: strikeReady asks blockedInfo at nogo.buffer over
+  // aisMooredClipKeepouts(nogo.frame) - the strike's own call - and the press re-asks EVERYTHING after its
+  // awaits: canCommand, underWay and strikeReady again (a vessel can berth back while the way in plans).
+  check("33c. the water test is the strike's own standard and the press re-asks it after the awaits (source "
+        + "pins: blockedInfo at the buffer over the moored clip; rd2 = strikeReady(k) behind canCommand/underWay)",
+        () => /aisMooredClipKeepouts\(nogo\.frame\)/.test(grab("strikeReady"))
+           && /blockedInfo\(nogo\.frame\.toEN\(wp\), shipsKo, buf\)/.test(grab("strikeReady"))
+           && /const rd2 = strikeReady\(k\);/.test(grab("reflyStrike"))
+           && /if\(!canCommand\(\) \|\| underWay\(\)\)/.test(grab("reflyStrike"))
+           && grab("strikeSay").includes("Re-fly, beside Start, offers them back when the water clears")
+           && grab("reflyStrike").indexOf("const rd2 = strikeReady(k);") > grab("reflyStrike").indexOf("await planInsideChart")
+           && grab("reflyStrike").indexOf('await cmd("/api/cmd/upload"') > grab("reflyStrike").indexOf("const rd2 = strikeReady(k);"),
+        () => "pins: clip " + /aisMooredClipKeepouts\(nogo\.frame\)/.test(grab("strikeReady"))
+            + ", blockedInfo " + /blockedInfo\(nogo\.frame\.toEN\(wp\), shipsKo, buf\)/.test(grab("strikeReady"))
+            + ", rd2 " + /const rd2 = strikeReady\(k\);/.test(grab("reflyStrike")));
 }
 
 Date.now = realNow;

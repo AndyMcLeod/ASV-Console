@@ -469,7 +469,8 @@ const goto = (from, to, o) => ({ op: "nogo", args: { from, to, opts: o } });
 
   // ── 13. THE WIRING ───────────────────────────────────────────────────────────────────────────────────────────────
   const CALLERS = { doGoTo: "Go-To", doRTH: "RTH", sailSend: "section", doTransit: "Transit", doUpload: "Upload",
-                    continueSurvey: "Continue", resumeFromHere: "Resume from here" };
+                    continueSurvey: "Continue", resumeFromHere: "Resume from here",
+                    reflyStrike: "Re-fly" };   // the struck coverage offered back (2026-11-05)
   // (the caller's closure: from its `await planInsideChart(` to the `withdrawn` it checks straight after)
   // (a caller that searches through planGoToLeg - the Go-To since 2026-10-18, its lock transit's legs beside it - is held
   // to that function's own search through planOffThread, and to its own `withdrawn` straight after the call)
@@ -499,7 +500,7 @@ const goto = (from, to, o) => ({ op: "nogo", args: { from, to, opts: o } });
               && (PIC.match(/routeStopGen !== stopWas/g) || []).length === 3
               && /await supervisorBusy\(\);\s*\n\s*try\{ return here\(\); \}\s*\n\s*finally\{ supPlanEnd = Date\.now\(\); \}/.test(PH),
         () => wiring.filter((w) => !(w.through && w.checks)).map((w) => w.fn + (w.through ? "" : " not through planOffThread")
-              + (w.checks ? "" : " not checking withdrawn")).join("; ") || "all seven callers wired");
+              + (w.checks ? "" : " not checking withdrawn")).join("; ") || "all eight callers wired");
 
   page.close();
   console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
