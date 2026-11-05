@@ -237,6 +237,11 @@ function makeWorld(opts) {
     + " const half = Math.max(MAX_HALF_M, sp.spacing*4.6/2 + 2);"
     + " return turnWithRetry(E, F, hE, hF, nogo.frame, ko, nogo.buffer, minTurnRadiusM(roleSpeed('turn')), half,"
     + " minTurnRadiusM('low'), easeLsM(), {spdKey: roleSpeed('turn'), approachM: 1}); }"
+    // the moored-contact clip (2026-11-04): no contact ever stands in this world, so the punch clips
+    // round an empty sea - stubbed shape-for-shape (a missing symbol here is the '0 runs, 0 turns'
+    // swallow this file's own notes record); the clip's behavior is min_depth_floor 17c's
+    + "\nfunction aisMooredClipKeepouts(){ return {polys: [], stale: false, note: null}; }"
+    + "\nfunction aisClipSig(){ return \"\"; }"
     // The same ladder judged as punchOut judges it - onto E, across the join, off F, with the upload's walk.
     + "\nfunction askJoin(runK, runK1){ const dr = depthRange();"
     + " const ko = buildKeepouts(nogo.frame, nogo.enf, {min: Math.max(V.NOGO_MIN_DEPTH_M, dr.min), max: 0}, nogo.features);"

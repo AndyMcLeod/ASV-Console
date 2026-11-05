@@ -105,6 +105,11 @@ var runLineIdx = -1, curTurn = -1, turnSeg = [], lastRunLine = -1, turnSlowAt = 
 // Same trap, same answer, as governor_says.js's adoptedSeq. Check 4g pins the page's own declaration so a
 // rename cannot leave the lifted functions quietly reading fresh globals.
 var avoiding = null;
+// THE UNDERWAY SPLICE'S WORLD (2026-11-04): routeStopGen is the page's withdrawal generation (read by the
+// auto try's re-validation; a test bumps it to model a press across the await); workerHold defers the stub
+// worker's answer until a test resolves it; workerDead models a worker that cannot answer (the auto try must
+// then do NOTHING - the ladder's hold is the fallback, never a page-thread search).
+var routeStopGen = 0, workerHold = null, workerDead = false, workerAsks = 0, aisTorn = false;
 var lineSwing = -1;   // the line she is swinging onto (2026-09-25) - read by currentActivity every frame
 // speedGovernor also reads the JUNCTION corner set since 2026-09-19 - see speed_modes.js.
 var cornerSlow = new Set();
@@ -162,7 +167,8 @@ var aisKoDrawn = [], aisKoNote = null, aisKoStale = false, aisKoBlindSaid = fals
 // grace period. 8e guards the name.
 var aisKoBlind = false;
 const { aisKeepouts: AK_aisKeepouts, aisAvoidKeepouts, aisAvoidKeepout, aisRoundKeepout, convexHull, AIS_KO_STALE_S,
-        AIS_LOOKAHEAD_M, aisInReach, aisReachM, AIS_MARGIN_FRAC } = require("../static/js/ais_keepout.js");   // the ladder's reach (2026-09-29)
+        AIS_LOOKAHEAD_M, aisInReach, aisReachM, AIS_MARGIN_FRAC,
+        aisMooredKeepouts } = require("../static/js/ais_keepout.js");   // the ladder's reach (2026-09-29); the punch clip (2026-11-04)
 // ⚠ THE LADDER'S SCENARIOS ARE THE BARE HULL'S (2026-10-17). Since then a contact's keep-out carries her clear water -
 // half her length round her hull (ais_keepout.js AIS_MARGIN_FRAC, his "Half her length") - and every scenario below 27
 // places its contacts at distances tuned to the hull alone: what they hold is the ladder (its reach, the override, the
@@ -382,6 +388,17 @@ eval([
   // guard caught it, not a check.
   grab("aroundLine"), grab("aroundStd"), grab("aroundTail"), grab("aroundTailIsSame"),
   grab("aroundNoOpWhy"),   // the no-op refusal, asked by both resumes where `via` is known (2026-11-03)
+  // THE FORWARD-STRIKE (2026-11-04): lifted, never stubbed - the walk past occupied waypoints, its words,
+  // and the bank (mission.strikes lands on this world's mission var; saveMission is stubbed below).
+  grab("strikePastOccupied"), grab("strikeSay"), grabDecl("STRIKES_MAX"), grab("bankStrike"),
+  "function saveMission(){}",
+  // THE UNDERWAY SPLICE (2026-11-04): the tick lifted real; the worker is this stub, steered by pinNext like
+  // the page-thread router and deferrable/killable by the module-scope levers above.
+  grab("aisAroundUnderwayTick"),
+  // the punch's moored clip (2026-11-04): lifted real, driven by check 32
+  grab("aisMooredClipKeepouts"), grab("aisClipSig"),
+  "async function planOffThread(job, here){ workerAsks++; if(workerDead) return here(); if(workerHold) await workerHold; "
+  + "return planNogoRoute(job.args.from, job.args.to, job.args.opts); }",
   grab("aroundTrySig"), grab("aroundTriedSame"),
   // THE AVOIDING FLAG'S OWN RECORD AND READER (2026-11-02, "Create a flag that attaches to the ASV an
   // reads AVOIDING until it's back on line or natural transit"). LIFTED, not stubbed: this suite is where
@@ -2117,11 +2134,18 @@ const wayInOf = (rte, from, tail = 3) => [from, ...viaOf(rte, tail), rejoinOf(rt
   surveying(7, [LONG]); frame(); nowHolding(); sent = []; logged = []; banners = [];
   clock += 61000; aisPolledAt = clock; frame(); await settle();
   const up2 = sent.find(x => x.p === "/api/cmd/upload"), rte2 = (up2 && up2.route) || [];
-  check("14g. a contact covering the rest of the line: that line is LEFT and the plan is picked up at the waypoint after its end - said, and recorded as skip_line",
-        () => rte2.length === 2 && distTo(rte2[0], ll(200, 60)) < 0.5 && distTo(rte2[1], ll(-200, 60)) < 0.5
-              && banners.some(b => /ROUTED ROUND/.test(b) && /is covered by/.test(b) && /picked up at its next waypoint/.test(b))
-              && logged.some(e => e.kind === "ais_around" && e.data.skip_line === true),
+  // ⚠ RE-BASED 2026-11-04 (the forward-strike). The waypoint after the line's end - [200, 60] here - sits
+  // INSIDE her grown maneuver ring (a 200 m ship: the ship-length disc reaches it, and the ladder's own
+  // half-length clear water would hold the boat there again), so on the real page holdTarget REFUSES it and
+  // the old j+1 jump was the field's two-minute CANNOT RESUME; this check's old green rode the router STUB
+  // answering where the real router refuses. The strike now walks past it: struck 1, picked up at the first
+  // waypoint clear of her, the strike said and logged beside skip_line.
+  check("14g. a contact covering the rest of the line: that line is LEFT, the occupied waypoint after its end is STRUCK, and the plan is picked up at the first waypoint clear of her - said, and recorded as skip_line + struck_wpts",
+        () => rte2.length === 1 && distTo(rte2[0], ll(-200, 60)) < 0.5
+              && banners.some(b => /ROUTED ROUND/.test(b) && /is covered by/.test(b) && /struck 1 waypoint/.test(b))
+              && logged.some(e => e.kind === "ais_around" && e.data.skip_line === true && e.data.struck_wpts === 1),
         () => rte2.length + " wpts: " + JSON.stringify(rte2.map(p => { const q = llEN(p.lat, p.lon, ref); return [Math.round(q.e), Math.round(q.n)]; }))
+            + "; struck " + JSON.stringify((logged.find(e => e.kind === "ais_around") || {data: {}}).data.struck_wpts)
             + "; " + JSON.stringify(banners.slice(-1)));
 
   // ⚠⚠ 14h. NO WAY ROUND: SAID ONCE, STILL HOLDING, AND ASKED AGAIN WHEN THE MODEL MOVES - NOT ON A CLOCK AND
@@ -4499,6 +4523,377 @@ function stationing(beh, sogKn, cogDeg, o = {}) {
         () => !/NOT at the/.test(b5b) && !!la5b && la5b.data.inside_standoff === false,
         () => "logged inside_standoff " + (la5b ? JSON.stringify(la5b.data.inside_standoff) : "(no record)")
             + "; banner " + JSON.stringify(b5b.slice(0, 220)));
+}
+
+// ═══ 30. THE WAY ROUND WITHOUT THE STOP (2026-11-04, Andy: "The ASV still waits at least 30 seconds on
+// encountering an AIS target. This wait should be gone and the avoidance maneuver should be calculated and
+// then implemented immediately."). aisAroundUnderwayTick fires at the SLOW rung: the RUNNING plan is amended
+// round the contact - no hold, no pause, no stop - with the router's leg in the worker (the planOffThread
+// stub above, deferrable by workerHold, killable by workerDead) and the taut path on this thread. ═══
+{
+  // THE REACH NEEDS THE HULL'S OWN SLOW-DOWN LAW (the 24-series' rule): without maneuvering the reach is
+  // the bare 50 m, and at 7 kn there is no SLOW band at all - entry at 50 m is 14 s, a hold. The DriX
+  // profile, restored at this block's end exactly as the 24-series restores it.
+  const DRIX30 = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "vessels", "drix08.json"), "utf8"));
+  const wasM30 = V.VESSEL.maneuvering;
+  V.VESSEL.maneuvering = DRIX30.maneuvering;
+  // a stopped 30 x 8 contact across her track at entry+18 (hull half 15 + 3 m buffer), entry 80 m out:
+  // the 24-series' own SLOW-first distance (24j drives the hold from exactly this approach)
+  const AHEAD = (e) => contact(e, 0, { sog: 0, cog: null, heading: 90 });
+  const amends = () => sent.filter(x => x.p === "/api/cmd/amend");
+  // WALLS_NWR, moved to flank a contact at `ec`: the taut way round cannot certify, so the router (the
+  // worker stub) is the only way - the walls stand clear of her n=0 track, so the charted-only assess
+  // still reads clear and the episode is still the contact's (aisCaused).
+  const wallsAt = (ec) => { const N = [{ e: ec - 60, n: 22 }, { e: ec + 35, n: 22 }, { e: ec + 35, n: 60 }, { e: ec - 60, n: 60 }];
+    const S2 = N.map(p => ({ e: p.e, n: -p.n }));
+    return { polys: [{ ring: N, bb: bbOf(N), kind: "a dock / pier" }, { ring: S2, bb: bbOf(S2), kind: "a dock / pier" }],
+             lines: [], points: [], marks: [], sys: [], chans: [] }; };
+  // a charted pier ACROSS the track at `ec` (for the charted-cause boundary check)
+  const pierAt = (ec) => { const R = [{ e: ec - 10, n: -10 }, { e: ec + 10, n: -10 }, { e: ec + 10, n: 10 }, { e: ec - 10, n: 10 }];
+    return { polys: [{ ring: R, bb: bbOf(R), kind: "a dock / pier" }], lines: [], points: [], marks: [], sys: [], chans: [] }; };
+
+  // 30. the first SLOW frame launches the maneuver: ONE amend, run stays "running", NO hold ever sent,
+  // the AVOIDING badge up with the pick-up, the episode spent, the log manual:false running:true
+  surveying(7, [AHEAD(98)]); avoiding = null; frame(); await settle();
+  const la30 = logged.find(e => e.kind === "ais_around");
+  check("30. a contact on the track of a RUNNING survey is routed round at the SLOW rung - one amend, no hold, "
+        + "no pause, the run never leaves 'running': the maneuver is calculated and implemented immediately",
+        () => amends().length === 1 && !paths().includes("/api/cmd/hold") && !paths().includes("/api/cmd/pause")
+              && S.run === "running" && avoiding && aisAvoid === null
+              && !!la30 && la30.data.manual === false && la30.data.running === true,
+        () => "sent " + JSON.stringify(paths()) + "; avoiding " + JSON.stringify(!!avoiding) + "; episode "
+            + JSON.stringify(aisAvoid) + "; log " + JSON.stringify(la30 ? la30.data : null));
+
+  // 30b. the MODEL GATE rations it: frames on the same model launch nothing more; the log's ais_avoid
+  // carries the new rung value "slow"
+  const sent30 = sent.length;
+  frame(); await settle(); frame(); await settle();
+  clock += 2500; frame(); await settle();   // ... and past the settle clock: the spliced route reads clear, so nothing re-fires
+  const av30 = logged.find(e => e.kind === "ais_avoid");
+  check("30b. ... rationed by the tick's own model gate - two more frames on the same model send NOTHING - and "
+        + "the episode was logged with rung 'slow' (the third rung value, which no hold or escape wrote)",
+        () => sent.length === sent30 && !!av30 && av30.data.rung === "slow",
+        () => "sent grew " + (sent.length - sent30) + "; ais_avoid " + JSON.stringify(av30 ? av30.data : null));
+
+  // 30c. NO WORKER, NO AUTO TRY - and never a page-thread search: the ladder beneath is unchanged, so the
+  // hold rung still catches her. Walls beside the contact so the taut path cannot certify (the router is
+  // the only way) and the worker dead: nothing is sent at SLOW, and the router is never asked on this thread.
+  surveying(7, [AHEAD(98)], { ko: wallsAt(98) }); workerDead = true; pinCalls = []; sent = []; workerAsks = 0;
+  frame(); await settle();
+  clock += 2500; frame(); await settle();   // a second frame past the settle clock: the gate holds on the recorded try
+  check("30c. ... and a DEAD route worker means NO automatic try and NO page-thread search - nothing sent, the "
+        + "router not asked here - the ladder's hold beneath is the fallback, exactly as before",
+        () => amends().length === 0 && pinCalls.length === 0 && workerAsks === 1,
+        () => "sent " + JSON.stringify(paths()) + "; router asked " + pinCalls.length + " time(s); worker asked "
+            + workerAsks + " time(s) - the model gate rations the asks themselves");
+  // 30c2. ... and the gate RE-ARMS the moment the model moves: the worker back and a fresh poll that moved
+  // her a step - the very next frame's try runs end to end, one amend, under way throughout.
+  workerDead = false; clock += 1000; aisVessels = [AHEAD(96)]; aisPolledAt = clock; sent = [];
+  // the stub router's DIRECT answer would run through her and be rightly discarded; the real router
+  // prepends a via - modeled here, the last point dropped by the splice's own slice(0,-1) contract
+  pinNext = { route: [ll(60, 15), ll(130, 0)] };
+  frame(); await settle();
+  check("30c2. ... and the gate RE-ARMS the moment the model moves - the worker back, a fresh poll: the next "
+        + "frame's try goes end to end, one amend, no stop",
+        () => amends().length === 1 && S.run === "running" && workerAsks === 2,
+        () => "sent " + JSON.stringify(paths()) + "; workerAsks " + workerAsks);
+  pinNext = null;
+  // 30c3. ... and an answer whose FIRST LEG runs through her - the stub's direct default - is discarded by
+  // the landing re-certification: the model moved again (past the splice's settle clock), the try went,
+  // nothing was sent on its back.
+  clock += 2500; aisVessels = [AHEAD(94)]; aisPolledAt = clock; sent = [];
+  frame(); await settle();
+  check("30c3. ... and an answer whose first leg runs THROUGH her is discarded by the landing "
+        + "re-certification - the try went (worker asked), nothing was sent on its back",
+        () => amends().length === 0 && workerAsks === 3,
+        () => "sent " + JSON.stringify(paths()) + "; workerAsks " + workerAsks);
+  workerDead = false;
+
+  // 30d. THE WORLD MOVES ACROSS THE AWAIT: the answer lands after a press (routeStopGen) - discarded unseen.
+  let release30; workerHold = new Promise((res) => { release30 = res; });
+  surveying(7, [AHEAD(98)], { ko: wallsAt(98) }); sent = []; banners = [];
+  pinNext = { route: [ll(60, 15), ll(130, 0)] };   // a GOOD answer: only the press-discard stands between it and an amend
+  frame();                                   // launches; the worker answer is deferred
+  routeStopGen += 1;                         // the operator presses Stop/Pause/Hold while it computes
+  release30(); workerHold = null; await settle(); pinNext = null;
+  check("30d. ... and an answer that lands AFTER an operator press (routeStopGen) is discarded unseen - "
+        + "nothing is sent on its back",
+        () => amends().length === 0,
+        () => "sent " + JSON.stringify(paths()));
+
+  // 30e. ... same discard when the guard HELD her meanwhile: the on-station machinery owns her now.
+  let release30e; workerHold = new Promise((res) => { release30e = res; });
+  surveying(7, [AHEAD(98)], { ko: wallsAt(98) }); sent = [];
+  pinNext = { route: [ll(60, 15), ll(130, 0)] };   // a GOOD answer: only the held-meanwhile discard stands
+  frame();                                   // launches
+  nowHolding();                              // the hold rung won the race
+  guardHeld = { route: runRoute.slice(), idx: 1, mark: lineMark(), at: ll(0, 0), kind: "AIS", clearM: 20, t: clock };
+  release30e(); workerHold = null; await settle(); pinNext = null;
+  check("30e. ... or when the guard holds her before it lands: the banked record owns her, the late answer "
+        + "is dropped",
+        () => amends().length === 0,
+        () => "sent " + JSON.stringify(paths()));
+  guardHeld = null;
+
+  // 30e2. THE GRACE WINDOW (the review's C1/C3 - the FRIGGA class): the hold rung banks SYNCHRONOUSLY but the
+  // vessel's behavior lags the round trip, so guardHeldOffer answers null for HELD_GRACE_MS - the discard must
+  // read guardHeld ITSELF (and the rungs' own markers), or the splice lands over the ladder's stop.
+  let release30f2; workerHold = new Promise((res) => { release30f2 = res; });
+  surveying(7, [AHEAD(98)], { ko: wallsAt(98) }); sent = [];
+  pinNext = { route: [ll(60, 15), ll(130, 0)] };   // a GOOD answer: only the new markers stand in its way
+  frame();                                          // launches
+  guardHeld = { route: runRoute.slice(), idx: 1, mark: lineMark(), at: ll(0, 0), kind: "AIS", clearM: 20, t: clock };
+  // behavior stays "survey" and S untouched: the offer is null (grace), run_seq unmoved, no press - every
+  // OLD check passes; only guardHeld (and guardMoved, pinned in source below) says the ladder acted
+  release30f2(); workerHold = null; await settle(); pinNext = null;
+  check("30e2. ... and an answer landing in the HOLD'S GRACE WINDOW - guardHeld banked, the vessel's behavior "
+        + "not yet reporting it - is discarded on guardHeld itself, the launch gate's own word (and the discard "
+        + "reads the rungs' synchronous markers, pinned in source)",
+        () => amends().length === 0
+              && /\|\| guardHeld \|\| guardMoved !== moved0/.test(grab("aisAroundRunning"))
+              && /S\.behavior === "escape" \|\| \(Date\.now\(\) - guardEscapeAt\) < GUARD_REASSESS_MS/.test(grab("aisAroundRunning")),
+        () => "sent " + JSON.stringify(paths()) + "; markers pinned "
+            + /\|\| guardHeld \|\| guardMoved !== moved0/.test(grab("aisAroundRunning")));
+  guardHeld = null;
+
+  // 30j. THE ESCALATION MOVES THE RUNG (the review's C2/C4): a moving episode the hold rung catches keeps its
+  // record but reads rung "hold" from then on - so when the offer is later spent (STOP, LEAVE IT HOLDING, a
+  // new command), the return tick's bankless-keep no longer preserves a zombie that would mute the NEXT
+  // encounter's banners and wear the old contact's name.
+  surveying(7, [AHEAD(98)], { ko: wallsAt(98) }); avoiding = null; workerDead = true; sent = [];
+  frame(); await settle();                          // the moving episode opens; the try can do nothing
+  const ep30j = aisAvoid, rung30jOpen = aisAvoid && aisAvoid.rung;   // the VALUE, not the live reference
+  aisVessels = [AHEAD(40)]; aisPolledAt = clock; frame(); await settle();   // she closes: the hold rung fires
+  const rung30j = aisAvoid && aisAvoid.rung;
+  guardHeld = null;                                 // the offer spent (STOP / LEAVE IT HOLDING / a new command)
+  frame(); await settle();
+  check("30j. an escalated episode reads the OWNING rung - opened 'slow' under way, 'hold' once the ladder "
+        + "banks - and with the offer spent the return tick closes it: no zombie episode survives a STOP",
+        () => !!ep30j && rung30jOpen === "slow" && rung30j === "hold" && aisAvoid === null,
+        () => "opened " + JSON.stringify(rung30jOpen) + " -> escalated " + JSON.stringify(rung30j)
+            + " -> after the spend " + JSON.stringify(aisAvoid));
+  workerDead = false;
+
+  // 30f. A CHARTED cause keeps the stop (the v1 boundary, said in the tick's own doc): no contact, a pier
+  // ahead - the SLOW rung slows her and NOTHING is amended.
+  surveying(7, [], { ko: pierAt(125) }); sent = [];
+  frame(); await settle();
+  check("30f. a CHARTED cause fires no underway splice (his words were an AIS target; a pier cannot move) - "
+        + "nothing amended",
+        () => amends().length === 0,
+        () => "sent " + JSON.stringify(paths()));
+
+  // 30g. a refused moving episode CLOSES ITSELF when the contact clears the track - nothing was held, so
+  // nothing else closes it; after the return dwell the episode is spent and the note says she is clear.
+  surveying(7, [AHEAD(98)], { ko: wallsAt(98) }); avoiding = null; workerDead = true; sent = []; notes = [];
+  frame(); await settle();                   // opens the episode; the try can do nothing (no worker)
+  const ep30g = aisAvoid;
+  aisVessels = []; aisPolledAt = clock;      // she sails; the track reads clear
+  frame(); clock += 4100; aisPolledAt = clock; frame(); await settle();
+  check("30g. a moving episode whose contact clears the track closes itself after the return dwell - no bank, "
+        + "no badge, no button left behind",
+        () => !!ep30g && ep30g.rung === "slow" && aisAvoid === null && avoiding === null,
+        () => "episode was " + JSON.stringify(ep30g) + "; now " + JSON.stringify(aisAvoid));
+  workerDead = false;
+
+  // 30h. THE COMMON CASE NEEDS NO WORKER AT ALL: open water beside her, the taut path certifies on this
+  // thread - the amend goes even with the worker dead.
+  surveying(7, [AHEAD(98)]); avoiding = null; workerDead = true; sent = [];
+  frame(); await settle();
+  check("30h. ... and the COMMON case needs no worker: open water, the taut path certifies the way in on this "
+        + "thread and the amend goes with the worker dead",
+        () => amends().length === 1 && S.run === "running",
+        () => "sent " + JSON.stringify(paths()));
+  workerDead = false;
+
+  // 30i. THE UNDERWAY SPLICE STRIKES TOO: a 60 m ship covers the rest of the line (the walk leaves the
+  // line whole - skipLine), a moored workboat sits ON the jump's target waypoint - struck in the same
+  // amendment, under way throughout, the taut path certifying the way in with the worker dead.
+  const SHIP60 = contact(170, 0, { sog: 0, cog: null, heading: 90, dim: { a: 30, b: 30, c: 4, d: 4 }, length: 60, beam: 8 });
+  const B30 = contact(200, 60, { sog: 0, cog: null, heading: 90, mmsi: 777000117 });
+  surveying(7, [SHIP60, B30]); avoiding = null; workerDead = true;
+  mission.lines = [LINE_E, { a: ll(200, 60), b: ll(-200, 60) }];
+  runRoute = [ll(-200, 0), LINE_E.b, ll(200, 60), ll(-200, 60)];
+  window._wpIndex = 1; S.wp_total = runRoute.length;
+  asv = ll(60, 0); sent = []; logged = [];
+  frame(); await settle();
+  const la30i = logged.find(e => e.kind === "ais_around");
+  const am30i = amends()[0];
+  check("30i. ... and the underway splice STRIKES: the ship covers the rest of the line (skip_line), the "
+        + "jump's target waypoint has a moored workboat on it - struck in the same no-stop amendment",
+        () => amends().length === 1 && la30i && la30i.data.struck_wpts === 1 && la30i.data.skip_line === true
+              && la30i.data.running === true && S.run === "running"
+              && !(am30i.route || []).some(pt => { const q = llEN(pt.lat, pt.lon, ref);
+                   return Math.round(q.n) === 60 && Math.round(q.e) === 200; }),
+        () => "sent " + JSON.stringify(paths()) + "; log "
+            + JSON.stringify(la30i ? {struck_wpts: la30i.data.struck_wpts, skip_line: la30i.data.skip_line} : null)
+            + "; route " + JSON.stringify((am30i && am30i.route || []).map(pt => { const q = llEN(pt.lat, pt.lon, ref);
+                   return [Math.round(q.e), Math.round(q.n)]; })));
+  workerDead = false;
+  V.VESSEL.maneuvering = wasM30;
+}
+
+// ═══ 31. THE FORWARD-STRIKE ON THE RESUME (2026-11-04, the pier convergence: "the ASV should abandon this
+// section of the survey and proceed on to the rest"). The field failure: the way round's pick-up sat inside
+// ANOTHER moored vessel, the way in was refused with CANNOT RESUME FROM HERE, and she station-kept until the
+// operator intervened. Now the tail is walked FORWARD past every waypoint a not-under-way contact occupies -
+// the test is holdTarget's own (blockedInfo at the buffer against the way-in's model), so a strike is exactly
+// a pre-empted refusal - the struck coverage is said, logged (struck_wpts/struck_m/struck_lines) and banked
+// on the plan (mission.strikes; the plan survives a reload). ═══
+{
+  // THE FIELD SHAPE, ONE SIZE UP (14g is the one-waypoint case): a 200 m ship covers the rest of line 1, so
+  // the walk leaves the line whole (skipLine) and the plan picks up at the route's next waypoints - and TWO
+  // moored workboats sit ON those waypoints, hull over each. The strike walks past BOTH: struck 2, resumed
+  // at the first waypoint nobody is on, said, logged and banked. Three drawn lines so the struck pair has a
+  // line to be named by.
+  const LONG31 = contact(115, 0, { sog: 0, cog: null, heading: 90, dim: { a: 100, b: 100, c: 4, d: 4 }, length: 200, beam: 8 });
+  const B31 = contact(200, 60, { sog: 0, cog: null, heading: 90, mmsi: 777000112 });
+  const C31 = contact(-200, 60, { sog: 0, cog: null, heading: 90, mmsi: 777000113 });
+  surveying(7, [LONG31, B31, C31]);
+  mission.lines = [LINE_E, { a: ll(200, 60), b: ll(-200, 60) }, { a: ll(-200, 120), b: ll(200, 120) }];
+  runRoute = [ll(-200, 0), LINE_E.b, ll(200, 60), ll(-200, 60), ll(-200, 120), ll(200, 120)];
+  window._wpIndex = 1; S.wp_total = runRoute.length;
+  frame(); nowHolding(); sent = []; logged = []; banners = [];
+  clock += 1000; aisPolledAt = clock; frame(); await settle();
+  const up31 = sent.find(x => x.p === "/api/cmd/upload"), rte31 = (up31 && up31.route) || [];
+  const la31 = logged.find(e => e.kind === "ais_around");
+  const rte31EN = rte31.map(p => { const q = llEN(p.lat, p.lon, ref); return [Math.round(q.e), Math.round(q.n)]; });
+  check("31. waypoints the way in was bound to refuse - a moored vessel's hull over each - are STRUCK and the "
+        + "survey resumes at the first waypoint nobody is on: the upload goes, the strike is said, logged "
+        + "(struck_wpts) and banked on the plan (mission.strikes)",
+        () => !!up31 && rte31.length >= 1 && la31 && la31.data.struck_wpts === 2
+              && rte31EN.some(q => q[0] === -200 && q[1] === 120)
+              && !rte31EN.some(q => q[1] === 60)
+              && banners.some(b => /ROUTED ROUND/.test(b) && /struck 2 waypoints/.test(b))
+              && Array.isArray(mission.strikes) && mission.strikes.length === 1 && mission.strikes[0].n === 2,
+        () => "upload " + (up31 ? rte31.length + " wpts " + JSON.stringify(rte31EN) : "none") + "; log "
+            + JSON.stringify(la31 ? {struck_wpts: la31.data.struck_wpts, struck_lines: la31.data.struck_lines} : null)
+            + "; strikes " + JSON.stringify(mission.strikes) + "; banners " + JSON.stringify(banners.slice(-2)));
+
+  // 31b. EVERY remaining waypoint occupied: the refusal survives, in the strike's own words, and the record
+  // and episode stand for the operator - abandoning the WHOLE remainder is their call, not the console's.
+  const BLOCKERS = [LONG31, B31, C31,
+                    contact(-200, 120, { sog: 0, cog: null, heading: 90, mmsi: 777000114 }),
+                    contact(200, 120, { sog: 0, cog: null, heading: 90, mmsi: 777000115 })];
+  surveying(7, BLOCKERS);
+  mission.lines = [LINE_E, { a: ll(200, 60), b: ll(-200, 60) }, { a: ll(-200, 120), b: ll(200, 120) }];
+  runRoute = [ll(-200, 0), LINE_E.b, ll(200, 60), ll(-200, 60), ll(-200, 120), ll(200, 120)];
+  window._wpIndex = 1; S.wp_total = runRoute.length;
+  frame(); nowHolding(); sent = []; banners = [];
+  clock += 1000; aisPolledAt = clock; frame(); await settle();
+  check("31b. ... and with EVERY remaining waypoint under a vessel the resume refuses in the strike's own "
+        + "words - nothing sent, the remainder and the episode stand: abandoning the whole survey is the "
+        + "operator's call",
+        () => !paths().includes("/api/cmd/upload")
+              && banners.some(b => /every waypoint left to fly has a vessel sitting on it/.test(b))
+              && !!guardHeld && !!aisAvoid,
+        () => "sent " + JSON.stringify(paths()) + "; banners " + JSON.stringify(banners.slice(-2)));
+
+  // 31d. a contact UNDER WAY never strikes coverage - she clears the water herself (the doctrine).
+  const MOVER = contact(200, 60, { sog: 6, cog: 0, heading: 0, mmsi: 777000116 });
+  surveying(7, [LONG31, MOVER]);
+  mission.lines = [LINE_E, { a: ll(200, 60), b: ll(-200, 60) }, { a: ll(-200, 120), b: ll(200, 120) }];
+  runRoute = [ll(-200, 0), LINE_E.b, ll(200, 60), ll(-200, 60), ll(-200, 120), ll(200, 120)];
+  window._wpIndex = 1; S.wp_total = runRoute.length;
+  frame(); nowHolding(); sent = []; logged = []; banners = [];
+  // the real router refuses a target inside her (holdTarget's flyThrough test); the stub cannot know
+  // that, so the scene hands it the real answer's shape
+  pinNext = { error: "the target sits in AIS: WORKBOAT (30 x 8 m)", reason: { mode: "target" } };
+  clock += 1000; aisPolledAt = clock; frame(); await settle();
+  pinNext = null;
+  const la31d = logged.find(e => e.kind === "ais_around");
+  check("31d. ... and a contact UNDER WAY on the pick-up strikes NOTHING - she clears the water herself, so "
+        + "the refusal stands (struck_wpts 0, no upload past her) and the model gate re-asks on her next report",
+        () => (!la31d || la31d.data.struck_wpts === 0) && !paths().includes("/api/cmd/upload")
+              && banners.some(b => /CANNOT RESUME FROM HERE/.test(b)),
+        () => "sent " + JSON.stringify(paths()) + "; log "
+            + JSON.stringify(la31d ? la31d.data : null) + "; banners " + JSON.stringify(banners.slice(-1)));
+  // 31d2. the moving filter, asked of the scan itself: a SWEPT under-way poly covering the waypoint
+  // strikes nothing; the same hull stopped strikes it - the pair that makes 31d falsifiable both ways.
+  {
+    const movP = aisKeepouts([contact(0, 0, { sog: 6, cog: 0, heading: 0 })], ref, { now: clock, polledAt: clock }).polys[0];
+    const stopP = aisKeepouts([contact(0, 0, { sog: 0, cog: null, heading: 90 })], ref, { now: clock, polledAt: clock }).polys[0];
+    const skM = strikePastOccupied([ll(0, 0)], { polys: [movP] }, 3);
+    const skS = strikePastOccupied([ll(0, 0)], { polys: [stopP] }, 3);
+    check("31d2. ... and the scan itself never strikes for a poly under way: the same hull over the same "
+          + "waypoint strikes stopped and not moving",
+          () => skM.n === 0 && skS.n === 1,
+          () => "moving n=" + skM.n + " (moving flag " + movP.moving + "), stopped n=" + skS.n);
+  }
+
+  // 31leg. THE LEG SITE: a Go-To held for a 200 m ship whose hull covers the leg's own end point - the
+  // walk's tail is the end point, the strike takes it (the ship sits on it), the tail empties, and the
+  // leg refuses in the strike's own words with the record and the episode standing.
+  const LONGLEG = contact(130, 0, { sog: 0, cog: null, heading: 90, dim: { a: 100, b: 100, c: 4, d: 4 }, length: 200, beam: 8 });
+  surveying(7, [LONGLEG], { behavior: "goto" });
+  mission.lines = []; runLineIdx = -1; lineSwing = -1;
+  runRoute = [ll(-200, 0), ll(200, 0)]; window._wpIndex = 1; S.wp_total = runRoute.length;
+  replyState["/api/cmd/goto"] = { behavior: "goto" };
+  frame(); nowHolding(); sent = []; banners = [];
+  clock += 1000; aisPolledAt = clock; frame(); await settle();
+  check("31leg. a held LEG whose END the vessel's own hull covers is refused by the WALK, in words, with the "
+        + "record kept - and the leg resume carries the same strike as the survey's (the call pinned in source: "
+        + "the one walk, strikePastOccupied, at both sites)",
+        () => !paths().includes("/api/cmd/goto")
+              && banners.some(b => /NO WAY ROUND/.test(b) && /covers the end/.test(b))
+              && !!guardHeld && !!aisAvoid
+              && /strikePastOccupied\(tail, koIn, nogo\.buffer \|\| 0\)/.test(grab("resumeHeldLeg"))
+              && /strikePastOccupied\(tail, koIn, nogo\.buffer \|\| 0\)/.test(grab("resumeHeldRun"))
+              && /strikePastOccupied\(tail, koIn, nogo\.buffer \|\| 0\)/.test(grab("aisAroundRunning")),
+        () => "sent " + JSON.stringify(paths()) + "; banners " + JSON.stringify(banners.slice(-2)));
+}
+
+// ═══ 32. THE PUNCH'S MOORED CLIP (2026-11-04, his option B's safe half): aisMooredClipKeepouts answers the
+// not-under-way set in the punch's own ref; a stale feed answers NOTHING with its reason; aisClipSig re-keys
+// the clip memo when a ship moves and holds under jitter; and the page wiring is pinned where no executing
+// harness reads it (turn_refusal's world stubs the clip). ═══
+{
+  surveying(7, [PARKED()]);
+  const clip32 = aisMooredClipKeepouts(ref);
+  clock += 61000;                                   // the feed goes stale: the clip must SAY so, not clip an empty sea
+  const stale32 = aisMooredClipKeepouts(ref);
+  aisPolledAt = clock;
+  check("32. aisMooredClipKeepouts answers the not-under-way set in the given ref, and a STALE feed answers "
+        + "nothing WITH its reason - never an empty sea claimed from a dead feed",
+        () => clip32.polys.length === 1 && !clip32.stale && clip32.polys[0].mmsi === 338111222
+              && stale32.polys.length === 0 && stale32.stale === true && !!stale32.note,
+        () => "fresh " + clip32.polys.length + " poly(s), stale " + JSON.stringify({n: stale32.polys.length, stale: stale32.stale, note: stale32.note}));
+  check("32b. aisClipSig names who, where and how big to 5 m: a ship that moved a boat-length re-keys the "
+        + "memo, report jitter under the rounding does not, and an empty set is its own key",
+        () => { const a = aisClipSig(clip32.polys);
+                const moved = clip32.polys.map(q => ({ ...q, bb: { x0: q.bb.x0 + 12, x1: q.bb.x1 + 12, y0: q.bb.y0, y1: q.bb.y1 } }));
+                const jig = clip32.polys.map(q => ({ ...q, bb: { x0: q.bb.x0 + 1, x1: q.bb.x1 + 1, y0: q.bb.y0, y1: q.bb.y1 } }));
+                return a !== aisClipSig(moved) && a === aisClipSig(jig) && a !== aisClipSig([]) && a.length > 0; },
+        () => "sig " + JSON.stringify(aisClipSig(clip32.polys)));
+  check("32c. the page wiring is pinned: punchOut builds the clip from aisMooredClipKeepouts(ref), the memo "
+        + "key carries aisClipSig (stale marked), and the punch summary says the count and the stale reason",
+        () => /const aisClip = aisMooredClipKeepouts\(ref\);/.test(H)
+           && /aisClipSig\(aisExcl\)/.test(H) && /aisClip\.stale \? "stale"/.test(H)
+           && H.includes("clipped round ${aisExcl.length} contact")
+           && H.includes("the pattern is NOT clipped round contacts"),
+        () => "wiring present: clip " + /const aisClip = aisMooredClipKeepouts\(ref\);/.test(H)
+            + ", key " + /aisClipSig\(aisExcl\)/.test(H)
+            + ", words " + H.includes("clipped round ${aisExcl.length} contact"));
+
+  // 32d. A TORN PAIR IS NOT A QUIET SEA (the review's C5): aisVessels emptied WITHOUT moving aisPolledAt -
+  // the layer toggled off unarmed, or one failed poll inside the guard's grace - must answer "no read in
+  // hand", never a fresh empty sea; and both tear writers set the flag (pinned in source: the lifted page
+  // has neither writer to drive).
+  surveying(7, [PARKED()]);
+  aisTorn = true; aisVessels = [];                  // the tear: fresh polledAt, no list
+  const torn32 = aisMooredClipKeepouts(ref);
+  aisTorn = false; aisVessels = [PARKED()]; aisPolledAt = clock;   // the poll's own write re-seeds the pair
+  const whole32 = aisMooredClipKeepouts(ref);
+  check("32d. a TORN vessels/polledAt pair answers 'no AIS read in hand' with stale said - never a fresh "
+        + "empty sea - and both tear writers set the flag (source-pinned), the poll's own write clearing it",
+        () => torn32.polys.length === 0 && torn32.stale === true && /no AIS read in hand/.test(torn32.note || "")
+              && whole32.polys.length === 1
+              && /\}catch\(e\)\{ aisVessels=\[\]; aisTorn=true;/.test(H)
+              && /if\(!aisGuardWanted\(\)\)\{ aisVessels=\[\]; aisTorn=true; \}/.test(H)
+              && /aisTorn = false; .*the pair is whole again/.test(H),
+        () => "torn " + JSON.stringify({n: torn32.polys.length, stale: torn32.stale, note: torn32.note})
+            + "; whole " + whole32.polys.length + "; writers pinned "
+            + /\}catch\(e\)\{ aisVessels=\[\]; aisTorn=true;/.test(H));
 }
 
 Date.now = realNow;

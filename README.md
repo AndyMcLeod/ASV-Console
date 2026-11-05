@@ -776,7 +776,10 @@ contact under a mile away read 26 nm and never closed); its AIS card is the char
 crossing the survey area reconfigures nothing**. A vessel **not under way** - moored, at anchor or stopped - is
 the one exception, and only for a **passage** (2026-10-07): a Go-To, an RTH, a drawn transit and an Upload's
 transit legs are planned round her at the standoff, as round a pier, from the traffic read along the whole route
-as it is planned, and the banner names her; a survey's own lines are never moved for her. After a contact has stopped or steered the
+as it is planned, and the banner names her; a survey's own committed lines are never moved for
+her - though since 4 November a NEW pattern's **Punch Out** clips its coverage round every vessel
+not under way at punch time (the summary counts them; a stale feed clips round nothing and says
+so), and coverage she settles on later is struck at the resume. After a contact has stopped or steered the
 boat off a survey line, the console **brings her back itself** once the contact is clear of
 the line for 4 s: it rejoins **100 m back down the line** over water already run, so the
 coverage overlaps, and carries on — with none of the operator's resume latches (no LOW
@@ -785,16 +788,27 @@ hold, no override). A contact that **stays on the line** gets the three answers 
 the operator may right-click the line **beyond** the contact (*Resume from here*, below) and the
 console routes her round it and continues the survey from there; and the console routes round the
 contact **itself**, as if it were a buoy or a dock, to the first point of the line beyond her that
-is clear by the standoff with the rest of the line clear too, and carries on (a contact covering
-the rest of the line leaves that line and picks the plan up at its next waypoint).
+is clear by the standoff with the rest of the line clear too, and carries on. A contact covering
+the rest of the line leaves that line whole, and - since 4 November - the plan is picked up at the
+first next waypoint **nobody is sitting on**: waypoints a vessel not under way occupies are
+**struck** (the test is the refusal's own, so exactly what would have been refused is struck), said
+with their line numbers, logged (`struck_wpts`) and banked on the plan (`mission.strikes`) to
+re-fly when the berth clears; with every remaining waypoint occupied the refusal stands, in those
+words, because abandoning the whole remainder is the operator's call.
 
 **It no longer waits to be asked** (1 November: *"remove the wait for operator rule for ais target
 avoiding. go to immediate maneuver to avoid"*). There was a decision budget - a minute until 28
 September, 30 s until 29 September, 10 s until now - and it is gone: the console maneuvers on the
-first frame she is on station. The stop itself stays, because the guard's hold is what banks the
-plan and so what gives the way round something to resume, and because it is the answer that needs
-no router to succeed; "immediate" is bounded by the water she needs to come to station, not by a
-timer. What this costs is coverage under a contact that was merely passing: she is routed round one
+first frame she is on station. The stop itself stayed - the guard's hold is what banks the plan,
+and it is the answer that needs no router to succeed - until **4 November**: a contact met UNDER
+WAY is now routed round **without stopping**. At the SLOW rung - the first moment the governor
+slows her for a contact on her track - the console lays the way round (the taut path on the page,
+the router's search in the **route worker**, never on the page's thread), re-validates the answer
+against the world when it lands (anything the operator or the ladder did meanwhile outranks it),
+and splices it into the running plan: she turns onto it with way on and the run never leaves
+'running'. The stop is the **fallback** now - no way round in time, no worker, a stale feed, or
+the guard already acting - and once she is on station everything here stands word for word. A
+charted feature keeps the stop: a pier cannot move. What this costs is coverage under a contact that was merely passing: she is routed round one
 who would have cleared the line a few seconds later, where the 100 m return used to take it back
 over water already run. The return still has two seas of its own - a contact clear of the line by
 the time she reaches station, and one that clears while she keeps holding because no way round could
@@ -807,8 +821,9 @@ have her **paused** (a paused hold keeps the offer, and the bar says the console
 that found nothing is asked again **as soon as the model moves** — a fresh AIS poll, a fresh chart
 read, a changed route, or her own position changing — and not on a clock. That is strictly faster
 than the 10 s it replaces: a contact that shifts two metres is answered on the next poll. It is a
-gate rather than a free run because a try that gets as far as the way in asks `planNogoRoute`
-*synchronously on the page's thread*, and a route search there was measured at 11 s and then 17.8 s
+gate rather than a free run because an ON-STATION try that gets as far as the way in asks
+`planNogoRoute` *synchronously on the page's thread* (the underway splice's search runs in the
+route worker instead), and a route search there was measured at 11 s and then 17.8 s
 on the Piscataqua Go-To — one at 4 Hz would wedge the page and the ladder with it. It also fixes
 what the clock got wrong for charted water: a pier does not move, so re-running a doomed search
 against one every 10 s bought nothing. Where no way round is found it says so **once** — the
@@ -888,7 +903,8 @@ rest of the leg reads clear of her for 4 s she carries on from where she stopped
 the console routes round her itself - one ship-length off her, the leg picked up beyond her - and
 re-issues the leg's OWN command, so she still holds at its end point. Right-clicking a contact on a
 running leg amends it round her. There is no wait before the console routes round her itself since
-1 November - it goes on the first frame she is on station - and since 2 November its retries are not
+1 November - it goes on the first frame she is on station, and since 4 November a leg still under
+way is spliced round her at the SLOW rung without stopping at all - and since 2 November its retries are not
 spaced either: a try that found nothing is asked again when the model moves, never on a clock. Rehearsed on a throwaway console with the DriX, when the wait was still
 10 s: a Go-To, the Return-to-Home chained after it and a drawn transit each met a moored test
 contact at 7 kn, were slowed 67-69 m off her, held 44-45 m off, and were routed round her in their
@@ -1208,10 +1224,12 @@ survey line within reach and lying across it (at the click itself where no line 
 by `/api/ais` with age 0 beside the real traffic, with or without the AIS
 service running — and **Clear test contacts** (`POST /api/ais/test`; a real link refuses it).
 **To rehearse the whole thing:** run a survey in the sim, right-click the line a few hundred
-meters ahead of the boat and place a test contact, and watch the guard slow and hold her
-(SURVEY HELD, the 10 s counting down on the bar); then press ROUTE ROUND HER NOW, or
-right-click the contact and choose Route round, or right-click the line beyond her and choose
-Resume from here, or wait the 10 s out — each ends with the survey carrying on beyond her,
+meters ahead of the boat and place a test contact, and watch the console route round her while
+still under way - ROUTED ROUND on the banner, no stop at all (since 4 November; the 10 s countdown
+this passage once described died on 1 November). Place her close aboard instead - inside the hold
+reach, about 90 m at 7 kn on the DriX - and the guard holds first (SURVEY HELD on the bar); then
+press ROUTE ROUND HER NOW, or right-click the contact and choose Route round, or right-click the
+line beyond her and choose Resume from here - each ends with the survey carrying on beyond her,
 one ship-length off. **The first rehearsal caught a defect the suites could not** (their router is a
 stub): the way in to the rejoin point was judged as a place to *hold* — the 6 m hold margin and
 the hold disc — so a point a standoff beyond her ring was moved off the line and the resume
@@ -1511,7 +1529,8 @@ tab's top bar shows **⚠ 2 CHART TABS**: close the chart tabs you are not using
 (`tests/supervisor.py` 13-13c, `tests/supervisor_page.js` 5 and 9-9c).
 
 **The route search runs in a worker (2026-10-12).** Go-To, RTH, a drawn transit, Upload, Continue,
-Resume from here, a passage's section and the ETA rows now search for their route in a background
+Resume from here, a passage's section, the ETA rows and (since 4 November) the underway way round
+a contact now search for their route in a background
 worker (`static/js/route_worker.js`), so the chart, the clearance guard, the controls and
 supervision's report keep running while it searches. The worker runs the planner's own code and its
 answer is the page's own, field for field: on a Go-To from New Castle up the Piscataqua, the
@@ -1749,8 +1768,10 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    **Punch Out (chart-feature clipping).** Draw a survey rectangle, set the survey
    **depth window** (Min depth, optional Max — blank surveys deep water), and click
    **Punch Out**: the console trims every survey line to safe water using the same
-   **nogo model** every behaviour avoids — off land / shoreline / **piers & docks**,
-   outside the depth window, and clear of fixed aids, hazards and (optionally)
+   **nogo model** every behavior avoids — off land / shoreline / **piers & docks**,
+   outside the depth window, clear of fixed aids, hazards and (optionally)
+   vessels the AIS shows **not under way** at punch time (since 4 November; counted on the
+   summary, skipped with a said reason on a stale feed), and (optionally)
    dredged/restricted areas, each expanded by the keep-clear **Buffer**. The buffer
    and the enforce toggles are **shared** (edit the buffer under the Path planning card's
    **Route rules**, shown on every tab); lowering it (to ~1.5–2 m) lets the small boat thread a
@@ -4059,8 +4080,8 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    round the charted keep-outs **and the AIS contacts**, at the standoff, and the governor has the
    throttle. A pause on that hold no longer spends the banked survey. A point on the **near side**
    of the contact she is holding for is refused in words — the line from there runs into her
-   and she would only be stopped again — with the time left before the console routes round
-   her itself; see the AIS layer above for what it does then. **A frame that starts a motion cannot
+   and she would only be stopped again — the console routes round her itself; see the AIS layer
+   above for what it does then. **A frame that starts a motion cannot
    also end it** (2026-09-27): the state the console pushes on the Start of a staged plan describes
    the plan just applied (index zero, not holding), and the end-of-plan chain never fires on the
    frame that moved the run counter — on Andy's console the held resume's Start was answered

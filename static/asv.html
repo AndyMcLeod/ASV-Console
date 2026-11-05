@@ -935,7 +935,7 @@
           <span class="gb-why" id="gb_why"></span>
         </div>
         <div class="gb-row">
-          <button class="ctl small" id="gb_around" style="display:none" title="Route round what she is held for NOW, carrying on beyond it - a contact at one ship-length from her center, a charted feature at the standoff her plan was laid at - rather than waiting for the console to do it itself.">ROUTE ROUND HER NOW</button>
+          <button class="ctl small" id="gb_around" style="display:none" title="Route round what she is held for NOW, carrying on beyond it - a contact at one ship-length from her center, a charted feature at the standoff her plan was laid at. The console does this itself - round a contact met under way without stopping, round charted water as soon as she is on station; press this to ask now.">ROUTE ROUND HER NOW</button>
           <button class="ctl small" id="gb_low" title="Keep surveying, but slowly. The console stops STOPPING the boat for this situation and holds it at LOW speed until you press RELEASE LOW on this bar or change a speed selector. It keeps watching, keeps reporting, keeps deviating where there is water, and still takes the helm in extremis.">CONTINUE AT LOW SPEED</button>
           <button class="ctl small" id="gb_proceed" title="You have assessed the water ahead and are taking responsibility for it. The console stops slowing and stopping the boat for this situation. It keeps watching, keeps reporting, and still takes the helm in extremis.">PROCEED — I have assessed it</button>
           <button class="ctl small" id="gb_cancel" style="display:none" title="Hand the situation back to the console. Ends the low speed you asked for as well.">CANCEL OVERRIDE</button>
@@ -1219,7 +1219,7 @@ import { homeGrid, fieldDistM, cellOf } from "/static/js/home_field.js";
 // depth under her. aisWithChart writes that depth, and how far a moored hull lies from a charted berth, on each record as
 // the contacts are polled, so the guard's model and a passage laid in the route worker read the same.
 import { aisKeepouts, aisAvoidKeepouts, aisRoundKeepout, convexHull, AIS_KO_STALE_S,
-         AIS_LOOKAHEAD_M, aisInReach, aisReachM, aisMotion, aisDiscM,
+         AIS_LOOKAHEAD_M, aisInReach, aisReachM, aisMotion, aisDiscM, aisMooredKeepouts,
          aisKeepout, aisWithChart, aisNavRuleText } from "/static/js/ais_keepout.js";
 // What is AHEAD, and what it warrants. Pure prediction - it commands nothing; the
 // clearance guard below is the one place that decides and commands.
@@ -3786,8 +3786,21 @@ function aisNearestPoly(p, aisKo){
   }
   return best;
 }
-function aisAvoidOpen(c, a, aisKind, aisHer, chartHer, chartNamedByEntry){
-  if(!guardHeld || aisAvoid) return;   // nothing banked (not a survey, or nothing unflown), or one already open
+function aisAvoidOpen(c, a, aisKind, aisHer, chartHer, chartNamedByEntry, moving){
+  // ⚠ A MOVING EPISODE HAS NO BANK (2026-11-04, the underway splice): the boat never stops, so there is no
+  // guardHeld - the amendment IS the plan, exactly as aisAroundRunning's manual press has always worked. The
+  // episode still opens, because it is the carrier of the retry gate (triedOn), the said-once latch and the
+  // session log's record; rung is the SLOW rung's own level. Everything else keyed on guardHeld - the offer,
+  // the return, the held bar - correctly never sees it.
+  if((!moving && !guardHeld) || aisAvoid){
+    // THE ESCALATION IS REAL INFORMATION (this feature's review, C2/C4): a moving episode the ladder then
+    // catches keeps its record - the retry gate, the said-once latches, the since clock - but the RUNG moves
+    // with the owner. aisReturnTick's bankless-keep and every "slow means moving" reader depend on it: left
+    // at "slow", an escalated episode survived the operator's own STOP as a zombie that muted the next
+    // encounter's banners and wore the old contact's name.
+    if(aisAvoid && !moving && guardHeld && a && a.level && aisAvoid.rung === "slow") aisAvoid.rung = a.level;
+    return;                              // nothing banked (not a survey, or nothing unflown), or one already open
+  }
   if(!aisHer && !chartHer) return;     // nothing identified to be about: no episode, exactly as before
   // `mmsi` NAMES HER (2026-09-28): the way round gives HER alone the ship-length ring, and finds her again by it
   // in a later frame - the contact at the point the ladder acted on (aisHer), not merely the nearest to the boat.
@@ -3810,16 +3823,19 @@ function aisAvoidOpen(c, a, aisKind, aisHer, chartHer, chartNamedByEntry){
   const chartName = chartHer
     ? chartHer.kind + (chartNamedByEntry ? "" : " (the nearest charted feature)")
     : null;
+  const mk = moving ? lineMark() : null;
   aisAvoid = {kind: aisKind || (c && c.kind) || chartName || "a keep-out",
               rung: a && a.level, since: Date.now(), clearSince: 0,
-              line: guardHeld.mark ? guardHeld.mark.line : null,
+              line: moving ? (mk ? mk.line : null) : (guardHeld.mark ? guardHeld.mark.line : null),
               mmsi: aisHer && aisHer.mmsi != null ? aisHer.mmsi : null,
               chart: chartHer || null};
   logClient("ais_avoid", {kind: aisAvoid.kind, rung: aisAvoid.rung, mmsi: aisAvoid.mmsi,
             charted: !!aisAvoid.chart,
             line: aisAvoid.line != null ? lineNo(aisAvoid.line) : null,
             t_entry_s: (a && a.tEntry != null) ? Math.round(a.tEntry) : null});
-  flashNote((aisAvoid.rung === "helm" ? "Steered clear of " : "Holding for ") + aisAvoid.kind
+  flashNote(moving
+    ? "Routing round " + aisAvoid.kind + " without stopping — she is on the track ahead; the plan carries on beyond her."
+    : (aisAvoid.rung === "helm" ? "Steered clear of " : "Holding for ") + aisAvoid.kind
     + (guardHeld.leg
        ? " — the " + legName(guardHeld.leg) + " carries on by itself once she is clear of the way, and goes round "
          + (aisAvoid.chart ? "it" : "her") + " as soon as she is on station if she is not."
@@ -3829,7 +3845,12 @@ function aisAvoidOpen(c, a, aisKind, aisHer, chartHer, chartNamedByEntry){
 }
 function aisReturnTick(p, aisKo, buf, now){
   if(!aisAvoid) return;
-  if(!guardHeld){ aisAvoid = null; return; }        // spent: resumed or dropped by hand, or a new command
+  // ⚠ A MOVING EPISODE NEVER HAD A BANK (2026-11-04, the underway splice): rung "slow" with no guardHeld is
+  // the NORMAL state of one, not a spent record - eating it here re-armed the retry gate every frame (triedOn
+  // lives on the episode) and closed nothing the splice's own lifecycle does not close better. Its lifecycle
+  // is aisAroundUnderwayTick's: spent by the splice's success, kept by the hold rung's escalation, closed by
+  // the clear dwell.
+  if(!guardHeld){ if(aisAvoid.rung !== "slow") aisAvoid = null; return; }   // spent: resumed or dropped by hand, or a new command
   const g = guardHeldOffer();
   if(!g || heldResuming) return;                    // not on station yet (an escape in flight), or resuming
   // ⚠ NEVER ON A STALE MODEL. A feed that has stopped answering EMPTIES the model, and an empty model
@@ -4321,6 +4342,82 @@ function aroundTailIsSame(g, tail){
          && tail.every((w, i) => w === cond[i] || distTo(w, cond[i]) <= AIS_AROUND_NOOP_M);
 }
 /**
+ * FORWARD-STRIKE: THE TAIL'S WAYPOINTS A VESSEL ACTUALLY SITS ON (Andy, 2026-11-04, the pier convergence:
+ * "the ASV should abandon this section of the survey and proceed on to the rest"). The field failure this
+ * answers: survey line 9's rejoin target lay inside a moored workboat, the way in was refused with CANNOT
+ * RESUME FROM HERE - correctly, and the model gate correctly never re-fired against a ship that reports
+ * nothing new - so she station-kept for two minutes until the operator intervened, resumed into the next
+ * contact, and the operator stopped the console. The answer is not a better refusal: walk the tail FORWARD
+ * past every waypoint a not-under-way contact occupies, strike that coverage (said in words, logged, banked
+ * on the plan), and hand the resume the first flyable waypoint.
+ *
+ * THE CONTIGUOUS OCCUPIED PREFIX ONLY. A moored ship two kilometers down the plan may be gone when she gets
+ * there; striking her now would spend coverage on a stale report. The blocked stretch AT THE REJOIN is what
+ * stands between the boat and the rest of the survey; anything further is its own episode on approach,
+ * judged against reports fresh at that hour.
+ *
+ * THE MODEL IS THE WAY-IN'S OWN (`koIn`) AND THE TEST IS holdTarget'S OWN, so a strike is EXACTLY a
+ * pre-empted refusal and nothing else: blockedInfo at nogo.buffer, the same call holdTarget's flyThrough
+ * branch makes of the target (passage.js) before it answers "the target sits in AIS: <ship>". A second
+ * standard here - tighter or looser rings, another buffer - would either strike waypoints the way-in
+ * would happily accept (coverage spent for nothing) or pass waypoints it is bound to refuse (the field's
+ * two-minute hold, one waypoint later). Only a poly carrying a CONTACT's mmsi strikes; a MOVING contact
+ * never does (she clears the water herself - the guard owns her live, the ais_keepout.js doctrine), and
+ * chart ink, charted features and unknown water never do - those end the scan, and the way-in's own
+ * refusal then names them for the operator to re-plan.
+ *
+ * Returns {n, struck: [{wp, kind, line}], lines, m}: drop tail.slice(0, n), each struck entry naming the
+ * occupying vessel and the drawn line (lineNo'd - the number the operator reads, for the words and the
+ * log alike); m is the struck track length. n is 0 whenever there is nothing to strike.
+ */
+function strikePastOccupied(tail, ko, buf){
+  const out = {n: 0, struck: [], lines: [], m: 0};
+  if(!tail || !tail.length || !nogo.frame || !ko) return out;
+  const ships = (ko.polys || []).filter(p => p && p.mmsi != null && !p.moving);
+  if(!ships.length) return out;
+  const shipsKo = {polys: ships, lines: [], points: []};
+  const b = Math.max(0, +buf || 0);
+  const lineSet = new Set();
+  for(let i = 0; i < tail.length; i++){
+    const info = blockedInfo(nogo.frame.toEN(tail[i]), shipsKo, b);
+    if(!(info && info.type === "poly")) break;           // the first flyable waypoint ends the strike
+    const seg = i + 1 < tail.length ? lineOfLeg(tail[i], tail[i + 1]) : null;
+    const line = seg ? lineNo(seg.line) : null;
+    if(line != null) lineSet.add(line);
+    out.struck.push({wp: tail[i], kind: info.kind, line});
+    if(i > 0) out.m += distTo(tail[i - 1], tail[i]);
+    out.n = i + 1;
+  }
+  out.lines = [...lineSet].sort((a, b2) => a - b2);
+  return out;
+}
+/**
+ * THE PUNCH'S MOORED CONTACTS (2026-11-04): every contact NOT under way, as a passage's are built
+ * (aisMooredKeepouts - sweepS 0, no `own`, nothing waived), in the PUNCH's own ref. {polys, stale, note}:
+ * a stale feed answers polys [] WITH its reason, and the punch summary says it rather than clipping an
+ * empty sea silently. punchOut's clip is the one reader; patClipKey carries aisClipSig of the same set so
+ * the memo can never serve a clip taken against ships that have since sailed.
+ */
+function aisMooredClipKeepouts(ref){
+  if(!ref) return {polys: [], stale: false, note: null};
+  // the TORN pair (review C5): aisVessels emptied out-of-band reads as a fresh empty sea - say so instead
+  if(aisTorn) return {polys: [], stale: true, note: "no AIS read in hand (the layer is off, or the last poll failed)"};
+  return aisMooredKeepouts(aisVessels, ref, {now: Date.now(), polledAt: aisPolledAt});
+}
+/** The moored set's memo signature: who, where and how big to 5 m - what can change the clip, nothing else. */
+function aisClipSig(polys){
+  return (polys || []).map(p => (p.mmsi != null ? p.mmsi : "x") + ":"
+    + (p.bb ? [p.bb.x0, p.bb.y0, p.bb.x1, p.bb.y1].map(v => Math.round(v / 5)).join(",") : "?")).sort().join("|");
+}
+/** The struck stretch in the operator's words: waypoint count, line numbers and who sits on them. */
+function strikeSay(sk){
+  if(!sk || !sk.n) return "";
+  const who = [...new Set(sk.struck.map(s => s.kind))].join(", ");
+  return "struck " + sk.n + " waypoint" + (sk.n === 1 ? "" : "s")
+       + (sk.lines.length ? " on line" + (sk.lines.length === 1 ? " " : "s ") + sk.lines.join(", ") : "")
+       + (sk.m ? " (" + fmtDist(sk.m) + " of coverage)" : "") + " — " + who + " sits on them; re-fly when clear";
+}
+/**
  * THE WAY ROUND THAT WOULD MOVE NOTHING - asked where the answer exists, which is inside the resume, after the way
  * IN has been planned and before anything has been commanded. Null when the maneuver does move her; otherwise the
  * banner saying why it is refused.
@@ -4342,6 +4439,8 @@ function aroundTailIsSame(g, tail){
  *   the tail still the remainder the guard condemned (aroundTailIsSame, the one expression).
  */
 function aroundNoOpWhy(g, auto, around, tail, viaN, stdM){
+  // (The forward-strike needs no clause here: a struck tail is SHORTER than the condemned remainder,
+  //  and aroundTailIsSame compares length first - a strike can never read as a no-op. 2026-11-04.)
   if(!around || !auto || !auto.chart || viaN || !aroundTailIsSame(g, tail)) return null;
   return "⚠ NO WAY ROUND " + auto.kind + " — the plan already runs where the way round would put her - she would "
        + "be handed back onto the same track the guard just stopped her on, at the same place, and the way in "
@@ -4757,6 +4856,56 @@ function aisAroundNow(polys){
   return true;
 }
 /**
+ * THE WAY ROUND WITHOUT THE STOP (2026-11-04, Andy: "The ASV still waits at least 30 seconds on encountering an
+ * AIS target. This wait should be gone and the avoidance maneuver should be calculated and then implemented
+ * immediately."). Measured on his 2026-11-04 session: the ladder slowed her at 17:47:09 and the way round went
+ * up at 17:47:34 - the 25 s was the LADDER's design (act only at the hold rung, entry within HOLD_S), not the
+ * router, which answered within a second once asked. So this tick asks at the SLOW rung: the moment the governor
+ * slows her for a CONTACT on her track, the way round is planned - the walk and the taut path on this thread in
+ * milliseconds, the router's own search in the route WORKER, never here - and spliced into the RUNNING plan
+ * (aisAroundRunning, the amend that never stops her). The ladder beneath is UNCHANGED: a try that finds nothing,
+ * a worker that cannot answer, or an answer the world outran, all fall through to the hold rung at HOLD_S and the
+ * on-station machinery exactly as before - this is a faster first answer, not a replacement for the stop.
+ *
+ * A CONTACT CAUSE ONLY (v1 boundary, documented in the handoff): a charted feature cannot move and loses little
+ * to the stop, and his words were "on encountering an AIS target"; the charted way round keeps hold-then-route.
+ *
+ * THE EPISODE CARRIES THE GATE: opened here with rung "slow" and NO bank (she never stops - see aisAvoidOpen's
+ * moving note), spent by the splice's success, by the hold rung's own lifecycle if the ladder catches her first
+ * (the hold's aisAvoidOpen keeps an open episode), or HERE when the contact clears the track before any of that
+ * (the return tick's own dwell, with nothing to return to).
+ */
+function aisAroundUnderwayTick(a, aisKo, aisCaused, aisHer, aisKind, now){
+  const ep = aisAvoid;
+  // a moving episode whose cause has cleared: nothing was ever held, so nothing else closes it
+  if(ep && ep.rung === "slow" && !guardHeld){
+    if(a && a.level === "clear"){
+      if(!ep.clearSince) ep.clearSince = now;
+      else if(now - ep.clearSince > AIS_RETURN_DWELL_MS){
+        aisAvoid = null;
+        flashNote(ep.kind + " is clear of the track — carrying on as planned.");
+      }
+      return;
+    }
+    if(ep.clearSince && a && a.level !== "clear") ep.clearSince = 0;
+  }
+  if(!a || a.level !== "slow") return;                       // the SLOW band only: hold and helm are the ladder's
+  if(!aisCaused || !aisHer) return;                          // a CONTACT on her track - never charted, never "nearest"
+  if(!S || S.run !== "running") return;                      // paused is the operator's; held is the on-station tick's
+  const beh = S.behavior;
+  if(!(beh === "survey" || beh === "goto" || beh === "rth" || beh === "transit")) return;
+  if(guardHeldOffer() || guardHeld) return;                  // a banked record is the on-station machinery's
+  if(heldResuming || aisAroundBusy) return;                  // one maneuver in flight at a time
+  if(aisKoStale || aisKoBlind) return;                       // no splice on a stale feed (the tick's own rule, 4575)
+  if(S.behavior === "escape" || (now - guardEscapeAt) < GUARD_REASSESS_MS) return;   // in extremis is the helm rung's
+  if((now - guardEdgeAt) < EDGE_REASSESS_MS) return;         // settling on a maneuver that just landed
+  if(!aisAvoid) aisAvoidOpen(clearance, a, aisKind, aisHer, null, false, true);
+  if(!aisAvoid || aisAvoid.clearSince || aisAvoid.rung !== "slow") return;
+  // the model gate and the launch are aisAroundRunning's own (its `auto` branch); un-awaited, its own catch speaks
+  aisAroundRunning(aisKo, aisHer, "she is on the track ahead", {auto: aisAvoid})
+    .catch(e => showBanner("⚠ THE WAY ROUND FAILED — " + ((e && e.message) || e) + ". The guard still watches."));
+}
+/**
  * Is that record still about the boat in front of the operator?
  *
  * ⚠ DERIVED, NOT REMEMBERED IN SIX PLACES. Stop, Start, Upload, RTH, Go-To, a spawn and the
@@ -5129,6 +5278,7 @@ function clearanceGuard(){
   // `clear` here, and a return evaluated inside a rung would never run.
   if(act) aisReturnTick(p, aisKo, buf, Date.now());
   if(act) aisAroundTick(aisKo, Date.now());          // the way round a contact that stays (2026-09-27)
+  if(act) aisAroundUnderwayTick(a, aisKo, aisCaused, aisHer, aisKind, Date.now());   // ... and WITHOUT the stop (2026-11-04)
 
   if(a.level === "clear"){
     if(guardLevel !== "clear"){
@@ -6871,6 +7021,12 @@ let nogoShow = true;                            // nogo overlay wash visibility
 // AIS layer: nearby vessels polled from the standalone AIS service via /api/ais.
 const AIS_KEY = "asv_ais_show_v1";
 let aisShow = false, aisVessels = [], aisTimer = null, aisNote = "", aisBusy = false;
+// A TORN PAIR IS NOT A QUIET SEA (this feature's review, C5): two writers empty aisVessels WITHOUT moving
+// aisPolledAt - the layer toggled off unarmed, and a failed poll inside the guard's 40 s grace - so a reader
+// of the pair alone sees a FRESH, EMPTY feed and claims water nobody checked. The guard's own grace is
+// deliberate and untouched; this flag is for the PUNCH's clip, which must say "no read in hand" rather than
+// clip round an empty sea. True whenever aisVessels was emptied out-of-band; false on every poll's own write.
+let aisTorn = false;
 // The card's held contacts that the server still collects BEYOND the range (/api/ais `beyond`): for the card alone, to
 // strike her where she is. Never the guard's - its model is aisVessels.
 let aisBeyondRpts = [];
@@ -14742,6 +14898,7 @@ async function pollAIS(){ if(UIROLE === "controls" || !aisWanted() || aisBusy) r
     // the charted depth under each vessel moored or at anchor, and how far a moored hull lies from a charted berth
     // (ais_keepout.js aisWithChart, 2026-11-01)
     aisVessels = (d && Array.isArray(d.vessels)) ? aisWithChart(d.vessels, nogo.features, sea.waterOffset || 0) : [];
+    aisTorn = false;                             // the pair is whole again: this list is the poll's own
     aisBeyondRpts = (d && Array.isArray(d.beyond)) ? d.beyond : [];
     // THE SERVICE ANSWERED (contacts, or none in range): the DR clock moves. This is the AIS proxy's own
     // reply, not a command result - `ok` is the service's word for "I am up" - so it is read as such,
@@ -14774,7 +14931,7 @@ async function pollAIS(){ if(UIROLE === "controls" || !aisWanted() || aisBusy) r
     else                                      aisState = "connecting";
     aisNote = (d && d.ok===false) ? (d.note || "AIS service offline")
             : (allErr ? ((aisSrc && aisSrc.note) || "all sources erroring") : "");
-  }catch(e){ aisVessels=[]; aisBeyondRpts=[]; aisState="offline"; aisSrc=null; aisSrcName=null; aisStall=null;
+  }catch(e){ aisVessels=[]; aisTorn=true; aisBeyondRpts=[]; aisState="offline"; aisSrc=null; aisSrcName=null; aisStall=null;
              aisNote = (e && e.name === "AbortError") ? "AIS query timed out" : "AIS query failed"; }
   finally{ aisBusy=false; aisPollCtl=null; aisStallSay(); renderAisTable(); render(); }
 }
@@ -14794,7 +14951,7 @@ function setAIS(on){ aisShow=on; const btn=$("#aisBtn"); if(btn) btn.classList.t
   if(on){ aisState="connecting"; aisSrc=null; aisSrcName=null; setAisTable(true); pollAIS(); }
   // ⚠ THE CONTACTS OUTLIVE THE LAYER WHILE THE GUARD WANTS THEM (2026-09-25): turning the glyphs
   // off must not empty the model the keep-outs are built from.
-  else { if(!aisGuardWanted()) aisVessels=[]; aisNote=""; $("#aisTip").style.display="none"; setAisTable(false); render(); } }
+  else { if(!aisGuardWanted()){ aisVessels=[]; aisTorn=true; } aisNote=""; $("#aisTip").style.display="none"; setAisTable(false); render(); } }
 // ONE CLOCK FOR BOTH CONSUMERS of the contacts - the layer and the guard's keep-outs - so the guard
 // is fed whether or not the layer is showing; pollAIS itself answers whether anyone wants a poll. The stream asks too
 // (onFrame), and is what keeps the guard fed in a window the browser has throttled - see AIS_POLL_TIMEOUT_MS.
@@ -16562,8 +16719,18 @@ async function punchOut(){
     // a line keeps its coverage across a channel, and the turns below may use channel water. Read from `enf`, which
     // the punch memo's key already names whole, so a clip taken under one setting is never served under the other.
     const chanExcl = enf.chan === false ? [] : channelSpanKeepouts(src, ref, nogo.features, ko.marks);
+    // A SHIP AT HER BERTH IS CLIPPED ROUND AT PUNCH TIME (Andy, 2026-11-04, the pier convergence - his
+    // "OR the survey pattern should modify in realtime as the AIS targets are discovered", taken at its
+    // safe half): every contact NOT under way at punch time joins the COVERAGE clip, so a new pattern never
+    // draws a line through an occupied berth in the first place. The CLIP ONLY - koTurn, `ko` and nogo.ko are
+    // untouched, the guard still models every contact live (ais_keepout.js's doctrine: a MOVING ship never
+    // reshapes a pattern - she is avoided and the line returned to), and the rings are rebuilt in the PUNCH's
+    // own ref (the frame-move warning) with no `own`, so nothing is waived. A STALE feed clips nothing and is
+    // SAID on the punch summary rather than silently clipping an empty sea.
+    const aisClip = aisMooredClipKeepouts(ref);
+    const aisExcl = aisClip.polys;
     // ⚠ THE CLIP IS THE ONE READER OF koCov, and the only place the ceiling applies.
-    const koClip = chanExcl.length ? {...koCov, polys:[...koCov.polys, ...chanExcl]} : koCov;
+    const koClip = (chanExcl.length || aisExcl.length) ? {...koCov, polys:[...koCov.polys, ...chanExcl, ...aisExcl]} : koCov;
     // ⚠ THE ENC CLIP IS MEMOISED, AND STRIKING A RUN IS THE WHOLE REASON.
     //
     // MEASURED on a 10-line, 949 m-wide plan over New Castle harbor (1,318 keep-out
@@ -16586,7 +16753,11 @@ async function punchOut(){
     const clipBuf = patClipBufM();
     const setKnNow = (() => { const st = (S && S.status) || {};
       return (st.env_set_kn != null && st.env_set_deg != null) ? +st.env_set_kn : 0; })();
-    const clipKey = patClipKey();       // the strike key PLUS this punch's standoff
+    // ... PLUS THE MOORED CONTACTS THE CLIP WAS TAKEN AGAINST (2026-11-04): aisClipSig names who, where to
+    // 5 m and how big, and the stale flag - so the first punch after a ship sails, arrives, or the feed goes
+    // stale takes a FRESH clip instead of serving the old one byte-identical (the chartInk lesson, same memo).
+    const baseKey = patClipKey();       // the strike key PLUS this punch's standoff
+    const clipKey = baseKey && baseKey + "|ais:" + (aisClip.stale ? "stale" : aisClipSig(aisExcl));
     if(clipKey && patClipMemo && patClipMemo.key === clipKey){
       // A COPY, not the cached array. The caller sorts, re-orients and filters what it is
       // given, and handing out the memo itself would let the next punch inherit the last
@@ -17158,6 +17329,11 @@ async function punchOut(){
     const depthLbl = dr.max>0 ? `${dr.min}-${dr.max} m` : `≥ ${dr.min} m`;
     $("#sp_hint").textContent=`Punched: ${src.length} lines → ${patClip.length} segments `+
       `(${depthLbl}, ${buffer} m buffer, −${turnMargin.toFixed(0)} m turn margin, nogo band ${bandWord(nogo.band)})`+
+      // THE MOORED-CONTACT CLIP IS SAID WITH ITS COUNT, AND SO IS A FEED THAT COULD NOT BE ASKED (2026-11-04):
+      // coverage clipped for a ship nobody can see on the summary reads as a chart fault, and an empty sea
+      // claimed from a stale feed is worse - the standing claim-vs-evidence rule, at the punch's own surface.
+      (aisExcl.length ? ` · clipped round ${aisExcl.length} contact${aisExcl.length === 1 ? "" : "s"} not under way` : ``)+
+      (aisClip.stale ? ` · AIS ${aisClip.note || "stale"} — the pattern is NOT clipped round contacts` : ``)+
       // ⚠⚠ AND WHEN THE SET WIDENED THE CLIP, SAY SO AND SAY WHY (2026-09-19, item 3).
       // Clipping the coverage at more than the operator asked for COSTS THEM SURVEY, and
       // this console's standing rule is that dropping coverage somebody asked for is said
@@ -20822,6 +20998,26 @@ function bankBreak(rec){
 function breakList(){
   return Array.isArray(mission.breaks) ? mission.breaks.filter(b => b && Array.isArray(b.route) && b.route.length) : [];
 }
+// ── STRUCK COVERAGE, BANKED ──────────────────────────────────────────────────────────────
+// A forward-strike (strikePastOccupied) abandons coverage a vessel sits on; the record of WHAT was
+// abandoned goes on the plan so it survives a reload and can be re-flown later by hand. It is NOT a
+// break record: mission.breaks keeps one record per survey for Continue (his settled word keeps
+// Continue to broken-off surveys), while strikes accumulate and nothing re-offers them automatically -
+// re-flying a struck berth is the operator's call, made when the water is actually clear. Each record
+// copies its own waypoints and line numbers (a later re-clip renumbers mission.lines; a banked record
+// must not drift with it - the break records' own rule). Server-side: "strikes" is whitelisted beside
+// "breaks" in asv_console.py or the next save silently drops it.
+const STRIKES_MAX = 12;              // the plan keeps this many, newest first (asv_console.py STRIKES_MAX)
+function bankStrike(sk){
+  if(!sk || !sk.n) return;
+  const rec = {id: "k" + Date.now().toString(36), t: Date.now(), n: sk.n, m: Math.round(sk.m),
+               lines: sk.lines.slice(), by: [...new Set(sk.struck.map(s => s.kind))],
+               wps: sk.struck.map(s => ({lat: s.wp.lat, lon: s.wp.lon}))};
+  mission.strikes = [rec, ...(Array.isArray(mission.strikes) ? mission.strikes : [])].slice(0, STRIKES_MAX);
+  saveMission();
+  logClient("coverage_struck", {id: rec.id, wpts: rec.n, m: rec.m, lines: rec.lines, by: rec.by});
+  return rec;
+}
 function breakSelected(){ const L = breakList(); return L.find(b => b.id === breakSel) || L[0] || null; }
 function breakLabel(b){
   return (b && b.no != null ? "S" + b.no + (b.name ? " " + b.name : "") : "the survey")
@@ -21482,9 +21678,19 @@ async function avoidContactAt(ll){
  * (the edge rung's own clock); if the guard still reads a hold once she is under way on it, the hold banks the
  * amended plan and the bar offers it back as it does any survey.
  */
-async function aisAroundRunning(polys, q, why){
+async function aisAroundRunning(polys, q, why, opts){
+  // `opts.auto` is the SLOW rung's own episode (2026-11-04, Andy: "the avoidance maneuver should be calculated
+  // and then implemented immediately") - the automatic caller is aisAroundUnderwayTick. An automatic try says a
+  // refusal ONCE per episode (the said-once latch below, the resumes' own rule), plans its router leg in the
+  // route WORKER and never on this thread, and discards its answer unseen when the world moved across the await.
+  const auto = (opts && opts.auto) || null;
   const kind = (q && q.kind) || "the contact";
-  if(aisAroundBusy){ flashNote("Route round " + kind + ": one is already in flight."); return false; }
+  const sayNoWay = (txt) => {                  // an automatic refusal is said once per episode; a press is always answered
+    if(auto && auto.aroundSaid === txt) return;
+    if(auto) auto.aroundSaid = txt;
+    showBanner(txt);
+  };
+  if(aisAroundBusy){ if(!auto) flashNote("Route round " + kind + ": one is already in flight."); return false; }
   const rr = indexedRoute() || [];
   const idx = Math.min(window._wpIndex || 0, rr.length);
   // A LEG UNDER WAY (2026-09-29): a Go-To, a Return-to-Home or a transit is walked along its own route (aisAroundLegPlan)
@@ -21493,7 +21699,7 @@ async function aisAroundRunning(polys, q, why){
   const leg = (beh === "goto" || beh === "rth" || beh === "transit") ? {behavior: beh} : null;
   const mark = leg ? null : (lineMark() || pauseMark);
   if(!asv || !rr.length || (!mark && !leg) || (leg && idx >= rr.length)){
-    showBanner('⚠ NO WAY ROUND ' + kind + ' — ' + (leg ? 'the ' + legName(leg) + ' has no waypoint left to pick up beyond her'
+    sayNoWay('⚠ NO WAY ROUND ' + kind + ' — ' + (leg ? 'the ' + legName(leg) + ' has no waypoint left to pick up beyond her'
       : 'she is not on a coverage line (a turn or a transit), so there is no line to pick up beyond her. Pause and use Resume from here on a line beyond her, or Go-To') + '.');
     return false;
   }
@@ -21503,18 +21709,68 @@ async function aisAroundRunning(polys, q, why){
   let stage = "planning";
   try {
     const g = {route: rr, idx, mark, at: {lat: asv.lat, lon: asv.lon}, leg};
+    // THE MODEL GATE, THE TICK'S OWN (2026-11-04): an automatic try is rationed by aroundTrySig exactly as the
+    // on-station tick's is - recorded at LAUNCH, before anything async, so two frames cannot launch two tries -
+    // and a press bypasses it as ROUTE ROUND HER NOW always has.
+    if(auto){
+      const sig = aroundTrySig(g, auto);
+      if(aroundTriedSame(auto.triedOn, sig)) return false;
+      auto.triedOn = sig;
+    }
     const std = patClipBufM();
     const plan = leg ? aisAroundLegPlan(g, polys, std, q && q.mmsi) : aisAroundPlan(g, polys, std, q && q.mmsi);
-    if(plan.error){ showBanner('⚠ NO WAY ROUND ' + kind + ' — ' + plan.error + '.'); return false; }
+    if(plan.error){ sayNoWay('⚠ NO WAY ROUND ' + kind + ' — ' + plan.error + '.'); return false; }
     const koIn = koRoundHer(polys, plan.her || q, std);
     const tail = leg ? plan.tail.slice() : (plan.to && !plan.atEnd) ? [plan.to, ...rr.slice(plan.j)] : rr.slice(plan.j);
+    // FORWARD-STRIKE (2026-11-04): the moving splice walks past occupied waypoints exactly as the resumes do.
+    const sk = strikePastOccupied(tail, koIn, nogo.buffer || 0);
+    if(sk.n) tail.splice(0, sk.n);
+    if(sk.n && !tail.length){
+      sayNoWay('⚠ NO WAY ROUND ' + kind + ' — every waypoint left to fly has a vessel sitting on it ('
+        + [...new Set(sk.struck.map(s => s.kind))].join(", ") + '). Nothing was sent; the guard still watches.');
+      return false;
+    }
     const target = tail[0];
     const from = {lat: asv.lat, lon: asv.lon};
     const herQ = plan.her || q;
-    const pin = (herQ ? tautRoundHer(from, target, aisRoundKeepout(herQ, std, nogo.buffer || 0), koIn, std) : null)   // taut round her first
-             || planNogoRoute(from, target, {...holdOpts(), standoffM: patClipBufM(), ko: koIn, flyThrough: true});
+    let pin = herQ ? tautRoundHer(from, target, aisRoundKeepout(herQ, std, nogo.buffer || 0), koIn, std) : null;   // taut round her first
+    if(!pin && auto){
+      // THE WORKER, AND ONLY THE WORKER (2026-11-04). An automatic try fires while she is UNDER WAY, and a route
+      // search on this thread was measured at 11 s and then 17.8 s - the clearance ladder itself runs on this
+      // thread, so the page must never freeze for a maneuver the console chose to make. No worker, no automatic
+      // try: the ladder beneath is unchanged, and the hold rung still catches her at HOLD_S, where the on-station
+      // search runs as it always has - she is stopped there, and a stopped boat can afford it. The "est" lane, so
+      // an operator's Go-To never queues behind this.
+      const stop0 = routeStopGen, seq0 = S ? S.run_seq : null, moved0 = guardMoved;
+      pin = await planOffThread({op: "nogo", args: {from, to: target, opts: {...holdOpts(), standoffM: std, ko: koIn, flyThrough: true}}},
+                                () => ({error: "the route worker is not available"}), undefined, "est");
+      // THE WORLD MAY HAVE MOVED ACROSS THE AWAIT (the fourth review's recurring shape, now on the OUTPUT side):
+      // anything the operator or the ladder did meanwhile outranks this answer. Discard quietly - the model gate
+      // earns the next try the moment anything that could change the answer has changed.
+      // ⚠⚠ THE LADDER'S OWN MARKERS, SYNCHRONOUS ONES INCLUDED (this feature's review, C1/C3 - the FRIGGA class
+      // for the FIFTH time). guardHeldOffer() is DESIGNED to answer null for HELD_GRACE_MS after a hold fires,
+      // because the vessel's behavior lags the command's round trip - so an answer landing in that window passed
+      // every check here and the amend posted OVER the hold the ladder had just commanded (the server's amend
+      // gate stays open until she reports holding, so the splice could outright replace the guard's stop). The
+      // discard reads what the rungs write THE INSTANT they act: guardHeld (the launch gate's own word, banked
+      // by hold and escape alike), guardMoved (bumped by every rung command), and the escape markers.
+      if(routeStopGen !== stop0 || !S || S.run !== "running" || (S ? S.run_seq : null) !== seq0
+         || guardHeld || guardMoved !== moved0
+         || S.behavior === "escape" || (Date.now() - guardEscapeAt) < GUARD_REASSESS_MS
+         || guardHeldOffer() || heldResuming || aisKoStale || aisAvoid !== auto) return false;
+      // ... and an automatic splice is never flown UNCERTIFIED: no model means no auto maneuver (the manual
+      // press keeps its degraded branch - the operator chose it with the banner in front of them).
+      if(pin.degraded) return false;
+      // ... and the leg SHE flies first - from where she is NOW to the answer's first waypoint - re-certified,
+      // because the answer was planned from where she WAS.
+      if(!pin.error && !pin.heldOff){
+        const first = (pin.route && pin.route.length) ? pin.route[0] : target;
+        if(!legClear({lat: asv.lat, lon: asv.lon}, first, nogo.frame, koIn, std)) return false;
+      }
+    }
+    if(!pin) pin = planNogoRoute(from, target, {...holdOpts(), standoffM: std, ko: koIn, flyThrough: true});
     if(pin.error || pin.heldOff){
-      showBanner('⚠ NO WAY ROUND ' + kind + ' — ' + (planWhy(pin) || heldOffWhy(pin.heldOff)) + '. Nothing was sent; the guard still watches.');
+      sayNoWay('⚠ NO WAY ROUND ' + kind + ' — ' + (planWhy(pin) || heldOffWhy(pin.heldOff)) + '. Nothing was sent; the guard still watches.');
       return false;
     }
     // The router's route EXCLUDES the start and ENDS at the target, which is tail[0] already (resumeFromHere's
@@ -21554,6 +21810,10 @@ async function aisAroundRunning(polys, q, why){
     // into `tail`, so the pick-up is `tail[0]` and it sits at `via.length` of the array that was uploaded.
     avoidingRaise("routed round", kind, spliced + via.length, route[via.length]);
     dropCornerSlow("the plan was routed round " + kind);
+    // An automatic splice SPENDS its episode (2026-11-04), as the resumes spend theirs: the maneuver is on the
+    // vessel, the badge is up, and the next contact is a new episode. The banked strike rides the same success.
+    if(auto && aisAvoid === auto) aisAvoid = null;
+    if(sk.n) bankStrike(sk);
     flashNote("Routed round " + kind + " (" + why + ") — " + said + ".");
     // ⚠ AND THE MARGIN IS SAID BY THE ONE FUNCTION THAT KNOWS IT (aroundMarginSay). This was the FOURTH surface
     // asserting "one ship-length off her" flat, which is a contact's rule and not a charted feature's; three
@@ -21562,7 +21822,9 @@ async function aisAroundRunning(polys, q, why){
       + aroundMarginSay(plan) + "; the console is still watching"});
     logClient("ais_around", {kind, line, skip_m: Math.round(plan.skipM || 0), skip_line: !!plan.skipLine, held_s: null,
               mmsi: plan.her ? plan.her.mmsi : null, round_m: plan.roundM, std_m: Math.round(std * 10) / 10,
-              wpts: route.length, manual: true, running: true, ...(leg ? {leg: leg.behavior} : {})});
+              // the forward-strike's own accounting (2026-11-04): NEW fields - skip_m/skip_line keep their meaning
+              struck_wpts: sk.n || 0, struck_m: Math.round(sk.m || 0), struck_lines: sk.lines,
+              wpts: route.length, manual: !auto, running: true, ...(leg ? {leg: leg.behavior} : {})});
     updateMissionCard(); render();
     return true;
   } catch(e){
@@ -21575,7 +21837,7 @@ async function aisAroundRunning(polys, q, why){
     // console's bookkeeping behind it failed. The settle clock is let go unless she took it.
     const msg = (e && e.message) || String(e);
     if(stage !== "taken") guardEdgeAt = 0;
-    showBanner('⚠ THE WAY ROUND ' + kind + ' FAILED — ' + msg + (stage === "taken"
+    sayNoWay('⚠ THE WAY ROUND ' + kind + ' FAILED — ' + msg + (stage === "taken"
       ? '. The amendment WAS taken: she is flying the way round, but the console failed after it, so the chart and '
         + 'the cards may not show it. The guard still watches.'
       : stage === "posting"
@@ -21622,7 +21884,8 @@ $("#gb_around").onclick = ()=>{ aisAroundNow(); };
 // which; a static title cannot ask it, so it says both.
 $("#gb_around").title = "Route round what she is held for NOW, carrying on beyond it - a contact at one "
   + "ship-length from her center, a charted feature at the standoff her plan was laid at."
-  + " The console does this itself as soon as she is on station, and tries again whenever anything that could change the answer changes; press this to ask while she is "
+  + " The console does this itself - round a contact met under way without stopping (since 4 November 2026), round "
+  + "charted water as soon as she is on station - and tries again whenever anything that could change the answer changes; press this to ask while she is "
   + "paused, or to force a try the automatic one has refused.";
 
 // PAUSE IS A TOGGLE NOW. It flashes while the run is held, and pressing it again is the
@@ -21853,6 +22116,16 @@ async function resumeHeldLeg(opts){
     sayRefusal("⚠ CANNOT RESUME THE " + NAME + " — it has no waypoint left to fly. She is station-keeping; re-command her.");
     render(); return;
   }
+  // FORWARD-STRIKE (2026-11-04): a leg's remaining waypoints a not-under-way contact sits on are struck off the
+  // tail's front before certification - the same walk as the survey resume's (strikePastOccupied).
+  const sk = strikePastOccupied(tail, koIn, nogo.buffer || 0);
+  if(sk.n) tail.splice(0, sk.n);
+  if(sk.n && !tail.length){
+    sayRefusal("⚠ CANNOT RESUME THE " + NAME + " — every waypoint left to fly has a vessel sitting on it ("
+      + [...new Set(sk.struck.map(s => s.kind))].join(", ") + "). She is station-keeping; Stop and re-plan, or "
+      + "wait for the water to clear.");
+    render(); return;
+  }
   // THE WAY IN, from where she is to the first waypoint of the way on: certified against the model it is routed by, at
   // the standoff when a way round brought her ring in - taut round her first, the router's own search where that cannot
   // be certified. The same argument as resumeHeldRun's: after an escape she is not where she stopped.
@@ -21915,7 +22188,7 @@ async function resumeHeldLeg(opts){
   const blindSay = (at && at.blindTraffic)
     ? "the AIS model is BLIND, so neither the pick-up nor the way in was checked against traffic - the charted "
       + "keep-outs were" : null;
-  const note = [pick, inNote, blindSay].filter(Boolean).join(", ");
+  const note = [pick, sk.n ? strikeSay(sk) : null, inNote, blindSay].filter(Boolean).join(", ");
   // THE LATCHES, as the survey's: the operator's press records the override and holds LOW; the console's return and
   // way round take neither, and keep a LOW the operator had standing before the hold.
   const hadLow = resumeSlow, ov = (!auto && !at) ? {t: Date.now(), level: "hold", clearM: g.clearM, slow: true} : null;
@@ -22008,9 +22281,12 @@ async function resumeHeldLeg(opts){
         : "she was still in the way, so the " + name + " goes on beyond her: ")
       + note + ". " + left + " waypoint" + (left === 1 ? "" : "s") + " to its end point"
       + (hadLow ? ", still at LOW on your authority (RELEASE LOW on the bar for the plan's speed)" : "") + ". Recorded in the session log.");
+    if(sk.n) bankStrike(sk);
     logClient("ais_around", {kind: who, leg: beh, line: null, skip_m: Math.round((at && at.skipM) || 0), skip_line: false,
               mmsi: at && at.her ? at.her.mmsi : null, round_m: at && at.roundM != null ? at.roundM : null,
               std_m: at && at.stdM != null ? Math.round(at.stdM * 10) / 10 : null, held_s: heldS, wpts: left, manual,
+              // the forward-strike's own accounting (2026-11-04): NEW fields - skip_m/skip_line keep their meaning
+              struck_wpts: sk.n || 0, struck_m: Math.round(sk.m || 0), struck_lines: sk.lines,
               // whether the traffic check could be made at all - read back from the session log afterwards
               blind_traffic: !!(at && at.blindTraffic),
               // ... and whether the way in had to be found at the bare buffer (insideStandoff) - the same
@@ -22022,7 +22298,8 @@ async function resumeHeldLeg(opts){
       + " to its end point, " + note + ". Recorded in the session log.");
   } else {
     flashNote("The " + name + " resumed at LOW — " + note + ". Speed stays low until you change it.");
-    logGuardLow("held_resume", g.clearM, g.kind, {leg: beh, waypoints: left, note});
+    if(sk.n) bankStrike(sk);
+    logGuardLow("held_resume", g.clearM, g.kind, {leg: beh, waypoints: left, struck_wpts: sk.n || 0, struck_lines: sk.lines, note});
     if(planIntent) planIntent.why.push({t:"warn", s:"OPERATOR OVERRIDE after a guard HOLD at "
       + (g.clearM != null ? g.clearM.toFixed(1) + " m" : "unknown range") + " from " + (g.kind || "a keep-out")
       + " — the " + name + " RESUMED AT LOW SPEED (" + note + "); the console will not stop the boat for this situation but "
@@ -22056,8 +22333,20 @@ async function resumeHeldRun(opts){
   const koIn = (opts && opts.ko) || nogo.ko;
   const L = aroundLine(g);                 // ⚠ the walk's own branch test - see aroundLine (2026-11-03)
   const tail = aroundTail(g, at);          // ⚠ ONE expression, shared with the no-op gate - see aroundTail
+  // FORWARD-STRIKE (2026-11-04, the pier convergence - see strikePastOccupied): waypoints of the way on that a
+  // not-under-way contact sits on are struck off the tail's front BEFORE anything is certified, so the way in is
+  // asked to a waypoint that can actually be flown rather than refused against an occupied one. A strike also
+  // empties the backtrack question: backing up overlaps coverage on a stretch this resume is abandoning.
+  const sk = strikePastOccupied(tail, koIn, nogo.buffer || 0);
+  if(sk.n) tail.splice(0, sk.n);
+  if(sk.n && !tail.length){
+    sayRefusal("⚠ CANNOT RESUME FROM HERE - every waypoint left to fly has a vessel sitting on it ("
+      + [...new Set(sk.struck.map(s => s.kind))].join(", ") + "). The boat is still station-keeping and the "
+      + "remainder is still held; Stop and re-plan, or wait for the water to clear.");
+    render(); return;
+  }
   let note = null, backedM = 0;
-  const to = (!at && L && back > 0) ? resumePointOn(L, g.mark, back) : null;
+  const to = (!at && !sk.n && L && back > 0) ? resumePointOn(L, g.mark, back) : null;
   if(to){
     // The same check the pause resume makes, for the same reason - except that here the
     // console already knows something ahead is foul, so "she has just surveyed it" is worth
@@ -22094,6 +22383,7 @@ async function resumeHeldRun(opts){
     note = "it was not on a coverage line when the console stopped it, so there was nothing "
          + "to back down";
   }
+  if(sk.n) note = (note ? note + "; " : "") + strikeSay(sk);
   // ⚠⚠ THE WAY BACK IS NOT THE WAY SHE CAME, once the rung that kept this record was the
   // ESCAPE. After a hold she is where she stopped, a few meters off her own line, and the
   // backtrack above is the whole question. After an escape she has been driven a long way off
@@ -22386,10 +22676,13 @@ async function resumeHeldRun(opts){
           : "she was still in the way, so the survey goes on beyond her without waiting: ")
         + (note || "carrying on") + ". " + left + " waypoint" + (left === 1 ? "" : "s") + " to fly"
         + (hadLow ? ", still at LOW on your authority (RELEASE LOW on the bar for the plan's speed)" : "") + ". Recorded in the session log.");
+      if(sk.n) bankStrike(sk);
       logClient("ais_around", {kind: who, line: at.line != null ? lineNo(at.line) : null, skip_m: Math.round(at.skipM || 0), skip_line: !!at.skipLine,
                 mmsi: at.her ? at.her.mmsi : null, round_m: at.roundM != null ? at.roundM : null,
                 std_m: at.stdM != null ? Math.round(at.stdM * 10) / 10 : null,
                 held_s: ep ? Math.round((Date.now() - ep.since) / 1000) : null, wpts: left, manual: !!(opts && opts.manual),
+                // the forward-strike's own accounting (2026-11-04): NEW fields - skip_m/skip_line keep their meaning
+                struck_wpts: sk.n || 0, struck_m: Math.round(sk.m || 0), struck_lines: sk.lines,
                 // whether the traffic check could be made at all - read back from the session log afterwards
                 blind_traffic: !!at.blindTraffic,
                 // ... and whether the way in had to be found at the bare buffer (insideStandoff) - the same
@@ -22417,10 +22710,12 @@ async function resumeHeldRun(opts){
   }
   flashNote("Survey resumed at LOW — " + (note || "carrying on") + ". Speed stays low until "
             + "you change it.");
+  if(sk.n) bankStrike(sk);
   logGuardLow("held_resume", g.clearM, g.kind, {backed_m: Math.round(backedM),
               // ⚠ AND THE RECORD, which is what the episode is reconstructed from
               // afterwards - a log that names a different line from the banner the
               // operator read is worse than either being wrong alone.
+              struck_wpts: sk.n || 0, struck_lines: sk.lines,
               line: g.mark ? lineNo(g.mark.line) : null, waypoints: left, note});
   if(planIntent) planIntent.why.push({t:"warn", s:"OPERATOR OVERRIDE after a guard HOLD at "
     + (g.clearM != null ? g.clearM.toFixed(1) + " m" : "unknown range") + " from "

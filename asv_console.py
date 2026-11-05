@@ -1297,6 +1297,7 @@ def check_plan_body(m):
         raise PlanRefused("the survey-area boundary is not a list of positions - nothing was saved")
     _check_surveys(m)
     _check_breaks(m)
+    _check_strikes(m)
     _check_passage(m)
     for k in ("arrival_radius_m", "approach_radius_m", "buffer_m", "min_depth_m", "lead_in", "lead_out"):
         v = m.get(k)
@@ -1359,6 +1360,45 @@ def _check_breaks(m):
             if v is not None and not _finite_num(v):
                 raise PlanRefused("survey break-off %d's %s must be a finite number (got %r) - nothing was saved"
                                   % (i + 1, k, v))
+
+
+STRIKES_MAX = 12            # struck-coverage records a plan keeps, newest first (the page's bankStrike)
+STRIKE_WPS_MAX = 2000       # waypoints one struck stretch may name
+
+
+def _check_strikes(m):
+    """COVERAGE STRUCK FOR A VESSEL SITTING ON IT (Andy, 2026-11-04, the pier convergence: "the ASV should abandon
+    this section of the survey and proceed on to the rest"). The page banks each forward-strike on the PLAN - so a
+    page reloaded, or a console restarted, still knows what was abandoned and why - as {id, t, n, m, lines, by,
+    wps: [the struck waypoints]}. TYPES ONLY, as the break-offs are checked; what a record means is the page's."""
+    strikes = m.get("strikes")
+    if strikes is None:
+        return
+    if not isinstance(strikes, list) or len(strikes) > STRIKES_MAX:
+        raise PlanRefused("the plan's struck-coverage records must be a list of at most %d - nothing was saved" % STRIKES_MAX)
+    for i, s in enumerate(strikes):
+        if not isinstance(s, dict):
+            raise PlanRefused("struck-coverage record %d is not a record - nothing was saved" % (i + 1))
+        wps = s.get("wps")
+        if not (isinstance(wps, list) and 0 < len(wps) <= STRIKE_WPS_MAX and all(_is_position(w) for w in wps)):
+            raise PlanRefused("struck-coverage record %d's waypoints are not a list of 1 to %d positions - nothing was saved"
+                              % (i + 1, STRIKE_WPS_MAX))
+        v = s.get("id")
+        if v is not None and not (isinstance(v, str) and len(v) <= SURVEY_NAME_MAX):
+            raise PlanRefused("struck-coverage record %d's id must be text of at most %d characters - nothing was saved"
+                              % (i + 1, SURVEY_NAME_MAX))
+        for k in ("t", "n", "m"):
+            v = s.get(k)
+            if v is not None and not _finite_num(v):
+                raise PlanRefused("struck-coverage record %d's %s must be a finite number (got %r) - nothing was saved"
+                                  % (i + 1, k, v))
+        ln = s.get("lines")
+        if ln is not None and not (isinstance(ln, list) and len(ln) <= STRIKE_WPS_MAX and all(_finite_num(x) for x in ln)):
+            raise PlanRefused("struck-coverage record %d's lines must be a list of numbers - nothing was saved" % (i + 1))
+        by = s.get("by")
+        if by is not None and not (isinstance(by, list) and len(by) <= 64
+                                   and all(isinstance(x, str) and len(x) <= 200 for x in by)):
+            raise PlanRefused("struck-coverage record %d's vessels must be a list of short texts - nothing was saved" % (i + 1))
 
 
 PASSAGE_SECTIONS_MAX = 600          # sections of a passage the plan keeps (~20 km each: 12,000 km)
@@ -1787,6 +1827,8 @@ def load_mission():
             "surveys": m.get("surveys") if isinstance(m.get("surveys"), list) else [],
             # THE SURVEY BREAK-OFFS (2026-10-11) - carried in both dicts for the same reason as the surveys
             "breaks": m.get("breaks") if isinstance(m.get("breaks"), list) else [],
+            # THE STRUCK COVERAGE (2026-11-04) - carried in both dicts for the same reason
+            "strikes": m.get("strikes") if isinstance(m.get("strikes"), list) else [],
             "passage": m.get("passage") if isinstance(m.get("passage"), dict) else None,
             "passage_hold": m.get("passage_hold") if isinstance(m.get("passage_hold"), dict) else None,
             # the revision a page sends back with its next save - see save_mission (review #10)
@@ -1799,7 +1841,7 @@ def load_mission():
             "speeds": _norm_speeds(None), "completion": "rth",
             "buffer_m": NOGO_BUFFER_DEFAULT_M, "min_depth_m": 2.0,
             "lead_mode": "m", "lead_in": 0, "lead_out": 0, "turn_ease": "arc",
-            "boundary": [], "boundary_closed": False, "survey_bounded": None, "surveys": [], "breaks": [], "passage": None, "passage_hold": None,
+            "boundary": [], "boundary_closed": False, "survey_bounded": None, "surveys": [], "breaks": [], "strikes": [], "passage": None, "passage_hold": None,
             "rev": 0}
     return dict(_MISSION_CACHE)
 
@@ -1848,6 +1890,7 @@ def save_mission(m):
         "survey_bounded": m.get("survey_bounded") if isinstance(m.get("survey_bounded"), bool) else None,   # see load_mission
         "surveys": m.get("surveys") or [],          # checked by check_plan_body above; see load_mission
         "breaks": m.get("breaks") or [],            # the survey break-offs (2026-10-11); checked above, see load_mission
+        "strikes": m.get("strikes") or [],          # the struck coverage (2026-11-04); checked above, see load_mission
         "passage": m.get("passage") if isinstance(m.get("passage"), dict) else None,   # the passage sailed (2026-10-12)
         # the hold a dropped passage left her at (2026-10-16): {lat, lon, run_seq, t}; carried in load_mission too
         "passage_hold": m.get("passage_hold") if isinstance(m.get("passage_hold"), dict) else None,

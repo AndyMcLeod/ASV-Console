@@ -735,6 +735,35 @@ check("17f. a way home that is not what it claims is REFUSED in words and nothin
       all(h_said.values()) and open(_C.MISSION_PATH, "rb").read() == h_before,
       "; ".join("%s: %s" % (k, (v or "NOT REFUSED")[:36]) for k, v in h_said.items()))
 
+# 18. THE STRUCK COVERAGE RIDES THE PLAN (2026-11-04, the forward-strike: Andy, "the ASV should abandon
+# this section of the survey and proceed on to the rest"). The page banks each strike on the plan
+# (bankStrike -> mission.strikes) so it survives a reload and a console restart; a record the console
+# dropped on save would silently un-bank every strike, and a record that is not what it claims is
+# refused in words with nothing written (TYPES ONLY - _check_strikes).
+SK18 = {"id": "k123", "t": 1800000000000, "n": 2, "m": 55, "lines": [2, 3],
+        "by": ["AIS: X (30 x 8 m, moored)"],
+        "wps": [{"lat": 43.001, "lon": -70.9}, {"lat": 43.002, "lon": -70.9}]}
+_, e18 = attempt(_C.save_mission, sv_plan(strikes=[SK18]))
+m18 = _C.load_mission()
+check("18. a struck-coverage record is SAVED and LOADED as it was - the bank survives the reload",
+      e18 is None and isinstance(m18.get("strikes"), list) and len(m18["strikes"]) == 1
+      and m18["strikes"][0].get("n") == 2 and len(m18["strikes"][0].get("wps") or []) == 2
+      and m18["strikes"][0].get("lines") == [2, 3],
+      "err %r; strikes %r" % (e18, m18.get("strikes")))
+sk_before = open(_C.MISSION_PATH, "rb").read()
+sk_bad = {"strikes not a list": sv_plan(strikes={"id": "x"}),
+          "too many": sv_plan(strikes=[dict(SK18, id="k%d" % i) for i in range(13)]),
+          "a record that is not one": sv_plan(strikes=["x"]),
+          "no waypoints": sv_plan(strikes=[dict(SK18, wps=[])]),
+          "a waypoint that is not a position": sv_plan(strikes=[dict(SK18, wps=[{"lat": "x", "lon": 0}])]),
+          "a count that is not a number": sv_plan(strikes=[dict(SK18, n="two")]),
+          "vessels not short texts": sv_plan(strikes=[dict(SK18, by=["y" * 300])])}
+sk_said = {k: refused(v) for k, v in sk_bad.items()}
+check("18b. a struck-coverage record that is not what it claims is REFUSED in words and nothing is written",
+      all(sk_said.values()) and open(_C.MISSION_PATH, "rb").read() == sk_before,
+      "; ".join("%s: %s" % (k, (v or "NOT REFUSED")[:36]) for k, v in sk_said.items()))
+
+
 # 10. None of it touched the operator's own plan.
 check("10. nothing in this suite wrote, replaced or removed the app directory's own plan files",
       not _WRITES_TO_APP, "; ".join(_WRITES_TO_APP[:3]) or "no write named them")

@@ -354,6 +354,13 @@ eval([
   grabDecl("_koLessKey"), grab("koWithoutFeature"), grab("aisReportSig"),
   grab("aroundOthers"), grab("aroundLine"), grab("aroundStd"), grab("aroundTail"), grab("aroundTailIsSame"),
   grab("aroundNoOpWhy"),
+  // THE FORWARD-STRIKE (2026-11-04): lifted, never stubbed - same as ais_avoid's bundle
+  grab("strikePastOccupied"), grab("strikeSay"), grabDecl("STRIKES_MAX"), grab("bankStrike"),
+  "function saveMission(){}",
+  // THE UNDERWAY SPLICE IS NOT THIS SUITE'S (2026-11-04): a no-op stand-in, so every held scene still reaches
+  // the rung it tests - the hold machinery is real here and remains the live fallback; tests/ais_avoid.js
+  // drives the real aisAroundUnderwayTick and the real splice.
+  "function aisAroundUnderwayTick(){}",
   grab("aroundTrySig"), grab("aroundTriedSame"), grab("aroundMarginSay"), grab("herOnlyModel"),
   // THE AVOIDING FLAG'S OWN RECORD AND READER (2026-11-02, "Create a flag that attaches to the ASV an
   // reads AVOIDING until it's back on line or natural transit"). LIFTED, not stubbed: this suite is where

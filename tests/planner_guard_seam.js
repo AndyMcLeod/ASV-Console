@@ -173,7 +173,11 @@ check("5b. ... and the CLIP MEMO names it while the STRIKE key does not - a set 
         return /patClipBufM\(\)\.toFixed\(/.test(clip)
             && !/patClipBufM\(/.test(strike)
             && /patStrikeKey\(\)/.test(clip)
-            && /const clipKey = patClipKey\(\);/.test(H);
+            // the memo key is DERIVED from patClipKey (strike key + standoff) and, since 2026-11-04,
+            // carries the moored-contact signature too - a ship arriving or sailing is a set change
+            // of its own kind, and the same property holds: the memo can never serve a stale clip
+            && /const baseKey = patClipKey\(\);/.test(H)
+            && /const clipKey = baseKey && baseKey \+ "\|ais:" \+ \(aisClip\.stale \? "stale" : aisClipSig\(aisExcl\)\);/.test(H);
       },
       "the memo reads patClipKey(), which is patStrikeKey() plus the standoff. Without the "
         + "standoff, two punches at the same buffer in different sets share one memo and the "
@@ -260,7 +264,12 @@ check("7. lines, leads and turns take the standoff; hops and transits try it fir
             // coverage line (guard.js:210 - coverage keeps the guard's standoff), and aisAroundRunning amends
             // round a CONTACT, whose ring tops the router up to a ship-length about her center, which is Andy's
             // 2026-09-28 "make the avoidance maneuver tighter and recover the survey line sooner".
-            && (H.match(/\{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\), ko: koIn, flyThrough: true\}/g) || []).length === 2
+            // resumeFromHere keeps the literal; aisAroundRunning names it `std` since 2026-11-04 (one
+            // declaration, `const std = patClipBufM();`) because the SAME standoff now goes to the route
+            // worker's search and the page's own fallback beside it - the 2026-10-12 route_worker rule
+            && (H.match(/\{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\), ko: koIn, flyThrough: true\}/g) || []).length === 1
+            && /planNogoRoute\(from, target, \{\.\.\.holdOpts\(\), standoffM: std, ko: koIn, flyThrough: true\}\)/.test(H)
+            && /opts: \{\.\.\.holdOpts\(\), standoffM: std, ko: koIn, flyThrough: true\}/.test(H)
             && /planNogoRoute\(from, tail\[0\], \{\.\.\.holdOpts\(\), standoffM: std, ko: koIn, flyThrough: true\}\)/.test(H)
             && /planNogoRoute\(backFrom, firstWp, \{\.\.\.holdOpts\(\), standoffM: stdIn, ko: koIn, flyThrough: true\}\)/.test(H)
             // ⚠ AND IT IS `!g.mark` AS WELL AS `g.leg` (2026-11-02, the rework review). The first fix keyed the
@@ -291,7 +300,10 @@ check("7. lines, leads and turns take the standoff; hops and transits try it fir
             && /const wayClear = !!\(nogo\.ready && nogo\.frame && koIn && from\s+&& legClear\(from, tail\[0\], nogo\.frame, koIn, at \? std : \(nogo\.buffer \|\| 0\)\)\);/.test(HL)
             && !/const wayClear = [^;]*patClipBufM\(\)/.test(HL)      // and no gate re-derives the guard's buffer
             && !/planNogoRoute\([^)]*ko: koIn\}\)/.test(H)    // no way-in site is judged as a berth any more
-            && /planNogoRoute\(from, target, \{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\), ko: koIn, flyThrough: true\}\)/.test(H)
+            // ⚠ the aisAroundRunning line that stood here asserted the patClipBufM() literal at `from, target`;
+            // that site names it `std` since 2026-11-04 (one declaration, the same number to the route worker's
+            // search and the page's own fallback beside it - the route_worker rule) and both shapes are
+            // asserted above.
             // ⚠ the resumeHeldRun line that stood here asserted patClipBufM() at `backFrom, firstWp`; that site
             // takes `stdIn` since 2026-11-02 and is asserted above. Kept as a note rather than deleted silently,
             // because this check's whole job is to make a change of standoff impossible to make quietly.

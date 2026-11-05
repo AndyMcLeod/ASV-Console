@@ -43,6 +43,12 @@
 // pier - aisMooredKeepouts below, folded in by passage.js passageKo, never into `nogo.ko` itself
 // and never into a survey pattern's lines. His RTH outbound passed NORD LOGOS, 132 m, stopped at
 // the Newington pier, 79 m off her AIS fix at 10 kn, and nothing in the route had known she was there.
+// ⚠⚠ AND A SECOND, THE SAME SHAPE, FOR THE PUNCH (Andy, 2026-11-04, the pier convergence): a NEW
+// pattern's COVERAGE CLIP goes round the contacts not under way at punch time - aisMooredKeepouts
+// again, into punchOut's koClip beside the channel exclusions, still never into `nogo.ko`, the
+// turn model or a pattern already punched. The boundary stands exactly where it was: a contact
+// UNDER WAY reconfigures no pattern, ever - she is avoided and the line returned to or, since the
+// same day, the plan routed round her without stopping (asv.html, aisAroundUnderwayTick).
 //
 // ⚠ NOTHING HERE COMMANDS ANYTHING, and nothing here is cached: every call builds the polygons
 // from the contacts it is handed and the clock it is given, so the answer can never be older

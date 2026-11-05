@@ -338,10 +338,28 @@ check("3. an unset operator floor leaves the hull's exactly as it was",
   const stmts = PO.filter(l => /buildKeepouts\(|^\s*const ko(Clip|Turn)\s*=/.test(l)
                                && !/^\s*\/\//.test(l));
   const dr = { min: Math.max(2.3, 5), max: 15 };        // panel: Min 5, Max 15
+  // `aisExcl` joined the clip statement 2026-11-04 (the moored-contact clip); handed empty here -
+  // this check's question is the depth window's two models, and a contact in the clip is 17c's.
   const M = new Function("buildKeepouts", "foldChartInk", "ref", "enf", "dr", "nogo",
-                         "chanExcl", "turnExcl",
+                         "chanExcl", "turnExcl", "aisExcl",
     stmts.join("\n") + "\nreturn {ko, koClip, koTurn};")(
-      buildKeepouts, () => 0, F, enf, dr, { features: feats }, [], []);
+      buildKeepouts, () => 0, F, enf, dr, { features: feats }, [], [], []);
+  // 17c. THE AIS EXCLUSION REACHES EXACTLY THE CLIP (2026-11-04, the moored-contact clip): a hull handed
+  // to the same sliced model lands in koClip's polys and in NEITHER ko nor koTurn - the two-model rule's
+  // third direction (ceiling to the clip, floor to the turns, contacts to the clip alone).
+  {
+    const R17 = [{ e: -10, n: 90 }, { e: 10, n: 90 }, { e: 10, n: 110 }, { e: -10, n: 110 }];
+    const fake = { ring: R17, bb: { x0: -10, y0: 90, x1: 10, y1: 110 }, kind: "AIS: X (30 x 8 m, moored)", mmsi: 1 };
+    const M2 = new Function("buildKeepouts", "foldChartInk", "ref", "enf", "dr", "nogo",
+                            "chanExcl", "turnExcl", "aisExcl",
+      stmts.join("\n") + "\nreturn {ko, koClip, koTurn};")(
+        buildKeepouts, () => 0, F, enf, dr, { features: feats }, [], [], [fake]);
+    check("17c. a moored contact handed to the punch's model reaches the CLIP alone: in koClip's polys, "
+          + "in neither ko nor koTurn - lines never through her, turns and leads never refused for her",
+          () => M2.koClip.polys.includes(fake) && !M2.ko.polys.includes(fake) && !M2.koTurn.polys.includes(fake),
+          () => "koClip has her: " + M2.koClip.polys.includes(fake) + ", ko: " + M2.ko.polys.includes(fake)
+              + ", koTurn: " + M2.koTurn.polys.includes(fake));
+  }
   const buffer = 3;
   const lines = []; for (let i = 0; i < 5; i++) lines.push([P(-500, i * 20), P(500, i * 20)]);
   let clipped = [];
@@ -387,7 +405,10 @@ check("17b. ... and each model is bound to its own consumer: koClip spreads koCo
         const po = grab(H, "punchOut");
         return /const koCov=buildKeepouts\(ref, enf, dr, nogo\.features\);/.test(po)
             && /const ko=buildKeepouts\(ref, enf, \{min: dr\.min, max: 0\}, nogo\.features\);/.test(po)
-            && /const koClip = chanExcl\.length \? \{\.\.\.koCov, polys:\[\.\.\.koCov\.polys, \.\.\.chanExcl\]\} : koCov;/.test(po)
+            // the moored-contact clip joined the SAME statement 2026-11-04 (aisExcl beside chanExcl), so the
+            // slice filter that feeds 17 still carries it - an AIS exclusion spliced via a NEW statement
+            // would never reach 17's executed model, and 17 would test a model without the clip
+            && /const koClip = \(chanExcl\.length \|\| aisExcl\.length\) \? \{\.\.\.koCov, polys:\[\.\.\.koCov\.polys, \.\.\.chanExcl, \.\.\.aisExcl\]\} : koCov;/.test(po)
             && /const koTurn = turnExcl\.length \? \{\.\.\.ko, polys:\[\.\.\.ko\.polys, \.\.\.turnExcl\]\} : ko;/.test(po)
             && /foldChartInk\(koCov, ref\);/.test(po) && /foldChartInk\(ko, ref\);/.test(po);
       },

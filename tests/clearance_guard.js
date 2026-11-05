@@ -787,6 +787,10 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
                      + grab(H, "heldResumeOwns") + NL2 + grab(H, "guardMove") + NL2
                      + "let heldResuming = false; const patClipBufM = () => nogo.buffer || 0; async function resumeHeldSurvey(){}"
                      + " const LINE_MATCH_M = 5; const onLineM = () => false; const legOfLine = () => null;" + NL2
+                     // the underway splice is not this suite's (2026-11-04): no contact ever stands in this world,
+                     // so the tick would gate itself out on frame one - stubbed like resumeHeldSurvey above; the
+                     // real one is driven by tests/ais_avoid.js
+                     + "function aisAroundUnderwayTick(){}" + NL2
                      + grab(H, "clearanceGuard").replace(/^function /, "return function ")
                      .replace("return function clearanceGuard", "const clearanceGuard = function")
                      + "; return clearanceGuard; })()");
