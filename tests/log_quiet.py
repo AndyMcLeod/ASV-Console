@@ -132,7 +132,10 @@ def records(path):
     return out
 
 
-ROUTINE = ("state", "telemetry")
+# The mission record (2026-11-05) added routine streams of its own - the environment on change, the targets of every
+# sensor, their particulars, the incident windows - and each honors the quiet itself (SessionLogger.routine): none may
+# land between log_quiet and log_resume any more than a state line may.
+ROUTINE = ("state", "telemetry", "env", "targets", "track_info", "incident")
 
 
 def routine_after(recs, t):
@@ -153,8 +156,12 @@ LOG_DIR = STATE.path("logs")
 
 srvlog = tempfile.TemporaryFile(mode="w+")
 # NO --no-log: the recorder is the thing under test. --log-quiet-s 2: the ten minutes are two seconds.
+# ⚠ THE RECORDING CONSOLE ASKS AN AIS BASE EVERY 10 s (its TargetRecorder, since 2026-11-05): left at the default it
+# polled the OPERATOR'S bundled service on 127.0.0.1:8788 whenever his console was up, and filled this suite's
+# recording with his live contacts. A closed port: the AIS sensor records "unreachable", the same every run.
+NO_AIS = ["--ais", "http://127.0.0.1:1"]
 proc = subprocess.Popen([sys.executable, "asv_console.py", "--sim", "--browser", "none", "--port", str(port),
-                         "--no-ais-service", "--log-quiet-s", str(DELAY_S), *STATE.args()],
+                         "--no-ais-service", "--log-quiet-s", str(DELAY_S), *NO_AIS, *STATE.args()],
                         cwd=APP, stdout=srvlog, stderr=subprocess.STDOUT)
 try:
     up = False

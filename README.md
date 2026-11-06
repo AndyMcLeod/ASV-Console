@@ -96,12 +96,12 @@ launch.
 * **⊕ Find port by name…** — type a place (`Nome, Alaska`) and the console *goes there*.
   The name is geocoded, and then — this is the part that matters — the result is
   **snapped to charted water deep enough for the selected hull**. A geocoder returns the
-  centre of a *town*, and a town centre is on land: Nome resolves to a street corner, and
+  center of a *town*, and a town center is on land: Nome resolves to a street corner, and
   the console moves it 600 m to charted 3.6 m water before calling it a berth. If no
   navigable water is charted nearby (somewhere landlocked, or off-chart) the port is
-  still created at the place centre but **flagged unverified with the reason**, never
+  still created at the place center but **flagged unverified with the reason**, never
   presented as a berth. A name that matches nothing is refused outright.
-* **+ Save this view as a port…** — pins the chart's current centre under a name you
+* **+ Save this view as a port…** — pins the chart's current center under a name you
   give it. This is the refinement step: once you can see the berth, put it exactly there.
 
 Either way the entry is written to `ports.json` and is in the list from then on. That file is your **live registry** and is not tracked by git — the repository ships `ports.default.json`, which is copied to it on first run, so the bases you add are yours and never show up as repository changes. Both
@@ -131,16 +131,16 @@ travel** — course over ground while making way, falling back to heading when s
 (below ~0.3 kn the COG is fix noise, and a marker that spins with it is worse than one
 that holds). It replaced a circle, which showed where the boat was and nothing else.
 
-Its colour is **the hull's own**, carried in `vessels/<id>.json` as `display.hull_color`
+Its color is **the hull's own**, carried in `vessels/<id>.json` as `display.hull_color`
 (and an optional `hull_color2` for a two-tone livery, filled across the aft third) — a
 property of the boat, so it lives with the boat rather than in a table of vessel ids in
 the page. Shipped: **yellow** for the small survey launch, **red** for the DriX. A vessel
-file that names no colour falls back to the chart's default, so older profiles are
+file that names no color falls back to the chart's default, so older profiles are
 unchanged.
 
 **AIS contacts use the same glyph**, smaller — they are boats, and drawing them as a
 different shape would say they were a different kind of thing. Each points down its own
-line of travel and is coloured by ship type: **green** cargo, **grey** military, **blue**
+line of travel and is colored by ship type: **green** cargo, **gray** military, **blue**
 fishing, **black** tug / tug-and-tow, **pink** sailing. The remaining categories are
 chosen only so no two collide. A contact reporting neither course nor heading is drawn
 bow-north with no speed stalk — the missing stalk is what says it has no track.
@@ -152,7 +152,7 @@ with a dark edge measured as *invisible* on the live canvas.
 **Surveying is not the same thing as being on a survey.** The vessel card carries two
 rows, and the distinction between them is a paradigm the rest of the system follows:
 
-* **Mode** — the behaviour the *run* is in (`survey`, `goto`, `rth`, `transit`). It stays
+* **Mode** — the behavior the *run* is in (`survey`, `goto`, `rth`, `transit`). It stays
   the same for the whole run.
 * **Doing** — what the vessel is doing *at this moment*. **SURVEYING means it is on a
   coverage line, and nothing else does.** The approach out of the harbor, every reversal
@@ -170,13 +170,19 @@ be segmented into "these pings are coverage on line 7" and "these were acquired 
 there" without re-deriving the classification from the track. One classifier, one answer:
 anything that needs it reads `currentActivity()` rather than deciding for itself.
 
-**And the recording carries every card.** A full `state` snapshot is written at least every
-10 s (wind, sea, water level, current, comms, ROCs, the supervising tab), the AIS contacts the
-page polls go in as `ais` records, and the page posts what only it knows — the nogo readout,
-History rows, the guard bar, the LINES table and run-time readouts — on change. Playback
-(`/playback`) resolves all of it at its cursor and puts every other record kind on its
-timeline, so a replay populates the same cards the operator watched. The files are larger for
-it, by design.
+**And the recording describes the whole mission (2026-11-05).** Each session opens with what it
+is: the hull, the base, the build and git commit, the clock zone, and the plan on disk. Every
+plan the link is given is a `plan_loaded` record, and every run has a `run_start` and a
+`run_end` (time, distance, energy, how it ended). A full `state` snapshot is written at least
+every 10 s (comms, ROCs, the supervising tab). The environment is its own `env` stream, written
+when a value changes (wind, sea, set, current, water level, density and each buoy's own row).
+Targets are recorded by the console itself, every 10 s, with no page needed: AIS and the ROCs
+today, and any sensor registered later. Sixty seconds before and thirty after a safety event
+are kept at 4 Hz. The page posts what only it knows on change: the nogo readout, History rows,
+the guard bar and its rung, the LINES table, and the keep-out model, chart ink and AIS keep-outs
+the guard was steering by. Playback (`/playback`) resolves all of it at its cursor and puts
+every other record kind on its timeline, so a replay populates the same cards the operator
+watched. [README_SIM.md](README_SIM.md) §9 lists every record.
 
 **And the recording goes quiet when there is nothing to record.** In the simulator, once the
 boat has been home and idle for ten minutes (holding or stopped within 25 m of the home point),
@@ -246,8 +252,8 @@ card is resizable and remembers its size):
   the straight line was already clear; whether it rode the Rule 9 lane and whether that
   lane was only **partial**; legs with **no clear detour** (unsafe, in red); a plan built
   with **no nogo model loaded**, which is not the same as a clean direct run. Plus mean
-  **waypoint spacing** — the fastest way to tell a resampled smooth track (points metres
-  apart, bearings swinging between neighbours) from a genuinely erratic route.
+  **waypoint spacing** — the fastest way to tell a resampled smooth track (points meters
+  apart, bearings swinging between neighbors) from a genuinely erratic route.
 * **Then** — the next three waypoints with bearing, range and role, and what happens at
   the end of the plan (return home, hold, or a return that has already been refused).
 
@@ -829,7 +835,7 @@ that"*). `AIS_AROUND_RETRY_MS` is gone, constant and all. Never on a stale feed,
 have her **paused** (a paused hold keeps the offer, and the bar says the console waits), and a try
 that found nothing is asked again **as soon as the model moves** — a fresh AIS poll, a fresh chart
 read, a changed route, or her own position changing — and not on a clock. That is strictly faster
-than the 10 s it replaces: a contact that shifts two metres is answered on the next poll. It is a
+than the 10 s it replaces: a contact that shifts two meters is answered on the next poll. It is a
 gate rather than a free run because an ON-STATION try that gets as far as the way in asks
 `planNogoRoute` *synchronously on the page's thread* (the underway splice's search runs in the
 route worker instead), and a route search there was measured at 11 s and then 17.8 s
@@ -873,7 +879,7 @@ keeps any vessel under 2 kn the hour outright (FRIGGA at New Castle: 0.8 kn, twe
 between reports, at anchor, and 43 m of phantom hull swept up her course reached the way round
 her; kept on her reporting *interval* she would still have been purged before her second report
 could record one); her next
-report put her back at 0.0 m, the helm rung escaped her and **the hold rung cancelled the escape
+report put her back at 0.0 m, the helm rung escaped her and **the hold rung canceled the escape
 0.44 s later**, because from inside the buffer every track "enters in 0 s" — the slow and hold
 rungs now stand down while an escape is in flight (`escaping` in `clearanceGuard`); and the
 banked survey is **not spent by a frame inside its own command's round trip** (`HELD_GRACE_MS`),
@@ -1652,7 +1658,7 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    automatically as a boustrophedon (lawnmower) route — the line *count* is
    derived from width ÷ spacing, not entered by hand. All three control points
    stay draggable and the pattern regenerates live, and the **crosshair grip at the
-   centre moves the whole pattern** — every anchor by one delta, so shape, spacing and
+   center moves the whole pattern** — every anchor by one delta, so shape, spacing and
    direction are preserved exactly. An alignment option
    (start / center / finish) positions the leftover margin. Both **Spacing** and
    **Direction** are editable fields — type a value to force the spacing or rotate
@@ -1718,7 +1724,7 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    (`833 + 1115 (392 m gap)`), and the chart's labels, the turn table, the survey
    card's line count and spacing, and every "line N of M" count it the same way. Above and below the table sit the **transit and RTH rows**:
    the **ENC-routed** time and distance from the boat to line 1, and from the last
-   line back home — routed by the same planner every behaviour flies (keep-outs +
+   line back home — routed by the same planner every behavior flies (keep-outs +
    the Rule 9 channel lane), because at this console's home water the straight
    line to the survey area crosses land and a straight-line "estimate" would be a
    different route's time. Each row degrades alone and honestly: no fix, no
@@ -1748,7 +1754,7 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    `NaN` too, since every comparison against them is false) or, given none,
    still captures the vessel's own live fix with both its stale-telemetry guards intact.
    **Because RTH *drives* to HOME, the client tests the chosen point against the same
-   keep-out model every behaviour routes by and WARNS on the banner** when it is not water
+   keep-out model every behavior routes by and WARNS on the banner** when it is not water
    the vessel can sit in — it widens the ENC extract to cover the point first, so a distant
    home can't read as "clear" merely because nothing is loaded near it. It warns rather
    than refuses: the point you picked is the point you asked for, and RTH still refuses a
@@ -1758,8 +1764,8 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    through the same `fmtDist()` as every other long distance, so a measurement follows
    the `UNITS` pill. Legs accumulate until cleared; `Esc` peels one layer at a time
    (menu → half-drawn leg → all measurements → the tool), and **dragging still pans**.
-   Drawn in **magenta** — S-52's colour for the mariner's own information, and the one
-   chart colour this console had not spent — because a measurement is an *annotation*:
+   Drawn in **magenta** — S-52's color for the mariner's own information, and the one
+   chart color this console had not spent — because a measurement is an *annotation*:
    it is never uploaded, saved to the mission, sent to the vessel, or logged.
 
    **Search patterns.** The card's **Search** tab generates a canned search route (à la CCOM's
@@ -1769,7 +1775,7 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    survey (cyan kept / amber routed-around / red blocked).
 
    **A preview never looks like the route.** A pattern not yet added to the plan - a survey
-   before or after Punch Out, a search - is drawn **cyan** and labelled **PREVIEW — not in
+   before or after Punch Out, a search - is drawn **cyan** and labeled **PREVIEW — not in
    plan** on the chart. **Green** is only ever the route uploaded to the boat, and the committed
    plan's lines are **yellow** with their L# labels. (A punched preview used to be green, the same
    green as the route under way.)
@@ -1821,7 +1827,7 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    NOT covered by the default; a vessel that wants more berth sets it in its own file.
 
    Where the chart gives a **sounding over** the hazard (`VALSOU`) that clears the floor
-   in force by a metre — tide-corrected, the same as depth areas — the boat can pass over
+   in force by a meter — tide-corrected, the same as depth areas — the boat can pass over
    it, and the hazard is **dropped from the keep-out model entirely**. **No sounding means
    unknown**, and unknown takes the full berth rather than the benefit of the doubt.
 
@@ -2057,13 +2063,13 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    **Lead-in and lead-out (the run is longer than the coverage).** The first stretch of
    a survey line is not usable data: coming out of the reversal the steering is still
    settling onto the track and the IMU is still settling with it. The Survey tab takes a
-   **lead-in** and a **lead-out**, and a **unit** — metres or seconds. Punch Out extends
+   **lead-in** and a **lead-out**, and a **unit** — meters or seconds. Punch Out extends
    every run by that much past both ends of the coverage, so the boat rolls out, steadies,
    and the coverage the operator drew starts exactly where they drew it. A duration is
    converted at the **survey** speed, because that is the speed the lead is flown at;
    flying it at anything else is what the settling is there to avoid. The value stored is
    the one typed, in the unit chosen — so a lead set as *20 s* stays 20 s and re-derives
-   its metres when the survey speed changes, rather than freezing into a distance that no
+   its meters when the survey speed changes, rather than freezing into a distance that no
    longer settles anything.
 
    *A lead is flown water, so it is clipped like flown water.* A punched run ends either
@@ -2210,7 +2216,7 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
 
    *What it costs and what it buys, measured on a live 7-line punch:* the three reversals
    that took the eased shape went from a worst per-waypoint curvature change of **0.049 to
-   0.0071 per metre — about 7× gentler** — for 29 waypoints each instead of 20 (90 → 117
+   0.0071 per meter — about 7× gentler** — for 29 waypoints each instead of 20 (90 → 117
    over the plan). A fourth pair, where the eased shape didn't fit, is byte-for-byte the
    racetrack it was. Note the sampling matters as much as the curve: a curvature ramp
    emitted at the ordinary 3 m arc step is an arc wearing the word "eased", so the spirals
@@ -2520,7 +2526,7 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    frames either side of good water do not add up to an escape.
 
    **And before it stops the boat it asks whether going slower would do.** A deviation cannot
-   answer a turn — the console may move a corner, and a reversal is a run of vertices a metre
+   answer a turn — the console may move a corner, and a reversal is a run of vertices a meter
    apart — but a turn's trouble is *tracking*, and the lever on tracking is speed. Measured on
    a real plan, from the point the guard stopped a survey: at 3.0 kn the projected track
    entered in 14 s; at 1.5 kn it was clear through the whole look-ahead. So the hold rung
@@ -2707,7 +2713,7 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
 
    **Real-time water level.** ENC depths are charted to a fixed datum (Low Water
    Datum in the Great Lakes, MLLW in the oceans), which can differ from the actual
-   water level by tenths of a metre to over a metre. On startup the console takes
+   water level by tenths of a meter to over a meter. On startup the console takes
    the vessel's GPS position + the clock, finds the **nearest NOAA CO-OPS tide
    stations**, **interpolates their live water levels** (inverse-distance weighted)
    to the vessel — capturing the spatial gradient (seiche tilt across a lake, tide
@@ -2773,7 +2779,7 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    **Show** shows / hides the boundary overlay — hidden, it still clips the lines;
    drawing the area always shows it.
 
-   **ENC nogo — every behaviour avoids it.** On the first GPS fix the console
+   **ENC nogo — every behavior avoids it.** On the first GPS fix the console
    extracts the ENC for the operating area and builds a persistent **nogo model**:
    shoreline + manmade structures (piers, docks, dolphins, breakwaters, locks…) +
    water shallower than **1 m corrected** (charted depth + live water level). `NOGO`
@@ -3828,8 +3834,8 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    > pairs; the chart's channel and the single marks came first and fourth in the
    > order above on 2026-10-04.
 
-2. **Behaviours (no survey plan needed).** Beyond a survey/search plan, the command
-   bar drives one-off autonomy behaviours, all available once **Armed**:
+2. **Behaviors (no survey plan needed).** Beyond a survey/search plan, the command
+   bar drives one-off autonomy behaviors, all available once **Armed**:
    - **Go-To** — the card's **Go-To** tab (click a point or type it, then **Go**; it
      shows the bearing, range and time first), or right-click the chart; the boat
      drives there (around obstacles) and holds. A Go-To from the chart menu fills the tab's
@@ -4030,7 +4036,7 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    one control that ends it says so: while paused the button reads **RESUME** and blinks
    (a steady amber under `prefers-reduced-motion` — the state is a safety readout, not
    decoration). Pressing it again resumes; so does Start, which has always been enabled
-   while paused, and both go through the same path so the behaviour cannot depend on which
+   while paused, and both go through the same path so the behavior cannot depend on which
    button you reach for.
 
    **Resuming closes the hole.** A pause is not a freeze: the boat is set by wind and
@@ -4306,8 +4312,8 @@ extra dependencies).
 
 ## Tests & git hooks
 
-The regression suites in `tests/` guard behaviour that has bitten — and, since the
-E-STOP suite, behaviour whose failure would be worst, whether or not it has failed yet.
+The regression suites in `tests/` guard behavior that has bitten — and, since the
+E-STOP suite, behavior whose failure would be worst, whether or not it has failed yet.
 **The directory is the authority**: the pre-commit hook derives its run list from
 `tests/` itself, so a new suite runs from the day it is written, and each suite's own
 docstring says what it guards and how its teeth were verified. This section describes a
@@ -4354,8 +4360,8 @@ qualify, and the operator cannot name them either); the boat must be inside the 
 whose half-width is the hull's own scale and deliberately carries no reference to the
 operator's buffer; the grant must not have ended; and the depth half needs the vessel
 reporting its slowest speed, with a missing key failing closed. Giving ground ends it
-outright, with a give that scales to the water she has actually made — a flat five metres
-could never arm at the berth this was measured on, which had under a metre. Running out of
+outright, with a give that scales to the water she has actually made — a flat five meters
+could never arm at the berth this was measured on, which had under a meter. Running out of
 time, or making no ground at all, does something different and the difference is the design:
 she is **stopped** and the standing-down **continues**, because the console does not steer a
 boat off a berth a person deliberately put her on. Only the ends that genuinely restore the
@@ -4469,9 +4475,9 @@ with its own kind and follows the structures toggle.
 node tests/pattern_move_grip.js
 ```
 
-**Survey move grip** — that the centre handle for moving a whole pattern is both reachable
+**Survey move grip** — that the center handle for moving a whole pattern is both reachable
 (hit test, with corner handles still winning ties so a small pattern stays reshapeable) and
-**visible**: it is drawn last, above the boat marker, because the boat sits at the centre of
+**visible**: it is drawn last, above the boat marker, because the boat sits at the center of
 a survey box more often than not and used to cover it completely.
 
 ```

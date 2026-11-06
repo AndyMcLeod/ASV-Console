@@ -380,7 +380,13 @@ class Registry:
                     "age": round(now - v.get("pos_ts", v.get("last_ts", now)), 0),
                     "src": v.get("src"),
                     "srcs": sorted(v.get("srcs", {})),
+                    # WHEN THE POSITION WAS HEARD, as an epoch (the console's session record, 2026-11-05): `age`
+                    # is rounded to the second and relative to this call, so a recorder could not tell a fresh
+                    # report from the last one again - nor place it in time on replay
+                    "obs_t": round(v.get("pos_ts", v.get("last_ts", now)), 1),
                 }
+                if v.get("pos_gap") is not None:    # her own reporting interval, recorded as it was measured
+                    rec["pos_gap"] = round(v["pos_gap"], 1)
                 # ⚠ THIS DICT IS A WHITELIST AND IT IS WHERE A NEW FIELD GOES TO DIE.
                 # The registry stores whatever a decoder reports, so a field can be parsed
                 # correctly, merged correctly, held correctly - and still never reach the

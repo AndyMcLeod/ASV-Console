@@ -6,18 +6,27 @@
 // page's own card data as client:* records; playback resolves all of it at the cursor (cardsAt) and puts every other
 // kind on the timeline instead of dropping it.
 //
-// DRIVEN: playback.html's own parseSession, lastStateAt, cardsAt, summarize, lastBefore and the fmt* helpers, brace-
-// matched out of the page and evaluated over a synthetic log holding ONE RECORD OF EVERY KIND the console writes.
+// DRIVEN: playback.html's own functions - EVERY top-level function and UPPERCASE const of the page, lifted by
+// tests/lib/playback_world.js (2026-11-05: a named list of fourteen made every new helper a ReferenceError here) - and
+// evaluated over a synthetic log holding ONE RECORD OF EVERY KIND the console writes.
 //   1   every kind in the log is rendered: on the timeline, or as a stream the chart and cards draw from - N of N
+//       (2026-11-05, KNOWINGLY CHANGED: `ais` is a STREAM now - no timeline row per record; 831 "AIS · N contact(s)" rows
+//       buried one log's 70 operator commands - and the check says so)
 //   2   cardsAt at the end of the run: every card populated from the LAST value before the cursor
 //   3   cardsAt mid-run: the EARLIER nogo readout and wind, only the History rows so far, the AIS snapshot still fresh
 //   4   an AIS snapshot older than AIS_STALE_S is not the traffic any more
 //   5   summarize: a digest for the timeline that reads the record, not the bookkeeping
 //   6   the DOM contract: applyAt writes every card id the markup declares, and render draws ROCs and AIS
+//   7   a repeated state snapshot is a sample, not a row
+//   8   an older log's /api/logevent `command` copies are NOT commands: no timeline row, not in the Cmds count
+//   9   CMD_LABEL names every operator command the console logs (amend ... env), and stays one top-level object
+//   10  loadLog: only the LATEST pick is loaded (two answered out of order); the first frame is drawn before the strip
+//   11  the suite wrote nothing
 //
 //   node tests/playback_cards.js      # exit 0 = pass, 1 = fail
 const fs = require("fs");
 const path = require("path");
+const PW = require("./lib/playback_world.js");
 
 // crash guard: a death outside a check() is REPORTED, not silent (turn_geometry.js 30)
 function __crash(e) {
@@ -29,8 +38,13 @@ function __crash(e) {
 process.on("uncaughtException", __crash);
 process.on("unhandledRejection", __crash);
 
-const PB = process.env.ASV_PLAYBACK || path.join(__dirname, "..", "static", "playback.html");
-const H = fs.readFileSync(PB, "utf8").split("\r\n").join("\n");
+const H = PW.source();          // static/playback.html, or the sidecar ASV_PLAYBACK names
+// ⚠ THIS SUITE WRITES NOTHING: every fs write is counted, and the last line asserts none happened
+let writes = 0;
+for (const k of ["writeFileSync", "appendFileSync", "mkdirSync", "mkdtempSync", "renameSync", "rmSync", "unlinkSync", "writeFile", "appendFile"]) {
+  const orig = fs[k];
+  if (typeof orig === "function") fs[k] = function () { writes++; return orig.apply(this, arguments); };
+}
 
 let fails = 0, ran = 0;
 function check(name, cond, detail) {
@@ -41,28 +55,12 @@ function check(name, cond, detail) {
   console.log((ok ? "  ok   " : "  FAIL ") + name + (note ? "   [" + note + "]" : ""));
   if (!ok) fails++;
 }
-function grab(name) {
-  const start = H.indexOf("function " + name + "(");
-  if (start < 0) throw new Error("test setup: function " + name + " not found in playback.html");
-  let k = H.indexOf("{", start), depth = 0;
-  for (;;) { const c = H[k]; if (c === "{") depth++; else if (c === "}") { depth--; if (!depth) break; } k++; }
-  return H.slice(start, k + 1);
+const grab = (name) => PW.grab(H, name);
+// the page's own functions over a log: its parse, then its cards
+function W(EVENTS) {
+  const w = PW.world(EVENTS, { window: {} });
+  return Object.assign({}, w.g(), { cardsAt: w.fn.cardsAt, summarize: w.fn.summarize, lastBefore: w.fn.lastBefore, fn: w.fn, w });
 }
-const NAMES = ["parseSession", "lastStateAt", "summarize", "lastBefore", "dirTxt", "fmtAgeS", "fmtWind", "fmtSea", "fmtSet",
-               "fmtCurrent", "fmtWater", "fmtComms", "fmtSuper", "cardsAt"];
-const cmdLabel = (H.match(/^const CMD_LABEL = \{[\s\S]*?\n\};/m) || ["const CMD_LABEL = {};"])[0];
-const aisStale = (H.match(/^const AIS_STALE_S = [^;]*;/m) || ["const AIS_STALE_S = 60;"])[0];
-// eslint-disable-next-line no-new-func
-const W = new Function("EVENTS", `"use strict";
-  let FIXES = [], STATES = [], MARKS = [], AIS = [], CLIENT = {}, T0 = 0, T1 = 0, DUR = 0;
-  const window = {};
-  const fmtLL = (a, b) => a.toFixed(4) + "," + b.toFixed(4);
-  const fmtDur = (s) => { s = Math.max(0, Math.round(s)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
-  ${cmdLabel}
-  ${aisStale}
-  ${NAMES.map(grab).join("\n")}
-  parseSession();
-  return { MARKS, FIXES, STATES, AIS, CLIENT, T0: T0, T1: T1, cardsAt, summarize, lastBefore };`);
 
 // ── the log: one record of every kind ───────────────────────────────────────────────
 const t0 = 1790300000;
@@ -115,15 +113,22 @@ try { R = W(EVENTS); } catch (e) { err = e; }
 check("0. the page's own functions evaluate over the synthetic log", () => !err && !!R, () => err ? "THREW " + err.message : kinds.length + " kinds in the log");
 if (!R) { console.log("\n1 CHECK(S) FAILED"); process.exit(1); }
 
-// 1. EVERY KIND RENDERED. `state` and `telemetry` are streams (the track and the cards); everything else must be on
-// the timeline. "7 of ~20" was the gap.
+// 1. EVERY KIND RENDERED. `state`, `telemetry` and `ais` are streams (the track, the cards, the targets layer);
+// everything else must be on the timeline. "7 of ~20" was the gap. ⚠ KNOWINGLY CHANGED 2026-11-05: `ais` was a timeline
+// row per record (831 of them buried 70 operator commands in one log); it is a stream now - drawn and carded through the
+// target model (the AIS sensor holds the record's two contacts) - and it must NOT be on the timeline.
+const STREAMS = ["telemetry", "state", "ais"];
 const onTimeline = new Set(R.MARKS.map((m) => m.ev && m.ev.kind));
-const rendered = kinds.filter((k) => onTimeline.has(k) || k === "telemetry" || k === "state");
+const rendered = kinds.filter((k) => onTimeline.has(k) || STREAMS.includes(k));
 const missing = kinds.filter((k) => !rendered.includes(k));
-check("1. every kind in the log is rendered - on the timeline, or as the track / card streams: " + rendered.length + " of " + kinds.length,
+const aisSensor = R.PB && R.PB.tgt && R.PB.tgt.ais;
+check("1. every kind in the log is rendered - on the timeline, or as the track / card / target streams: " + rendered.length + " of " + kinds.length
+      + "; the `ais` stream has no row per record and is in the target model",
       () => missing.length === 0 && R.FIXES.length === 3 && R.STATES.length === 2 && R.AIS.length === 1
+            && !onTimeline.has("ais") && !!aisSensor && aisSensor.recs.length === 1 && Object.keys(aisSensor.tracks).length === 2
             && Object.keys(R.CLIENT).sort().join(",") === "activity,berth_grant,guard,guard_low,history,lines,nogo,page_stall,survey_lines",
       () => (missing.length ? "NOT rendered: " + missing.join(", ") : "all " + kinds.length) + "; fixes " + R.FIXES.length + ", states " + R.STATES.length
+            + ", ais on the timeline " + onTimeline.has("ais") + ", ais tracks " + (aisSensor ? Object.keys(aisSensor.tracks).length : "none")
             + ", client kinds " + Object.keys(R.CLIENT).sort().join(","));
 
 // 2. THE CARDS AT THE END OF THE RUN: the LAST value before the cursor, for each.
@@ -169,12 +174,20 @@ check("5. summarize: a spawn reads its lat/lon, a history row its text, an activ
 
 // 6. THE DOM CONTRACT: the markup declares each card id, applyAt writes each, render draws the ROCs and the AIS.
 const IDS = ["m_wind", "m_sea", "m_set", "m_current", "m_water", "m_nogo", "m_comms", "m_runtime", "m_survey", "m_approach", "m_super",
-             "m_intent", "m_guard", "l_table", "a_list", "h_list"];
+             "m_intent", "m_guard", "l_table", "a_list", "h_list",
+             // 2026-11-05, the mission record: the guard's rung, the Environment, Session and Vessel rows
+             "m_glevel", "e_wind", "e_sea", "e_set", "e_forcing", "e_current", "e_water", "e_density", "e_buoys",
+             "s_vessel", "s_port", "s_mode", "s_build", "s_tz", "s_prev", "v_cog", "v_spd", "v_att", "v_hold", "a_sensors",
+             // review 2026-11-05: what the Targets card cannot show is SAID in the card, not over the chart
+             "a_notice"];
 const applySrc = grab("applyAt"), renderSrc = grab("render");
 const noMarkup = IDS.filter((id) => !H.includes('id="' + id + '"'));
 const noWrite = IDS.filter((id) => !applySrc.includes('$("#' + id + '")'));
-check("6. the DOM contract: every card id is in the markup and written by applyAt; render draws ROC markers and AIS contacts",
-      () => noMarkup.length === 0 && noWrite.length === 0 && /cards\.roc/.test(renderSrc) && /cards\.ais/.test(renderSrc)
+check("6. the DOM contract: every card id is in the markup and written by applyAt; render draws ROC markers and every sensor's "
+      + "contacts (cards.targets); the notices - no traffic record, the AVOIDING fallback, a BLIND model - are the card's, not "
+      + "text over the chart",
+      () => noMarkup.length === 0 && noWrite.length === 0 && /cards\.roc/.test(renderSrc) && /cards\.targets/.test(renderSrc)
+            && !/no traffic record/.test(renderSrc) && /targetNotices\(c\)/.test(applySrc)
             && /c\.transits/.test(applySrc)
             && /cardsAt\(absT\)/.test(renderSrc),
       () => "missing markup: " + (noMarkup.join(",") || "none") + "; not written: " + (noWrite.join(",") || "none"));
@@ -189,5 +202,80 @@ check("7. a state snapshot that repeats the last one's autonomy, note and behavi
       () => stateRows.length === 1 && stateRows7.length === 2 && /Return-to-Home/.test(stateRows7[1].det),
       () => stateRows.length + " row(s) for 2 identical snapshots; " + stateRows7.length + " with a changed third");
 
-console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
-process.exit(fails ? 1 : 0);
+// 8. THE LOGEVENT COPY IS NOT A COMMAND. Until 2026-11-05 every page post was written twice - its client:* record and a
+// `command` of /api/logevent with the same body: 777 of one log's 847 "commands". The older recordings still hold the
+// copies; playback skips them, so neither the timeline nor the Cmds pill counts them. A real command beside them stays.
+const ev8 = EVENTS.concat([
+  { t: t0 + 44, kind: "command", path: "/api/logevent", body: { kind: "nogo", text: "x" }, code: 200 },
+  { t: t0 + 45, kind: "command", path: "/api/logevent", body: { kind: "history", text: "y" }, code: 200 },
+  { t: t0 + 46, kind: "command", path: "/api/cmd/stop", body: {}, code: 200 },
+]);
+const R8 = W(ev8);
+const cmdRows8 = R8.MARKS.filter((m) => m.cls.startsWith("cmd"));
+check("8. an older log's /api/logevent `command` copies get no timeline row and are not counted as commands; a real command beside them is",
+      () => !R8.MARKS.some((m) => m.ev && m.ev.path === "/api/logevent") && cmdRows8.length === 2
+            && cmdRows8.some((m) => m.lab === "STOP") && cmdRows8.some((m) => m.lab === "ARM"),
+      () => "command rows: " + cmdRows8.map((m) => m.lab).join(",") + "; logevent rows " + R8.MARKS.filter((m) => m.ev && m.ev.path === "/api/logevent").length);
+
+// 9. EVERY OPERATOR COMMAND HAS ITS NAME, and CMD_LABEL stays the one top-level object the console's other readers expect.
+const NEW_CMDS = { "/api/cmd/amend": "AMEND", "/api/cmd/reapproach": "RE-APPROACH", "/api/cmd/escape": "ESCAPE", "/api/cmd/hold_clear": "HOLD CLEAR",
+                   "/api/cmd/speed": "SPEED", "/api/cmd/reset": "RESET", "/api/cmd/spawn": "SPAWN", "/api/vessel": "VESSEL", "/api/ports": "PORT",
+                   "/api/cmd/energy": "ENERGY", "/api/ais/test": "AIS TEST", "/api/ais/radius": "AIS RADIUS", "/api/env": "ENV CFG" };
+const ev9 = Object.keys(NEW_CMDS).map((p, i) => ({ t: t0 + 50 + i, kind: "command", path: p, body: p === "/api/cmd/amend" ? { route: [{ lat: 43, lon: -70 }], note: "AIS way round" } : {}, code: 200 }));
+const R9 = W(EVENTS.concat(ev9));
+const labs9 = ev9.map((e) => (R9.MARKS.find((m) => m.ev === e) || {}).lab);
+const bad9 = Object.keys(NEW_CMDS).filter((p, i) => labs9[i] !== NEW_CMDS[p]);
+const amendRow = R9.MARKS.find((m) => m.ev === ev9[0]);
+check("9. CMD_LABEL names all 13 commands the mission record added (amend ... env) - an amend row says its route and note - and is still "
+      + "a top-level `const CMD_LABEL = {` ... `\\n};`",
+      () => bad9.length === 0 && /^const CMD_LABEL = \{[\s\S]*?\n\};/m.test(H) && /1 wpts/.test(amendRow.det) && /AIS way round/.test(amendRow.det),
+      () => (bad9.length ? "unnamed or misnamed: " + bad9.map((p) => p + "=" + labs9[Object.keys(NEW_CMDS).indexOf(p)]).join(", ") : "all named") + "; amend det " + (amendRow && amendRow.det));
+
+// 10. ONLY THE LATEST PICK IS LOADED, AND THE FIRST FRAME IS DRAWN BEFORE THE STRIP (review 2026-11-05). loadLog itself,
+// with the page's own parseSession, over a fetch the suite answers in the order it chooses; the DOM-bound steps are
+// stubs that record their call.
+(async () => {
+  const FN = PW.functions(H), CN = PW.consts(H), have = new Set(FN.map((f) => f.name));
+  const STUBS = ["stopPlay", "showEmpty", "hideEmpty", "buildEventList", "buildRunList", "fitToData", "applyAt", "stripShow", "render", "updateMeta", "seek"]
+    .filter((n) => have.has(n));
+  // eslint-disable-next-line no-new-func
+  const mkLoader = new Function("INJ", `"use strict";
+    let FIXES = [], STATES = [], MARKS = [], AIS = [], CLIENT = {}, PB = null, T0 = 0, T1 = 0, DUR = 0;
+    let pt = 0, playing = false, draggingScrub = false, zoom = 14, center = {lat: 0, lon: 0}, follow = true,
+        showTrack = true, showPlan = true, showTgt = true, showKo = true, showEnv = true;
+    let EVENTS = [], loadGen = 0, loadedName = null;
+    const window = {}, $ = () => null, fetch = INJ.fetch;
+    ${CN.map((c) => c.text).join("\n")}
+    ${FN.map((f) => f.text).join("\n")}
+    ${STUBS.map((n) => n + " = (...a) => { INJ.calls.push([" + JSON.stringify(n) + "].concat(a)); };").join("\n")}
+    return { loadLog, get: () => ({ loadedName, n: EVENTS.length, argv: (EVENTS[0] || {}).argv }) };`);
+  const LOGS = {
+    big: [{ t: 100, kind: "session_start", argv: ["big"] }, { t: 101, kind: "connect", mode: "sim" }, { t: 102, kind: "disconnect" }, { t: 103, kind: "session_end" }],
+    small: [{ t: 200, kind: "session_start", argv: ["small"] }, { t: 201, kind: "connect", mode: "sim" }],
+  };
+  const pend = {}, calls = [];
+  const fetchStub = (url) => new Promise((res) => {
+    const f = decodeURIComponent(String(url).split("file=")[1]);
+    pend[f] = () => res({ text: async () => LOGS[f].map((e) => JSON.stringify(e)).join("\n") });
+  });
+  let got = null, err = null;
+  try {
+    const L = mkLoader({ fetch: fetchStub, calls });
+    const pBig = L.loadLog("big"), pSmall = L.loadLog("small");
+    pend.small(); await pSmall;                   // the second pick answers first...
+    pend.big(); await pBig;                       // ...and the 80 MB one after it
+    got = L.get();
+  } catch (e) { err = e; }
+  const seq = calls.map((c) => c[0]), metas = calls.filter((c) => c[0] === "updateMeta").map((c) => c[1]);
+  check("10. only the LATEST pick is loaded: a large recording picked, then a small one, answered in the other order - the small one's "
+        + "records under its own name, the large one dropped when it lands (no second load, no deep link pairing its records with the "
+        + "small one's name); and the first frame (applyAt) is drawn BEFORE the strip is shown, whose axis the frame's clock text sets",
+        () => !err && got.loadedName === "small" && got.n === 2 && got.argv[0] === "small" && JSON.stringify(metas) === '["small"]'
+              && seq.indexOf("applyAt") >= 0 && seq.indexOf("applyAt") < seq.indexOf("stripShow") && seq.indexOf("stripShow") < seq.indexOf("render"),
+        () => err ? "THREW " + err.message : JSON.stringify({ got, metas, seq }));
+
+  check("11. the suite wrote nothing (every fs write function counted)", () => writes === 0, () => writes + " write call(s)");
+
+  console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
+  process.exit(fails ? 1 : 0);
+})();

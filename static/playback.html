@@ -102,6 +102,18 @@
   .toast{position:absolute;top:64px;left:50%;transform:translateX(-50%);z-index:9;font-family:var(--mono);font-size:11px;
     background:rgba(10,17,25,.96);border:1px solid var(--line2);border-radius:3px;padding:6px 12px;color:var(--ink-dim);opacity:0;transition:opacity .2s;}
   .toast.show{opacity:1;}
+
+  /* the mission record (2026-11-05): runs, targets, the environment strip */
+  .runs div{padding:3px 0;border-top:1px solid var(--line);cursor:pointer;}
+  .runs div:hover{color:var(--bronze);} .runs div.cur{color:var(--track);}
+  .runs .tt{color:var(--ink-faint);margin-right:6px;}
+  .vrow .v.wrap{white-space:normal;max-width:150px;}
+  /* ⚠ A WIDTH, NOT JUST left+right: a canvas is a replaced element, so left/right alone leave it at its own pixel width -
+     and stripBuild sized it from that, so it stayed ~145 px wide on the first live look */
+  #envstrip{position:absolute;left:14px;right:14px;width:calc(100% - 28px);bottom:66px;height:74px;z-index:6;pointer-events:none;
+    background:rgba(10,17,25,.88);border:1px solid var(--line2);border-radius:5px;}
+  #envstrip.hidden{display:none;}
+  body.strip .cards, body.strip .events{bottom:150px;}
 </style>
 </head>
 <body>
@@ -121,19 +133,35 @@
   <div class="controls">
     <button class="ctl" id="zin" title="Zoom in">+</button>
     <button class="ctl" id="zout" title="Zoom out">–</button>
-    <button class="ctl small on" id="follow" title="Keep the boat centred during playback">BOAT</button>
-    <button class="ctl small on" id="t_track" title="Show the boat's travelled track">TRK</button>
+    <button class="ctl small on" id="follow" title="Keep the boat centered during playback">BOAT</button>
+    <button class="ctl small on" id="t_track" title="Show the boat's traveled track">TRK</button>
     <button class="ctl small on" id="t_plan" title="Show planned survey lines / waypoints / routes">PLAN</button>
+    <button class="ctl small on" id="t_tgt" title="Show the targets every sensor reported (AIS, ROC, ...), with their trails">TGT</button>
+    <button class="ctl small on" id="t_ko" title="Show what the guard saw: the AIS keep-outs it used, the chart ink, the contact it was avoiding">KO</button>
+    <button class="ctl small on" id="t_env" title="Show the environment: the rose at the boat, the stations, and the time strip">ENV</button>
     <button class="ctl small on" id="t_events" title="Show the event timeline">EVTS</button>
   </div>
 
   <div class="cards">
   <div class="vcard">
+    <h3>Session</h3>
+    <div class="vrow"><span class="l">Vessel</span><span class="v wrap" id="s_vessel">—</span></div>
+    <div class="vrow"><span class="l">Port</span><span class="v wrap" id="s_port">—</span></div>
+    <div class="vrow"><span class="l">Mode</span><span class="v" id="s_mode">—</span></div>
+    <div class="vrow"><span class="l">Build</span><span class="v wrap" id="s_build">—</span></div>
+    <div class="vrow"><span class="l">Clock</span><span class="v wrap" id="s_tz">—</span></div>
+    <div class="vnote" id="s_prev"></div>
+  </div>
+  <div class="vcard">
     <h3>Vessel <span id="v_clock" style="color:var(--ink-faint);font-weight:400;">—</span></h3>
     <div class="vrow"><span class="l">Position</span><span class="v" id="v_pos">—</span></div>
     <div class="vrow"><span class="l">Heading</span><span class="v" id="v_hdg">—</span></div>
+    <div class="vrow"><span class="l">COG</span><span class="v" id="v_cog">—</span></div>
     <div class="vrow"><span class="l">SOG</span><span class="v" id="v_sog">—</span></div>
-    <div class="vrow"><span class="l">Battery</span><span class="v" id="v_batt">—</span></div>
+    <div class="vrow"><span class="l">Speed</span><span class="v wrap" id="v_spd">—</span></div>
+    <div class="vrow"><span class="l">Energy</span><span class="v" id="v_batt">—</span></div>
+    <div class="vrow"><span class="l">Pitch / roll</span><span class="v" id="v_att">—</span></div>
+    <div class="vrow"><span class="l">Hold</span><span class="v wrap" id="v_hold">—</span></div>
     <div class="vrow"><span class="l">Autonomy</span><span class="v" id="v_auto">—</span></div>
     <div class="vrow"><span class="l">Behavior</span><span class="v" id="v_beh">—</span></div>
     <div class="vrow"><span class="l">Waypoint</span><span class="v" id="v_wp">—</span></div>
@@ -152,16 +180,34 @@
     <div class="vrow"><span class="l">Survey</span><span class="v" id="m_survey">—</span></div>
     <div class="vrow"><span class="l">Approach</span><span class="v" id="m_approach">—</span></div>
     <div class="vrow"><span class="l">Supervisor</span><span class="v" id="m_super">—</span></div>
+    <div class="vrow"><span class="l">Guard</span><span class="v wrap" id="m_glevel">—</span></div>
     <div class="vnote" id="m_intent"></div>
     <div class="vnote gb" id="m_guard"></div>
+  </div>
+  <div class="vcard">
+    <h3>Environment <span id="e_from" style="color:var(--ink-faint);font-weight:400;"></span></h3>
+    <div class="vrow"><span class="l">Wind</span><span class="v wrap" id="e_wind">—</span></div>
+    <div class="vrow"><span class="l">Sea</span><span class="v wrap" id="e_sea">—</span></div>
+    <div class="vrow"><span class="l">Set</span><span class="v wrap" id="e_set">—</span></div>
+    <div class="vrow"><span class="l">Forcing</span><span class="v wrap" id="e_forcing">—</span></div>
+    <div class="vrow"><span class="l">Current</span><span class="v wrap" id="e_current">—</span></div>
+    <div class="vrow"><span class="l">Water</span><span class="v wrap" id="e_water">—</span></div>
+    <div class="vrow"><span class="l">Density</span><span class="v wrap" id="e_density">—</span></div>
+    <div class="hist" id="e_buoys"></div>
+  </div>
+  <div class="vcard">
+    <h3>Runs <span id="r_count" style="color:var(--ink-faint);font-weight:400;"></span></h3>
+    <div class="runs ltab" id="r_list">—</div>
   </div>
   <div class="vcard">
     <h3>Lines <span id="l_count" style="color:var(--ink-faint);font-weight:400;"></span></h3>
     <div class="ltab" id="l_table">—</div>
   </div>
   <div class="vcard">
-    <h3>AIS <span id="a_count" style="color:var(--ink-faint);font-weight:400;"></span></h3>
+    <h3>Targets <span id="a_count" style="color:var(--ink-faint);font-weight:400;"></span></h3>
     <div class="ltab" id="a_list">—</div>
+    <div class="vnote" id="a_sensors"></div>
+    <div class="vnote" id="a_notice" style="color:#ff9682"></div>
   </div>
   <div class="vcard">
     <h3>History</h3>
@@ -173,6 +219,8 @@
     <h3>Event timeline <span id="ev_count" style="color:var(--ink-faint);font-weight:400;"></span></h3>
     <div class="evlist" id="evlist"></div>
   </div>
+
+  <canvas id="envstrip" class="hidden" title="Wind and gust, set, current (knots); Hs and water level (meters) - the cursor is the line"></canvas>
 
   <div class="transport">
     <button class="tbtn" id="restart" title="Jump to start">⏮</button>
@@ -201,7 +249,7 @@ const TILE = 256, MINZ = 3, MAXZ = 20, FIT_MAXZ = 16, M_PER_DEG_LAT = 111320;
 
 let zoom = 14;
 let center = {lat: 42.137083, lon: -80.087367};
-let follow = true, showTrack = true, showPlan = true;
+let follow = true, showTrack = true, showPlan = true, showTgt = true, showKo = true, showEnv = true;
 
 // ---- Web-Mercator projection (identical to the live console) -------------- //
 const mapEl = $("#map"), tilesEl = $("#tiles"), cv = $("#overlay"), ctx = cv.getContext("2d");
@@ -230,11 +278,16 @@ function fmtLL(lat, lon){
 
 // ---- parsed session ------------------------------------------------------- //
 let EVENTS = [];      // every log record, in order
-let FIXES = [];       // {t,lat,lon,hdg,sog,batt,batt_pct,batt_state} - the track
+let FIXES = [];       // the track: {t, lat, lon, hdg, sog, cog, ...the status fields the Vessel card reads} (fixFrom)
 let STATES = [];      // full state snapshots {t, ...}
-let MARKS = [];       // timeline rows (commands + state transitions) {t,cls,lab,det,tag,ev}
-let AIS = [];         // {t, vessels, count} - the traffic the operator saw (the `ais` records)
-let CLIENT = {};      // the page's own card data by kind (client:* records): nogo, history, guard, lines, activity ...
+let MARKS = [];       // timeline rows (commands, state transitions, lifecycle records) {t,cls,lab,det,tag,ev}
+let AIS = [];         // {t, vessels, count} - an OLD log's `ais` records (a new log records `targets` instead)
+let CLIENT = {};      // the page's own card data by kind (client:* records), each sorted by t
+// ⚠ EVERY OTHER INDEX parseSession BUILDS LIVES IN THIS ONE OBJECT (2026-11-05, the mission record): the targets of every
+// sensor, the environment stream, the plan timeline, the runs, the episodes, the strip. tests/lib/playback_world.js
+// evaluates these functions with the globals on these lines declared in its preamble - one name per index would be one
+// more place for the page and its suites to disagree. pbEmpty() lists what is in it.
+let PB = null;
 let T0 = 0, T1 = 0, DUR = 0;
 let pt = 0;           // playback cursor (seconds since T0)
 let playing = false, speed = 1, lastRAF = 0;
@@ -246,7 +299,35 @@ const CMD_LABEL = {
   "/api/cmd/hold":"HOLD", "/api/cmd/sethome":"SET-HOME", "/api/cmd/approach":"APPROACH",
   "/api/mission":"PLAN EDIT", "/api/comms":"COMMS CFG", "/api/waterlevel":"WATER LVL",
   "/api/connect":"CONNECT", "/api/disconnect":"DISCONNECT",
+  "/api/cmd/amend":"AMEND", "/api/cmd/reapproach":"RE-APPROACH", "/api/cmd/escape":"ESCAPE",
+  "/api/cmd/hold_clear":"HOLD CLEAR", "/api/cmd/speed":"SPEED", "/api/cmd/reset":"RESET",
+  "/api/cmd/spawn":"SPAWN", "/api/vessel":"VESSEL", "/api/ports":"PORT", "/api/cmd/energy":"ENERGY",
+  "/api/ais/test":"AIS TEST", "/api/ais/radius":"AIS RADIUS", "/api/env":"ENV CFG",
+  "/api/cmd/berth":"BERTH", "/api/roc":"ROC",
 };
+// The commands whose body carries a ROUTE the boat is then flying: each replaces the drawn route (planAt). amend and
+// reapproach were missing until 2026-11-05, so after an AIS way-round the boat seemed to leave a route she had left.
+const PLAN_ROUTE_CMDS = new Set(["/api/cmd/upload", "/api/cmd/goto", "/api/cmd/transit", "/api/cmd/rth", "/api/cmd/amend", "/api/cmd/reapproach"]);
+// The kinds that are STREAMS - samples the track, the cards and the chart draw from - and so get no timeline row each.
+// Every other kind is on the timeline (playback_cards.js 1). `ais` was a row per record until 2026-11-05: 831 rows of
+// "AIS · N contact(s)" buried the 70 operator commands of one log. client:ais_model is the guard's AIS keep-out model,
+// sampled every 2 s while it changes - a chart layer, not an event.
+const STREAM_KINDS = new Set(["state", "telemetry", "ais", "env", "targets", "track_info", "client:ais_model"]);
+// How long a sensor's last `targets` record is still the traffic: the recorder writes one every 10 s while it holds
+// anything and a 60 s heartbeat when it holds nothing (TargetRecorder, asv_console.py), so 75 s covers the heartbeat. An
+// OLD log's `ais` record keeps AIS_STALE_S (below).
+const TARGETS_STALE_S = 75;
+const TGT_TRAIL_S = 600;       // a contact's trail: the last ten minutes up to the cursor
+const TGT_OLD_S = 180;         // a report older than this at the cursor is drawn dimmed (the live layer's rule)
+const TGT_INTERP_MAX_S = 180;  // two reports farther apart than this are not joined by a straight line - held instead
+// The live page's AIS category colors (asv.html AIS_COL), plus a rehearsal hull and a ROC
+const TGT_COL = {cargo:"#3fbf6b", tanker:"#d9534f", passenger:"#e8a13f", fishing:"#4a90d9",
+  tug:"#000000", sailing:"#ff7fc4", pleasure:"#58c0b0", hsc:"#9b8cf0", special:"#f0c14a",
+  military:"#b0b0b0", other:"#8fa3b0", unknown:"#8fa3b0", test:"#e070ff", roc:"#e0b050",
+};
+const GLYPH_FWD = 12, GLYPH_AFT = 7, GLYPH_HALF = 6.5;   // the live page's vessel glyph (asv.html), in px
+const EPI_GRACE_S = 10;        // a supervisor snapshot this soon after an episode opened may predate its record
+const EPI_OWN_CMD_S = 2;       // a hold or stop this soon after the avoid record is the RUNG's own, not an end to it
 
 function fmtDur(s){ s=Math.max(0,Math.round(s)); const m=Math.floor(s/60), ss=s%60;
   return (m<60? `${m}:${String(ss).padStart(2,'0')}` : `${Math.floor(m/60)}:${String(m%60).padStart(2,'0')}:${String(ss).padStart(2,'0')}`); }
@@ -259,96 +340,1038 @@ async function loadList(){
   if(!logs.length){ showEmpty("No recordings found in logs/ yet.","Run a session in the live console, then come back."); return; }
   for(const L of logs){
     const o = document.createElement("option");
-    const d = new Date(L.mtime*1000);
     o.value = L.name;
-    o.textContent = `${L.name.replace(/^asv_|\.jsonl$/g,"")}  ·  ${(L.size/1024).toFixed(0)} KB`;
+    o.textContent = pickLabel(L);
     sel.appendChild(o);
   }
-  sel.value = logs[0].name;
-  await loadLog(logs[0].name);
+  const link = parseDeepLink(location.search);
+  const want = (link.file && logs.some(L => L.name === link.file)) ? link.file : logs[0].name;
+  sel.value = want;
+  await loadLog(want, want === link.file ? link.t : null);
+}
+// ⚠ THE PICKER SAYS WHICH CONSOLE MADE EACH FILE (2026-11-05): 37 old sessions came from verification consoles on other
+// ports into the same logs/ folder, and the list named each by its time and size alone. /api/logs now reads each file's
+// head (list_logs: vessel, port, mode); a field it does not have is simply left out.
+function pickLabel(L){
+  const core = String((L && L.name) || "").replace(/^asv_|\.jsonl$/g, "");
+  const port = L.port_name || L.base || (L.port && typeof L.port === "object" ? (L.port.name || L.port.id) : null);
+  const bits = [core, L.vessel, port, L.mode ? String(L.mode).toUpperCase() : null,
+                (typeof L.port === "number" ? ":" + L.port : null), ((+L.size || 0) / 1024).toFixed(0) + " KB"];
+  return bits.filter(x => x != null && x !== "").join("  ·  ");
+}
+// DEEP LINK (2026-11-05): ?file=asv_<ts>.jsonl&t=<s> opens that recording at that moment - something one person can send
+// another. `t` is seconds into the recording, or an epoch (anything past 1e9). A name the server would refuse (not a bare
+// asv_*.jsonl) is not asked for at all.
+function parseDeepLink(search){
+  let q = null;
+  try{ q = new URLSearchParams(search || ""); }catch(e){ return {file: null, t: null}; }
+  const f = q.get("file"), tv = q.get("t");
+  const file = (f && /^asv_[A-Za-z0-9_.-]+\.jsonl$/.test(f)) ? f : null;
+  const t = (tv != null && tv !== "" && Number.isFinite(+tv)) ? Math.max(0, +tv) : null;
+  return {file, t};
+}
+let loadGen = 0, loadedName = null;     // the latest pick, and the recording whose records ARE loaded
+function noteLink(){
+  if(!EVENTS.length || !loadedName) return;
+  try{ const q = new URLSearchParams(); q.set("file", loadedName); q.set("t", pt.toFixed(1));
+       history.replaceState(null, "", location.pathname + "?" + q.toString()); }catch(e){}
 }
 
-async function loadLog(name){
+async function loadLog(name, atS){
   stopPlay();
+  // ⚠ ONLY THE LATEST PICK IS LOADED (review 2026-11-05): an 80 MB recording picked, then a small one, finished in the
+  // other order - the large one's records under the small one's name, and a deep link publishing that pairing.
+  const gen = ++loadGen;
   let text = "";
   try{ const r = await fetch("/api/log?file="+encodeURIComponent(name)); text = await r.text(); }
-  catch(e){ showEmpty("Could not read the recording.", String(e)); return; }
+  catch(e){ if(gen === loadGen) showEmpty("Could not read the recording.", String(e)); return; }
+  if(gen !== loadGen) return;
+  loadedName = name;
   EVENTS = [];
   for(const line of text.split("\n")){ if(!line.trim()) continue;
     try{ EVENTS.push(JSON.parse(line)); }catch(e){} }
+  text = "";                                         // the parsed records are what is kept, not a second copy as text
   parseSession();
   if(!FIXES.length && !MARKS.length){ showEmpty("Recording has no events.", name); return; }
   hideEmpty();
   buildEventList();
+  buildRunList();
   fitToData();
-  pt = 0; applyAt(0); render();
+  pt = 0; applyAt(0);
+  stripShow();                                        // AFTER the first frame: its clock text sets the scrubber's width
+  render();
   updateMeta(name);
+  if(atS != null) seek(atS > 1e9 ? atS - T0 : atS);
 }
 
 function parseSession(){
-  FIXES = []; STATES = []; MARKS = []; AIS = []; CLIENT = {};
+  FIXES = []; STATES = []; MARKS = []; AIS = []; CLIENT = {}; PB = pbEmpty();
   let lastStateKey = null;
   let mode = "—";
+  let tmin = Infinity, tmax = -Infinity;
   for(const e of EVENTS){
     const t = e.t || 0;
-    if(e.kind === "state"){
+    // ⚠ A LOOP, NOT Math.min(...ts): a spread passes one argument per record, and V8 refuses it past ~125,000 of them
+    // (RangeError) - the recording of 2026-10-20 is already 60,395 lines, so the next long field day would not open.
+    if(t){ if(t < tmin) tmin = t; if(t > tmax) tmax = t; }
+    const k = e.kind;
+    if(k === "state"){
       const s = e.state || {}; STATES.push({t, ...s});
       const st = s.status || {};
-      if(st.lat_deg!=null && st.lon_deg!=null)
-        FIXES.push({t, lat:st.lat_deg, lon:st.lon_deg, hdg:st.heading_deg, sog:st.sog_kn,
-                    batt:st.battery_v, batt_pct:st.battery_pct, batt_state:s.status.battery_state});
+      if(st.lat_deg!=null && st.lon_deg!=null) FIXES.push(fixFrom(t, st));
+      pbStatus(t, st, s);
+      if(s.roc && Array.isArray(s.roc.rocs)) tgtRocState(t, s.roc);
+      if(s.env || s.water || s.current || s.density)
+        PB.envState.push({t, env: s.env || null, water: s.water || null, current: s.current || null, density: s.density || null});
       // A ROW ONLY ON A TRANSITION. The recorder writes a full snapshot every ten seconds now (playback's
       // cards read them), and most say exactly what the last one said - a sample, not an event.
       const lab = (s.autonomy||s.run||"state").toUpperCase(), det = s.note || "", key = lab + "|" + det + "|" + (s.behavior||"");
       if(key !== lastStateKey){ lastStateKey = key;
         MARKS.push({t, cls:"state", lab, det, tag: s.behavior, ev:e}); }
       if(s.mode) mode = s.mode;
-    } else if(e.kind === "telemetry"){
+    } else if(k === "telemetry"){
       const st = e.status || {};
-      if(st.lat_deg!=null && st.lon_deg!=null)
-        FIXES.push({t, lat:st.lat_deg, lon:st.lon_deg, hdg:st.heading_deg, sog:st.sog_kn,
-                    batt:st.battery_v, batt_pct:st.battery_pct, batt_state:st.battery_state});
-    } else if(e.kind === "command"){
-      const lab = CMD_LABEL[e.path] || e.path;
-      const err = e.code >= 400;
-      let det = "";
-      const b = e.body || {};
-      if(e.path === "/api/cmd/arm") det = b.on ? "on" : "off";
-      else if(e.path === "/api/cmd/estop") det = b.on ? "latch" : "release";
-      else if(e.path === "/api/cmd/goto" && b.lat!=null) det = fmtLL(b.lat, b.lon);
-      else if(b.route && b.route.length) det = b.route.length + " wpts";
-      else if(e.path === "/api/mission") det = ((b.waypoints||[]).length) + " wpts, " + ((b.lines||[]).length) + " lines";
-      else if(e.path === "/api/cmd/approach") det = (b.m!=null? b.m+" m":"");
-      if(err) det = (det? det+" · ":"") + "REJECTED " + e.code + (e.error? " ("+e.error+")":"");
-      MARKS.push({t, cls: err? "cmd err":"cmd", lab, det, tag: err? null : (e.code===200?null:e.code), ev:e});
-    } else if(e.kind === "connect"){
+      if(st.lat_deg!=null && st.lon_deg!=null) FIXES.push(fixFrom(t, st));
+      pbStatus(t, st, e);
+    } else if(k === "command"){
+      // ⚠ NOT A COMMAND, A COPY. Until 2026-11-05 every page post was written twice - as its client:* record and again as
+      // a `command` of /api/logevent carrying the same body: 777 of the 847 "commands" in one log (1.17 MB), so the Cmds
+      // pill read 847 against 70 operator commands and the timeline carried 777 blank rows. The console no longer writes
+      // the copy (LOG_QUIET_POSTS); the older recordings still hold it, so it is skipped here.
+      if(e.path === "/api/logevent") continue;
+      MARKS.push(cmdMark(t, e));
+      planCommand(t, e);
+    } else if(k === "connect"){
       mode = e.mode || mode;
       MARKS.push({t, cls:"state", lab:"CONNECT", det:(e.mode||"")+(e.host? " "+e.host:""), ev:e});
-    } else if(e.kind === "disconnect"){
+    } else if(k === "disconnect"){
       MARKS.push({t, cls:"state", lab:"DISCONNECT", det:e.mode||"", ev:e});
-    } else if(e.kind === "session_start"){
+      PB.epiRaw.push({t, op: "close"});
+    } else if(k === "session_start"){
+      PB.meta.start = e;
       MARKS.push({t, cls:"state", lab:"SESSION START", det:(e.argv||[]).join(" "), ev:e});
-    } else if(e.kind === "session_end"){
+    } else if(k === "session_end"){
       MARKS.push({t, cls:"state", lab:"SESSION END", det:"", ev:e});
-    } else if(e.kind === "ais"){
+      PB.epiRaw.push({t, op: "close"});
+    } else if(k === "ais"){
+      // AN OLD LOG'S TRAFFIC (a new log records `targets`): kept as it was, and adapted into the one target model every
+      // sensor shares (tgtFromAis). A stream - no timeline row each (STREAM_KINDS).
       AIS.push({t, vessels: e.vessels || [], count: e.count});
-      MARKS.push({t, cls:"misc", lab:"AIS", det:(e.count!=null? e.count : (e.vessels||[]).length) + " contact(s)", ev:e});
-    } else if(typeof e.kind === "string" && e.kind.startsWith("client:")){
-      const ck = e.kind.slice(7);
+      tgtFromAis(t, e);
+    } else if(k === "targets"){
+      tgtRecord(t, e);
+    } else if(k === "track_info"){
+      tgtInfo(t, e);
+    } else if(k === "env"){
+      envRecord(t, e);
+    } else if(typeof k === "string" && k.startsWith("client:")){
+      const ck = k.slice(7);
       (CLIENT[ck] = CLIENT[ck] || []).push({t, e});
-      MARKS.push({t, cls:"misc", lab: ck.toUpperCase().replace(/_/g," "), det: summarize(e), ev:e});
-    } else if(e.kind){
+      if(!STREAM_KINDS.has(k))
+        MARKS.push({t, cls:"misc", lab: ck.toUpperCase().replace(/_/g," "), det: ck === "guard_level" ? fmtGuardLevel(e) : ck === "model" ? fmtModel(e)
+                                                                            : ck === "chart_ink" ? fmtChartInk(e) : summarize(e), ev:e});
+    } else if(k){
       // EVERY OTHER KIND IS ON THE TIMELINE (2026-09-25): spawn, log_quiet / log_resume, supervisor_*,
       // storage_*, loop_fault / loop_recovered, logs_compressed, ais_service_exit ... A replay rendered 7
       // kinds of ~20 and silently dropped the rest; a kind added tomorrow lands here without a branch.
-      MARKS.push({t, cls:"misc", lab: String(e.kind).toUpperCase().replace(/_/g," "), det: summarize(e), ev:e});
+      // The mission record's lifecycle kinds (2026-11-05) are indexed for the cards as well, and say what they are.
+      MARKS.push(lifecycle(t, e) || {t, cls:"misc", lab: String(k).toUpperCase().replace(/_/g," "), det: summarize(e), ev:e});
     }
   }
-  FIXES.sort((a,b)=>a.t-b.t); STATES.sort((a,b)=>a.t-b.t); MARKS.sort((a,b)=>a.t-b.t);
-  const ts = EVENTS.map(e=>e.t||0).filter(Boolean);
-  T0 = ts.length? Math.min(...ts) : 0; T1 = ts.length? Math.max(...ts) : 0; DUR = Math.max(0.001, T1-T0);
+  FIXES.sort(byT); STATES.sort(byT); MARKS.sort(byT);
+  // ⚠ SORTED: file order is not time order (a command is stamped after its dispatch - measured 1.74 s back in one
+  // log), and every reader below binary-searches.
+  for(const ck of Object.keys(CLIENT)) CLIENT[ck].sort(byT);
+  T0 = tmin < Infinity ? tmin : 0; T1 = tmax > -Infinity ? tmax : 0; DUR = Math.max(0.001, T1-T0);
   window._mode = mode;
+  pbFinish();
 }
+function byT(a, b){ return a.t - b.t; }
+
+// ---- every index parseSession builds (2026-11-05, the mission record) ------ //
+// Andy, 2026-11-05: "The playback function should display targets from AIS and any other sensor we may add. It should
+// have all the environmental data for playback. Look at the logging function(s) and add in data that fully describes
+// any given mission."
+// ⚠ BUILT ONCE, READ BY BINARY SEARCH. An 80 MB recording is ~60,000 records, and a frame that walks them (applyAt's
+// waypoint scan, planAt, lastStateAt, lastBefore - every one of them linear until this) pays that sixty times a second.
+// Every timeline here is sorted by its time key at the end of parseSession and read through idxAt.
+function pbEmpty(){
+  return {
+    tgt: {},            // sensor -> {name, recs: [{t, ok, note, center, area, health, ids, stale_s, old}], tracks: {id: track}}
+    env: {env: [], water: [], current: [], density: [], buoys: [], stations: [], n: 0},   // the `env` stream, [{t, v}] each
+    envState: [],       // [{t, env, water, current, density}] from state snapshots: an OLD log's environment
+    sets: [],           // {t, kn, deg, crab, src}: the set applied - 1 Hz where the trace carries it
+    forcing: [],        // {t, f}: the sim's own forcing split (status.forcing, sim only)
+    wps: [],            // {t, idx, tot, run}: the waypoint at the cursor
+    planRaw: [], plans: [],   // the plan timeline: {t, mission, route, src, note, chase} in force from t on
+    meta: {manifest: [], vessel: [], port: [], start: null},   // [{t, e}] each; start = the session_start record
+    runRaw: [], runs: [],     // {run_id, t0, t1, start, end}
+    epiRaw: [], epis: [],     // avoidance episodes {t0, t1, mmsi, kind, rung, why, held, flagged}
+    incidents: [],      // {t, t0, t1, trigger, triggers, n}
+    strip: {wind: [], gust: [], hs: [], set: [], cur: [], water: []},   // [[t, value]] for the ENV strip
+    tz: null,           // {offset_s, name, from}: the console's clock
+    hl: {past: -1, n: -1, run: -2},   // what highlightEvents and the Runs list last painted
+    rocState: null,     // an OLD log's state.roc, adapted (tgtRocState) - sensor "roc" unless the log has its own
+    memo: null,         // {t, c}: cardsAt's last answer - applyAt and render ask for the same cursor every frame
+    stripImg: null,     // the ENV strip's series, drawn once per load and size (stripBuild)
+  };
+}
+// The index of the last element of `arr` (sorted by `key`, default "t") at or before `absT`, else -1.
+function idxAt(arr, absT, key){
+  const k = key == null ? "t" : key;
+  let lo = 0, hi = (arr ? arr.length : 0) - 1, r = -1;
+  while(lo <= hi){ const mid = (lo + hi) >> 1; if(arr[mid][k] <= absT){ r = mid; lo = mid + 1; } else hi = mid - 1; }
+  return r;
+}
+function llOf(p){
+  if(Array.isArray(p)) return (p.length >= 2 && p[0] != null && p[1] != null) ? {lat: +p[0], lon: +p[1]} : null;
+  return (p && p.lat != null && p.lon != null) ? {lat: +p.lat, lon: +p.lon} : null;
+}
+function n2(v, d){ return (v == null || !Number.isFinite(+v)) ? null : (+v).toFixed(d); }
+// Fill a field a record does not carry (undefined - and, with nullToo, null) from the record before it: an incident
+// frame carries no battery, an old telemetry line no fuel, and a gauge must not blink "—" between two that do.
+function carry(arr, fields, nullToo){
+  const last = {};
+  for(const x of arr) for(const f of fields){
+    const v = x[f];
+    if(v === undefined || (nullToo && v === null)){ if(f in last) x[f] = last[f]; }
+    else last[f] = v;
+  }
+}
+const FIX_CARRY = ["cog", "batt", "batt_pct", "batt_state", "etype", "fuel_l", "fuel_pct", "fuel_state", "speed_key", "speed_kn", "pitch", "roll", "holding", "off_m", "drifting", "hold_clear_m"];
+// One fix of the track, with what the Vessel card reads beside it (A7 put fuel, commanded speed, pitch/roll and the hold
+// in the 1 Hz trace, 2026-11-05).
+function fixFrom(t, st){
+  return {t, lat: st.lat_deg, lon: st.lon_deg, hdg: st.heading_deg, sog: st.sog_kn, cog: st.cog_deg,
+          batt: st.battery_v, batt_pct: st.battery_pct, batt_state: st.battery_state,
+          etype: st.energy_type, fuel_l: st.fuel_l, fuel_pct: st.fuel_pct, fuel_state: st.fuel_state,
+          speed_key: st.speed_key, speed_kn: st.speed_target_kn, pitch: st.pitch_deg, roll: st.roll_deg,
+          holding: st.holding, off_m: st.off_station_m, drifting: st.drifting, hold_clear_m: st.hold_clear_m};
+}
+// The status fields that get their own timeline: the set, the sim's forcing, the waypoint.
+function pbStatus(t, st, rec){
+  if(st.env_set_kn != null) PB.sets.push({t, kn: st.env_set_kn, deg: st.env_set_deg, crab: st.crab_deg, src: st.env_set_src});
+  if(st.forcing && typeof st.forcing === "object") PB.forcing.push({t, f: st.forcing});
+  const idx = rec.wp_index != null ? rec.wp_index : st.wp_index, tot = rec.wp_total != null ? rec.wp_total : st.wp_total;
+  if(idx != null || tot != null || rec.run) PB.wps.push({t, idx, tot, run: rec.run || null});
+}
+function cmdMark(t, e){
+  const lab = CMD_LABEL[e.path] || e.path;
+  const err = e.code >= 400;
+  let det = "";
+  const b = e.body || {}, p = e.path;
+  if(p === "/api/cmd/arm") det = b.on ? "on" : "off";
+  else if(p === "/api/cmd/estop") det = b.on ? "latch" : "release";
+  else if((p === "/api/cmd/goto" || p === "/api/cmd/escape") && b.lat!=null) det = fmtLL(b.lat, b.lon);
+  else if(p === "/api/cmd/amend") det = [b.route && b.route.length ? b.route.length + " wpts" : null, b.note ? String(b.note).slice(0, 120) : null].filter(Boolean).join(" · ");
+  else if(b.route && b.route.length) det = b.route.length + " wpts";
+  else if(p === "/api/mission") det = ((b.waypoints||[]).length) + " wpts, " + ((b.lines||[]).length) + " lines";
+  else if(p === "/api/cmd/approach") det = (b.m!=null? b.m+" m":"");
+  else if(p === "/api/cmd/speed") det = b.speed != null ? String(b.speed) : "";
+  else if(p === "/api/vessel") det = b.id ? String(b.id) : "";
+  else if(p === "/api/ais/radius") det = b.km != null ? b.km + " km" : "";
+  else if(p === "/api/ais/test") det = b.clear ? "clear" : (b.lat != null ? (b.name ? b.name + " · " : "") + fmtLL(+b.lat, +b.lon) : "");
+  else if(p === "/api/cmd/hold_clear") det = [b.hold_clear_m != null ? b.hold_clear_m + " m" : null, b.note ? String(b.note).slice(0, 100) : null].filter(Boolean).join(" · ");
+  else if(p === "/api/cmd/energy") det = b.unlimited != null ? (b.unlimited ? "unlimited" : "metered") : (b.level != null ? "level " + b.level : "");
+  if(err) det = (det? det+" · ":"") + "REJECTED " + e.code + (e.error? " ("+e.error+")":"");
+  if(e.client) det = (det ? det + " · " : "") + "tab " + String(e.client).slice(0, 8);   // who sent it (A12)
+  return {t, cls: err? "cmd err":"cmd", lab, det, tag: err? null : (e.code===200?null:e.code), ev:e};
+}
+// ⚠ THE MISSION RECORD'S LIFECYCLE KINDS (2026-11-05): written once (manifest, vessel, port, the plan on disk at boot) or
+// on a change (plan_loaded, run_start / run_end, incident) - indexed for the cards AND a timeline row that says what the
+// record is. null for any other kind: the caller's generic row takes it.
+function lifecycle(t, e){
+  const k = e.kind, row = (lab, det) => ({t, cls: "misc", lab, det: det || "", ev: e});
+  if(k === "manifest"){
+    PB.meta.manifest.push({t, e});
+    const b = e.build || {}, g = b.git || {};
+    return row("MANIFEST", [e.mode ? String(e.mode).toUpperCase() : null, b.fingerprint, g.branch, g.head ? String(g.head).slice(0, 10) : null,
+                            e.prev && e.prev.name ? "continues " + e.prev.name : null].filter(Boolean).join(" · "));
+  }
+  if(k === "vessel"){
+    PB.meta.vessel.push({t, e});
+    const p = e.profile || {};
+    return row("VESSEL", [p.name || e.id, p.name ? e.id : null].filter(Boolean).join(" · "));
+  }
+  if(k === "port"){
+    PB.meta.port.push({t, e});
+    const p = e.port || {};
+    return row("PORT", [p.name || p.id, p.ofs ? "OFS " + p.ofs : null].filter(Boolean).join(" · "));
+  }
+  if(k === "mission"){
+    if(!e.error && e.mission && typeof e.mission === "object") PB.planRaw.push({t, mission: e.mission, src: "mission"});
+    return row("PLAN ON DISK", e.error ? "unreadable: " + String(e.error).slice(0, 100)
+               : missionDigest(e.mission) + (e.rev != null ? " · rev " + e.rev : ""));
+  }
+  if(k === "mission_saved") return row("PLAN SAVED", (e.n_wpts || 0) + " wpts, " + (e.n_lines || 0) + " lines" + (e.rev != null ? " · rev " + e.rev : ""));
+  if(k === "plan_loaded"){
+    planLoaded(t, e);
+    return row("PLAN LOADED", e.behavior === "rth_chase" ? "RTH chase · home moved " + Math.round(+e.moved_m || 0) + " m"
+               : [e.behavior, e.name, e.n != null ? e.n + " wpts" : null, e.staged ? "staged" : null].filter(Boolean).join(" · "));
+  }
+  if(k === "run_start"){
+    PB.runRaw.push({t, e});
+    return row("RUN START", [e.behavior, e.completion, e.wp_total != null ? e.wp_total + " wpts" : null, e.speed_key].filter(Boolean).join(" · "));
+  }
+  if(k === "run_end"){
+    PB.runRaw.push({t, e});
+    return row("RUN END", runText({t0: t - (+e.dur_s || 0), t1: t, start: null, end: e}));
+  }
+  if(k === "incident") return incidentRecord(t, e);
+  return null;
+}
+function missionDigest(m){ return ((m && m.waypoints) || []).length + " wpts, " + ((m && m.lines) || []).length + " lines"; }
+
+// ⚠ AN INCIDENT'S FRAMES ARE THE TRACK THERE (2026-11-05). The log keeps 1 Hz and a 10 s snapshot; the guard acts on 4 Hz
+// frames. The recorder keeps a ring of slim 4 Hz frames and, on a safety trigger, writes the minute before and the half
+// minute after as ONE `incident` record - so inside its window the replay runs on the frames the guard saw, and the
+// timeline says where it fired.
+function incidentRecord(t, e){
+  const cols = Array.isArray(e.cols) ? e.cols : [], fr = Array.isArray(e.frames) ? e.frames : [];
+  const ci = {};
+  cols.forEach((name, i) => { ci[name] = i; });
+  let t0 = Infinity, t1 = -Infinity, n = 0;
+  if(ci.t != null && ci.lat != null && ci.lon != null){
+    for(const f of fr){
+      if(!Array.isArray(f)) continue;
+      const g = (name) => ci[name] != null ? f[ci[name]] : undefined;
+      const ft = +g("t"), la = g("lat"), lo = g("lon");
+      if(!Number.isFinite(ft) || la == null || lo == null) continue;
+      FIXES.push({t: ft, lat: +la, lon: +lo, hdg: g("hdg"), sog: g("sog"), cog: g("cog"), speed_key: g("speed_key"),
+                  speed_kn: g("speed_target_kn"), holding: g("holding"), hold_clear_m: g("hold_clear_m"), hi: true});
+      if(g("env_set_kn") != null) PB.sets.push({t: ft, kn: g("env_set_kn"), deg: g("env_set_deg")});
+      if(g("wp_index") != null || g("run") != null) PB.wps.push({t: ft, idx: g("wp_index"), tot: undefined, run: g("run")});
+      if(ft < t0) t0 = ft;
+      if(ft > t1) t1 = ft;
+      n++;
+    }
+  }
+  const trig = String(e.trigger || (Array.isArray(e.triggers) && e.triggers[0]) || "?");
+  const fired = Array.isArray(e.fired) && Array.isArray(e.fired[0]) && Number.isFinite(+e.fired[0][0]) ? +e.fired[0][0] : null;
+  const at = fired != null ? fired : (n ? Math.max(t0, t1 - (+e.post_s || 0)) : t);
+  PB.incidents.push({t: at, t0: n ? t0 : t, t1: n ? t1 : t, trigger: trig, triggers: Array.isArray(e.triggers) ? e.triggers : [trig], n});
+  return {t: at, cls: "misc", lab: "INCIDENT · " + trig.toUpperCase().replace(/_/g, " "),
+          det: (Array.isArray(e.triggers) && e.triggers.length > 1 ? e.triggers.join(", ") + " · " : "") + n + " frames", ev: e};
+}
+
+// ---- the plan in force at the cursor (2026-11-05) -------------------------- //
+// ⚠ THE PLAN STARTS FROM THE RECORD OF IT, NOT FROM THE FIRST EDIT. One log uploaded at 37 s and never held a plan edit,
+// so its survey lines were never drawn: the console now writes the plan on disk at boot (`mission`). A route is replaced
+// by every command that hands the boat one - amend and reapproach included, which an AIS way-round and a hold's way back
+// are - and cleared by a stop or an e-stop. A log that records `plan_loaded` (the console's own route, written at every
+// call that hands the link a plan) draws THAT, not the page's request: the console builds the RTH, hold, escape and
+// re-approach routes itself, and only plan_loaded carries them.
+function planCommand(t, e){
+  if(e.code && e.code >= 400) return;
+  const b = e.body || {}, p = e.path;
+  if(EPI_CLOSE_CMDS.has(p)) PB.epiRaw.push({t, op: "close", p});
+  if(p === "/api/mission") PB.planRaw.push({t, mission: b, src: "edit"});
+  else if(p === "/api/cmd/stop" || p === "/api/cmd/estop") PB.planRaw.push({t, clear: true, src: p});
+  else if(p === "/api/cmd/start") PB.planRaw.push({t, restore: true, src: p});
+  else if(PLAN_ROUTE_CMDS.has(p)){
+    const r = Array.isArray(b.route) && b.route.length ? b.route.map(llOf).filter(Boolean) : null;
+    if(r) PB.planRaw.push({t, cmd: true, route: r, src: p, note: b.note || null});
+    else if(p === "/api/cmd/upload") PB.planRaw.push({t, cmd: true, route: "mission", src: p});   // flies the plan on disk
+  }
+}
+const EPI_CLOSE_CMDS = new Set(["/api/cmd/stop", "/api/cmd/estop", "/api/cmd/upload", "/api/cmd/goto", "/api/cmd/rth", "/api/cmd/transit", "/api/cmd/hold", "/api/cmd/start"]);
+const PLAN_PAIR_S = 5;   // a plan_loaded too long to carry its route borrows the command's, if one came this close
+function planLoaded(t, e){
+  if(e.behavior === "rth_chase"){ const g = llOf(e.target); if(g) PB.planRaw.push({t, chase: g, src: "rth_chase"}); return; }
+  const r = Array.isArray(e.route) && e.route.length ? e.route.map(llOf).filter(Boolean) : null;
+  PB.planRaw.push({t, src: "plan_loaded", route: r, behavior: e.behavior || null, name: e.name || null, n: e.n,
+                   splice: Number.isInteger(e.splice_at) ? e.splice_at : null});
+}
+function missionRoute(m){
+  return (m && Array.isArray(m.waypoints) && m.waypoints.length) ? m.waypoints.map(llOf).filter(Boolean) : null;
+}
+function plansFinish(){
+  const raw = PB.planRaw.sort(byT);
+  const loaded = raw.some(p => p.src === "plan_loaded");
+  const cmdRoutes = raw.filter(p => p.cmd && Array.isArray(p.route));
+  let cur = {t: -Infinity, mission: null, route: null, src: null, note: null, chase: null, parked: null, off: 0};
+  for(const p of raw){
+    if(p.cmd && loaded) continue;
+    const n = Object.assign({}, cur, {t: p.t});
+    if(p.mission !== undefined) n.mission = p.mission;
+    // ⚠ A STOP PARKS THE PLAN, IT DOES NOT TAKE IT AWAY (review 2026-11-05): the link keeps it aboard and the next Start
+    // flies it again from waypoint one (and an E-STOP's release + Start carries on) - wiped, the whole re-flown run
+    // replayed with no route. The parked route comes back at a Start that has none of its own.
+    if(p.clear){ n.parked = cur.route ? {route: cur.route, note: cur.note, off: cur.off} : cur.parked;
+                 n.route = null; n.chase = null; n.src = p.src; n.note = null; n.off = 0; }
+    else if(p.restore){ if(!cur.route && cur.parked){ n.route = cur.parked.route; n.note = cur.parked.note; n.off = cur.parked.off || 0; n.src = p.src; } n.parked = null; }
+    else if(p.src === "plan_loaded"){
+      let r = p.route;
+      if(!r){ const near = cmdRoutes.find(c => Math.abs(c.t - p.t) <= PLAN_PAIR_S); r = near ? near.route : null; }
+      const sp = spliceRoute(cur, r, p.name === "amend" ? p.splice : null);
+      n.route = sp.route; n.off = sp.off; n.src = p.src; n.note = [p.behavior, p.name].filter(Boolean).join(" · ") || null; n.chase = null; n.parked = null;
+    } else if(p.chase){ n.chase = p.chase; }
+    else if(p.cmd){
+      const r = p.route === "mission" ? missionRoute(n.mission) : p.route;
+      // an OLD log's amend (no plan_loaded): the console spliced it at the live index - the waypoint the trace says
+      const sp = spliceRoute(cur, r, p.src === "/api/cmd/amend" ? wpAt(p.t).idx : null);
+      n.route = sp.route; n.off = sp.off; n.src = p.src; n.note = p.note || null; n.chase = null; n.parked = null;
+    }
+    PB.plans.push(n); cur = n;
+  }
+}
+// ⚠ AN AMENDMENT REPLACES THE PLAN FROM `at` ON, THE FLOWN PREFIX KEPT (review 2026-11-05) - as the console splices it
+// (Engine.amend: wp_total = splice_at + the tail) and the page does (asv.html spliceAt). Drawn as the tail alone, the
+// flown waypoints vanished and, colored by the boat's index in the WHOLE plan, every waypoint still ahead read 'passed'.
+// No prefix to keep (the recording began mid-run): the tail, with `off` = at, so it is colored by its own index + at.
+function spliceRoute(cur, r, at){
+  if(!r || !Number.isInteger(at) || at < 0) return {route: r, off: 0};
+  const pre = cur && Array.isArray(cur.route) ? cur.route : null, poff = (cur && cur.off) || 0;
+  if(pre && pre.length + poff >= at && at >= poff) return {route: pre.slice(0, at - poff).concat(r), off: poff};
+  return {route: r, off: at};
+}
+function planAt(absT){
+  const p = lastBefore(PB.plans, absT);
+  return p ? {mission: p.mission, route: p.route, src: p.src, note: p.note, chase: p.chase, off: p.off || 0} : {mission: null, route: null, src: null, note: null, chase: null, off: 0};
+}
+
+// ---- runs: what one file says about each mission in it (2026-11-05) ------- //
+// The console writes run_start / run_end from the Engine, page or no page (the run-end table needed a chart page open and
+// awake). Paired by run_id; a run_end with no start (the log began mid-run) starts dur_s before it; a run with no end was
+// still running when the recording stopped.
+function runsFinish(){
+  const by = {};
+  for(const x of PB.runRaw.sort(byT)){
+    const e = x.e, id = e.run_id != null ? String(e.run_id) : "seq:" + e.run_seq;
+    if(e.kind === "run_start"){ const r = {run_id: id, t0: x.t, t1: null, start: e, end: null}; by[id] = r; PB.runs.push(r); }
+    else {
+      const r = by[id];
+      if(r && !r.end){ r.end = e; r.t1 = x.t; }
+      else PB.runs.push({run_id: id, t0: x.t - (+e.dur_s || 0), t1: x.t, start: null, end: e});
+    }
+  }
+  PB.runs.sort((a, b) => a.t0 - b.t0);
+}
+function fmtKm(m){ return (m == null || !Number.isFinite(+m)) ? "--" : (+m < 1000 ? Math.round(+m) + " m" : (+m / 1000).toFixed(2) + " km"); }
+function runText(r){
+  const s = r.start || {}, e = r.end || {};
+  const beh = String(e.behavior || s.behavior || "run").toUpperCase();
+  const en = e.energy;
+  const enTxt = en && en.used != null ? " · " + (en.kind || "energy") + " " + n2(en.used, en.unit === "L" ? 1 : en.unit === "V" ? 2 : 0) + " " + (en.unit || "") : "";
+  const how = r.end ? String(e.run || "ended").toUpperCase() + (e.note ? " — " + String(e.note).slice(0, 80) : "") : "still running when the recording ends";
+  return beh + (e.dur_s != null ? " · " + fmtDur(e.dur_s) : "") + (e.dist_m != null ? " · " + fmtKm(e.dist_m) : "") + enTxt
+       + (e.wp_total ? " · wp " + (e.wp_index != null ? e.wp_index : "?") + "/" + e.wp_total : "") + " · " + how;
+}
+function runIdxAt(absT){
+  const R = PB.runs;
+  for(let i = R.length - 1; i >= 0; i--){ if(R[i].t0 <= absT) return (R[i].t1 == null || absT <= R[i].t1) ? i : -1; }
+  return -1;
+}
+
+// ---- the mission description: the Session card (2026-11-05) --------------- //
+// ⚠ WHAT BOAT, WHERE, ON WHAT BUILD, BY WHOSE CLOCK. None of it was in a log: session_start carried pid/argv/host/port,
+// and 359 of 371 boots took a default vessel argv does not name. The console now writes a `manifest`, the `vessel` and
+// the `port` (again on every switch); the card reads the last of each at or before the cursor (the first, before them).
+function sessionAt(absT){
+  const pick = (arr) => { const r = lastBefore(arr, absT) || (arr && arr[0]) || null; return r ? r.e : null; };
+  const man = pick(PB.meta.manifest), ves = pick(PB.meta.vessel), prt = pick(PB.meta.port);
+  const p = (ves && ves.profile) || {}, h = p.hull || {}, d = (ves && ves.derived) || {}, pw = p.power || {};
+  let vessel = "—";
+  if(ves) vessel = [p.name || ves.id, p.name && ves.id ? ves.id : null,
+                    h.loa_m != null ? n2(h.loa_m, 2) + " x " + (h.beam_m != null ? n2(h.beam_m, 2) : "?") + " m" : null,
+                    h.draft_m != null ? "draft " + n2(h.draft_m, 2) + " m" : null,
+                    d.min_nav_depth_m != null ? "min depth " + n2(d.min_nav_depth_m, 2) + " m" : null,
+                    pw.type || null].filter(Boolean).join(" · ");
+  else {
+    const argv = (PB.meta.start && Array.isArray(PB.meta.start.argv)) ? PB.meta.start.argv : [];
+    const i = argv.indexOf("--vessel");
+    if(i >= 0 && argv[i + 1]) vessel = argv[i + 1] + " (from the command line)";
+  }
+  const pe = prt && prt.port;
+  const port = pe ? [pe.name || pe.id, pe.ofs ? "OFS " + pe.ofs : null, prt.unverified ? "unverified" : null].filter(Boolean).join(" · ") : "—";
+  const b = (man && man.build) || {}, g = b.git || {};
+  const build = man ? ([b.fingerprint, g.branch, g.head ? String(g.head).slice(0, 10) : null].filter(Boolean).join(" · ") || "—") : "—";
+  const tz = PB.tz;
+  const tzTxt = tz ? (tz.name ? tz.name + " · " : "") + "UTC" + fmtOffset(tz.offset_s) + (tz.from === "iso" ? " (from the records' own clock)" : "") : "—";
+  const pv = man && man.prev;
+  const prev = pv ? "Continues " + pv.name + " (" + (pv.ended_clean ? "ended cleanly" : "ended WITHOUT a session end")
+                    + (pv.run ? ", " + pv.run : "") + (pv.behavior ? " " + pv.behavior : "")
+                    + (pv.wp_total ? ", wp " + (pv.wp_index != null ? pv.wp_index : "?") + "/" + pv.wp_total : "") + (pv.armed ? ", armed" : "") + ")"
+                  : (man ? "Continues no earlier recording." : "");
+  return {vessel, port, mode: String((man && man.mode) || window._mode || "—").toUpperCase(), build, tz: tzTxt, prev};
+}
+function fmtOffset(s){
+  if(s == null || !Number.isFinite(+s)) return "";
+  const a = Math.abs(Math.round(+s / 60));
+  return (+s < 0 ? "-" : "+") + String(Math.floor(a / 60)).padStart(2, "0") + ":" + String(a % 60).padStart(2, "0");
+}
+// ⚠ THE CONSOLE'S CLOCK AND UTC, LABELED - NEVER THE VIEWER'S ZONE. The console runs on New York time while the measured
+// mission sailed off Honolulu, and toLocaleTimeString printed whatever zone the viewer's machine was in. The offset is
+// the manifest's; an older log has none, so it is read off the records themselves (`iso` is console-local, `t` epoch).
+function tzFinish(){
+  const m = PB.meta.manifest[0] && PB.meta.manifest[0].e.tz;
+  if(m && m.utc_offset_s != null && Number.isFinite(+m.utc_offset_s)){ PB.tz = {offset_s: +m.utc_offset_s, name: m.name || null, from: "manifest"}; return; }
+  for(const e of EVENTS){
+    if(!e || !e.t || typeof e.iso !== "string") continue;
+    const u = Date.parse(e.iso.replace(" ", "T").replace(/Z$/, "") + "Z");
+    if(Number.isFinite(u)){ PB.tz = {offset_s: Math.round((u / 1000 - e.t) / 900) * 900, name: null, from: "iso"}; return; }
+  }
+  PB.tz = null;
+}
+function fmtClock(absT, tz){
+  if(!Number.isFinite(absT)) return "—";
+  const hms = (s) => new Date(s * 1000).toISOString().slice(11, 19);
+  return (tz ? hms(absT + tz.offset_s) + " console (UTC" + fmtOffset(tz.offset_s) + ") · " : "") + hms(absT) + " UTC";
+}
+
+function pbFinish(){
+  carry(FIXES, FIX_CARRY, false);
+  PB.sets.sort(byT); carry(PB.sets, ["crab", "src"], false);
+  PB.forcing.sort(byT);
+  PB.wps.sort(byT); carry(PB.wps, ["idx", "tot", "run"], true);
+  for(const k of ["env", "water", "current", "density", "buoys", "stations"]) PB.env[k].sort(byT);
+  PB.envState.sort(byT);
+  for(const k of ["manifest", "vessel", "port"]) PB.meta[k].sort(byT);
+  PB.incidents.sort(byT);
+  aisModelFinish(); tgtFinish(); plansFinish(); runsFinish(); epiFinish(); stripFinish(); tzFinish();
+  // the track's Web-Mercator position at zoom 0, once: render scales it per frame instead of projecting every fix again
+  for(const f of FIXES){ const m = mercUnit(f.lat, f.lon); f.mx = m.x; f.my = m.y; }
+}
+// client:ais_model IS A DELTA SINCE 2026-11-05 (asv.html AIS_MODEL_KEY_MS): `ids` names every contact the guard held,
+// `contacts` carries only those that changed - a ring only when she joined or her keep-out moved - and `key` marks a
+// keyframe. Each record's `e` is made WHOLE here, once, so the cards and the chart read one complete model at the cursor.
+// A record with no `ids` (written before) is whole already. A delta whose contact has no ring yet (read before its
+// keyframe) says so: `partial`.
+function aisModelFinish(){
+  let held = new Map();
+  for(const r of (CLIENT.ais_model || [])){
+    const e = r.e || {};
+    if(!Array.isArray(e.ids) || e.key) held = new Map();
+    for(const q of (Array.isArray(e.contacts) ? e.contacts : [])){
+      if(!q || q.mmsi == null) continue;
+      const k = String(q.mmsi);
+      held.set(k, Object.assign({}, held.get(k) || {}, q));     // no ring in the delta: the last one posted stands
+    }
+    if(!Array.isArray(e.ids)) continue;
+    const ids = e.ids.map(String), keep = new Map();
+    for(const k of ids) if(held.has(k)) keep.set(k, held.get(k));
+    held = keep;
+    r.e = Object.assign({}, e, {contacts: ids.map(k => held.get(k)).filter(Boolean)});
+    if(ids.some(k => !held.has(k) || !Array.isArray(held.get(k).ring))) r.e.partial = true;
+  }
+}
+function mercUnit(lat, lon){
+  const s = Math.sin(lat * Math.PI / 180);
+  return {x: (lon + 180) / 360, y: 0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)};
+}
+
+// ---- targets: ONE model for every sensor (2026-11-05) --------------------- //
+// Andy, 2026-11-05: "The playback function should display targets from AIS and any other sensor we may add."
+// ⚠ A SENSOR IS A NAME, NOT A BRANCH. The console's TargetRecorder writes `targets` (who is held now, and the rows that
+// changed) and `track_info` (each track's particulars, on change) for EVERY registered sensor - AIS and the ROCs today,
+// radar ARPA or sonar contacts tomorrow - so this reads whatever sensor it is handed, and a new one is drawn and listed
+// with no change here. An OLD log's `ais` record (every contact in full, from the /api/ais handler) and its state.roc
+// adapt into the same model, so one drawing and one card serve every recording.
+function tgtSensor(name){
+  const k = String(name == null ? "?" : name);
+  return PB.tgt[k] || (PB.tgt[k] = {name: k, recs: [], tracks: {}, prev: null, prevT: null});
+}
+function tgtTrack(s, id){
+  const k = String(id);
+  return s.tracks[k] || (s.tracks[k] = {id: k, rows: [], infos: [], seg: 0});
+}
+function numOr(v){ return (v == null || v === "" || typeof v === "boolean" || !Number.isFinite(+v)) ? null : +v; }
+// ⚠ A CONTACT ABSENT FROM THE RECORD BEFORE IS A NEW SIGHTING: her trail and her interpolation do not join across the gap
+// (a ship that left the range for an hour did not sail the straight line between). A record after the sensor itself went
+// stale (no record within its stale_s) makes every contact a new sighting.
+function tgtMember(s, t, e, ids, staleS, old){
+  const set = new Set(ids);
+  const prev = (s.prev && s.prevT != null && t - s.prevT <= staleS) ? s.prev : null;
+  for(const id of ids){ if(!prev || !prev.has(id)){ const tr = tgtTrack(s, id); if(tr.rows.length) tr.seg++; } }
+  s.prev = set; s.prevT = t;
+  s.recs.push({t, ok: e.ok !== false, note: e.note ? String(e.note) : "", center: llOf(e.center), area: e.area || null,
+               health: e.health || null, ids, stale_s: staleS, old: !!old});
+}
+function tgtRow(s, t, r, hdg){
+  const la = numOr(r.lat), lo = numOr(r.lon);
+  if(la == null || lo == null) return;
+  const tr = tgtTrack(s, r.id);
+  const ob = numOr(r.obs_t);
+  tr.rows.push({t, obs_t: ob != null ? ob : t, lat: la, lon: lo, sog: numOr(r.sog), cog: numOr(r.cog), hdg: numOr(hdg),
+                nav: r.nav != null ? r.nav : null, seg: tr.seg});
+}
+function tgtRecord(t, e){
+  const s = tgtSensor(e.sensor);
+  const ids = Array.isArray(e.ids) ? e.ids.filter(x => x != null).map(String) : [];
+  tgtMember(s, t, e, ids, TARGETS_STALE_S, false);
+  for(const r of (Array.isArray(e.rows) ? e.rows : [])) if(r && r.id != null) tgtRow(s, t, r, r.hdg);
+}
+function tgtInfo(t, e){
+  if(e.id == null) return;
+  const tr = tgtTrack(tgtSensor(e.sensor), e.id);
+  tr.infos.push({t, name: e.name != null ? String(e.name) : null, cls: e.cls != null ? String(e.cls) : null, feed: e.feed || null,
+                 len_m: numOr(e.len_m), beam_m: numOr(e.beam_m), dim: e.dim || null, info: e.info || {}});
+}
+const AIS_INFO_KEYS = ["type", "dest", "draught", "imo", "callsign", "eta", "srcs", "gt", "dwt", "built", "flag", "status"];
+// An OLD log's `ais` record: every contact in full, each a keyframe row; her report time is the service's age at the poll.
+function tgtFromAis(t, e){
+  const s = tgtSensor("ais");
+  const vs = Array.isArray(e.vessels) ? e.vessels.filter(v => v && v.mmsi != null) : [];
+  tgtMember(s, t, {ok: true, note: e.note}, vs.map(v => String(v.mmsi)), AIS_STALE_S, true);
+  for(const v of vs){
+    const id = String(v.mmsi), age = numOr(v.age), ob = numOr(v.obs_t);
+    tgtRow(s, t, {id, obs_t: ob != null ? ob : (age != null ? t - age : t), lat: v.lat, lon: v.lon, sog: v.sog, cog: v.cog, nav: v.nav}, v.heading);
+    const tr = tgtTrack(s, id), last = tr.infos[tr.infos.length - 1];
+    const info = {};
+    for(const k of AIS_INFO_KEYS) if(v[k] != null) info[k] = v[k];
+    const n = {t, name: v.name != null ? String(v.name) : null, cls: v.cat != null ? String(v.cat) : null, feed: v.src || null,
+               len_m: numOr(v.length), beam_m: numOr(v.beam), dim: v.dim || null, info};
+    if(!last || last.name !== n.name || last.cls !== n.cls || last.len_m !== n.len_m || last.beam_m !== n.beam_m) tr.infos.push(n);
+  }
+}
+// An OLD log's ROCs (state.roc, every snapshot): sensor "roc" when the recording has no `targets` of its own for them. ⚠ NO
+// STALE AGE: they follow the state snapshot, as every other card read from one does.
+function tgtRocState(t, roc){
+  const s = PB.rocState || (PB.rocState = {name: "roc", recs: [], tracks: {}, prev: null, prevT: null});
+  const rs = roc.rocs.filter(r => r && numOr(r.lat) != null && numOr(r.lon) != null);
+  const ids = rs.map((r, i) => String(r.id != null ? r.id : (r.name || "roc" + i)));
+  tgtMember(s, t, {ok: true}, ids, Infinity, true);
+  rs.forEach((r, i) => {
+    const age = numOr(r.age_s);
+    tgtRow(s, t, {id: ids[i], obs_t: age != null ? t - age : t, lat: r.lat, lon: r.lon, sog: r.sog, cog: r.cog, nav: null}, r.heading);
+    const tr = tgtTrack(s, ids[i]), last = tr.infos[tr.infos.length - 1];
+    const n = {t, name: r.name != null ? String(r.name) : null, cls: "roc:" + (r.kind || "?"), feed: r.source || null,
+               len_m: null, beam_m: null, dim: null,
+               info: {status: r.status || null, arrival: llOf(r.arrival), arrival_bearing: numOr(r.arrival_bearing),
+                      home: r.id != null && r.id === roc.home_id}};
+    if(!last || last.name !== n.name || last.cls !== n.cls || JSON.stringify(last.info) !== JSON.stringify(n.info)) tr.infos.push(n);
+  });
+}
+function tgtFinish(){
+  if(PB.rocState && !(PB.tgt.roc && PB.tgt.roc.recs.length)) PB.tgt.roc = PB.rocState;
+  for(const k of Object.keys(PB.tgt)){
+    const s = PB.tgt[k];
+    s.recs.sort(byT); s.prev = null;
+    for(const id of Object.keys(s.tracks)){
+      const tr = s.tracks[id];
+      tr.rows.sort((a, b) => (a.obs_t - b.obs_t) || (a.t - b.t));
+      tr.infos.sort(byT);
+    }
+  }
+}
+// The membership record in force at the cursor, and whether it is too old to be the traffic any more.
+function tgtSensorAt(s, absT){
+  const i = idxAt(s.recs, absT), rec = i >= 0 ? s.recs[i] : null;
+  return {rec, stale: !rec || (absT - rec.t) > rec.stale_s};
+}
+function lerpN(a, b, f){ return (a != null && b != null) ? a + (b - a) * f : a; }
+// The shorter way round between two bearings; a missing one (or AIS's 511 "not available") holds the first.
+function angLerp(a, b, f){
+  if(a == null || b == null || !(a >= 0 && a < 360) || !(b >= 0 && b < 360)) return a;
+  const d = ((b - a + 540) % 360) - 180;
+  return ((a + d * f) % 360 + 360) % 360;
+}
+// ⚠ BETWEEN TWO REPORTS, THE STRAIGHT LINE - ONLY WHEN THEY ARE ONE SIGHTING AND CLOSE IN TIME. A row is written when her
+// kinematics change or her report ages a minute, so a contact between two rows is interpolated by her REPORT time (obs_t)
+// and held at the last report past the newest one. Two rows farther apart than TGT_INTERP_MAX_S, or across a gap in her
+// membership (seg), are held, not joined: she did not sail the line between.
+function tgtPosAt(tr, absT){
+  const R = tr.rows;
+  if(!R.length) return null;
+  const i = idxAt(R, absT, "obs_t");
+  const a = i >= 0 ? R[i] : R[0], b = i >= 0 ? R[i + 1] : null;
+  if(b && b.seg === a.seg && b.obs_t > a.obs_t && b.obs_t - a.obs_t <= TGT_INTERP_MAX_S){
+    const f = (absT - a.obs_t) / (b.obs_t - a.obs_t);
+    return {lat: a.lat + (b.lat - a.lat) * f, lon: a.lon + (b.lon - a.lon) * f, sog: lerpN(a.sog, b.sog, f),
+            cog: angLerp(a.cog, b.cog, f), hdg: angLerp(a.hdg, b.hdg, f), nav: a.nav, obs_t: a.obs_t, seg: a.seg, interp: true};
+  }
+  return {lat: a.lat, lon: a.lon, sog: a.sog, cog: a.cog, hdg: a.hdg, nav: a.nav, obs_t: a.obs_t, seg: a.seg, interp: false};
+}
+// One contact at the cursor: where (tgtPosAt), what (the last track_info at or before it - else her first), how old.
+function tgtView(sensor, tr, absT){
+  const p = tgtPosAt(tr, absT);
+  if(!p) return null;
+  const inf = lastBefore(tr.infos, absT) || tr.infos[0] || {};
+  const ageS = Math.max(0, absT - p.obs_t);
+  return {sensor, id: tr.id, name: inf.name || null, cls: inf.cls || null, feed: inf.feed || null,
+          lat: p.lat, lon: p.lon, sog: p.sog, cog: p.cog, hdg: p.hdg, nav: p.nav,
+          len_m: inf.len_m != null ? inf.len_m : null, beam_m: inf.beam_m != null ? inf.beam_m : null, dim: inf.dim || null,
+          info: inf.info || {}, obs_t: p.obs_t, ageS, old: ageS > TGT_OLD_S, interp: p.interp, seg: p.seg};
+}
+function sensorOrder(a, b){
+  const r = (x) => x === "ais" ? 0 : x === "roc" ? 2 : 1;
+  return (r(a) - r(b)) || (a < b ? -1 : a > b ? 1 : 0);
+}
+// Every sensor at the cursor: its membership record, and each contact it held then. A stale sensor is listed with none.
+function targetsAt(absT){
+  const out = [];
+  for(const name of Object.keys(PB.tgt).sort(sensorOrder)){
+    const s = PB.tgt[name], at = tgtSensorAt(s, absT), rec = at.rec, contacts = [];
+    if(rec && !at.stale) for(const id of rec.ids){ const tr = s.tracks[id]; const v = tr ? tgtView(name, tr, absT) : null; if(v) contacts.push(v); }
+    out.push({sensor: name, ok: rec ? rec.ok : null, note: rec ? rec.note : "", stale: at.stale, age_s: rec ? absT - rec.t : null,
+              old: rec ? rec.old : false, center: rec ? rec.center : null, area: rec ? rec.area : null, health: rec ? rec.health : null,
+              contacts});
+  }
+  return out;
+}
+// A contact in the AIS shape the live page's functions read (aisMotion, hullBox) and the AIS card always showed.
+function tgtAsAis(v){
+  return Object.assign({}, v.info || {}, {mmsi: /^\d+$/.test(v.id) ? +v.id : v.id, name: v.name, lat: v.lat, lon: v.lon,
+    sog: v.sog, cog: v.cog, heading: v.hdg, nav: v.nav, cat: v.cls, length: v.len_m, beam: v.beam_m, dim: v.dim,
+    age: v.ageS, src: v.feed, sensor: v.sensor, obs_t: v.obs_t});
+}
+function tgtAsRoc(v){
+  const i = v.info || {};
+  return {id: v.id, name: v.name, kind: String(v.cls || "roc:?").replace(/^roc:/, ""), lat: v.lat, lon: v.lon, heading: v.hdg,
+          cog: v.cog, sog: v.sog, status: i.status || null, arrival: llOf(i.arrival), home: !!i.home, age_s: v.ageS};
+}
+// Her trail: her reports over the last TGT_TRAIL_S up to the cursor, one polyline per sighting (broken where her
+// membership broke, or where two reports are too far apart to join), ending where she is drawn now.
+function tgtTrail(tr, absT, now){
+  const R = tr.rows, hi = idxAt(R, absT, "obs_t");
+  if(hi < 0) return [];
+  const out = [];
+  let cur = null, prev = null;
+  for(let i = idxAt(R, absT - TGT_TRAIL_S, "obs_t") + 1; i <= hi; i++){
+    const r = R[i];
+    if(!cur || r.seg !== prev.seg || r.obs_t - prev.obs_t > TGT_INTERP_MAX_S){ cur = []; out.push(cur); }
+    if(!prev || r.lat !== prev.lat || r.lon !== prev.lon || !cur.length) cur.push({lat: r.lat, lon: r.lon});
+    prev = r;
+  }
+  if(cur && now && prev && now.seg === prev.seg) cur.push({lat: now.lat, lon: now.lon});
+  return out.filter(p => p.length > 1);
+}
+// ⚠ WHICH WAY SHE POINTS IS THE LIVE PAGE'S ANSWER, BY THE LIVE PAGE'S OWN FUNCTION (2026-11-05). Andy, 2026-09-30, at
+// the Port of Los Angeles: "The red outlines are perfectly alongside their respective pier as expected, while the green
+// targets are rotated" - two drawings of one ship turned by two rules. The replay pointed every contact along her COURSE
+// (a moored ship's course is GNSS noise), so it disagreed with the live chart the same way. window.PBK is the module
+// bridge at the foot of this page: aisMotion itself, from static/js/ais_keepout.js. The age it reads is her report's age
+// at the cursor (`age`, polledAt 0).
+function tgtMotion(a){
+  const K = window.PBK;
+  if(K && typeof K.aisMotion === "function") return K.aisMotion(a, {now: 0, polledAt: 0});
+  return tgtMotionFallback(a);
+}
+// ⚠ ONLY WHILE THE MODULE HAS NOT LOADED (a page opened from disk, an old browser): the same rule written out - her true
+// heading where she reports one (0-359; 511 is "not available"), her course only while she is under way, else no
+// direction (the disc). Under way = making AIS_MOVING_KN (0.5) with a course, neither saying she is stopped (nav 1/5/6 at
+// under 3 kn) nor reporting like a vessel at anchor (under 2 kn on a report over 400 s old). tests/playback_targets.js
+// holds it to aisMotion over a grid of contacts; the berth rule needs the chart and is the module's alone.
+function tgtMotionFallback(a){
+  const sog = (a.sog != null && Number.isFinite(+a.sog) && +a.sog >= 0) ? +a.sog : null;
+  const ageS = Math.max(0, +a.age || 0);
+  const navStopped = a.nav != null && (+a.nav === 1 || +a.nav === 5 || +a.nav === 6) && (sog == null || sog < 3.0);
+  const slowAndOld = sog != null && sog < 2.0 && ageS > 400;
+  const moving = sog != null && sog >= 0.5 && a.cog != null && Number.isFinite(+a.cog) && !navStopped && !slowAndOld;
+  const h = a.heading;
+  let hdg = null, from = null;
+  if(h != null && Number.isFinite(+h) && +h >= 0 && +h < 360){ hdg = +h; from = "heading"; }
+  else if(moving){ hdg = ((+a.cog % 360) + 360) % 360; from = "course"; }
+  return {sog, ageS, navStopped, vel: null, moving, hdg, from};
+}
+function tgtBox(a){
+  const K = window.PBK;
+  if(K && typeof K.hullBox === "function") return K.hullBox(a);
+  const d = a && a.dim, len = a && a.length, beam = a && a.beam;
+  if(!len && !beam) return null;
+  const L = len || (beam ? beam * 6 : 0), B = beam || (len ? len / 6 : 0);
+  if(!(L > 0 && B > 0)) return null;
+  const fwd = d && d.a ? d.a : L / 2, port = d && d.c ? d.c : B / 2;
+  return {lengthM: L, beamM: B, toBowM: fwd, toSternM: L - fwd, toPortM: port, toStbdM: B - port, exact: !!(len && beam)};
+}
+function tgtDiscM(box){
+  const K = window.PBK;
+  return (K && typeof K.aisDiscM === "function") ? K.aisDiscM(box) : Math.hypot(box.lengthM, box.beamM) / 2;
+}
+function tgtColor(cls){
+  const c = String(cls || "");
+  if(c.startsWith("roc")) return TGT_COL.roc;
+  return TGT_COL[c] || TGT_COL.unknown;
+}
+// ⚠ HOW ONE CONTACT IS DRAWN - THE LIVE LAYER'S RULES (asv.html drawAIS), as a plan render paints and a suite can read:
+// no direction (stopped, no heading) is the DISC the keep-out models her as; to scale (about her antenna) while her hull
+// is bigger on screen than the glyph, the glyph below that; the speed stalk along her COURSE from her bow, only while
+// she is under way; her name at zoom 12 and in; dimmed when her report is over TGT_OLD_S old at the cursor. `mpp` is the
+// chart's meters per pixel.
+function tgtGlyph(v, mpp, z){
+  const a = tgtAsAis(v), mo = tgtMotion(a), col = tgtColor(v.cls), box = tgtBox(a);
+  const toScale = !!box && (box.lengthM / mpp) > (GLYPH_FWD + GLYPH_AFT) * 0.62;
+  const g = {col, alpha: v.old ? 0.45 : 1, dir: mo.hdg, from: mo.from, moving: mo.moving, shape: null, rPx: null, box: null,
+             scale: 0.62, stalk: null, label: z >= 12 ? (v.name || String(v.id)) : null};
+  if(mo.hdg == null){ g.shape = "disc"; g.rPx = toScale ? tgtDiscM(box) / mpp : GLYPH_FWD * 0.62; }
+  else if(toScale){
+    g.shape = "hull";
+    g.box = mo.from === "berth" ? Object.assign({}, box, {toBowM: box.lengthM / 2, toSternM: box.lengthM / 2, toPortM: box.beamM / 2, toStbdM: box.beamM / 2}) : box;
+  } else g.shape = "glyph";
+  if(mo.moving) g.stalk = {cog: ((+a.cog % 360) + 360) % 360, fromPx: (toScale && mo.hdg != null) ? box.toBowM / mpp : GLYPH_FWD * 0.62, lenPx: 7};
+  return g;
+}
+
+// ---- what the guard saw (2026-11-05) -------------------------------------- //
+// ⚠ AN EPISODE OPENS ON THE PAGE'S OWN RECORD OF IT AND ENDS THE WAYS THE PAGE ENDS IT (asv.html): client:ais_avoid (the
+// hold for a contact) or client:ais_around / client:avoiding (a way round) open it; ais_return ends a hold; a way round
+// ends when the supervisor's snapshot no longer says avoiding (after EPI_GRACE_S - a snapshot can predate the record), on
+// ais_around_failed, on a command that hands the boat a new plan or stops her, and at a disconnect or session end. A
+// record naming a DIFFERENT contact is a new episode. `kind` arrives as kind_ (the console's /api/logevent renames the
+// page's own `kind`, which would overwrite the record's); client:avoiding carries no mmsi, so its contact is found by the
+// name in "AIS: NAME (size)".
+function kindName(kind){
+  const m = /^AIS: (.+?) \(/.exec(String(kind || ""));
+  if(!m) return {name: null, mmsi: null};
+  const mm = /^MMSI (\d+)$/.exec(m[1]);
+  return mm ? {name: null, mmsi: mm[1]} : {name: m[1], mmsi: null};
+}
+function epiFinish(){
+  const ev = [];
+  for(const k of ["ais_avoid", "ais_around", "avoiding", "ais_return", "ais_around_failed"])
+    for(const r of (CLIENT[k] || [])) ev.push({t: r.t, k, e: r.e});
+  for(const x of PB.epiRaw) ev.push({t: x.t, k: "close", p: x.p});
+  for(const s of STATES){ const sv = s.supervisor; if(sv && typeof sv === "object" && "avoiding" in sv && !sv.avoiding) ev.push({t: s.t, k: "sup_clear"}); }
+  ev.sort(byT);
+  let cur = null;
+  const close = (t) => { if(cur){ cur.t1 = t; cur = null; } };
+  for(const x of ev){
+    // ⚠ THE RUNG'S OWN HOLD IS NOT ITS END (review 2026-11-05): the page logs client:ais_avoid and posts /api/cmd/hold
+    // in one frame, and the console stamps the command AFTER dispatch - so the hold closed the episode it had just opened,
+    // and a whole hold for a contact replayed with no AVOIDING ring. A hold or stop within EPI_OWN_CMD_S of the avoid.
+    if(x.k === "close" && cur && cur.ta != null && (x.p === "/api/cmd/hold" || x.p === "/api/cmd/stop")
+       && x.t - cur.ta <= EPI_OWN_CMD_S) continue;
+    if(x.k === "close" || x.k === "ais_around_failed"){ close(x.t); continue; }
+    if(x.k === "sup_clear"){ if(cur && !cur.held && x.t - cur.tf > EPI_GRACE_S) close(x.t); continue; }
+    if(x.k === "ais_return"){ if(cur){ cur.held = false; if(!cur.flagged) close(x.t); } continue; }
+    const kn = kindName(x.e.kind_), mmsi = x.e.mmsi != null ? String(x.e.mmsi) : kn.mmsi, name = kn.name;
+    const same = cur && ((mmsi && cur.mmsi === mmsi) || (mmsi && !cur.mmsi && name && cur.name === name) || (!mmsi && (!name || cur.name === name)));
+    if(!same){
+      close(x.t);
+      cur = {t0: x.t, t1: null, mmsi: mmsi || null, name: name || null, kind: x.e.kind_ || null, rung: null, why: null, held: false, flagged: false, tf: x.t, ta: null};
+      PB.epis.push(cur);
+    } else if(!cur.mmsi && mmsi) cur.mmsi = mmsi;
+    // ⚠ A MOVING EPISODE (rung 'slow': an underway splice round her) HAS NO BANK (review 2026-11-05): marked held, the
+    // supervisor's clear was ignored and no ais_return ever comes for it, so it rang 'AVOIDING' for the rest of the survey.
+    if(x.k === "ais_avoid"){ cur.rung = x.e.rung || cur.rung; cur.held = cur.rung !== "slow"; cur.ta = x.t; }
+    else { cur.flagged = true; cur.tf = x.t; if(x.k === "avoiding" && x.e.why) cur.why = String(x.e.why); }
+  }
+}
+function episodeAt(absT){
+  const i = idxAt(PB.epis, absT, "t0"), ep = i >= 0 ? PB.epis[i] : null;
+  return (ep && (ep.t1 == null || absT < ep.t1)) ? ep : null;
+}
+// The contact the open episode names, among those held at the cursor: by mmsi, else by her name.
+function avoidedIn(ep, targets){
+  if(!ep) return null;
+  for(const s of targets || []) for(const v of s.contacts){
+    if(ep.mmsi && v.id === ep.mmsi) return v;
+    if(!ep.mmsi && ep.name && v.name && String(v.name).toUpperCase() === String(ep.name).toUpperCase()) return v;
+  }
+  return null;
+}
+function fmtGuardLevel(e){
+  if(!e) return "—";
+  const bits = [String(e.level || "clear").toUpperCase() + (e.prev ? " (from " + String(e.prev).toUpperCase() + ")" : "")];
+  if(e.kind_) bits.push(String(e.kind_).slice(0, 80));
+  if(numOr(e.clear_m) != null) bits.push((+e.clear_m).toFixed(1) + " m clear");
+  if(numOr(e.t_entry_s) != null) bits.push("entry in " + Math.round(+e.t_entry_s) + " s");
+  // `act` is the page's armed && !estop && supervising(): whether the rung could COMMAND, said in words, not "true"
+  if(e.act === true) bits.push("commanding");
+  else if(e.act === false && e.level && e.level !== "off") bits.push("watching only (not armed, or E-STOP)");
+  if(e.ais_caused) bits.push("AIS" + (e.her_mmsi != null ? " " + e.her_mmsi : ""));
+  if(e.grant) bits.push("berth grant");
+  return bits.join(" · ") + (e.why ? " — " + String(e.why).slice(0, 160) : "");
+}
+// The keep-out model the guard and every planner clipped to (client:model), as one timeline line.
+function fmtModel(e){
+  if(!e) return "—";
+  if(!e.ready) return "no model" + (e.failed ? " — the read FAILED: " + String(e.failed).slice(0, 120) : "");
+  const n = (+e.n_polys || 0) + (+e.n_lines || 0) + (+e.n_points || 0);
+  const bits = [String(e.band || "?").replace(/^enc_/, "") + " · " + n + " keep-out(s)"];
+  if(numOr(e.floor) != null) bits.push("floor " + (+e.floor).toFixed(1) + " m");
+  if(numOr(e.buffer) != null) bits.push("buffer " + (+e.buffer) + " m");
+  if(+e.ink_n) bits.push("+" + e.ink_n + " off the chart image");
+  if(+e.skin_gaps) bits.push(e.skin_gaps + " seabed gap(s)");
+  if(+e.unread_n) bits.push(e.unread_n + " unread square(s)");
+  if((e.partial || []).length) bits.push("INCOMPLETE: " + e.partial.slice(0, 4).join(", "));
+  if((e.stale || []).length) bits.push("stale: " + e.stale.slice(0, 4).join(", "));
+  if(e.lock_waiver_id) bits.push("lock waiver " + e.lock_waiver_id);
+  if(e.failed) bits.push("FAILED: " + String(e.failed).slice(0, 80));
+  return bits.join(" · ");
+}
+// What the chart image added to that model (client:chart_ink), or why it was not compared.
+function fmtChartInk(e){
+  if(!e) return "—";
+  if(e.refused) return "not compared — " + String(e.refused).slice(0, 140);
+  const nl = (e.lines || []).length, na = (e.areas || []).length;
+  return nl + " line(s), " + na + " area(s) read off the chart" + (e.z != null ? " at z" + e.z : "")
+    + (e.folded === false ? " · NOT folded into the model" : "") + (+e.detached_n ? " · " + e.detached_n + " detached" : "");
+}
+
+// ---- the environment at the cursor (2026-11-05) --------------------------- //
+// Andy, 2026-11-05: "It should have all the environmental data for playback."
+// ⚠ A NEW LOG'S ENVIRONMENT IS THE `env` STREAM, AN OLD LOG'S IS THE STATE SNAPSHOT - read per block, the stream first.
+// The console writes `env` on a change of VALUE (in full after start and every wake) and has DROPPED the four blocks from
+// the logged state snapshot (43% of its bytes, 95% repeats), so a new log has nothing else; an old log has no `env` at
+// all. A block from the stream is AGED at the cursor (its age_s when written plus the time since), so a reading an hour
+// old reads an hour old at the cursor; a snapshot block keeps the age it was written with (one 10 s snapshot behind).
+function envRecord(t, e){
+  const b = (e && e.blocks && typeof e.blocks === "object") ? e.blocks : {};
+  for(const k of ["env", "water", "current", "density"]){
+    if(b[k] && typeof b[k] === "object") PB.env[k].push({t, v: b[k]});
+    else if(e.full) PB.env[k].push({t, v: null});        // a full record without it: the block is gone
+  }
+  const x = (e.extra && typeof e.extra === "object") ? e.extra : {};
+  if(Array.isArray(x.buoys)) PB.env.buoys.push({t, v: x.buoys});
+  else if(e.full) PB.env.buoys.push({t, v: []});
+  if(x.stations && typeof x.stations === "object") PB.env.stations.push({t, v: x.stations});
+  PB.env.n++;
+}
+function envAged(r, absT){
+  if(!r || !r.v) return null;
+  const v = r.v;
+  // ⚠ A CURRENT RECOMPUTED WITH THE SAME ANSWER IS RE-AGED BY ITS OWN RECORD (review 2026-11-05): its age is not a
+  // value, so the stream wrote nothing and the replay aged it from the first record that carried it - an hour old
+  // beside a console that said seconds. The console writes that block alone every ENV_RESAMPLE_LOG_S (SessionLogger
+  // _env_resampled), and its age_s (since it was computed) ages it here like any other.
+  if(numOr(v.age_s) != null) return Object.assign({}, v, {age_s: +v.age_s + Math.max(0, absT - r.t)});
+  if(numOr(v.obs_t) != null) return Object.assign({}, v, {age_s: Math.max(0, absT - +v.obs_t)});
+  return v;
+}
+function envAt(absT){
+  const out = {env: null, water: null, current: null, density: null, buoys: [], buoys_t: null, stations: null, from: null};
+  const si = idxAt(PB.envState, absT), snap = si >= 0 ? PB.envState[si] : null;
+  let stream = false, state = false;
+  for(const k of ["env", "water", "current", "density"]){
+    const i = idxAt(PB.env[k], absT);
+    if(i >= 0){ out[k] = envAged(PB.env[k][i], absT); stream = true; }
+    else if(snap && snap[k]){ out[k] = snap[k]; state = true; }
+  }
+  const bi = idxAt(PB.env.buoys, absT);
+  if(bi >= 0){ out.buoys = PB.env.buoys[bi].v || []; out.buoys_t = PB.env.buoys[bi].t; }
+  const ti = idxAt(PB.env.stations, absT);
+  if(ti >= 0) out.stations = PB.env.stations[ti].v;
+  out.from = stream ? "env stream" : state ? "state snapshots (older recording)" : null;
+  return out;
+}
+function stnList(a){
+  if(!Array.isArray(a) || !a.length) return "";
+  const one = (s) => Array.isArray(s) ? String(s[1] || s[0]) + (numOr(s[2]) != null ? " " + fmtKm(s[2]) : "")
+                   : (s && typeof s === "object") ? String(s.name || s.id || "?") + (numOr(s.dist_km) != null ? " " + n2(s.dist_km, 0) + " km" : "")
+                   : String(s);
+  return a.slice(0, 4).map(one).join(", ") + (a.length > 4 ? " +" + (a.length - 4) : "");
+}
+function envWind(env){
+  if(!env) return "—";
+  if(env.enabled === false) return "off";
+  const w = env.wind || {};
+  if(numOr(w.speed_kn) == null) return env.ok ? "calm" : (env.note ? String(env.note).slice(0, 80) : "—");
+  const ids = stnList(w.stations && w.stations.length ? w.stations : env.stations);
+  return n2(w.speed_kn, 1) + " kn from " + dirTxt(w.dir_from_deg)
+       + (numOr(w.gust_kn) != null ? " · gust " + n2(w.gust_kn, 1) + " kn" + (w.gust_src ? " (" + w.gust_src + ")" : "") : "")
+       + (env.source ? " · " + env.source : "") + (ids ? " · " + ids : "") + fmtAgeS(env.age_s);
+}
+function envSea(env){
+  const s = env && env.sea;
+  if(!s || numOr(s.hs_m) == null) return env && env.enabled === false ? "off" : "—";
+  const ids = stnList(s.stations);
+  return n2(s.hs_m, 2) + " m / " + (numOr(s.tp_s) != null ? n2(s.tp_s, 1) + " s" : "?") + " from " + dirTxt(s.dir_from_deg)
+       + (s.derived ? " · derived from the wind" : "") + (ids ? " · " + ids : "") + fmtAgeS(env.age_s);
+}
+function setAt(absT){ return lastBefore(PB.sets, absT); }
+function envSet(x){
+  if(!x || numOr(x.kn) == null) return "—";
+  if(+x.kn <= 0.01) return "none";
+  return n2(x.kn, 2) + " kn toward " + dirTxt(x.deg) + (numOr(x.crab) != null ? " · crab " + (+x.crab >= 0 ? "+" : "") + (+x.crab).toFixed(0) + "°" : "")
+       + (x.src ? " · " + x.src : "");
+}
+// ⚠ THE SIM'S OWN FORCING - WHAT ACTUALLY PUSHED HER (status.forcing, sim only): the wind as applied (gusted and veered),
+// the leeway and the stream apart. The set above is their SUM, and the recorded wind is the buoys' mean; this is the truth
+// of a sim run. A real link has none, and says so.
+function envForcing(absT){
+  const r = lastBefore(PB.forcing, absT);
+  if(!r) return PB.forcing.length ? "—" : "— (sim only; none in this recording)";
+  const f = r.f, bits = [];
+  if(numOr(f.wind_kn) != null) bits.push("wind " + n2(f.wind_kn, 1) + " kn from " + dirTxt(f.wind_from_deg) + (numOr(f.gust_mult) != null ? " (x" + n2(f.gust_mult, 2) + ")" : ""));
+  if(numOr(f.leeway_kn) != null) bits.push("leeway " + n2(f.leeway_kn, 2) + " kn toward " + dirTxt(f.leeway_deg));
+  if(numOr(f.stream_kn) != null) bits.push("stream " + n2(f.stream_kn, 2) + " kn toward " + dirTxt(f.stream_deg));
+  if(numOr(f.hs_m) != null) bits.push("Hs " + n2(f.hs_m, 2) + " m / " + (numOr(f.tp_s) != null ? n2(f.tp_s, 1) + " s" : "?") + " from " + dirTxt(f.wave_from_deg));
+  if(numOr(f.rho) != null) bits.push("ρ " + n2(f.rho, 1));
+  return (bits.join(" · ") || "—") + fmtAgeS(absT - r.t > 5 ? absT - r.t : null);
+}
+function envCurrent(c){
+  if(!c) return "—";
+  if(!c.ok) return c.note ? "-- (" + String(c.note).slice(0, 80) + ")" : "--";
+  const kn = numOr(c.speed_kn) != null ? c.speed_kn : c.set_kn, deg = numOr(c.set_deg) != null ? c.set_deg : c.dir_deg;
+  const m = c.model && typeof c.model === "object" ? c.model : null, ids = stnList(c.stations);
+  return (numOr(kn) != null ? n2(kn, 2) + " kn toward " + dirTxt(deg) : "--") + (c.source ? " · " + c.source : "")
+       + (m && m.label ? " · " + m.label : "") + (ids ? " · " + ids : "") + (c.tag ? " · " + c.tag : "")
+       + (c.cycle_start_utc ? " · cycle " + c.cycle_start_utc : "") + fmtAgeS(c.age_s);
+}
+function envWater(w){
+  if(!w) return "—";
+  if(!w.ok) return w.note ? "-- (" + String(w.note).slice(0, 80) + ")" : "--";
+  const s = w.surge && w.surge.ok ? w.surge : null;
+  return (numOr(w.offset_m) != null ? (+w.offset_m >= 0 ? "+" : "") + n2(w.offset_m, 2) + " m" : "--")
+       + (w.datum ? " " + w.datum : "") + (w.method ? " · " + w.method : "") + (w.data_kind ? " · " + w.data_kind : "")
+       + (w.name || w.station ? " · " + (w.name || w.station) : "")
+       + (s ? " · surge " + (numOr(s.low_m) != null ? "low " + n2(s.low_m, 2) + " m" : "") + (numOr(s.high_m) != null ? " high " + n2(s.high_m, 2) + " m" : "") : "")
+       + fmtAgeS(w.age_s);
+}
+function envDensity(d){
+  if(!d) return "—";
+  if(!d.ok) return d.note ? "-- (" + String(d.note).slice(0, 80) + ")" : "--";
+  const tp = d.temp || {}, sa = d.salinity || {};
+  return (numOr(d.rho) != null ? "ρ " + n2(d.rho, 1) + " kg/m³" : "--")
+       + (numOr(tp.c) != null ? " · " + n2(tp.c, 1) + " °C" + (tp.source ? " (" + tp.source + ")" : "") : "")
+       + (numOr(sa.psu) != null ? " · " + n2(sa.psu, 1) + " psu" + (sa.source ? " (" + sa.source + ")" : "") : "")
+       + (d.estimated ? " · estimated" : "") + fmtAgeS(d.age_s);
+}
+// Each buoy's own row - pressure, air and water temperature, dew point, visibility, its wind and waves - aged at the cursor.
+function envBuoys(rows, absT){
+  return (rows || []).slice(0, 8).map(b => {
+    const bits = [String(b.id || "?") + (numOr(b.dist_km) != null ? " · " + n2(b.dist_km, 0) + " km" : "")];
+    if(numOr(b.PRES) != null) bits.push(n2(b.PRES, 1) + " hPa");
+    if(numOr(b.ATMP) != null) bits.push("air " + n2(b.ATMP, 1) + " °C");
+    if(numOr(b.WTMP) != null) bits.push("water " + n2(b.WTMP, 1) + " °C");
+    if(numOr(b.DEWP) != null) bits.push("dew " + n2(b.DEWP, 1) + " °C");
+    if(numOr(b.VIS) != null) bits.push("vis " + n2(b.VIS, 1) + " nmi");
+    if(numOr(b.WSPD) != null) bits.push("wind " + n2(b.WSPD, 1) + " m/s" + (numOr(b.GST) != null ? " G " + n2(b.GST, 1) : "") + (numOr(b.WDIR) != null ? " from " + dirTxt(b.WDIR) : ""));
+    if(numOr(b.WVHT) != null) bits.push("Hs " + n2(b.WVHT, 1) + " m" + (numOr(b.DPD) != null ? " / " + n2(b.DPD, 0) + " s" : ""));
+    return {id: b.id, text: bits.join(" · ") + (numOr(b.t) != null ? fmtAgeS(Math.max(0, absT - +b.t)) : "")};
+  });
+}
+// The rose at the boat: the wind (from), the current and the set applied (toward), the sea (from).
+function roseAt(env, setRec){
+  const e = env.env, c = env.current, w = e && e.enabled !== false && e.wind;
+  return {wind: w && numOr(w.speed_kn) != null && numOr(w.dir_from_deg) != null ? {kn: +w.speed_kn, from: +w.dir_from_deg} : null,
+          current: c && c.ok && numOr(c.speed_kn) != null && numOr(c.set_deg) != null ? {kn: +c.speed_kn, to: +c.set_deg} : null,
+          set: setRec && numOr(setRec.kn) != null && +setRec.kn > 0.01 && numOr(setRec.deg) != null ? {kn: +setRec.kn, to: +setRec.deg} : null,
+          sea: e && e.enabled !== false && e.sea && numOr(e.sea.dir_from_deg) != null ? {from: +e.sea.dir_from_deg, hs: numOr(e.sea.hs_m)} : null};
+}
+// The stations whose positions the recording carries: tide gauges, current stations, buoys.
+function stationsAt(env){
+  const out = [], st = env.stations || {};
+  for(const k of ["water", "current"]) for(const s of (Array.isArray(st[k]) ? st[k] : []))
+    if(s && numOr(s.lat) != null && numOr(s.lon) != null) out.push({kind: k, id: s.id, name: s.name || s.id, lat: +s.lat, lon: +s.lon});
+  for(const b of env.buoys || []) if(b && numOr(b.lat) != null && numOr(b.lon) != null) out.push({kind: "buoy", id: b.id, name: b.id, lat: +b.lat, lon: +b.lon});
+  return out;
+}
+// The ENV strip's series, built once: [[t, value]] each - the stream's (or an old log's snapshots') wind, gust, Hs, current
+// and water level, and the set applied from the 1 Hz trace.
+// ⚠ A READING THAT IS GONE IS A GAP (review 2026-11-05): [t, null]. Only the readings were pushed, so an environment
+// switched off - or a real link's 'off' block, a current gone not-ok - drew the last value on to the end of the
+// recording, beside a card that said off.
+function stripFinish(){
+  const S = PB.strip, val = (v) => numOr(v) != null ? +v : null;
+  const env = (t, e) => { const on = !!e && e.enabled !== false, wd = (on && e.wind) || {};
+    S.wind.push([t, on ? val(wd.speed_kn) : null]); S.gust.push([t, on ? val(wd.gust_kn) : null]);
+    S.hs.push([t, on ? val(e.sea && e.sea.hs_m) : null]); };
+  const cur = (t, c) => S.cur.push([t, (c && c.ok) ? val(numOr(c.speed_kn) != null ? c.speed_kn : c.set_kn) : null]);
+  const wat = (t, w) => S.water.push([t, (w && w.ok) ? val(w.offset_m) : null]);
+  if(PB.env.n){
+    for(const r of PB.env.env) env(r.t, r.v);
+    for(const r of PB.env.current) cur(r.t, r.v);
+    for(const r of PB.env.water) wat(r.t, r.v);
+  } else for(const s of PB.envState){ env(s.t, s.env); cur(s.t, s.current); wat(s.t, s.water); }
+  for(const x of PB.sets) if(numOr(x.kn) != null) S.set.push([x.t, +x.kn]);
+  for(const k of Object.keys(S)){
+    S[k].sort((a, b) => a[0] - b[0]);
+    while(S[k].length && S[k][0][1] == null) S[k].shift();          // a series opens on a reading (one of none is empty)
+  }
+}
+function stripHas(){ const S = PB && PB.strip; return !!S && Object.keys(S).some(k => S[k].filter(p => p[1] != null).length > 1); }
 
 
 // ---- every card at the cursor (2026-09-25) --------------------------------- //
@@ -363,7 +1386,9 @@ function summarize(e){
     v = String(v); if(v.length > 60) v = v.slice(0,57) + "…"; parts.push(k + "=" + v); if(parts.length >= 4) break; }
   return parts.join(" · ");
 }
-function lastBefore(arr, absT){ let r=null; for(const x of arr||[]){ if(x.t > absT) break; r = x; } return r; }
+// The last element at or before absT of an array sorted by t. ⚠ A BINARY SEARCH: it was a walk from the start, run for
+// every card every frame - sixty times a second across the whole recording.
+function lastBefore(arr, absT){ const i = idxAt(arr, absT); return i >= 0 ? arr[i] : null; }
 function dirTxt(d){ return d==null ? "—" : ((Math.round(d)%360+360)%360)+"°"; }
 function fmtAgeS(s){ if(s==null) return ""; s=Math.round(s); return s<60 ? " · "+s+" s" : s<3600 ? " · "+Math.round(s/60)+" min" : " · "+(s/3600).toFixed(1)+" h"; }
 function fmtWind(env){ const w = env && env.wind; if(!env || env.enabled===false) return env ? "off" : "—";
@@ -379,40 +1404,60 @@ function fmtComms(c){ if(!c) return "—"; return String(c.mode || "none").toUpp
 function fmtSuper(s){ if(!s) return "—"; return s.holder ? "tab " + String(s.holder).slice(0,8) + (s.stale ? " (stale)" : "") + " · " + (s.tabs||0) + " tab(s)" : "none · " + (s.tabs||0) + " tab(s)"; }
 
 // EVERYTHING THE CARDS SHOW AT THE CURSOR, resolved once: the last full state snapshot at or before `absT`
-// (wind, sea, water, current, comms, ROCs, supervisor), the page's own card data (client:* records) at or
-// before it, the traffic snapshot if it is recent enough to still be the traffic (AIS_STALE_S), and the
-// History rows up to it, newest first. Pure - applyAt writes it to the DOM and render draws from it.
+// (comms, supervisor, autonomy), the environment (envAt: the `env` stream, or an old log's snapshots), the page's own
+// card data (client:* records) at or before it, every sensor's targets (targetsAt) - `ais` the AIS sensor's in the
+// shape the card always had, null once its last record is too old to be the traffic - the guard's model and the
+// episode it was in, and the History rows up to it, newest first. Pure - applyAt writes it to the DOM and render draws
+// from it; asked twice per frame for one cursor, it answers the second time from PB.memo.
 const AIS_STALE_S = 60;
 function cardsAt(absT){
+  if(PB.memo && PB.memo.t === absT) return PB.memo.c;
   const s = lastStateAt(absT) || null;
-  const st = (s && s.status) || {};
-  const pick = k => { const r = lastBefore(CLIENT[k], absT); return r ? r.e : null; };
+  const pickR = k => lastBefore(CLIENT[k], absT);
+  const pick = k => { const r = pickR(k); return r ? r.e : null; };
   // the LINES card: the tick (`lines`, every 30 s while running) or the run-end table (`survey_lines`), whichever
   // is the later at the cursor - the run-end table carries the final actuals
   const lt = lastBefore(CLIENT.lines, absT), ls = lastBefore(CLIENT.survey_lines, absT);
   const linesRec = (lt && ls) ? (ls.t >= lt.t ? ls : lt) : (lt || ls);
   const nogo = pick("nogo"), guard = pick("guard"), lines = linesRec ? linesRec.e : null, act = pick("activity");
-  const ais = lastBefore(AIS, absT);
-  const hist = (CLIENT.history || []).filter(r => r.t <= absT).slice(-20).reverse().map(r => ({t: r.t, what: r.e.what, text: r.e.text}));
-  return {
-    wind: fmtWind(s && s.env), sea: fmtSea(s && s.env), set: fmtSet(st), current: fmtCurrent(s && s.current),
-    water: fmtWater(s && s.water), comms: fmtComms(s && s.comms), super: fmtSuper(s && s.supervisor),
+  const H = CLIENT.history || [], hi = idxAt(H, absT);
+  const hist = H.slice(Math.max(0, hi - 19), hi + 1).reverse().map(r => ({t: r.t, what: r.e.what, text: r.e.text}));
+  const env = envAt(absT), sr = setAt(absT);
+  const targets = targetsAt(absT);
+  const sAis = targets.find(x => x.sensor === "ais"), sRoc = targets.find(x => x.sensor === "roc");
+  const ep = episodeAt(absT);
+  const gl = pick("guard_level");
+  const c = {
+    wind: fmtWind(env.env), sea: fmtSea(env.env),
+    set: fmtSet(sr ? {env_set_kn: sr.kn, env_set_deg: sr.deg, crab_deg: sr.crab} : (s && s.status) || {}),
+    current: fmtCurrent(env.current), water: fmtWater(env.water), comms: fmtComms(s && s.comms), super: fmtSuper(s && s.supervisor),
     nogo: nogo ? (nogo.text || "—") : "—", nogoCls: nogo ? (nogo.cls || "") : "",
     runtime: lines && lines.runtime ? lines.runtime : "—", survey: lines && lines.survey ? lines.survey : "—",
     approach: lines && lines.approach ? lines.approach : "—",
     intent: act ? (String(act.activity || "").toUpperCase() + (act.detail ? " — " + act.detail : "")) : "",
     guard: guard && guard.shown ? (guard.text || "") : "", guardCls: guard && guard.shown ? (guard.cls || "") : "",
+    glevel: gl ? fmtGuardLevel(gl) : "—", glevelCls: gl ? String(gl.level || "") : "",
     lines: lines && Array.isArray(lines.lines) ? lines.lines : [], turns: lines && Array.isArray(lines.turns) ? lines.turns : [],
     transits: lines && Array.isArray(lines.transits) ? lines.transits : [],
-    ais: (ais && (absT - ais.t) <= AIS_STALE_S) ? (ais.vessels || []) : null,
-    roc: (s && s.roc && Array.isArray(s.roc.rocs)) ? s.roc.rocs.filter(r => r && r.lat!=null && r.lon!=null) : [],
+    ais: sAis && !sAis.stale ? sAis.contacts.map(tgtAsAis) : null,
+    roc: sRoc && !sRoc.stale ? sRoc.contacts.map(tgtAsRoc) : [],
+    targets,
+    episode: ep, avoided: avoidedIn(ep, targets),
+    ko: {ais_model: pickR("ais_model"), chart_ink: pickR("chart_ink"), model: pickR("model")},
+    envCard: {from: env.from, wind: envWind(env.env), sea: envSea(env.env), set: envSet(sr), forcing: envForcing(absT),
+              current: envCurrent(env.current), water: envWater(env.water), density: envDensity(env.density),
+              buoys: envBuoys(env.buoys, absT)},
+    rose: roseAt(env, sr), stations: stationsAt(env),
     history: hist,
   };
+  PB.memo = {t: absT, c};
+  return c;
 }
 
 function updateMeta(name){
   $("#p_mode").textContent = window._mode || "—";
   $("#p_dur").textContent = fmtDur(DUR);
+  // operator commands only: the /api/logevent copies an older recording holds are not commands (parseSession)
   $("#p_cmds").textContent = MARKS.filter(m=>m.cls.startsWith("cmd")).length;
   $("#p_fixes").textContent = FIXES.length;
   $("#ev_count").textContent = MARKS.length + " events";
@@ -439,6 +1484,8 @@ function fitToData(){
 }
 
 // ---- resolve state at the playback cursor --------------------------------- //
+// The boat at the cursor: the fix before it with every field the Vessel card reads, its position (and speed) carried
+// along the straight line to the next. Binary search.
 function fixAt(absT){
   if(!FIXES.length) return null;
   if(absT <= FIXES[0].t) return FIXES[0];
@@ -446,34 +1493,17 @@ function fixAt(absT){
   let lo=0, hi=FIXES.length-1;
   while(hi-lo>1){ const mid=(lo+hi)>>1; if(FIXES[mid].t<=absT) lo=mid; else hi=mid; }
   const a=FIXES[lo], b=FIXES[hi], f=(absT-a.t)/Math.max(1e-6,(b.t-a.t));
-  return {t:absT, lat:a.lat+(b.lat-a.lat)*f, lon:a.lon+(b.lon-a.lon)*f,
-          hdg:a.hdg, sog:(a.sog!=null&&b.sog!=null)? a.sog+(b.sog-a.sog)*f : a.sog,
-          batt:a.batt, batt_pct:a.batt_pct, batt_state:a.batt_state};
+  return Object.assign({}, a, {t:absT, lat:a.lat+(b.lat-a.lat)*f, lon:a.lon+(b.lon-a.lon)*f,
+          sog:(a.sog!=null&&b.sog!=null)? a.sog+(b.sog-a.sog)*f : a.sog});
 }
-function lastStateAt(absT){
-  let s=null; for(const st of STATES){ if(st.t<=absT) s=st; else break; } return s;
-}
-function trackTo(absT){
-  const out=[]; for(const f of FIXES){ if(f.t<=absT) out.push(f); else break; } return out;
-}
-// planned overlays reconstructed from command bodies up to the cursor
-function planAt(absT){
-  let mission=null, route=null;
-  for(const e of EVENTS){
-    if((e.t||0) > absT) break;
-    if(e.kind!=="command" || (e.code&&e.code>=400)) continue;
-    const b = e.body||{};
-    if(e.path==="/api/mission") mission = b;
-    else if(e.path==="/api/cmd/upload" && b.route) route = b.route;
-    else if((e.path==="/api/cmd/goto"||e.path==="/api/cmd/transit"||e.path==="/api/cmd/rth") && b.route) route = b.route;
-    else if(e.path==="/api/cmd/stop"||e.path==="/api/cmd/estop") route = null;
-  }
-  return {mission, route};
-}
+function lastStateAt(absT){ return lastBefore(STATES, absT); }
+// The waypoint at the cursor: the last state, telemetry or incident frame that carried one.
+function wpAt(absT){ const w = lastBefore(PB.wps, absT); return w ? {idx: w.idx != null ? w.idx : 0, tot: w.tot || 0, run: w.run} : {idx: 0, tot: 0, run: null}; }
 
 // ---- draw ----------------------------------------------------------------- //
 function render(){
-  const {w,h} = viewSize(); cv.width=w; cv.height=h;
+  const {w,h} = viewSize();
+  if(cv.width !== w || cv.height !== h){ cv.width = w; cv.height = h; }   // a resize clears and reallocates: only on a change
   const o = originPx(), n = Math.pow(2,zoom);
   const x0=Math.floor(o.x/TILE), x1=Math.floor((o.x+w)/TILE), y0=Math.floor(o.y/TILE), y1=Math.floor((o.y+h)/TILE);
   const want=new Set(), url=TILE_URL(zoom);
@@ -487,12 +1517,24 @@ function render(){
   tilesEl.querySelectorAll("img").forEach(img=>{ if(!want.has(img.dataset.k)) img.remove(); });
 
   ctx.clearRect(0,0,w,h);
+  if(!PB) return;
   const toScreen = (lat,lon)=>{ const p=worldPx(lat,lon,zoom); return {x:p.x-o.x, y:p.y-o.y}; };
   const absT = T0 + pt;
+  const sc = TILE * n;                                              // world px per unit of mercUnit
+  const mpp = 156543.03392 * Math.cos(center.lat*Math.PI/180) / n;  // meters per pixel, as the live chart reckons it
+  const cards = cardsAt(absT);
 
-  // planned survey lines / waypoints / routes (reconstructed from commands)
+  // planned survey lines / waypoints / routes: the plan timeline at the cursor (plansFinish - built once)
   if(showPlan){
-    const {mission, route} = planAt(absT);
+    const plan = planAt(absT), mission = plan.mission, route = plan.route;
+    if(mission && Array.isArray(mission.waypoints) && mission.waypoints.length > 1 && !(route && route.length)){
+      // the plan on disk, not (yet) being flown: faint
+      ctx.beginPath(); mission.waypoints.forEach((p,i)=>{ const q = llOf(p); if(!q) return; const s=toScreen(q.lat,q.lon); i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y); });
+      ctx.setLineDash([2,5]); ctx.strokeStyle="rgba(255,154,60,0.45)"; ctx.lineWidth=1.2; ctx.stroke(); ctx.setLineDash([]);
+    }
+    if(plan.chase){ const s = toScreen(plan.chase.lat, plan.chase.lon);
+      ctx.beginPath(); ctx.arc(s.x, s.y, 7, 0, 2*Math.PI); ctx.setLineDash([3,3]); ctx.strokeStyle="#3fbf6b"; ctx.lineWidth=1.5; ctx.stroke(); ctx.setLineDash([]);
+      ctx.font="10px Consolas,monospace"; ctx.fillStyle="#3fbf6b"; ctx.fillText("RTH chase", s.x+9, s.y+3); }
     if(mission && mission.lines){
       ctx.font="10px Consolas,monospace";
       mission.lines.forEach(L=>{ if(!L.a||!L.b) return; const a=toScreen(L.a.lat,L.a.lon), b=toScreen(L.b.lat,L.b.lon);
@@ -507,7 +1549,7 @@ function render(){
     if(route && route.length){                        // the uploaded / commanded run path
       ctx.beginPath(); route.forEach((p,i)=>{ const s=toScreen(p.lat,p.lon); i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y); });
       ctx.setLineDash([5,4]); ctx.strokeStyle="rgba(63,191,107,0.75)"; ctx.lineWidth=1.6; ctx.stroke(); ctx.setLineDash([]);
-      const wpIdx = window._wpIdx||0;
+      const wpIdx = wpAt(absT).idx - (plan.off || 0);     // the route's own numbering (spliceRoute's `off`)
       ctx.font="10px Consolas,monospace";
       route.forEach((p,i)=>{ const s=toScreen(p.lat,p.lon);
         ctx.beginPath(); ctx.moveTo(s.x,s.y-5); ctx.lineTo(s.x+5,s.y); ctx.lineTo(s.x,s.y+5); ctx.lineTo(s.x-5,s.y); ctx.closePath();
@@ -515,10 +1557,17 @@ function render(){
     }
   }
 
-  // travelled track up to the cursor
-  const trk = showTrack ? trackTo(absT) : [];
-  if(trk.length>1){
-    ctx.beginPath(); trk.forEach((p,i)=>{ const s=toScreen(p.lat,p.lon); i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y); });
+  // what the guard saw: the keep-out model's extent, the chart ink folded in, the AIS keep-outs - behind everything else
+  if(showKo) drawKo(cards, toScreen, o, sc, w, h);
+
+  // traveled track up to the cursor. ⚠ FROM THE INDEX, PROJECTED ONCE (pbFinish's mx/my), a point only where it moves a
+  // pixel and more: a 3 h recording is ~11,000 fixes, and every frame used to copy them into a new array and project each.
+  const hiFix = showTrack ? idxAt(FIXES, absT) : -1;
+  if(hiFix > 0){
+    ctx.beginPath(); let lx = null, ly = null;
+    for(let i = 0; i <= hiFix; i++){ const f = FIXES[i], x = f.mx*sc - o.x, y = f.my*sc - o.y;
+      if(lx !== null && i !== hiFix && Math.abs(x-lx) < 1.5 && Math.abs(y-ly) < 1.5) continue;
+      lx === null ? ctx.moveTo(x,y) : ctx.lineTo(x,y); lx = x; ly = y; }
     ctx.strokeStyle=getCSS("--track"); ctx.lineWidth=2; ctx.globalAlpha=.9; ctx.stroke(); ctx.globalAlpha=1;
   }
 
@@ -529,17 +1578,45 @@ function render(){
     ctx.beginPath(); ctx.arc(h.x,h.y,5,0,2*Math.PI); ctx.fill(); ctx.stroke();
     ctx.fillStyle="#3fbf6b"; ctx.font="bold 11px Consolas,monospace"; ctx.fillText("H", h.x+7, h.y-5); }
 
-  // ROC markers and the traffic the operator saw, at the cursor (2026-09-25)
-  const cards = cardsAt(absT);
-  for(const r of cards.roc){ const p=toScreen(r.lat,r.lon);
-    ctx.fillStyle="#e0b050"; ctx.strokeStyle="#0a141c"; ctx.lineWidth=1.5;
-    ctx.beginPath(); ctx.rect(p.x-5,p.y-5,10,10); ctx.fill(); ctx.stroke();
-    ctx.font="10px Consolas,monospace"; ctx.fillStyle="#e0b050"; ctx.fillText(r.name||r.id||"ROC", p.x+8, p.y-6); }
-  for(const v of (cards.ais||[])){ if(v.lat==null||v.lon==null) continue; const p=toScreen(v.lat,v.lon);
-    const a=((v.cog!=null?v.cog:(v.heading||0))-90)*Math.PI/180;
-    ctx.beginPath(); ctx.moveTo(p.x+Math.cos(a)*8, p.y+Math.sin(a)*8);
-    ctx.lineTo(p.x+Math.cos(a+2.5)*6, p.y+Math.sin(a+2.5)*6); ctx.lineTo(p.x+Math.cos(a-2.5)*6, p.y+Math.sin(a-2.5)*6); ctx.closePath();
-    ctx.fillStyle="rgba(120,190,255,0.85)"; ctx.fill(); ctx.strokeStyle="#0a141c"; ctx.lineWidth=1; ctx.stroke(); }
+  // the stations the environment came from, where the recording says they are
+  if(showEnv) drawStations(cards.stations, toScreen);
+
+  // EVERY SENSOR'S TARGETS at the cursor (2026-11-05), each drawn by the live layer's rules (tgtGlyph), with her trail
+  if(showTgt){
+    ctx.save(); ctx.font="10px Consolas,monospace"; ctx.textBaseline="alphabetic";
+    for(const S of cards.targets){
+      if(S.sensor === "roc") continue;                   // the ROCs below, with their arrival points
+      const sens = PB.tgt[S.sensor];
+      ctx.lineWidth = 1.2;
+      for(const v of S.contacts){ const tr = sens && sens.tracks[v.id]; if(!tr) continue;
+        for(const line of tgtTrail(tr, absT, v)){
+          ctx.beginPath(); line.forEach((p,i)=>{ const s=toScreen(p.lat,p.lon); i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y); });
+          ctx.globalAlpha = 0.45 * (v.old ? 0.6 : 1); ctx.strokeStyle = tgtColor(v.cls); ctx.stroke(); } }
+      ctx.globalAlpha = 1;
+      for(const v of S.contacts) drawTarget(v, toScreen(v.lat, v.lon), mpp);
+    }
+    ctx.globalAlpha = 1;
+    // the ROCs: heading, and where she will take the boat aboard
+    for(const r of cards.roc){ const p=toScreen(r.lat,r.lon);
+      if(r.arrival){ const q = toScreen(r.arrival.lat, r.arrival.lon);
+        ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(q.x,q.y); ctx.setLineDash([2,3]); ctx.strokeStyle="rgba(224,176,80,0.7)"; ctx.lineWidth=1; ctx.stroke(); ctx.setLineDash([]);
+        ctx.beginPath(); ctx.arc(q.x,q.y,4,0,2*Math.PI); ctx.strokeStyle="#e0b050"; ctx.lineWidth=1.5; ctx.stroke(); }
+      if(r.heading!=null && r.heading>=0 && r.heading<360){ const a=r.heading*Math.PI/180;
+        ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(p.x+Math.sin(a)*14, p.y-Math.cos(a)*14); ctx.strokeStyle="#e0b050"; ctx.lineWidth=2; ctx.stroke(); }
+      ctx.fillStyle="#e0b050"; ctx.strokeStyle="#0a141c"; ctx.lineWidth=1.5;
+      ctx.beginPath(); ctx.rect(p.x-5,p.y-5,10,10); ctx.fill(); ctx.stroke();
+      ctx.font="10px Consolas,monospace"; ctx.fillStyle="#e0b050"; ctx.fillText(r.name||r.id||"ROC", p.x+8, p.y-6); }
+    ctx.restore();
+  }
+
+  // the contact the open avoidance episode names: ringed, named
+  if(showKo && cards.episode){
+    ctx.save(); ctx.font="bold 10px Consolas,monospace"; ctx.strokeStyle="rgba(255,90,80,0.95)"; ctx.fillStyle="rgba(255,150,130,0.95)";
+    if(cards.avoided){ const p = toScreen(cards.avoided.lat, cards.avoided.lon);
+      ctx.beginPath(); ctx.arc(p.x, p.y, 18, 0, 2*Math.PI); ctx.lineWidth=2; ctx.setLineDash([5,3]); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillText("AVOIDING " + (cards.avoided.name || cards.avoided.id), p.x+20, p.y-14); }
+    ctx.restore();
+  }
   // boat marker (interpolated)
   const boat = fixAt(absT);
   if(boat){ const s=toScreen(boat.lat,boat.lon);
@@ -548,8 +1625,224 @@ function render(){
       ctx.strokeStyle=getCSS("--asv"); ctx.lineWidth=2; ctx.stroke(); }
     ctx.beginPath(); ctx.arc(s.x,s.y,6,0,2*Math.PI); ctx.fillStyle=getCSS("--asv"); ctx.fill();
     ctx.lineWidth=2; ctx.strokeStyle="#160d02"; ctx.stroke();
+    if(showEnv) drawRose(s, cards.rose);
     if(follow) { center={lat:boat.lat,lon:boat.lon}; }
   }
+  stripDraw();
+}
+
+// ---- the drawing helpers (2026-11-05) ------------------------------------- //
+// ⚠ THE LIVE CHART'S OWN SHAPES (asv.html glyphOutline / drawHullToScale / drawHullDisc / drawVesselGlyph), so a contact
+// in the replay looks like the contact on the live chart: the same glyph, the same raked hull about her antenna, the same
+// dashed disc for a ship that has not said which way she lies.
+function glyphOutline(fill){
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(fill || "").trim());
+  if(!m) return "#160d02";
+  const n = parseInt(m[1], 16);
+  const lum = (0.2126*((n>>16)&255) + 0.7152*((n>>8)&255) + 0.0722*(n&255)) / 255;
+  return lum < 0.35 ? "rgba(226,240,252,0.92)" : "#160d02";
+}
+function drawHullToScale(g, x, y, course, col, box, mpp){
+  const F = box.toBowM/mpp, A = box.toSternM/mpp, P = box.toPortM/mpp, S = box.toStbdM/mpp;
+  const bow = Math.min(F * 0.35, (P + S) * 0.8);
+  g.save(); g.translate(x, y); g.rotate((course || 0) * Math.PI/180);
+  g.beginPath(); g.moveTo(0, -F); g.lineTo(S, -F + bow); g.lineTo(S, A); g.lineTo(-P, A); g.lineTo(-P, -F + bow); g.closePath();
+  g.fillStyle = col; g.globalAlpha = g.globalAlpha * 0.55; g.fill(); g.globalAlpha = g.globalAlpha / 0.55;
+  g.lineWidth = 1.2; g.strokeStyle = col; g.stroke();
+  g.beginPath(); g.arc(0, 0, 1.6, 0, Math.PI*2); g.fillStyle = glyphOutline(col); g.fill();
+  g.restore();
+}
+function drawHullDisc(g, x, y, col, rPx){
+  g.save(); g.translate(x, y);
+  g.beginPath(); g.arc(0, 0, Math.max(3, rPx), 0, Math.PI*2);
+  g.fillStyle = col; g.globalAlpha = g.globalAlpha * 0.3; g.fill(); g.globalAlpha = g.globalAlpha / 0.3;
+  g.setLineDash([4, 3]); g.lineWidth = 1.2; g.strokeStyle = col; g.stroke(); g.setLineDash([]);
+  g.beginPath(); g.arc(0, 0, 1.6, 0, Math.PI*2); g.fillStyle = glyphOutline(col); g.fill();
+  g.restore();
+}
+function drawVesselGlyph(g, x, y, course, c1, scale){
+  const k = scale || 1, F = GLYPH_FWD*k, A = GLYPH_AFT*k, W = GLYPH_HALF*k;
+  g.save(); g.translate(x, y); g.rotate((course || 0) * Math.PI/180);
+  g.beginPath(); g.moveTo(0, -F); g.lineTo(W, A); g.lineTo(-W, A); g.closePath();
+  g.fillStyle = c1; g.fill();
+  g.lineWidth = 1.6 * Math.max(0.7, k); g.strokeStyle = glyphOutline(c1); g.stroke();
+  g.restore();
+}
+function drawTarget(v, s, mpp){
+  const g = tgtGlyph(v, mpp, zoom);
+  ctx.save(); ctx.globalAlpha = g.alpha;
+  if(g.shape === "disc") drawHullDisc(ctx, s.x, s.y, g.col, g.rPx);
+  else if(g.shape === "hull") drawHullToScale(ctx, s.x, s.y, g.dir, g.col, g.box, mpp);
+  else drawVesselGlyph(ctx, s.x, s.y, g.dir, g.col, g.scale);
+  if(g.stalk){ ctx.save(); ctx.translate(s.x, s.y); ctx.rotate(g.stalk.cog * Math.PI/180);
+    ctx.beginPath(); ctx.moveTo(0, -g.stalk.fromPx); ctx.lineTo(0, -g.stalk.fromPx - g.stalk.lenPx);
+    ctx.strokeStyle = g.col; ctx.lineWidth = 1.5; ctx.stroke(); ctx.restore(); }
+  if(g.label){ ctx.fillStyle = v.old ? "rgba(200,215,225,0.5)" : "#c8dbe6"; ctx.font = "10px Consolas,monospace"; ctx.fillText(g.label, s.x+8, s.y+3); }
+  ctx.restore();
+}
+// A record's lat/lon pairs projected ONCE (to zoom-0 Web Mercator), kept on the record: the chart ink can be thousands of
+// segments, and every frame would project each again.
+function inkMerc(r){
+  if(r._merc) return r._merc;
+  const e = r.e || {}, L = Array.isArray(e.lines) ? e.lines : [], A = Array.isArray(e.areas) ? e.areas : [];
+  const lines = new Float64Array(L.length * 4);
+  L.forEach((s, i) => { if(!Array.isArray(s) || s.length < 4) { lines[i*4] = NaN; return; }
+    const a = mercUnit(+s[0], +s[1]), b = mercUnit(+s[2], +s[3]); lines[i*4] = a.x; lines[i*4+1] = a.y; lines[i*4+2] = b.x; lines[i*4+3] = b.y; });
+  const areas = A.filter(ring => Array.isArray(ring) && ring.length > 2).map(ring => ring.map(p => mercUnit(+p[0], +p[1])));
+  return (r._merc = {lines, areas});
+}
+function drawKo(cards, toScreen, o, sc, w, h){
+  const K = cards.ko;
+  ctx.save();
+  const m = K.model && K.model.e;
+  if(m && Array.isArray(m.bbox) && m.bbox.length === 4){   // the keep-out model's extent [W, S, E, N]
+    const a = toScreen(+m.bbox[3], +m.bbox[0]), b = toScreen(+m.bbox[1], +m.bbox[2]);
+    ctx.setLineDash([3,5]); ctx.strokeStyle="rgba(217,83,79,0.35)"; ctx.lineWidth=1; ctx.strokeRect(a.x, a.y, b.x-a.x, b.y-a.y); ctx.setLineDash([]); }
+  if(K.chart_ink){                                        // the chart ink the guard folded into its model
+    const M = inkMerc(K.chart_ink);
+    ctx.fillStyle="rgba(217,83,79,0.10)";
+    for(const ring of M.areas){ ctx.beginPath(); ring.forEach((p,i)=>{ const x=p.x*sc-o.x, y=p.y*sc-o.y; i?ctx.lineTo(x,y):ctx.moveTo(x,y); }); ctx.closePath(); ctx.fill(); }
+    ctx.beginPath();
+    const Ls = M.lines;
+    for(let i = 0; i < Ls.length; i += 4){
+      if(Ls[i] !== Ls[i]) continue;                         // NaN: an unreadable segment
+      const ax = Ls[i]*sc-o.x, ay = Ls[i+1]*sc-o.y, bx = Ls[i+2]*sc-o.x, by = Ls[i+3]*sc-o.y;
+      if((ax < 0 && bx < 0) || (ax > w && bx > w) || (ay < 0 && by < 0) || (ay > h && by > h)) continue;   // off screen
+      ctx.moveTo(ax, ay); ctx.lineTo(bx, by); }
+    ctx.strokeStyle="rgba(217,83,79,0.6)"; ctx.lineWidth=1; ctx.stroke();
+  }
+  const am = K.ais_model && K.ais_model.e;                // the AIS keep-outs the guard steered by
+  if(am && Array.isArray(am.contacts)){
+    ctx.font="10px Consolas,monospace";
+    for(const q of am.contacts){ if(!Array.isArray(q.ring) || q.ring.length < 3) continue;
+      ctx.beginPath(); q.ring.forEach((p,i)=>{ const s=toScreen(+p[0], +p[1]); i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y); }); ctx.closePath();
+      ctx.fillStyle = q.moving ? "rgba(217,83,79,0.08)" : "rgba(217,83,79,0.12)"; ctx.fill();
+      ctx.setLineDash(q.moving ? [6,4] : []); ctx.strokeStyle = q.in_reach ? "rgba(255,90,80,0.95)" : "rgba(217,83,79,0.7)"; ctx.lineWidth = q.in_reach ? 2 : 1.3; ctx.stroke(); ctx.setLineDash([]);
+      // ⚠ UNDER THE RING, AND WITHOUT THE NAME: the contact's own glyph prints her name at her position, and this label
+      // at the ring's first point sat on top of it - two names over each other, neither readable (the first live look)
+      if(zoom >= 13 && q.kind){
+        let minX = Infinity, maxY = -Infinity;
+        for(const p of q.ring){ const s = toScreen(+p[0], +p[1]); if(s.x < minX) minX = s.x; if(s.y > maxY) maxY = s.y; }
+        const what = String(q.kind).replace(/^AIS: /, "").replace(/^[^(]*(?=\()/, "");   // "(40 x 9 m)": the box she was given
+        ctx.fillStyle="rgba(255,150,130,0.95)";
+        ctx.fillText("keep-out " + what + (numOr(q.margin_m) != null ? " · " + Math.round(+q.margin_m) + " m margin" : "")
+                     + (q.in_reach ? " · IN REACH" : ""), minX, maxY + 11); } }
+  }
+  ctx.restore();
+}
+function drawStations(list, toScreen){
+  if(!list || !list.length) return;
+  ctx.save(); ctx.font="10px Consolas,monospace"; ctx.lineWidth=1.2;
+  for(const s of list){ const p = toScreen(s.lat, s.lon);
+    ctx.strokeStyle = s.kind === "buoy" ? "#f0c14a" : s.kind === "water" ? "#58c0b0" : "#4a90d9";
+    ctx.beginPath();
+    if(s.kind === "buoy"){ ctx.moveTo(p.x, p.y-6); ctx.lineTo(p.x+5, p.y+4); ctx.lineTo(p.x-5, p.y+4); ctx.closePath(); }
+    else if(s.kind === "water") ctx.rect(p.x-4, p.y-4, 8, 8);
+    else { ctx.moveTo(p.x, p.y-5); ctx.lineTo(p.x+5, p.y); ctx.lineTo(p.x, p.y+5); ctx.lineTo(p.x-5, p.y); ctx.closePath(); }
+    ctx.stroke();
+    if(zoom >= 11){ ctx.fillStyle = ctx.strokeStyle; ctx.fillText(String(s.name || s.id || "").slice(0, 24), p.x+7, p.y+3); } }
+  ctx.restore();
+}
+// The rose at the boat: the wind as a needle FROM where it blows, the current and the set applied as arrows TOWARD where
+// they push her, the sea as a tick from where it runs.
+function drawRose(s, rose){
+  if(!rose) return;
+  ctx.save(); ctx.font="10px Consolas,monospace"; ctx.lineWidth=2;
+  const ray = (deg, len, col, txt, head) => {
+    const a = deg*Math.PI/180, ex = s.x + Math.sin(a)*len, ey = s.y - Math.cos(a)*len;
+    ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(ex, ey); ctx.strokeStyle = col; ctx.stroke();
+    if(head){ ctx.beginPath(); ctx.moveTo(ex, ey);
+      ctx.lineTo(ex - Math.sin(a-0.45)*7, ey + Math.cos(a-0.45)*7); ctx.lineTo(ex - Math.sin(a+0.45)*7, ey + Math.cos(a+0.45)*7); ctx.closePath(); ctx.fillStyle = col; ctx.fill(); }
+    else { ctx.beginPath(); ctx.arc(ex, ey, 2.5, 0, 2*Math.PI); ctx.fillStyle = col; ctx.fill(); }
+    ctx.fillStyle = col; ctx.fillText(txt, ex + 4, ey - 2);
+  };
+  if(rose.wind) ray(rose.wind.from, 22 + Math.min(30, rose.wind.kn * 1.5), "rgba(220,230,240,0.85)", "wind " + n2(rose.wind.kn, 0) + " kn", false);
+  if(rose.sea) ray(rose.sea.from, 18, "rgba(150,170,255,0.75)", rose.sea.hs != null ? "sea " + n2(rose.sea.hs, 1) + " m" : "sea", false);
+  if(rose.current) ray(rose.current.to, 20 + Math.min(40, rose.current.kn * 25), "rgba(80,200,255,0.9)", "current " + n2(rose.current.kn, 2) + " kn", true);
+  if(rose.set) ray(rose.set.to, 20 + Math.min(40, rose.set.kn * 25), "rgba(255,170,60,0.9)", "set " + n2(rose.set.kn, 2) + " kn", true);
+  ctx.restore();
+}
+
+// ---- the ENV strip (2026-11-05) ------------------------------------------- //
+// ⚠ DRAWN ONCE, BLITTED PER FRAME. The series are the whole recording (the set alone is the 1 Hz trace - ~11,000 points
+// in 3 h); stripBuild paints them into an offscreen canvas on load and on a resize, and stripDraw copies it and adds the
+// cursor line, so a frame costs the same at minute one as at hour three.
+function stripShow(){
+  const on = showEnv && stripHas(), el = $("#envstrip");
+  if(!el) return;
+  el.classList.toggle("hidden", !on); document.body.classList.toggle("strip", on);
+  if(on) stripBuild();
+}
+// ⚠ ON THE SCRUBBER'S TIME AXIS: the strip sits right above it, and on its own full-width axis the cursor line stood
+// 240 px from the scrubber's thumb at the same instant (the first live look). The thumb's center runs from 7 px inside
+// the range input's left edge to 7 px inside its right. MEASURED EVERY DRAW (review 2026-11-05): the scrubber is flex:1,
+// so the clock text beside it sets its width - read once at load, before the first frame wrote the clock, the cursor
+// line ran 250 px ahead of the thumb at the end of the recording.
+function stripAxis(el, W){
+  let L = 4, R = W - 4;
+  const sc = $("#scrub");
+  if(sc && typeof sc.getBoundingClientRect === "function" && typeof el.getBoundingClientRect === "function"){
+    const sr = sc.getBoundingClientRect(), er = el.getBoundingClientRect();
+    if(sr.width > 40 && er.width > 40){ L = Math.max(4, sr.left - er.left + 7); R = Math.min(W - 4, sr.right - er.left - 7); }
+    if(!(R - L > 20)){ L = 4; R = W - 4; }
+  }
+  return [L, R];
+}
+function stripBuild(){
+  const el = $("#envstrip");
+  if(!el || !PB || el.classList.contains("hidden")) return;
+  const W = Math.max(60, el.clientWidth || 600), Hh = Math.max(30, el.clientHeight || 74);
+  el.width = W; el.height = Hh;
+  const off = document.createElement("canvas"); off.width = W; off.height = Hh;
+  const [L, R] = stripAxis(el, W);
+  PB.stripLR = [L, R];
+  const g = off.getContext("2d"), S = PB.strip, top = 12, bot = Hh - 4;
+  const X = (t) => L + (t - T0) / DUR * (R - L);
+  g.fillStyle = "rgba(10,20,28,0.78)"; g.fillRect(0, 0, W, Hh);
+  // THREE SCALES: the wind's knots, the water's knots, and meters. On one knot axis an 11 kn wind pressed a 0.6 kn set
+  // and a 0.1 kn current flat against the floor of the strip (the first live look).
+  let knMax = 1, wMax = 0.2;
+  for(const k of ["wind", "gust"]) for(const p of S[k]) if(p[1] != null && p[1] > knMax) knMax = p[1];
+  for(const k of ["set", "cur"]) for(const p of S[k]) if(p[1] != null && p[1] > wMax) wMax = p[1];
+  let mLo = Infinity, mHi = -Infinity;
+  for(const k of ["hs", "water"]) for(const p of S[k]){ if(p[1] == null) continue; if(p[1] < mLo) mLo = p[1]; if(p[1] > mHi) mHi = p[1]; }
+  if(!(mHi > mLo)){ mLo = Math.min(0, mLo < Infinity ? mLo : 0); mHi = Math.max(1, mHi > -Infinity ? mHi : 1); }
+  const Ykn = (v) => bot - v / knMax * (bot - top), Yw = (v) => bot - v / wMax * (bot - top),
+        Ym = (v) => bot - (v - mLo) / (mHi - mLo) * (bot - top);
+  const series = [["wind", Ykn, "rgba(220,230,240,0.9)"], ["gust", Ykn, "rgba(220,230,240,0.45)"], ["set", Yw, "rgba(255,170,60,0.9)"],
+                  ["cur", Yw, "rgba(80,200,255,0.9)"], ["hs", Ym, "rgba(150,170,255,0.9)"], ["water", Ym, "rgba(88,192,176,0.9)"]];
+  g.lineWidth = 1.2;
+  for(const [k, Y, col] of series){
+    const P = S[k]; if(P.length < 1) continue;
+    g.beginPath(); let lx = null, ly = null;
+    for(let i = 0; i < P.length; i++){ const x = X(P[i][0]);
+      if(P[i][1] == null){ if(lx !== null){ g.lineTo(x, ly); lx = ly = null; } continue; }   // a gap: the step ends here
+      const y = Y(P[i][1]);
+      if(lx === null) g.moveTo(x, y);
+      else { if(Math.abs(x - lx) < 0.5 && i < P.length - 1) { continue; } g.lineTo(x, ly); g.lineTo(x, y); }   // a step: a value holds until the next
+      lx = x; ly = y; }
+    if(lx !== null) g.lineTo(R, ly);
+    g.strokeStyle = col; g.stroke();
+  }
+  g.font = "10px Consolas,monospace"; let tx = 6;
+  for(const [k, , col] of series){ if(!S[k].length) continue; const lab = {wind: "wind", gust: "gust", set: "set", cur: "current", hs: "Hs", water: "water lvl"}[k];
+    g.fillStyle = col; g.fillText(lab, tx, 10); tx += g.measureText(lab).width + 10; }
+  g.fillStyle = "rgba(200,215,225,0.7)";
+  g.fillText("wind 0-" + n2(knMax, 1) + " kn · set/current 0-" + n2(wMax, 2) + " kn"
+             + ((S.hs.length || S.water.length) ? " · " + n2(mLo, 2) + " to " + n2(mHi, 2) + " m" : ""), tx + 6, 10);
+  PB.stripImg = off;
+  stripDraw();
+}
+function stripDraw(){
+  const el = $("#envstrip");
+  if(!el || !PB || !PB.stripImg || el.classList.contains("hidden")) return;
+  const [L, R] = stripAxis(el, el.width);
+  const was = PB.stripLR || [L, R];
+  if(Math.abs(was[0] - L) > 1 || Math.abs(was[1] - R) > 1){ stripBuild(); return; }   // the axis moved: draw it again
+  const g = el.getContext("2d");
+  g.clearRect(0, 0, el.width, el.height); g.drawImage(PB.stripImg, 0, 0);
+  const x = L + pt / DUR * (R - L);
+  g.beginPath(); g.moveTo(x, 0); g.lineTo(x, el.height); g.strokeStyle = "#ffcf3f"; g.lineWidth = 1.5; g.stroke();
 }
 
 // ---- apply state to the readouts + timeline ------------------------------- //
@@ -557,26 +1850,24 @@ function applyAt(ptv){
   pt = Math.max(0, Math.min(DUR, ptv));
   const absT = T0 + pt;
   const boat = fixAt(absT), s = lastStateAt(absT);
-  // wp index: latest telemetry/state carrying wp_index
-  let wpIdx=0, wpTot=0, run=null;
-  for(const e of EVENTS){ if((e.t||0)>absT) break;
-    if(e.kind==="state"){ const st=e.state||{}; if(st.wp_index!=null) wpIdx=st.wp_index; if(st.wp_total!=null) wpTot=st.wp_total; if(st.run) run=st.run; }
-    else if(e.kind==="telemetry"){ if(e.wp_index!=null) wpIdx=e.wp_index; if(e.run) run=e.run; } }
-  window._wpIdx = wpIdx;
+  // the waypoint at the cursor: an index built once (PB.wps), not a walk of every record up to it each frame
+  const wp = wpAt(absT);
+  window._wpIdx = wp.idx;
 
   $("#v_clock").textContent = boat? "@ "+fmtDur(pt) : "";
   $("#v_pos").textContent = boat? fmtLL(boat.lat, boat.lon) : "—";
   $("#v_hdg").textContent = (boat&&boat.hdg!=null)? boat.hdg.toFixed(0)+"°" : "—";
+  $("#v_cog").textContent = (boat&&boat.cog!=null)? dirTxt(boat.cog) : "—";
   $("#v_sog").textContent = (boat&&boat.sog!=null)? boat.sog.toFixed(2)+" kn" : "—";
-  const bel=$("#v_batt");
-  if(boat&&boat.batt!=null){ bel.textContent = boat.batt.toFixed(1)+" V"+(boat.batt_pct!=null?" ("+boat.batt_pct+"%)":"");
-    bel.className="v "+(boat.batt_state==="critical"?"bad":boat.batt_state==="warn"?"warn":"ok"); }
-  else { bel.textContent="—"; bel.className="v"; }
+  $("#v_spd").textContent = speedTxt(boat);
+  const en = energyTxt(boat), bel=$("#v_batt"); bel.textContent = en.text; bel.className = "v " + en.cls;
+  $("#v_att").textContent = attTxt(boat);
+  $("#v_hold").textContent = holdTxt(boat);
   const auto = s? (s.autonomy||"—") : "—";
   const ael=$("#v_auto"); ael.textContent=auto.toUpperCase();
   ael.className="v "+(auto==="auto"||auto==="hold"?"auto":auto==="e-stop"||auto==="failsafe"?"bad":auto==="armed"?"warn":auto==="safe"?"ok":"");
   $("#v_beh").textContent = s? [s.behavior,s.completion].filter(Boolean).join(" · ").toUpperCase() : "—";
-  $("#v_wp").textContent = wpTot? `${wpIdx} / ${wpTot}` : "—";
+  $("#v_wp").textContent = wp.tot? `${wp.idx} / ${wp.tot}` : "—";
   $("#v_note").textContent = s? (s.note||"") : "";
   const c = cardsAt(absT);
   $("#m_wind").textContent = c.wind; $("#m_sea").textContent = c.sea; $("#m_set").textContent = c.set;
@@ -584,21 +1875,144 @@ function applyAt(ptv){
   const ng = $("#m_nogo"); ng.textContent = c.nogo; ng.className = "v " + (c.nogoCls === "warn" ? "warn" : "");
   $("#m_comms").textContent = c.comms; $("#m_runtime").textContent = c.runtime;
   $("#m_survey").textContent = c.survey; $("#m_approach").textContent = c.approach; $("#m_super").textContent = c.super;
+  const gl = $("#m_glevel"); gl.textContent = c.glevel;
+  gl.className = "v wrap " + (/^(clear|)$/i.test(c.glevelCls) ? "" : /hold|helm|stop|blind/i.test(c.glevelCls) ? "bad" : "warn");
   $("#m_intent").textContent = c.intent;
   const gb = $("#m_guard"); gb.textContent = c.guard; gb.className = "vnote gb " + String(c.guardCls || "").replace("guardbar","").trim();
+  // the environment, all of it (2026-11-05)
+  const E = c.envCard;
+  $("#e_from").textContent = E.from ? "· " + E.from : "";
+  $("#e_wind").textContent = E.wind; $("#e_sea").textContent = E.sea; $("#e_set").textContent = E.set;
+  $("#e_forcing").textContent = E.forcing; $("#e_current").textContent = E.current; $("#e_water").textContent = E.water;
+  $("#e_density").textContent = E.density;
+  setHtml($("#e_buoys"), E.buoys.length ? E.buoys.map(b=>`<div>${escapeHtml(b.text)}</div>`).join("") : "");
+  // the session: what boat, where, on what build, by whose clock
+  const ss = sessionAt(absT);
+  $("#s_vessel").textContent = ss.vessel; $("#s_port").textContent = ss.port; $("#s_mode").textContent = ss.mode;
+  $("#s_build").textContent = ss.build; $("#s_tz").textContent = ss.tz; $("#s_prev").textContent = ss.prev;
+  runsHighlight(absT);
   $("#l_count").textContent = c.lines.length ? c.lines.length + " line(s)" : "";
-  $("#l_table").innerHTML = (c.lines.length ? "<table>" + c.lines.map((L,i)=>`<tr><td>L${i+1}</td><td>${Math.round(L.len_m||0)} m</td><td>${fmtDur(L.plan_s||0)}</td><td>${L.actual_s? fmtDur(L.actual_s) : "--"}</td></tr>`).join("") + "</table>" : "—")
-    + (c.transits.length ? "<div style=\"margin-top:4px;color:var(--ink-faint)\">transits</div><table>" + c.transits.map(h=>`<tr><td>L${h.from}→L${h.to}</td><td>${Math.round(h.m||0)} m</td><td>${fmtDur(h.plan_s||0)}</td><td>${h.sec? fmtDur(h.sec) : "--"}</td></tr>`).join("") + "</table>" : "");
-  $("#a_count").textContent = c.ais ? c.ais.length + " contact(s)" : "";
-  $("#a_list").innerHTML = c.ais && c.ais.length ? c.ais.slice(0,12).map(v=>`<div>${escapeHtml(v.name||v.mmsi||"?")} · ${v.sog!=null? (+v.sog).toFixed(1)+" kn":"--"} @ ${dirTxt(v.cog)}</div>`).join("") : (c.ais ? "no contacts" : "—");
-  $("#h_list").innerHTML = c.history.length ? c.history.map(h=>`<div><span class="tt">${fmtDur(h.t-T0)}</span>${escapeHtml(h.text||"")}</div>`).join("") : "—";
+  setHtml($("#l_table"), (c.lines.length ? "<table>" + c.lines.map((L,i)=>`<tr><td>L${i+1}</td><td>${Math.round(L.len_m||0)} m</td><td>${fmtDur(L.plan_s||0)}</td><td>${L.actual_s? fmtDur(L.actual_s) : "--"}</td></tr>`).join("") + "</table>" : "—")
+    + (c.transits.length ? "<div style=\"margin-top:4px;color:var(--ink-faint)\">transits</div><table>" + c.transits.map(h=>`<tr><td>L${h.from}→L${h.to}</td><td>${Math.round(h.m||0)} m</td><td>${fmtDur(h.plan_s||0)}</td><td>${h.sec? fmtDur(h.sec) : "--"}</td></tr>`).join("") + "</table>" : ""));
+  // every sensor's contacts, nearest first, with the CPA the live card computes (targets.js cpa, through the bridge)
+  const live = c.targets.filter(S => !S.stale), rows = targetRows(c.targets, boat);
+  $("#a_count").textContent = live.length ? rows.length + " contact(s)" : "";
+  setHtml($("#a_list"), rows.length ? rows.slice(0,12).map(r=>`<div${r.old ? ' style="opacity:.55"' : ""}>${escapeHtml(r.text)}</div>`).join("") : (live.length ? "no contacts" : "—"));
+  $("#a_sensors").textContent = c.targets.map(sensorText).join(" · ");
+  $("#a_notice").textContent = targetNotices(c).join(" · ");
+  setHtml($("#h_list"), c.history.length ? c.history.map(h=>`<div><span class="tt">${fmtDur(h.t-T0)}</span>${escapeHtml(h.text||"")}</div>`).join("") : "—");
 
   $("#t_now").textContent = fmtDur(pt);
-  const wall = boat? new Date((absT)*1000) : (s? new Date(s.t*1000):null);
-  $("#t_wall").textContent = wall? wall.toLocaleTimeString() : "—";
+  // ⚠ THE CONSOLE'S CLOCK AND UTC, LABELED (fmtClock) - toLocaleTimeString printed the VIEWER's zone
+  $("#t_wall").textContent = (boat || s) ? fmtClock(absT, PB.tz) : "—";
   if(!draggingScrub) $("#scrub").value = Math.round(pt*10);
 
   highlightEvents(absT);
+}
+// innerHTML only when it changed: a frame that rewrites the same table re-parses it and drops the reader's text selection
+function setHtml(el, html){ if(el && el._html !== html){ el.innerHTML = html; el._html = html; } }
+// ⚠ ON THE CARD, NOT THE CANVAS (review 2026-11-05): painted at canvas y 20-48 these sat under the opaque top bar (0-43 px
+// wide, 0-102 px narrow) - the page said the traffic record was missing "rather than showing an empty sea", and the
+// operator saw only the empty sea. What the cursor cannot show, said where it is read.
+function targetNotices(c){
+  const out = [];
+  if(c.ais === null && PB && PB.tgt && PB.tgt.ais) out.push("AIS: no traffic record at the cursor");
+  if(c.episode && !c.avoided) out.push("AVOIDING " + String(c.episode.kind || c.episode.why || "").slice(0, 60) + " (not among the contacts held)");
+  const am = c.ko && c.ko.ais_model && c.ko.ais_model.e;
+  if(am && (am.blind || am.stale || am.torn))
+    out.push("AIS model " + [am.blind ? "BLIND" : null, am.stale ? "STALE" : null, am.torn ? "TORN" : null].filter(Boolean).join(" ") + (am.note ? " · " + String(am.note).slice(0, 60) : ""));
+  return out;
+}
+function speedTxt(b){
+  if(!b) return "—";
+  const cmd = b.speed_key ? String(b.speed_key).toUpperCase() + (numOr(b.speed_kn) != null ? " " + n2(b.speed_kn, 1) + " kn" : "")
+            : (numOr(b.speed_kn) != null ? n2(b.speed_kn, 1) + " kn" : null);
+  const made = numOr(b.sog) != null ? n2(b.sog, 2) + " kn" : "--";
+  return (cmd ? "commanded " + cmd + " · " : "") + "made good " + made;
+}
+function stateCls(st){ return st === "critical" ? "bad" : (st === "warn" || st === "low") ? "warn" : "ok"; }
+// ENERGY BY WHAT SHE BURNS (status.energy_type): liters and percent of fuel for a fueled hull, volts and percent for a
+// battery - the card read battery volts for every boat, and a C-Worker's was always "—".
+function energyTxt(b){
+  if(!b) return {text: "—", cls: ""};
+  const fuel = b.etype === "fuel" || (b.etype == null && b.batt == null && (b.fuel_l != null || b.fuel_pct != null));
+  if(fuel){
+    if(b.fuel_l == null && b.fuel_pct == null) return {text: "—", cls: ""};
+    return {text: "fuel " + [b.fuel_l != null ? n2(b.fuel_l, 1) + " L" : null, b.fuel_pct != null ? "(" + n2(b.fuel_pct, 0) + "%)" : null].filter(Boolean).join(" "),
+            cls: stateCls(b.fuel_state)};
+  }
+  if(b.batt == null) return {text: "—", cls: ""};
+  return {text: (+b.batt).toFixed(1) + " V" + (b.batt_pct != null ? " (" + b.batt_pct + "%)" : ""), cls: stateCls(b.batt_state)};
+}
+function attTxt(b){
+  if(!b || (numOr(b.pitch) == null && numOr(b.roll) == null)) return "—";
+  const f = (v) => numOr(v) == null ? "--" : (+v >= 0 ? "+" : "") + (+v).toFixed(1) + "°";
+  return f(b.pitch) + " / " + f(b.roll);
+}
+function holdTxt(b){
+  if(!b) return "—";
+  const off = numOr(b.off_m) != null ? " · " + n2(b.off_m, 1) + " m off station" : "";
+  if(b.holding) return "HOLDING" + off + (numOr(b.hold_clear_m) != null ? " · clear " + Math.round(+b.hold_clear_m) + " m" : "");
+  if(b.drifting) return "DRIFTING" + off;
+  return "—";
+}
+function distM(a, b){
+  const R = 6371008.8, p1 = a.lat*Math.PI/180, p2 = b.lat*Math.PI/180, dp = p2 - p1, dl = (b.lon - a.lon)*Math.PI/180;
+  const h = Math.sin(dp/2)**2 + Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;
+  return 2*R*Math.asin(Math.min(1, Math.sqrt(h)));
+}
+// The Targets card's rows: every contact held at the cursor, nearest the boat first, with her CPA by the live card's own
+// function (targets.js cpa - null when either has no track, and a NEGATIVE tcpa is a closest approach already passed).
+function targetRows(targets, boat){
+  const K = window.PBK, own = boat ? {lat: boat.lat, lon: boat.lon, sog: boat.sog, cog: boat.cog} : null;
+  const out = [];
+  for(const S of targets || []) for(const v of S.contacts){
+    const rangeM = own ? distM(own, v) : null;
+    const q = (own && K && typeof K.cpa === "function") ? K.cpa(own, {lat: v.lat, lon: v.lon, sog: v.sog, cog: v.cog}) : null;
+    // ⚠ A SHIP NOT UNDER WAY IS NEVER WORDED AS GOING ANYWHERE (2026-11-05): a moored ship's course over the ground is
+    // GNSS noise (CMA CGM AMAZON at Pier 300: 0.0 kn, heading 251, course 327.5), so "0.0 kn @ 327°" would name a
+    // direction the drawing beside it refuses. The row asks the same rule the glyph does (tgtMotion): under way, her speed
+    // at her course; not, "not under way" and her heading where she reports one; no speed at all, her heading alone.
+    const mo = v.sog != null ? tgtMotion(tgtAsAis(v)) : null;
+    const how = v.sog == null ? (v.hdg != null ? "hdg " + dirTxt(v.hdg) : "—")
+              : mo.moving ? (+v.sog).toFixed(1) + " kn @ " + dirTxt(v.cog)
+              : (+v.sog).toFixed(1) + " kn · not under way" + (mo.hdg != null ? " · hdg " + dirTxt(mo.hdg) : "");
+    const text = String(v.name || v.id) + (S.sensor !== "ais" ? " [" + S.sensor + "]" : "")
+      + " · " + how
+      + (rangeM != null ? " · " + fmtKm(rangeM) : "")
+      + (q && q.closing && q.tcpaS != null ? " · CPA " + fmtKm(q.cpaM) + " in " + fmtDur(q.tcpaS) : q && !q.closing ? " · opening" : "")
+      + (v.old ? fmtAgeS(v.ageS) : "");
+    out.push({sensor: S.sensor, id: v.id, name: v.name, rangeM, cpa: q, old: v.old, text});
+  }
+  return out.sort((a, b) => (a.rangeM == null ? Infinity : a.rangeM) - (b.rangeM == null ? Infinity : b.rangeM));
+}
+function sensorText(S){
+  const h = S.health && typeof S.health === "object" ? Object.keys(S.health).filter(k => S.health[k] && S.health[k].stalled) : [];
+  return S.sensor + ": " + (S.stale ? (S.age_s != null ? "no record for " + fmtDur(S.age_s) : "none yet") : S.contacts.length + " held")
+       + (S.ok === false && S.note ? " (" + String(S.note).slice(0, 60) + ")" : "") + (h.length ? " · stalled " + h.join(", ") : "");
+}
+
+// ---- the Runs list (2026-11-05) ------------------------------------------- //
+function buildRunList(){
+  const box = $("#r_list"), R = PB.runs;
+  $("#r_count").textContent = R.length ? R.length + " run(s)" : "";
+  box.innerHTML = R.length ? "" : "—";
+  R.forEach((r, i) => {
+    const row = document.createElement("div");
+    row.dataset.i = i;
+    row.innerHTML = `<span class="tt">${fmtDur(Math.max(0, r.t0 - T0))}</span>${escapeHtml(runText(r))}`;
+    row.onclick = () => { stopPlay(); seek(Math.max(0, r.t0 - T0)); noteLink(); };
+    box.appendChild(row);
+  });
+  PB.hl.run = -2;
+}
+function runsHighlight(absT){
+  const i = runIdxAt(absT);
+  if(i === PB.hl.run) return;
+  const rows = $("#r_list").children;
+  if(PB.hl.run >= 0 && rows[PB.hl.run]) rows[PB.hl.run].classList.remove("cur");
+  if(i >= 0 && rows[i]) rows[i].classList.add("cur");
+  PB.hl.run = i;
 }
 
 // ---- event timeline ------------------------------------------------------- //
@@ -607,22 +2021,31 @@ function buildEventList(){
   MARKS.forEach((m,i)=>{
     const row=document.createElement("div");
     row.className="ev "+m.cls; row.dataset.i=i;
-    row.innerHTML = `<span class="tt">${fmtDur((m.t||0)-T0)}</span><span><span class="lab">${m.lab}</span>`+
-      (m.tag? `<span class="tag">${m.tag}</span>`:"")+
+    row.innerHTML = `<span class="tt">${fmtDur((m.t||0)-T0)}</span><span><span class="lab">${escapeHtml(m.lab)}</span>`+
+      (m.tag? `<span class="tag">${escapeHtml(m.tag)}</span>`:"")+
       (m.det? `<div class="det">${escapeHtml(m.det)}</div>`:"")+`</span>`;
-    row.onclick = ()=>{ seek((m.t||0)-T0); stopPlay(); };
+    row.onclick = ()=>{ seek((m.t||0)-T0); stopPlay(); noteLink(); };
     box.appendChild(row);
   });
+  PB.hl.n = -1; PB.hl.past = -1;
 }
+// ⚠ ONLY THE ROWS THAT CHANGED. This toggled two classes on EVERY row of the timeline every frame - a 3 h recording
+// carries thousands - and walked MARKS from the start to find the current one. The current row is a binary search, and
+// a frame touches only the rows between the last cursor and this one (the first paint after a build touches them all).
 function highlightEvents(absT){
-  const rows=$("#evlist").children; let curIdx=-1;
-  for(let i=0;i<MARKS.length;i++){ if((MARKS[i].t||0)<=absT) curIdx=i; else break; }
-  for(let i=0;i<rows.length;i++){
-    rows[i].classList.toggle("past", (MARKS[i].t||0)<=absT);
-    rows[i].classList.toggle("cur", i===curIdx);
-  }
-  if(curIdx>=0 && rows[curIdx] && playing){
-    const r=rows[curIdx], box=$("#evlist");
+  const rows=$("#evlist").children, H = PB.hl, cur = idxAt(MARKS, absT);
+  if(H.n !== rows.length){
+    for(let i=0;i<rows.length;i++){ rows[i].classList.toggle("past", i <= cur); rows[i].classList.toggle("cur", i === cur); }
+    H.n = rows.length;
+  } else if(cur !== H.past){
+    const lo = Math.max(0, Math.min(cur, H.past)), hi = Math.min(rows.length - 1, Math.max(cur, H.past));
+    for(let i=lo;i<=hi;i++) rows[i].classList.toggle("past", i <= cur);
+    if(H.past >= 0 && rows[H.past]) rows[H.past].classList.remove("cur");
+    if(cur >= 0 && rows[cur]) rows[cur].classList.add("cur");
+  } else return;
+  H.past = cur;
+  if(cur>=0 && rows[cur] && playing){
+    const r=rows[cur], box=$("#evlist");
     if(r.offsetTop < box.scrollTop || r.offsetTop > box.scrollTop+box.clientHeight-30)
       box.scrollTop = r.offsetTop - box.clientHeight/2;
   }
@@ -675,29 +2098,45 @@ $("#follow").onclick=()=>{ follow=!follow; $("#follow").classList.toggle("on",fo
 $("#t_track").onclick=()=>{ showTrack=!showTrack; $("#t_track").classList.toggle("on",showTrack); render(); };
 $("#t_plan").onclick=()=>{ showPlan=!showPlan; $("#t_plan").classList.toggle("on",showPlan); render(); };
 $("#t_events").onclick=()=>{ $("#events").classList.toggle("hidden"); $("#t_events").classList.toggle("on", !$("#events").classList.contains("hidden")); };
+$("#t_tgt").onclick=()=>{ showTgt=!showTgt; $("#t_tgt").classList.toggle("on",showTgt); render(); };
+$("#t_ko").onclick=()=>{ showKo=!showKo; $("#t_ko").classList.toggle("on",showKo); render(); };
+$("#t_env").onclick=()=>{ showEnv=!showEnv; $("#t_env").classList.toggle("on",showEnv); stripShow(); render(); };
 
-$("#playpause").onclick=()=>{ playing? stopPlay() : startPlay(); };
-$("#restart").onclick=()=>{ stopPlay(); seek(0); };
+$("#playpause").onclick=()=>{ if(playing){ stopPlay(); noteLink(); } else startPlay(); };
+$("#restart").onclick=()=>{ stopPlay(); seek(0); noteLink(); };
 $("#speed").onchange=e=>{ speed=parseFloat(e.target.value); };
 $("#logpick").onchange=e=>loadLog(e.target.value);
 
 let draggingScrub=false;
 const scrub=$("#scrub");
 scrub.addEventListener("input", ()=>{ draggingScrub=true; seek(scrub.value/10); });
-scrub.addEventListener("change", ()=>{ draggingScrub=false; });
+scrub.addEventListener("change", ()=>{ draggingScrub=false; noteLink(); });
 scrub.addEventListener("mousedown", ()=>{ stopPlay(); });
 
 window.addEventListener("keydown", e=>{
   if(e.target.tagName==="SELECT"||e.target.tagName==="INPUT") return;
-  if(e.code==="Space"){ e.preventDefault(); playing?stopPlay():startPlay(); }
-  else if(e.code==="ArrowRight"){ seek(Math.min(DUR, pt+ (e.shiftKey?10:2))); stopPlay(); }
-  else if(e.code==="ArrowLeft"){ seek(Math.max(0, pt- (e.shiftKey?10:2))); stopPlay(); }
-  else if(e.code==="Home"){ stopPlay(); seek(0); }
-  else if(e.code==="End"){ stopPlay(); seek(DUR); }
+  if(e.code==="Space"){ e.preventDefault(); if(playing){ stopPlay(); noteLink(); } else startPlay(); }
+  else if(e.code==="ArrowRight"){ seek(Math.min(DUR, pt+ (e.shiftKey?10:2))); stopPlay(); noteLink(); }
+  else if(e.code==="ArrowLeft"){ seek(Math.max(0, pt- (e.shiftKey?10:2))); stopPlay(); noteLink(); }
+  else if(e.code==="Home"){ stopPlay(); seek(0); noteLink(); }
+  else if(e.code==="End"){ stopPlay(); seek(DUR); noteLink(); }
 });
-window.addEventListener("resize", render);
+window.addEventListener("resize", ()=>{ stripBuild(); render(); });
+// the module bridge below loads after this script: once it has, redraw with the live page's own pointing rule
+window.pbkReady = ()=>{ if(EVENTS.length){ applyAt(pt); render(); } };
 
 loadList();
+</script>
+<script type="module">
+// ⚠ THE LIVE PAGE'S POINTING RULE AND HULL BOX, NOT A COPY OF THEM (2026-11-05). The classic script above draws every
+// contact through window.PBK when it is here: aisMotion (heading first, course only while under way, else the disc),
+// hullBox / aisDiscM (her size about her antenna) and cpa - the very functions the live chart and guard ask, so a replay
+// cannot point a ship differently from the live chart. Until this loads (or where it cannot), the classic script's
+// documented fallback stands. NO function declarations here: tests/lib/playback_world.js lifts the page's functions.
+import { aisMotion, aisBox, aisDiscM, hullRingEN, aisAgeS } from "/static/js/ais_keepout.js";
+import { cpa, hullBox } from "/static/js/targets.js";
+window.PBK = { aisMotion, aisBox, aisDiscM, hullRingEN, aisAgeS, cpa, hullBox };
+if (typeof window.pbkReady === "function") window.pbkReady();
 </script>
 </body>
 </html>

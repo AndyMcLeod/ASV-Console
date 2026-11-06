@@ -98,7 +98,7 @@ class _Log:                                        # the session recorder's comm
     def __init__(self):
         self.commands = []
 
-    def command(self, path, body, code, error):
+    def command(self, path, body, code, error, **kw):   # client / rx_t / ms: the attribution (mission record, 2026-11-05)
         self.commands.append((path, code, error))
 
     def __getattr__(self, name):                   # every other recorder call is a no-op here

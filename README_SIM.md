@@ -45,11 +45,11 @@ defaults) comes from the active vessel profile, `vessels/<id>.json`; the default
 **DriX H-8 with the EM712 gondola**. The figures quoted in the table below are the
 **Z-Boat 1800 HS**'s (`zboat_1800hs`, ~1.9 m × 0.75 m, battery), unless a row says otherwise.
 
-| Aspect | Behaviour |
+| Aspect | Behavior |
 |---|---|
 | **Position** | Starts at **≈42.1371 N, −80.0874 W** (Presque Isle Bay, Erie PA — operator-set launch point), heading 090°. Integrates lat/lon along heading at the current speed. |
 | **Waypoint autonomy** | **Line-following** (look-ahead LOS ~3 m): the boat tracks the survey/transit line between waypoints (pulling out cross-track error) rather than steering point-to-point, turn rate ≤ **60°/s** (nimble small boat). It advances onto the next leg when it passes the waypoint along-track or comes within the **approach radius** (GUI "Appr m", default ~1 m) — following the line to ~1 m of each turn; applies live to a running sim. Ends per the plan's **completion** mode (stop / loiter / repeat). |
-| **Completion / behaviours** | Station-keeps (holds) at the end of a Go-To / RTH / Hold / Transit / Loiter run; loops on Repeat. On **RTH** (the default) the sim HOLDS at the last waypoint and the console chains the real ENC-routed Return-to-Home — so with no console attached the boat stays safely on station instead of running home on an unrouted straight line. |
+| **Completion / behaviors** | Station-keeps (holds) at the end of a Go-To / RTH / Hold / Transit / Loiter run; loops on Repeat. On **RTH** (the default) the sim HOLDS at the last waypoint and the console chains the real ENC-routed Return-to-Home — so with no console attached the boat stays safely on station instead of running home on an unrouted straight line. |
 | **Speed** | Target set by the plan's speed key — **Low 1.5 kn / Survey 3.0 kn / High 6.0 kn** (manual: survey ≈ 2.8–3.5 kn). Accelerates/decelerates smoothly (≤ 1.5 kn/s) — except a commanded CUT on a hull with a measured slow-down (the DriX's `maneuvering.slowdown`), which is flown in gear: a 3.3 s dead time, then a decay toward her 3.65 kn idle (7 → 4 kn in ~43 m / 15.5 s), the same step the console's corner walk takes (`speed_step_kn` / coast.js `speedStep`). A stop stays on the ramp. |
 | **Arrival radius** | From the plan, clamped 1–50 m (default **2 m**, ~1 boat length). |
 | **Environment** | **Real wind + sea state push the boat off course** (see §2a) — a steady crab plus a gust-driven wander the line-follower steers out. Pitch/roll are driven by the real sea. |
@@ -129,7 +129,7 @@ link (sim or real) only obeys. Order matters:
    obstacles** (the approach from the boat to the first waypoint, and any transit
    between lines). Requires **armed**, no E-STOP, and ≥ 1 waypoint.
 3. **Start** — begins the survey/search run. Requires **armed**, a **plan uploaded**,
-   no E-STOP. **Completion** (command bar) sets the end behaviour: *RTH* (chain the
+   no E-STOP. **Completion** (command bar) sets the end behavior: *RTH* (chain the
    ENC-routed Return-to-Home and station-keep at home — the default), *Complete* (stop),
    *Loiter* (station-keep at the last waypoint), or *Repeat* (loop the route).
    The chain is not a survey feature: a **Go-To** or **Transit** under *RTH* holds at its
@@ -144,7 +144,7 @@ link (sim or real) only obeys. Order matters:
    plainly that this is **not** the true failsafe — the **RC transmitter E-stop /
    Sw A is** (see §6). Release E-STOP to arm again.
 
-**Plan-free behaviours** (armed, no survey plan): **Go-To** (click a point → drive
+**Plan-free behaviors** (armed, no survey plan): **Go-To** (click a point → drive
 there + hold), **Transit** (`TRAN`, draw a line → **Follow**), **Hold** (station-keep
 here), **Return-to-Home** (drive to home + hold; home auto-set at launch or via **Set
 Home**). All are routed clear of the ENC nogo model, or refuse an unreachable target.
@@ -254,7 +254,7 @@ throttle (idle 1.0 L/h, exponent 3) is still a guess.
 5. **Arm → Upload → Start.** Upload routes the transit to the survey clear of
    obstacles (green path). Watch the boat drive the survey, the waypoint counter
    advance (`wp x / N`), the track paint, and the battery drain.
-6. **Try a behaviour:** with the boat Armed, click **Go-To** and pick a point, or
+6. **Try a behavior:** with the boat Armed, click **Go-To** and pick a point, or
    `TRAN` → draw a line → **Follow**, or **RTH** — each drives clear of the nogo and
    station-keeps at the end. No survey plan needed.
 7. **Rehearse safety:** hit **Pause**/**Start**, **Stop**, and **E-STOP**; note how
@@ -286,13 +286,13 @@ Command endpoints: `/api/connect` · `/api/disconnect` · `/api/cmd/arm` ·
 `/api/cmd/upload` · `/api/cmd/start` · `/api/cmd/pause` · `/api/cmd/stop` ·
 `/api/cmd/estop` · `/api/cmd/rth` · `/api/cmd/goto` · `/api/cmd/transit` ·
 `/api/cmd/hold` · `/api/cmd/reapproach` · `/api/cmd/escape` · `/api/cmd/amend` ·
-`/api/cmd/sethome` · `/api/cmd/approach`. The behaviour commands (`goto`/`rth`/`transit`) accept an ENC-aware
+`/api/cmd/sethome` · `/api/cmd/approach`. The behavior commands (`goto`/`rth`/`transit`) accept an ENC-aware
 `{route:[…]}` computed by the browser; `upload` accepts one too. **Every holding command
 also accepts `hold_clear_m`** — the radius round the hold point the browser certified clear
 of the keep-out model. The sim re-approaches DIRECT inside that disc (a chord of a clear
 disc is clear); set beyond it, it takes the way off and reports `hold_wants_route`, and the
 browser answers with `/api/cmd/reapproach {route, hold_clear_m}` — a routed way back that
-keeps the run's behaviour. With no `hold_clear_m` at all (no browser, no model) the direct
+keeps the run's behavior. With no `hold_clear_m` at all (no browser, no model) the direct
 re-approach stays, as a Go-To with no route drives direct. While holding, `status` carries
 `hold` (the point), `off_station_m`, `hold_clear_m` and `hold_wants_route`.
 
@@ -326,7 +326,7 @@ then decays toward her idle speed (`speed_step_kn`), where it used to come down 
 several times faster than the real boat.
 
 **`/api/cmd/amend {route, note}`** DEVIATES A RUNNING PLAN: it replaces the unflown
-remainder and keeps everything else — the flown prefix, the waypoint index, the behaviour,
+remainder and keeps everything else — the flown prefix, the waypoint index, the behavior,
 the run. It exists because every other commanded motion goes through `upload`, which resets
 the index to zero, so the only way to change a running plan was to start it again from
 waypoint one — which is why the clearance guard could only ever slow or stop. `wp_total` may
@@ -430,29 +430,80 @@ curl -s -X POST localhost:8791/api/vessel -d '{"id":"ben_cworker4"}'  # switch (
 
 ---
 
-## 9. Session recording (for a future playback mode)
+## 9. Session recording
 
 Every run — sim **or** real — is recorded to `logs/asv_<timestamp>.jsonl`, an
 append-only, line-delimited JSON event stream created fresh each server launch.
-It captures two interleaved streams in time order, the substrate a later
-**playback** mode will replay:
+The built-in **playback** viewer replays it (see `README_PLAYBACK.md`). Since
+2026-11-05 the file describes the whole mission, not only its motion and its
+commands: which hull, which base, which build, the plan on disk, what the link was
+actually given, each run's start and end, the environment, every sensor's targets,
+and the 4 Hz frames round a safety event.
 
-- **Commands / settings / actions** — one `command` record per POST the console
-  receives (arm, upload, start/pause/stop, E-STOP, goto/hold/rth/transit,
-  sethome, approach, connect/disconnect, mission edits, comms + water-level
-  settings) with its input `body` and HTTP outcome `code` (so a rejected **409**
-  gate is recorded too). Passwords are redacted.
-- **Telemetry / state** — the same snapshots the browser sees over SSE: a full
-  `state` record on every salient transition (armed/run/behavior/link/note/wp…)
-  plus a slim `telemetry` sample (position, heading, COG, SOG, battery) at ~1 Hz
-  in between, so playback can reconstruct the boat's actual track.
+Each line is `{"t": epoch, "iso": "...", "kind": "...", ...}`. `iso` is the
+console's local time with no offset; the `manifest` record names the zone. Because
+it taps the HTTP and Engine layers (not `SimVcu`), the mechanism is identical for
+the sim and a real VCU link. It is best-effort — a logging failure never disturbs
+the C2 path — and line-buffered, so a crash or hard kill still leaves a complete,
+valid file. Every number the console itself writes is finite: a `NaN` line is
+one playback cannot read, and it skips it. A command body and a page post are
+written as they arrived; a browser never sends a `NaN`, but a hand-made POST can.
+`logs/` is gitignored.
 
-Each line is `{"t": epoch, "iso": "...", "kind": "...", ...}`. Because it taps the
-HTTP and Engine layers (not `SimVcu`), the mechanism is identical for the sim and
-a real VCU link. It is best-effort — a logging failure never disturbs the C2 path
-— and line-buffered, so a crash or hard kill still leaves a complete, valid file.
-Lifecycle markers `session_start` / `connect` / `disconnect` / `session_end`
-bracket each boat session. `logs/` is gitignored.
+**What a session writes.**
+
+| Kind | What it is for | When it is written |
+|---|---|---|
+| `session_start`, `manifest`, `port`, `vessel`, `mission` | What this session IS. `manifest`: the build fingerprint and git commit (read from `.git` by file, never by running git), Python and the platform, the console's time zone and UTC offset, the mode, every parsed flag (any whose name reads as a secret left out, a URL's user:password removed), where its state lives (relative to the app, `<app>/...`, or to the home folder, `~/...`: no account name in a shared recording), the AIS and current setup, and `prev`, the recording this one continues (the newest other file of THIS console's port that served, read from its tail: did it end cleanly, was a run under way). `port`: the base's entry, where the sim spawns, the current model in force. `vessel`: the profile, a digest of its file, and what the console derived from it (minimum depth, speed steps, wind and hull areas). `mission`: the plan on disk with its revision and digest, or why it could not be read. | Once, right after `session_start`, in that order. `port` and `vessel` again on every switch; `mission` again after every wake. |
+| `connect` / `disconnect` / `session_end` | Lifecycle markers that bracket each boat session. | As they happen. |
+| `command` | One per POST the console receives (arm, upload, start/pause/stop, E-STOP, goto/hold/rth/transit, amend, re-approach, sethome, approach, connect/disconnect, mission edits, settings) with its input `body` and HTTP outcome `code` (so a rejected **409** gate is recorded too), the tab that sent it (`client`, the first 8 characters of its `X-ASV-Client` header), when it arrived (`rx_t`) and how long it took (`ms`). A body's `password` is masked. The supervisor heartbeat, chart-corridor reads and the page's own event posts are not commands and are not written here. | Every POST. |
+| `mission_saved` | A saved plan's new revision and digest, and how many waypoints, lines and surveys it holds. The body is in the command. | After every successful `/api/mission` save. |
+| `plan_loaded` | What the link was actually GIVEN: the route (to 6 dp, with its digest; a route over 5,000 points by its digest and length only), the arrival and approach radii, the speed, the completion, the hold disc, staged or not, and the `run_seq` in force when it was loaded (an upload is flown by the next run: Start begins it). It covers the routes the console builds itself, which no command body carries: an upload from the saved plan, a hold at her fix, a direct Go-To or RTH, the escape, an amend's splice. An RTH chase's re-target is `behavior: rth_chase`. | On every upload, route and amend; a chase's re-target at most every 10 s. |
+| `run_start` / `run_end` | Each run with a start and an end: `run_id` (`<session>:<run_seq>`), behavior, completion, speed, vessel; at the end the state it reached (or `superseded` by the next commanded motion, or `session_end`), the duration, the distance sailed, the waypoint reached and the energy used. A late frame of an earlier `run_seq` neither ends the run nor opens one again. | When a run begins and when it ends, from the Engine, page or no page. |
+| `state` | A full snapshot of what the browser sees over SSE, less the four environment blocks (the `env` stream carries them). | On every salient transition (armed/run/behavior/link/note/wp…) and at least every 10 s. |
+| `telemetry` | A slim motion sample: position, heading, COG, SOG, the speed key and target, battery or fuel, holding, laps, the set applied (`env_set_kn` / `env_set_deg` and its source), crab, pitch, roll, distance off station, drifting, and in the sim `forcing` (the wind as applied, the leeway and the stream apart, the sea, the water density). A field the link does not report is left out. | ~1 Hz between snapshots. |
+| `env` | The environment: the `env` (wind and sea), `water`, `current` and `density` blocks; each nearby NDBC buoy's own row (wind, gust, sea, pressure, air and water temperature, dew point, visibility, each with its own time); and where the tide and current stations are. Every record carries all four blocks; `changed` names the ones that changed; `full` marks the forced write at start and after a wake. A current recomputed with the same answer writes its block alone (`resampled`) every 60 s, so its age is said again. | On a change of VALUE, looked at no more than once a second. Ages, fetch stamps and page links are not values; a monitor error is. In full at the first snapshot after start and after every wake. |
+| `targets` / `track_info` | Every registered target sensor's picture round the boat, written by the console whether or not a page is open. Built in: `ais` (the AIS service's contacts within the display range — a passage's widened range while a chart page polls with it, and for 30 s after — or the whole lake on a Great Lake, plus any test contacts) and `roc` (the ROC set). `targets` carries the sensor's health, the ids it holds sorted by range from the boat (no cap), the rows that changed (`id`, the report time `obs_t`, lat, lon, sog, cog, hdg, nav; a heading not reported is null, never 0) and who is `gone`. `track_info` carries each track's particulars: name, class, feed, size, and the rest of what the sensor serves. A new sensor is one `register_target_sensor` call. | Each sensor every 10 s. A row when a track first appears, when it moves, when its report is 60 s past the last row, and on a keyframe (every 10 minutes, and the first record after start and after every wake). A sensor holding nothing writes on a change and on a 60 s heartbeat. `track_info` on first sight, on a change, and for every track after a wake. |
+| `incident` | The 4 Hz frames round a safety event, in one record: `cols` names each frame's fields (time, position, heading, COG, SOG, waypoint, run, autonomy, behavior, set, hold, speed, avoiding), `frames` holds the 60 s before and the 30 s after the last trigger inside it (at most 120 s after the first), `triggers` what fired, and `cut` when the log going quiet closed it early. A trigger is an E-STOP, autonomy going to failsafe or e-stop, a telemetry loop fault, a supervisor stand-down, or one of the page's own events: `avoiding`, `ais_avoid`, `ais_around`, `guard_override`, `guard_low`, `hold_disc`, and a `berth_grant` whose guard took the helm. A trigger inside an open window joins it and extends it. After a wake the first frame seeds the edges: a state that arose while quiet fires nothing. | 30 s after the last trigger (at most 120 s after the first); a window still open at session end, or when the log goes quiet, is written as it stands. |
+| `client:<kind>` | What only the page knows, posted to `/api/logevent` and written once, with `_tab` (the posting tab, as `client` above): the nogo readout, History rows, the guard bar's rung and reason (`guard`), the run's activity, the LINES table every 30 s while running and at the run's end (`lines`, `survey_lines`; each row with `done`, the share of its coverage actually run), and page stalls and sleeps (with `role`: the chart window or the controls window). From the SUPERVISING tab only, each on its own change: `model` (the keep-out model's identity: band, box, depth floor, buffer, the enforce toggles, the water level it was built at, its counts), `chart_ink` (the structures read off the chart image, and `folded`: whether the model took them in), `ais_model` (the AIS keep-outs the guard was handed, each ring in lat/lon; each post names every contact held, `ids`, and carries only the contacts that changed — a ring when she joined or her keep-out moved, at most every 10 s — with a keyframe, `key`, of every ring every 10 minutes and at every wake) and `guard_level` (the guard's rung, keyed on the contact by her MMSI, at most twice a second). | On change, or on the slow tick named. |
+| `log_quiet` / `log_resume`, `supervisor_*`, `storage_*`, `loop_fault`, `spawn` … | The console's own events. | As they happen. |
+
+**Quiet.** When the sim boat has sat home and idle for 10 minutes, the console
+writes `log_quiet` and stops the ROUTINE records — `state`, `telemetry`, `env`,
+`targets`, `track_info`, `incident` and the page's `client:*` — until a mission is
+planned or saved or the boat is commanded (`log_resume`). The lifecycle records
+still land: commands, the session's description, `plan_loaded`, a run's end. A
+reader may start at `log_resume`: the next snapshot is full, the environment is
+written in full, each sensor's first record is a keyframe with every track's
+particulars, the plan on disk is written again, and the page posts what it holds
+again. It is the file that stops, never the simulation.
+
+**What is NOT recorded.**
+
+- **A real link's wind, sea and density.** The console has no such feed on a real
+  link (those blocks read off), and `forcing` is the sim's alone. The water level
+  and the current are recorded in both modes.
+- **Raw AIS reports.** The record holds the AIS service's merged picture round the
+  boat, asked every 10 s, not the position reports or aisstream's static reports
+  themselves. A contact the service holds with no position yet (heard only by a
+  static report) is not in it; her particulars are recorded once they reach a
+  contact that has one. Only the display range is asked (a passage's widened range while a chart page
+  polls with it): a contact beyond it is not recorded.
+- **The charted keep-out zones themselves.** `client:model` records the model's
+  identity, not its polygons. The chart ink and the AIS keep-out rings are recorded.
+- **Anything no page posted.** The page's streams need an open console page, and
+  the four model streams the supervising one. With none open there are none.
+- **Secrets the console knows by name.** A command body's `password` is masked.
+  The AIS key and the feeds' notes are left out of every record. A ROC's GPS
+  host and port are left out of the `targets` stream, not out of the file: a
+  full `state` snapshot carries the ROC set with its `gps` block, as it always
+  has, and the command that attached the feed carries them in its body. The manifest's copy of the flags leaves out any flag whose name
+  reads as a secret (a name filter, not a whitelist), and its AIS URL is written
+  without its user:password. The command line in `session_start` is redacted by
+  the same rule: a secret-named flag's value is `<redacted>`, and a URL's
+  user:password is removed. `/api/logs` serves no command line (an older
+  recording carries its own raw). A credential under a flag name the filter does
+  not catch is still in the file: keep credentials off the command line.
 
 Inspect the latest recording (kinds histogram):
 
@@ -463,9 +514,11 @@ print(f, dict(c))"
 ```
 
 **Playback.** These recordings are replayed by the built-in **playback viewer** at
-**`/playback`** (link in the live console's top bar) — the boat drives its track on
-the chart, commands and transitions scroll on a timeline, with play/pause, speed
-and a scrubber; read-only. See **`README_PLAYBACK.md`**.
+**`/playback`** (link in the live console's top bar) — the boat drives her track
+on the chart among every sensor's targets, commands and transitions scroll on a
+timeline, and the Session, Vessel, Mission, Environment, Runs, Lines, Targets and
+History cards read the record at the cursor, with play/pause, speed and a
+scrubber; read-only. See **`README_PLAYBACK.md`**.
 
 ---
 
@@ -478,7 +531,7 @@ and a scrubber; read-only. See **`README_PLAYBACK.md`**.
   Control ↔ boat session (see `PLAN.md` §8).
 - **No live manual driving.** The console is autonomous-only by design; live
   manual control stays on the **RC transmitter** (the RC remains master).
-- **ENC routing is a planning aid, not certified.** Behaviours route clear of
+- **ENC routing is a planning aid, not certified.** Behaviors route clear of
   *charted* ENC obstacles; ENC scale/currency varies and there may be uncharted
   hazards, so the operator still verifies the routed path (and the Start confirm
   asks). With no ENC coverage the console routes direct and warns.

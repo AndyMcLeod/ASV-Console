@@ -3513,7 +3513,7 @@ function grantOnNewMotion(seq){
 
 /** Every grant decision reaches the recording, so "why did the console NOT act" is answerable. */
 function logGrantEvent(kind, data){
-  fetch("/api/logevent", {method:"POST", headers:{"Content-Type":"application/json"},
+  fetch("/api/logevent", {method:"POST", headers: typeof logHeaders === "function" ? logHeaders() : {"Content-Type":"application/json"},
     body: JSON.stringify({kind:"berth_grant", data:{event: kind, ...data,
       berth: berthAt() || null, buffer_m: nogo.buffer || null}})}).catch(()=>{});
 }
@@ -5241,6 +5241,12 @@ function clearanceGuard(){
   const aisHer = aisCaused ? aisNearestPoly((a && a.entry) || p, aisLadder) : null;
   clearance.level = a.level; clearance.tEntry = a.tEntry; clearance.why = a.why;
   clearance.onPlan = !!a.onPlan;
+  // ⚠ AND WHAT THE LADDER SAW, KEPT FOR THE RECORD (the mission record, 2026-11-05): read after this frame by logGuardLevel
+  // and logAisModel (client:guard_level, client:ais_model) and by no rung. ONLY NAMES THIS FUNCTION ALREADY DECLARES: every
+  // suite that lifts it would throw a ReferenceError on a new one (speed_modes.js stubs nothing it does not already read).
+  clearance.koFrame = nogo.frame; clearance.aisKo = aisKo; clearance.aisInReach = aisLadder; clearance.aisReach = aisReach;
+  clearance.aisCaused = !!aisCaused; clearance.her = aisHer; clearance.entry = (a && a.entry) || null;
+  clearance.onStation = !!onStation; clearance.settling = !!settling;
   // ⚠⚠ SPOKEN, OR IT IS A DISABLED SAFETY. While a grant stands, the ladder above is
   // answering a true question about a SMALLER world. The operator must be able to see what
   // the FULL world says on the same frame - "the guard WOULD be IN EXTREMIS against your
@@ -5260,6 +5266,7 @@ function clearanceGuard(){
   // ⚠ A VIEW-ONLY TAB ASSESSES AND ALARMS, BUT DOES NOT COMMAND (review #14): the bar above is already drawn, so a
   // second tab shows the same ladder and the same hazard - it just does not fight the supervising tab for the boat.
   const act = !!(S && S.armed && !S.estop) && supervising();
+  clearance.act = act;                               // ... and whether it could act on it, for the record as above
   const rose = a.level !== "clear" && a.level !== guardLevel;
   // `blind` sits at the bottom with `clear` so it can never read as an ESCALATION - it is
   // the absence of a judgment, not a rung - but it is not `clear` anywhere else.
@@ -9328,14 +9335,31 @@ function currentActivity(){
 // snapshots; what only THIS page knows - the nogo readout, the History rows, the guard bar, the LINES table
 // and the run-time readouts - is posted from here, on CHANGE or on a slow tick, never per frame. playback.html
 // resolves each at its cursor.
+// ⚠ THE TAB IS NAMED ON EVERY POST (the mission record, 2026-11-05): the server records it as `_tab`, so two chart tabs'
+// posts - or the controls window's - can be told apart in a log that never could. READ INSIDE A try, NOT A BARE typeof:
+// three suites lift this text into worlds with no CLIENT_ID (typeof answers those), and a post made while the module is
+// still evaluating meets the const before its own line runs - its TDZ, where typeof throws too.
+// The same header for the posts that build their own body (activity, page_stall, page_asleep, guard_override...):
+// each calls this behind a typeof, because the suites that lift those functions lift them without it.
+function logHeaders(){
+  const headers = {"Content-Type":"application/json"};
+  try{ if(typeof CLIENT_ID === "string" && CLIENT_ID) headers["X-ASV-Client"] = CLIENT_ID; }catch(e){}
+  return headers;
+}
 function logClient(kind, data){
-  fetch("/api/logevent", {method:"POST", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({kind, data})}).catch(()=>{});
+  const headers = {"Content-Type":"application/json"};
+  try{ if(typeof CLIENT_ID === "string" && CLIENT_ID) headers["X-ASV-Client"] = CLIENT_ID; }catch(e){}
+  fetch("/api/logevent", {method:"POST", headers, body: JSON.stringify({kind, data})}).catch(()=>{});
 }
 let lastGuardLogged = "";                       // the hidden key: a bar hidden at page start is not a change
 function logGuardChange(){                      // every 2 s: the guard bar, when it changes
   const bar = $("#guardBar"); if(!bar) return;
-  const text = (bar.textContent || "").replace(/\s+/g, " ").trim();
+  // ⚠ THE MESSAGE, NOT THE BUTTONS (the mission record, 2026-11-05). This was the bar's whole textContent, which carries
+  // every button's label whether it is shown or not: the census found all 156 records it measured reading "... CANCEL
+  // OVERRIDE RELEASE LOW ...". The rung and the reason are what the operator was told; the rung itself, exactly and on
+  // every change, is client:guard_level's (logGuardLevel).
+  const part = id => { const el = $(id); return el ? (el.textContent || "") : ""; };
+  const text = (part("#gb_rung") + " " + part("#gb_why")).replace(/\s+/g, " ").trim();
   const shown = bar.style.display !== "none" && !!text;
   const key = shown ? bar.className + "|" + text : "";
   if(key === lastGuardLogged) return;
@@ -9345,7 +9369,7 @@ function logGuardChange(){                      // every 2 s: the guard bar, whe
 function logLinesTick(){                        // every 30 s while running: the LINES table + run-time readouts
   if(!(S && S.run === "running") || !mission.lines.length) return;
   const txt = id => { const el = $(id); return el ? (el.textContent || "").replace(/\s+/g, " ").trim() : ""; };
-  logClient("lines", {lines: buildLineTable(), turns: buildTurnTable(), transits: buildHopTable(), runtime: txt("#v_runtime"),
+  logClient("lines", {lines: lineRowsForLog(), turns: buildTurnTable(), transits: buildHopTable(), runtime: txt("#v_runtime"),
                       survey: txt("#v_surveydur"), approach: txt("#v_approach"), wpt: txt("#v_wpt"),
                       mission: txt("#v_mission")});
 }
@@ -9356,12 +9380,230 @@ function logActivityChange(){
   if(key === lastActivity) return;
   lastActivity = key;
   const st = (S && S.status) || {};
-  fetch("/api/logevent", {method:"POST", headers:{"Content-Type":"application/json"},
+  fetch("/api/logevent", {method:"POST", headers: typeof logHeaders === "function" ? logHeaders() : {"Content-Type":"application/json"},
     body: JSON.stringify({kind:"activity", data:{
       activity: a.activity, surveying: a.surveying, detail: a.detail,
       behavior: (S&&S.behavior) || null, line: runLineIdx >= 0 ? lineNo(runLineIdx) : null,
       segment: runLineIdx >= 0 ? runLineIdx+1 : null,
       lat: st.lat_deg, lon: st.lon_deg, sog_kn: st.sog_kn}})}).catch(()=>{});
+}
+// ── THE MISSION RECORD: WHAT EACH DECISION WAS MADE AGAINST (2026-11-05) ─────────────────────────────────────────── //
+// ⚠ THE PAGE RECORDS THE MODEL, NOT ONLY THE DECISION (Andy, 2026-11-05: "Look at the logging function(s) and add in
+// data that fully describes any given mission."). Every guard and avoidance post says what the console DID - a rung, a
+// way round, a hold - and none said what it did it against: the keep-out model (its band, box, floor, the six enforce
+// toggles, the water level it was BUILT at), the structures read off the chart image and folded in, the AIS keep-outs
+// the ladder was handed, the rung on each frame. No replay could rebuild one decision, and the Honolulu, New Castle and
+// Erie escapes stayed irreproducible for want of the chart ink alone (CLAUDE.md: "nothing records it in any session log,
+// ever").
+// Four change-only streams carry them: client:model, client:chart_ink, client:ais_model and client:guard_level.
+// ⚠ THE SUPERVISING TAB ONLY, ASKED BEFORE ANY LATCH MOVES. Every chart tab builds its own model and runs the ladder,
+// but only the supervising one commands, so another tab's copy is not what the boat was steered by - and it doubled
+// every record. A tab that takes over posts what it holds at its next 2 s tick (logModelTick).
+// ⚠ ON CHANGE, NEVER STRINGIFIED PER FRAME: each stream keys its change on a signature of primitives, and its payload
+// is built only when that key moves. The rung is asked every frame - its key is three short strings - and posted at
+// most twice a second.
+// ⚠ A RECORDER NEVER TAKES A FRAME DOWN: each is caught whole. Inside updateNogoUI a throw would strand a chart read;
+// inside onState it would stop the guard's own frame.
+// ⚠ NO PAYLOAD KEY NAMED t OR iso: the server writes client data FLAT onto {t, iso, kind}, so either would overwrite the
+// record's own stamp. A hazard's name goes as kind_ (the server renames a top-level `kind` to that anyway).
+// The latches: "" is "nothing said yet" (at boot an empty model is not news); null is "say what stands, whatever it is"
+// (after the recording wakes from quiet - logWakeTick).
+let modelLogged = "", inkLogged = "";
+let aisHeadLogged = "", aisModelAt = 0, aisModelKeyAt = 0, aisRingSent = new Map(), aisFlagsSent = new Map();
+let guardLevelLogged = "", guardLevelPrev = null, guardLevelAt = 0;
+let logQuietWas = null;
+const GUARD_LEVEL_MIN_MS = 500;      // client:guard_level at most twice a second, the latest kept; a fall to clear at once
+// ⚠ A KEEP-OUT THAT ONLY MOVED IS SAMPLED, NOT STREAMED. A contact under way is dead-reckoned every frame, so her box
+// moves on every 2 s tick, and each post carries every contact's ring (measured on the real builder: 0.9-1.5 KB a
+// contact at 1e-6) - a busy harbor posted at the tick would be megabytes an hour, on a real link that never goes quiet.
+// What the ladder acts on - which contacts it holds and has in reach, their rules, the feed's health - is posted at the
+// next tick; a box that merely moved, at most this often.
+// ⚠⚠ AND A POST CARRIES WHAT CHANGED, NOT THE WHOLE RING SET (review 2026-11-05). The floor never applied to a change of
+// what the ladder held - a contact crossing the reach edge, the boat entering a moored ship's grown ring, one joining -
+// and every post re-sent the 36-64 point ring of every contact within 3 km: replayed through the real builder on two
+// real harbor sessions (43-49 contacts) that was 13.6 and 16.9 MB an hour, more than the whole log had been. Now a post
+// names every contact held (`ids`) and carries only those whose flags changed, or whose ring joined or moved (each ring
+// at most every AIS_MODEL_MOVE_MS); a contact without a ring keeps the last one posted. A KEYFRAME (`key`: every ring)
+// on the first post, after a wake and every AIS_MODEL_KEY_MS (the targets stream's TARGETS_KEYFRAME_S), so a reader
+// may start there. Playback merges them. The same two sessions replayed through this function: 0.8 and 1.1 MB an hour.
+const AIS_MODEL_MOVE_MS = 10000, AIS_MODEL_KEY_MS = 600000;
+/** A number for the record, rounded to `dp` places - null for none, never NaN (a NaN line is lost to playback). */
+function recNum(v, dp){ const x = +v; return (v == null || v === "" || !Number.isFinite(x)) ? null : +x.toFixed(dp); }
+/** How many chart-read structures the model holds: foldChartInk's own count, and none with structures switched off. */
+function nogoInkN(){ return (nogo.enf && nogo.enf.land === false) ? 0 : (chartInk.lines || []).length + (chartInk.areas || []).length; }
+/** The keep-out model's identity as one string: what a rebuild, an extract, a toggle, the tide or a lock waiver changes.
+ *  NOT the water reading itself - the model holds the level it was BUILT at, and moves only TIDE_REBUILD_M from it. */
+function nogoModelSig(){
+  if(!nogo.ko && !nogo.failed && !nogo.band) return "";
+  const ko = nogo.ko || {}, e = nogo.enf || {}, b = nogo.bbox, f = nogo.frame, enc = sea.enc || {};
+  return [nogo.ready ? 1 : 0, nogo.band || "", b ? [b.W, b.S, b.E, b.N].join(",") : "", V.NOGO_MIN_DEPTH_M, nogoDR().min,
+          nogo.buffer, e.land, e.depth, e.haz, e.area, e.wreck, e.chan, V.OPEN_WATER !== false, nogo.builtOffset,
+          (ko.polys || []).length, (ko.lines || []).length, (ko.points || []).length, nogoInkN(),
+          nogo.skin ? (nogo.skin.refused ? "refused" : (nogo.skin.gaps || []).length) : "", (nogo.unread || []).length,
+          nogo.failed ? nogo.failed.why : "", (enc.partial || []).join(","), (enc.stale || []).join(","),
+          lockWaiver ? lockWaiver.id + ":" + (lockWaiver.keys ? lockWaiver.keys.size : 0) : "",
+          f ? f.lat + "," + f.lon : ""].join("|");
+}
+/** The merged chart read's identity: the reads in it, the last refusal, and whether the model folds it (the land toggle). */
+function chartInkSig(){
+  if(!chartInk.key && !inkRefused) return "";
+  return [chartInk.key || "", inkRefused ? inkRefused.why : "", nogo.enf && nogo.enf.land === false ? 0 : 1].join("|");
+}
+function chartInkRecord(){
+  const ll = p => [recNum(p.lat, 6), recNum(p.lon, 6)];
+  const box = b => b ? [b.W, b.S, b.E, b.N].map(v => recNum(v, 6)) : null;
+  return {key: chartInk.key || null, folded: !(nogo.enf && nogo.enf.land === false), z: recNum(chartInk.z, 0),
+          reads: (chartReads || []).map(r => ({key: r.key, bb: box(r.bb), z: recNum(r.z, 0), got: recNum(r.got, 0),
+                                               tiles: recNum(r.tiles, 0), ms: recNum(r.ms, 0)})),
+          lines: (chartInk.lines || []).filter(L => L && L.a && L.b).map(L => [...ll(L.a), ...ll(L.b)]),
+          areas: (chartInk.areas || []).filter(A => A && A.ring && A.ring.length >= 3).map(A => A.ring.map(ll)),
+          detached_n: (chartInk.detached || []).length, refused: inkRefused ? String(inkRefused.why).slice(0, 200) : null};
+}
+/** client:model and client:chart_ink, each on ITS change. Asked by updateNogoUI - which every rebuild, every chart read's
+ *  merge (ensureChartInk) and a new extract's emptying of the reads (refreshNogo) end in - and by the 2 s tick. */
+function logNogoModel(){
+  try{ if(!supervising()) return; }catch(e){ return; }   // ONE gate for both records; each is then caught on its own
+  try{
+    const sig = nogoModelSig();
+    if(sig !== modelLogged){
+      modelLogged = sig;
+      const ko = nogo.ko || {}, e = nogo.enf || {}, b = nogo.bbox, f = nogo.frame, enc = sea.enc || {}, c = nogo.center;
+      const flag = k => (e[k] == null ? null : !!e[k]);
+      logClient("model", {ready: !!nogo.ready, band: nogo.band || null, bbox: b ? [b.W, b.S, b.E, b.N].map(v => recNum(v, 6)) : null,
+        center: c ? {lat: recNum(c.lat, 6), lon: recNum(c.lon, 6)} : null,
+        min_depth_req: recNum(V.NOGO_MIN_DEPTH_M, 2), floor: recNum(nogoDR().min, 2), buffer: recNum(nogo.buffer, 1),
+        enf: {land: flag("land"), depth: flag("depth"), haz: flag("haz"), area: flag("area"), wreck: flag("wreck"), chan: flag("chan")},
+        open_water: V.OPEN_WATER !== false,
+        built_offset_m: recNum(nogo.builtOffset, 2), water_offset_m: recNum(sea.waterOffset, 2),
+        n_polys: (ko.polys || []).length, n_lines: (ko.lines || []).length, n_points: (ko.points || []).length,
+        ink_n: nogoInkN(), skin_gaps: nogo.skin && !nogo.skin.refused ? (nogo.skin.gaps || []).length : null,
+        unread_n: (nogo.unread || []).length, failed: nogo.failed ? String(nogo.failed.why).slice(0, 200) : null,
+        partial: (enc.partial || []).slice(0, 40), stale: (enc.stale || []).slice(0, 10).map(s => String(s).slice(0, 200)),
+        lock_waiver_id: lockWaiver ? lockWaiver.id : null,
+        frame_origin: f ? {lat: recNum(f.lat, 6), lon: recNum(f.lon, 6)} : null});
+    }
+  }catch(e){ console.error("[asv] the keep-out model record failed:", e); }
+  try{
+    const sig = chartInkSig();
+    if(sig !== inkLogged){ inkLogged = sig; logClient("chart_ink", chartInkRecord()); }
+  }catch(e){ console.error("[asv] the chart ink record failed:", e); }
+}
+/** client:ais_model - the AIS keep-outs the guard's last frame was handed (clearance.aisKo, written by clearanceGuard),
+ *  each ring in lat/lon converted in the frame it was BUILT in (clearance.koFrame: a new extract between that frame and
+ *  this tick moves the model's frame), and which of them its ladder had in reach. Asked every 2 s (logModelTick). */
+function logAisModel(){
+  try{
+    if(!supervising()) return;
+    const c = clearance || {}, fr = c.koFrame;
+    // LIVE: the guard's last frame had a model. Its no-model return keeps an older frame's fields (updateClearance
+    // spreads them), so the measured clearance - null there - is the test, not the fields themselves.
+    const live = !!(fr && c.m != null && nogo.ready);
+    const ko = live ? (c.aisKo || []) : [];
+    const inR = new Set((live ? (c.aisInReach || []) : []).map(q => String(q.mmsi)));
+    const qs = ko.slice().sort((x, y) => String(x.mmsi).localeCompare(String(y.mmsi)));
+    const id = q => String(q.mmsi);
+    const flags = q => (q.moving ? 1 : 0) + "" + (inR.has(id(q)) ? 1 : 0) + ":" + (q.rule || "") + ":" + Math.round(q.marginM || 0);
+    const ringKey = q => q.bb ? [q.bb.x0, q.bb.y0, q.bb.x1, q.bb.y1].map(v => Math.round(v / 5)).join(",") : "";
+    const head = (!live && !aisKoStale && !aisKoBlind && !aisTorn) ? ""
+      : [aisKoStale ? 1 : 0, aisKoBlind ? 1 : 0, aisTorn ? 1 : 0, live ? 1 : 0].join("") + "#"
+        + qs.map(q => q.mmsi + ":" + flags(q)).join(";");
+    const now = Date.now();
+    const wake = aisHeadLogged === null;                     // logWakeTick's latch: say what stands, whole
+    const periodic = head !== "" && now - aisModelKeyAt >= AIS_MODEL_KEY_MS;
+    const ringDue = q => { const s = aisRingSent.get(id(q)); return !s || (s.k !== ringKey(q) && now - s.at >= AIS_MODEL_MOVE_MS); };
+    const due = qs.filter(ringDue);
+    if(!wake && !periodic && head === aisHeadLogged && !due.length) return;
+    const key = wake || periodic || aisModelKeyAt === 0 || head === "";
+    const dueSet = new Set(due.map(id));
+    const sent = key ? qs : qs.filter(q => dueSet.has(id(q)) || aisFlagsSent.get(id(q)) !== flags(q));
+    aisHeadLogged = head; aisModelAt = now;
+    if(key){ aisModelKeyAt = now; aisRingSent = new Map(); aisFlagsSent = new Map(); }
+    const held = new Set(qs.map(id));
+    for(const k of [...aisRingSent.keys()]) if(!held.has(k)) aisRingSent.delete(k);   // gone is gone: her return is a join
+    for(const k of [...aisFlagsSent.keys()]) if(!held.has(k)) aisFlagsSent.delete(k);
+    const vs = new Map((aisVessels || []).map(v => [String(v.mmsi), v]));
+    const ll = p => { const g = fr.fromEN(p.e, p.n); return [recNum(g.lat, 6), recNum(g.lon, 6)]; };
+    logClient("ais_model", {stale: !!aisKoStale, blind: !!aisKoBlind, torn: !!aisTorn,
+      poll_age_s: aisPolledAt > 0 ? recNum(Math.max(0, now - aisPolledAt) / 1000, 1) : null,
+      note: live ? (aisKoNote || null) : "no keep-out model, so the guard holds no contacts" + (aisKoNote ? " (" + aisKoNote + ")" : ""),
+      reach_m: live ? recNum(c.aisReach, 1) : null,
+      key, ids: qs.map(q => q.mmsi),
+      contacts: sent.map(q => {
+        // where her heading came from, by THE one rule (aisMotion) the keep-out was built by: the berth's, her own, her course
+        const v = vs.get(id(q)), mo = v ? aisMotion(v, {now, polledAt: aisPolledAt}) : null;
+        const withRing = key || dueSet.has(id(q));
+        aisFlagsSent.set(id(q), flags(q));
+        if(withRing) aisRingSent.set(id(q), {k: ringKey(q), at: now});
+        const out = {mmsi: q.mmsi, kind: q.kind || null, moving: !!q.moving, hdg: recNum(q.hdg, 1),
+                hdg_from: q.hdg == null ? null : q.byBerth ? "berth" : (mo && mo.from) || null,
+                rule: q.rule || null, margin_m: recNum(q.marginM, 1), in_reach: inR.has(id(q))};
+        if(withRing) out.ring = (q.ring || []).map(ll);
+        return out;
+      })});
+  }catch(e){ console.error("[asv] the AIS keep-out record failed:", e); }
+}
+/** client:guard_level - the clearance guard's rung, asked by onState right after clearanceGuard() and by the 2 s tick (a
+ *  coalesced change no later frame came to post). Keyed on (level, kind, act); at most one post per GUARD_LEVEL_MIN_MS,
+ *  the LATEST kept - a rung that lasts less than that between two posts is folded into the next - and a fall to clear is
+ *  posted at once. Reads only what clearanceGuard left on `clearance`: nothing here is asked again of the model. */
+function logGuardLevel(){
+  try{
+    if(!supervising()) return;
+    const c = clearance || {}, fr = c.koFrame;
+    const live = !!(fr && c.m != null && nogo.ready);          // as logAisModel's: no model, no assessment
+    const level = live ? (c.level || "clear") : "off";
+    const her = live && c.aisCaused ? (c.her || null) : null;
+    const kind = live ? (c.kind || (her && her.kind) || null) : null;
+    const act = live && !!c.act;
+    // ⚠ KEYED ON WHO, NOT ON HOW SHE IS WRITTEN (review 2026-11-05): a contact's kind embeds her speed ("AIS: NAME (60 x
+    // 12 m, 10.3 kn)"), so every SOG wobble on a 5 s poll re-posted the same rung - and gave it a timeline row. Her MMSI
+    // when the rung is hers; else the kind without a speed in it. The name still rides the payload (kind_).
+    const ident = her && her.mmsi != null ? "mmsi:" + her.mmsi : String(kind || "").replace(/,\s*-?\d+(\.\d+)?\s*kn(?=\))/g, "");
+    const key = level + "|" + ident + "|" + (act ? 1 : 0);
+    if(key === guardLevelLogged) return;
+    const now = Date.now();
+    if(!(level === "clear" && guardLevelPrev !== "clear") && now - guardLevelAt < GUARD_LEVEL_MIN_MS) return;
+    const prev = guardLevelPrev;
+    guardLevelLogged = key; guardLevelPrev = level; guardLevelAt = now;
+    const en = live && c.entry ? fr.fromEN(c.entry.e, c.entry.n) : null;
+    logClient("guard_level", {level, prev, t_entry_s: live ? recNum(c.tEntry, 1) : null,
+      why: live ? (c.why ? String(c.why).slice(0, 200) : null) : "no keep-out model: the guard is not assessing",
+      clear_m: live ? recNum(c.m, 1) : null, kind_: kind ? String(kind).slice(0, 200) : null,
+      on_plan: live ? !!c.onPlan : null, on_station: live ? !!c.onStation : null, settling: live ? !!c.settling : null,
+      grant: !!grant, ais_in_reach: live ? (c.aisInReach || []).length : 0, ais_caused: !!(live && c.aisCaused),
+      her_mmsi: her && her.mmsi != null ? her.mmsi : null,
+      entry: en ? {lat: recNum(en.lat, 6), lon: recNum(en.lon, 6)} : null,
+      act, frame_t: S && S.server_t != null ? S.server_t : null});
+  }catch(e){ console.error("[asv] the guard-level record failed:", e); }
+}
+/** Every 2 s beside the guard bar's (connect): the model, the chart ink, the AIS keep-outs, each only on its change - and
+ *  the rung, for a coalesced change no later frame came to post. */
+function logModelTick(){ logNogoModel(); logAisModel(); logGuardLevel(); }
+/**
+ * ⚠ A QUIET LOG DROPPED WHAT THIS PAGE POSTED, AND THE PAGE NEVER KNEW (the mission record, 2026-11-05). While the
+ * recording is quiet the console answers every post 200 and writes nothing, and each change-only latch here was left
+ * holding the value whose post was lost - measured, no client:nogo for 30 minutes after a resume. So when S.log_quiet
+ * falls, every latch is reset and what stands is posted again: the readout, the model and the chart ink now (they change
+ * only when the chart does), the AIS keep-outs, the rung and the guard bar at their next tick, the activity next frame.
+ * Asked by onState every frame, behind a typeof guard.
+ */
+function logWakeTick(s){
+  try{
+    const q = !!(s && s.log_quiet);
+    const woke = logQuietWas === true && !q;
+    logQuietWas = q;
+    if(!woke) return;
+    lastNogoLogged = null; lastGuardLogged = null; lastActivity = null;
+    modelLogged = null; inkLogged = null; aisHeadLogged = null; guardLevelLogged = null;
+    updateNogoUI();
+  }catch(e){ console.error("[asv] the record's wake failed:", e); }
+}
+/** The LINES rows as the log carries them: buildLineTable's, each with `done` - the share of the line's coverage actually
+ *  RUN (lineDoneFrac, 2 dp), which otherwise lives only in this browser's localStorage. Not in buildLineTable itself: the
+ *  card asks that every frame, and the coverage walk is the log's, at its 30 s tick and the run's end. */
+function lineRowsForLog(){
+  const L = mission.lines || [];
+  return buildLineTable().map((r, k) => ({...r, done: (L[k] && L[k].a && L[k].b) ? recNum(lineDoneFrac(L[k]), 2) : null}));
 }
 function buildLineTable(){ const spd=roleSpeedMS("survey");   // the lead is flown at it too
   return mission.lines.map((L,k)=>{
@@ -9642,8 +9884,8 @@ function renderLineTable(){
   setHtmlIfChanged(q("lt_rth"), transitRowHtml(`RTH L${lastLine} → home:`, transitEst.rth, trSpd, roleSpeed("transit"), rthSec));
 }
 function logLineTable(reason){ if(!mission.lines.length) return;
-  const lines=buildLineTable(), turns=buildTurnTable(), transits=buildHopTable();
-  fetch("/api/logevent",{method:"POST",headers:{"Content-Type":"application/json"},
+  const lines=lineRowsForLog(), turns=buildTurnTable(), transits=buildHopTable();   // the rows with the coverage run (2026-11-05)
+  fetch("/api/logevent", {method:"POST", headers: typeof logHeaders === "function" ? logHeaders() : {"Content-Type":"application/json"},
     body:JSON.stringify({kind:"survey_lines", data:{reason, speed:mission.speed, speeds:mission.speeds, lines, turns, transits,
       // the surveys, in run order, with the plan line each begins at (phase 2): the log reads S3 as the chart does
       surveys:(mission.surveys || []).map(s=>({id:s.id, no:s.no, name:s.name || "",
@@ -12823,7 +13065,13 @@ function updateNogoUI(){
   const r = nogoReadout();
   el.textContent = r.text; setTip(el, r.title);
   el.className = "vv " + r.cls;                 // .vv.warn is defined after .vrow .vv, so it wins
-  if(r.text !== lastNogoLogged){ lastNogoLogged = r.text; logClient("nogo", {text: r.text, cls: r.cls, ready: !!nogo.ready}); }
+  // ⚠ THE ELAPSED COUNTER IS NOT A CHANGE (the mission record, 2026-11-05). While a read runs, tickClock repaints this
+  // row every second, and keyed on the text every second was a record: "reading chart… N s" was 263 of about 314 nogo
+  // records in one measured log. While busy the key masks the digits, so the read's start is posted, and what it lands on.
+  const key = nogo.busy ? r.text.replace(/\d+/g, "#") : r.text;
+  if(key !== lastNogoLogged){ lastNogoLogged = key; logClient("nogo", {text: r.text, cls: r.cls, ready: !!nogo.ready}); }
+  // ... and the model itself, on ITS change. typeof-guarded: six suites lift this function with no stub for the name.
+  if(typeof logNogoModel === "function") logNogoModel();
 }
             // how far from centerline toward the stbd edge (0.5 = ¼ width in from the edge)
 // SCRATCH ONLY. The two lane stages set this; channelLaneRoute resets it on entry and
@@ -20271,8 +20519,8 @@ function supervisorSlept(gapMs, beganHidden){
   // not - and "THIS TAB WAS ASLEEP" said of it (as it was, at 18:49:59) sends the operator after the browser's
   // settings for nothing. Recorded as what it was; stallWatch says an on-screen stall in its own words.
   if(Date.now() - supPlanEnd < 2000){
-    fetch("/api/logevent", {method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({kind:"page_asleep", data:{gap_s: gap, supervising: wasSupervising, began_hidden: beganHidden,
+    fetch("/api/logevent", {method:"POST", headers: typeof logHeaders === "function" ? logHeaders() : {"Content-Type":"application/json"},
+      body: JSON.stringify({kind:"page_asleep", data:{gap_s: gap, role: (typeof UIROLE === "string" ? UIROLE : null), supervising: wasSupervising, began_hidden: beganHidden,
                                                       planning: true}})}).catch(()=>{});
     return;
   }
@@ -20284,9 +20532,9 @@ function supervisorSlept(gapMs, beganHidden){
     showBanner("⚠ THIS TAB WAS ASLEEP for " + gap + " s — its clearance guard and speed governor were not "
       + "running while it slept. Nothing was stopped and the vessel kept its own safety systems; read the chart and "
       + "the Mission Status card before relying on this tab again.");
-  fetch("/api/logevent", {method:"POST", headers:{"Content-Type":"application/json"},
+  fetch("/api/logevent", {method:"POST", headers: typeof logHeaders === "function" ? logHeaders() : {"Content-Type":"application/json"},
     body: JSON.stringify({kind:"page_asleep",
-                          data:{gap_s: gap, supervising: wasSupervising, began_hidden: beganHidden}})}).catch(()=>{});
+                          data:{gap_s: gap, role: (typeof UIROLE === "string" ? UIROLE : null), supervising: wasSupervising, began_hidden: beganHidden}})}).catch(()=>{});
 }
 // Give the post up on the way out, so the next tab does not wait out the stale timer.
 addEventListener("pagehide", ()=>{
@@ -21584,7 +21832,7 @@ async function resumeRun(){
   flashNote("Resumed at LOW — " + (note || "carrying on") + ". Speed stays low until you press RELEASE LOW on the bar (or change a speed selector).");
   if(planIntent) planIntent.why.push({t:"warn", s:"RESUMED after a pause — " + (note || "carrying on")
     + "; held at LOW speed until the operator changes it"});
-  fetch("/api/logevent", {method:"POST", headers:{"Content-Type":"application/json"},
+  fetch("/api/logevent", {method:"POST", headers: typeof logHeaders === "function" ? logHeaders() : {"Content-Type":"application/json"},
     body: JSON.stringify({kind:"resume", data:{line: resumeLine, backed_m: Math.round(backedM),
       boat_lengths: RESUME_BACK_LENGTHS, note}})}).catch(()=>{});
   updateMissionCard(); render();
@@ -21851,7 +22099,7 @@ async function resumeFromHere(ll){
             + (resumeSlow ? " once your LOW hold is released" : "") + '—' + " set a slower speed if you want it slow.");
   if(planIntent) planIntent.why.push({t:"warn", s:"RESUMED FROM A CHOSEN POINT after a pause " + '—' + " " + said
     + "; the governor has the throttle (the transit at the transit speed, the line at the survey speed)"});
-  fetch("/api/logevent", {method:"POST", headers:{"Content-Type":"application/json"},
+  fetch("/api/logevent", {method:"POST", headers: typeof logHeaders === "function" ? logHeaders() : {"Content-Type":"application/json"},
     body: JSON.stringify({kind:"resume", data:{line, from_point: true, along_m: Math.round(fromStart),
       transit_m: Math.round(transitM), via: via.length, certified: !pin.degraded, note: said}})}).catch(()=>{});
   updateMissionCard(); render();
@@ -22203,7 +22451,7 @@ $("#gb_proceed").onclick = ()=>{
   // Hand back anything the guard had already taken, so "proceed" means what it says. The
   // governor re-asserts the role's speed on the next frame.
   if(clearance.slowed){ clearance.slowed = false; commandedSpeed = null; }
-  fetch("/api/logevent", {method:"POST", headers:{"Content-Type":"application/json"},
+  fetch("/api/logevent", {method:"POST", headers: typeof logHeaders === "function" ? logHeaders() : {"Content-Type":"application/json"},
     body: JSON.stringify({kind:"guard_override", data:{
       level: guardOverride.level, clearance_m: guardOverride.clearM,
       kind_: c.kind || null, why: c.why || null, buffer_m: nogo.buffer || null}})}).catch(()=>{});
@@ -22986,7 +23234,7 @@ async function resumeHeldRun(opts){
 // An operator overriding a safety intervention goes in the recording, both ways round, or
 // the run cannot be read afterwards. Same event shape as the full PROCEED's.
 function logGuardLow(how, clearM, kindName, extra){
-  fetch("/api/logevent", {method:"POST", headers:{"Content-Type":"application/json"},
+  fetch("/api/logevent", {method:"POST", headers: typeof logHeaders === "function" ? logHeaders() : {"Content-Type":"application/json"},
     body: JSON.stringify({kind:"guard_low", data:{how: how, clearance_m: clearM,
       kind_: kindName || null, buffer_m: nogo.buffer || null,
       boat_lengths: RESUME_BACK_LENGTHS, ...(extra||{})}})}).catch(()=>{});
@@ -23338,6 +23586,7 @@ function applyCmdState(s){
 function onState(s){
   S = s;
   checkBoot(s.boot_id);                          // drop a stale trail if the sim rebooted
+  if(typeof logWakeTick === "function") logWakeTick(s);   // the recording woke: what a quiet log dropped is said again
   const freshRun = prevRun!=="running" && prevRun!=="paused" && s.run==="running";
   if(freshRun){ resetLineStats(); resetRunTimer();
     if(s.behavior!=="rth"){ rthChained=false; rthChainFailed=false; } }  // fresh run re-arms the RTH chain (but not the chained RTH itself)
@@ -23554,6 +23803,9 @@ function onState(s){
     // The clearance guard runs first of all, because safety outranks the role.
     clearanceGuard();
     accumLineTime(); speedGovernor(); speedReconcile(s, st); logActivityChange(); updateRunTime(); updateMissionCard(); renderLineTable(); trackLineCoverage(); renderSurveyTable(); renderIntent(); render();
+    // the guard's rung into the record - NOT between the two lines above: clearance_guard.js 17 holds accumLineTime
+    // straight after the guard. It reads only what clearanceGuard left on `clearance`, and is caught whole.
+    if(typeof logGuardLevel === "function") logGuardLevel();
   }
   updateMissionCard();                           // the common per-behavior Mission readout
   renderRoc();                                   // ROC · HOME card (from s.roc)
@@ -23599,7 +23851,7 @@ function onFrame(ev){
     if(frameFaults === 1) console.error("[asv] a telemetry frame failed:", e);
     if(frameFaults >= FRAME_FAULT_AFTER && !frameFaultLogged){
       frameFaultLogged = true;
-      fetch("/api/logevent", {method:"POST", headers:{"Content-Type":"application/json"},
+      fetch("/api/logevent", {method:"POST", headers: typeof logHeaders === "function" ? logHeaders() : {"Content-Type":"application/json"},
         body: JSON.stringify({kind:"page_frame_fault", data:{error: frameFaultMsg, frames: frameFaults}})}).catch(()=>{});
     }
   }
@@ -23667,7 +23919,7 @@ function stallContext(gap){
   const m = (typeof mission === "object" && mission) || {};
   const ko = (nogo && nogo.ko) || {};
   const anchors = ["A", "B", "C"].filter(k => pat && pat[k]).join("") || "none";
-  return {gap_ms: Math.round(gap), mode: mode, pattern_anchors: anchors,
+  return {gap_ms: Math.round(gap), role: (typeof UIROLE === "string" ? UIROLE : null), mode: mode, pattern_anchors: anchors,
           pattern_runs: (patClip || []).length,        // the punched runs on the chart, which is the heavy geometry
           waypoints: (m.waypoints || []).length, lines: (m.lines || []).length,
           boundary: (m.boundary || []).length, route: (runRoute || []).length, track: (track || []).length,
@@ -23686,7 +23938,7 @@ function stallWatch(){
   stallOnScreen = document.visibilityState === "visible";
   if(gap <= STALL_MS || !began) return;
   const ctx = stallContext(gap);
-  fetch("/api/logevent", {method:"POST", headers:{"Content-Type":"application/json"},
+  fetch("/api/logevent", {method:"POST", headers: typeof logHeaders === "function" ? logHeaders() : {"Content-Type":"application/json"},
     body: JSON.stringify({kind:"page_stall", data: ctx})}).catch(()=>{});
   console.warn("[asv] the page stalled for " + gap + " ms", ctx);
   // Said only when it is long enough to have been felt, and not more than once every half minute: the operator
@@ -23767,6 +24019,7 @@ function connect(){
   es.onerror = ()=>{ $("#dot").className="dot lost"; supervisorStreamLost(); };
   setInterval(consoleHealth, 1000);
   setInterval(logGuardChange, 2000);              // the guard bar into the log, on change (playback's cards)
+  setInterval(logModelTick, 2000);                // the keep-out model, chart ink, AIS keep-outs and rung, on change
   setInterval(logLinesTick, 30000);               // the LINES table + run-time readouts, while running
 }
 // HOW OLD A READING IS, for the water, weather and current rows (review #13): whole minutes, then hours. The

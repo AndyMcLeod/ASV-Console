@@ -1,11 +1,12 @@
 // tests/page_log_posts.js - the page posts its OWN card data into the session log, on change and never per frame
 // (2026-09-25, for playback's cards): the nogo readout, the History rows, the guard bar, the LINES table.
 //
-// DRIVEN: the page's own logClient, updateNogoUI, recordAction, historyText, logGuardChange and logLinesTick, brace-
-// matched out of static/asv.html and evaluated with a recording `fetch`, a fake element per selector and the state each
-// reads. What is asserted is WHEN a post happens and what it carries - a readout repeated is not re-posted, a History
-// row that merges into an existing one is not re-posted, the guard bar posts only when it changes, the LINES tick
-// posts only while a run is under way.
+// DRIVEN: the page's own logClient, updateNogoUI, recordAction, historyText, logGuardChange, logLinesTick, lineRowsForLog
+// and recNum, brace-matched out of static/asv.html and evaluated with a recording `fetch`, a fake element per selector and
+// the state each reads. What is asserted is WHEN a post happens and what it carries - a readout repeated is not re-posted
+// (nor a chart read's elapsed counter, 1b), a History row that merges into an existing one is not re-posted, the guard
+// bar posts its message only when it changes, the LINES tick posts only while a run is under way, with the coverage run.
+// The mission record's new streams (client:model, chart_ink, ais_model, guard_level) are tests/page_model_posts.js's.
 //
 //   node tests/page_log_posts.js      # exit 0 = pass, 1 = fail
 // ASV_HTML points this at a SIDECAR copy for a mutation run.
@@ -53,9 +54,10 @@ function world() {
   const readout = { text: "1300 zones · floor 2.0 m", cls: "" };
   const S = { run: "idle" };
   const mission = { lines: [] };
+  const nogo = { ready: true, busy: false };
   // eslint-disable-next-line no-new-func
-  const W = new Function("$", "fetch", "readout", "S", "mission", `"use strict";
-    const nogo = { ready: true }; let nogoShow = true;
+  const W = new Function("$", "fetch", "readout", "S", "mission", "nogo", `"use strict";
+    let nogoShow = true;
     const nogoReadout = () => ({ text: readout.text, cls: readout.cls, title: "" });
     const setTip = () => {};
     const HISTORY_MAX = 20, HISTORY_KEY = "k";
@@ -64,11 +66,13 @@ function world() {
     const renderAlertRecent = () => {};   // recordAction feeds the ALERTS card's tail (2026-09-28) - the card is ui_split / action_history's subject
     const nogoKeyShow = () => {};         // updateNogoUI shows the NOGO key with the overlay (2026-10-18) - nogo_key.js's subject
     const buildLineTable = () => [{ len_m: 100, plan_s: 60, actual_s: 30 }]; const buildTurnTable = () => []; const buildHopTable = () => [];
+    // the rows the log carries gain the coverage RUN (lineRowsForLog, 2026-11-05); the coverage walk is the page's own
+    const lineDoneFrac = (L) => L.frac;
     ${decl(/^let lastNogoLogged = null;/m)}
     ${decl(/^let lastGuardLogged = "";/m)}
-    ${["logClient", "updateNogoUI", "recordAction", "historyText", "logGuardChange", "logLinesTick"].map(grab).join("\n")}
-    return { updateNogoUI, recordAction, logGuardChange, logLinesTick, log: () => actionLog };`)($, fetch, readout, S, mission);
-  return { W, posts, els, readout, S, mission, $ };
+    ${["logClient", "updateNogoUI", "recordAction", "historyText", "logGuardChange", "logLinesTick", "lineRowsForLog", "recNum"].map(grab).join("\n")}
+    return { updateNogoUI, recordAction, logGuardChange, logLinesTick, log: () => actionLog };`)($, fetch, readout, S, mission, nogo);
+  return { W, posts, els, readout, S, mission, nogo, $ };
 }
 
 console.log("The page posts its own card data into the session log, on change:");
@@ -86,6 +90,21 @@ console.log("The page posts its own card data into the session log, on change:")
         () => posts.length + " post(s): " + JSON.stringify(posts.map((p) => p.body.data.text)));
 }
 {
+  // THE ELAPSED COUNTER (2026-11-05): while a read runs, tickClock repaints the row every second - "reading chart… N s" was
+  // 263 of about 314 nogo records in one log. While busy the change key masks the digits.
+  const { W, posts, readout, nogo } = world();
+  nogo.busy = true;
+  for (const s of [0, 1, 2, 3, 14]) { readout.text = "reading chart… " + s + " s"; readout.cls = "warn"; W.updateNogoUI(); }
+  const reading = posts.length;
+  nogo.busy = false; readout.text = "1310 zones · floor 2.0 m"; readout.cls = ""; W.updateNogoUI();
+  readout.text = "1311 zones · floor 2.0 m"; W.updateNogoUI();      // not busy: a digit that moves IS a change
+  check("1b. while a chart read runs, its elapsed counter is not a change - five repaints of 'reading chart… N s' post "
+        + "once, as the first of them - and the readout it lands on is posted, as is a count that moves after it",
+        () => reading === 1 && posts[0].body.data.text === "reading chart… 0 s" && posts.length === 3
+              && posts[1].body.data.text === "1310 zones · floor 2.0 m" && posts[2].body.data.text === "1311 zones · floor 2.0 m",
+        () => posts.length + " post(s): " + JSON.stringify(posts.map((p) => p.body.data.text)));
+}
+{
   const { W, posts } = world();
   W.recordAction("banner", "Nogo established (1300 nogo zone(s))");
   W.recordAction("banner", "Nogo established (1300 nogo zone(s))");     // merges into the row above: not a new row
@@ -99,24 +118,34 @@ console.log("The page posts its own card data into the session log, on change:")
         () => posts.length + " post(s): " + JSON.stringify(posts.map((p) => p.body.data.text)) + "; rows " + W.log().length);
 }
 {
+  // THE MESSAGE, NOT THE BUTTONS (2026-11-05): the bar's whole textContent carries every button's label, shown or not -
+  // the census found all 156 records it measured reading "... CANCEL OVERRIDE RELEASE LOW ...". What is posted is the
+  // rung (#gb_rung) and the reason (#gb_why), as the operator read them.
   const { W, posts, $ } = world();
-  const bar = $("#guardBar"); bar.style.display = "none"; bar.textContent = "";
+  const BUTTONS = " ROUTE ROUND HER NOW CONTINUE AT LOW SPEED PROCEED — I have assessed it CANCEL OVERRIDE "
+                + "RELEASE LOW — BACK TO THE PLAN'S SPEED LEAVE IT HOLDING";
+  const bar = $("#guardBar"), rung = $("#gb_rung"), why = $("#gb_why");
+  const say = (r, w) => { rung.textContent = r; why.textContent = w; bar.textContent = r + w + BUTTONS; };
+  bar.style.display = "none"; say("SLOW", "");
   W.logGuardChange(); W.logGuardChange();
   const hidden = posts.length;
-  bar.style.display = ""; bar.className = "guardbar blind"; bar.textContent = "  GUARD BLIND\n 96.8 m off a keep-out ";
+  bar.style.display = ""; bar.className = "guardbar blind"; say("  GUARD BLIND\n", " 96.8 m off a keep-out ");
   W.logGuardChange(); W.logGuardChange();
   const shownOnce = posts.length;
-  bar.className = "guardbar helm"; bar.textContent = "HELM - the console would steer now";
+  bar.className = "guardbar helm"; say("⚠ HELM", "the console would steer now");
   W.logGuardChange();
   bar.style.display = "none";
   W.logGuardChange();
-  check("3. the guard bar is posted on CHANGE: nothing while hidden, once when it shows (whitespace folded), once when its "
-        + "rung changes, and once more when it hides again",
+  check("3. the guard bar is posted on CHANGE: nothing while hidden, once when it shows, once when its rung changes, and "
+        + "once more when it hides again - its MESSAGE, the rung and the reason with whitespace folded, and none of the "
+        + "buttons' labels the bar also holds",
         () => hidden === 0 && shownOnce === 1 && posts.length === 3 && posts.every((p) => p.body.kind === "guard")
               && posts[0].body.data.shown === true && posts[0].body.data.text === "GUARD BLIND 96.8 m off a keep-out"
               && posts[0].body.data.cls === "guardbar blind" && posts[1].body.data.cls === "guardbar helm"
+              && posts[1].body.data.text === "⚠ HELM the console would steer now"
+              && posts.every((p) => !/CANCEL OVERRIDE|PROCEED|RELEASE LOW|LEAVE IT HOLDING/.test(p.body.data.text))
               && posts[2].body.data.shown === false && posts[2].body.data.text === "",
-        () => posts.length + " post(s): " + JSON.stringify(posts.map((p) => [p.body.data.shown, p.body.data.cls])));
+        () => posts.length + " post(s): " + JSON.stringify(posts.map((p) => [p.body.data.shown, p.body.data.cls, p.body.data.text])));
 }
 {
   const { W, posts, S, mission, $ } = world();
@@ -127,11 +156,14 @@ console.log("The page posts its own card data into the session log, on change:")
   $("#v_approach").textContent = "1m @ high"; $("#v_wpt").textContent = "3 / 40"; $("#v_mission").textContent = "Run\n running";
   S.run = "idle"; W.logLinesTick();                    // lines drawn but nothing running: still nothing
   const before = posts.length;
+  mission.lines = [{ a: { lat: 43, lon: -70 }, b: { lat: 43.001, lon: -70 }, frac: 0.6666 }];
   S.run = "running"; W.logLinesTick();
   check("4. the LINES tick posts only while a run is under way with lines - a plan drawn and idle posts nothing - carrying "
-        + "the table and the run-time readouts as the cards show them (whitespace folded)",
+        + "the table (each row with the share of its coverage RUN, `done`, 2 dp - 2026-11-05) and the run-time readouts as "
+        + "the cards show them (whitespace folded)",
         () => before === 0 && posts.length === 1 && posts[0].body.kind === "lines"
-              && posts[0].body.data.lines.length === 1 && posts[0].body.data.runtime === "1:00 · 2:00 left · 33%"
+              && posts[0].body.data.lines.length === 1 && posts[0].body.data.lines[0].done === 0.67
+              && posts[0].body.data.lines[0].len_m === 100 && posts[0].body.data.runtime === "1:00 · 2:00 left · 33%"
               && posts[0].body.data.survey === "5m @ survey" && posts[0].body.data.approach === "1m @ high"
               && posts[0].body.data.wpt === "3 / 40" && posts[0].body.data.mission === "Run running",
         () => posts.length + " post(s): " + JSON.stringify(posts[0] && posts[0].body.data).slice(0, 200));

@@ -1001,8 +1001,23 @@ def _redact(body):
 
 LOG_QUIET_AFTER_S = 600.0        # sim boat home and idle this long -> the recording goes quiet (see SessionLogger)
 LOG_QUIET_HOME_M = 25.0          # "home" for that rule: within this of the home point
-AIS_LOG_INTERVAL_S = 10.0        # the contacts the page polls go into the log at most this often
-_ais_log_t = [0.0]
+
+
+def _rec_num(v, nd):
+    """A number for the record, rounded - or None. ⚠ A NaN LINE IS A LOST LINE: _write serializes with allow_nan, and
+    playback's JSON.parse drops a line holding a bare NaN without a word, so every number a NEW record carries is
+    made finite here (or by finite_only) before it is written. A bool is not a number here."""
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    f = float(v)
+    return round(f, nd) if math.isfinite(f) else None
+
+
+def _plan_digest(doc):
+    """sha256 of a plan's CANONICAL JSON (sorted keys, no spaces): the same plan digests the same whatever wrote it,
+    so a `mission` record and a `mission_saved` record can be matched without carrying the body twice."""
+    return hashlib.sha256(json.dumps(doc, sort_keys=True, separators=(",", ":"),
+                                     default=str).encode("utf-8")).hexdigest()
 
 
 class SessionLogger:
@@ -1022,8 +1037,44 @@ class SessionLogger:
     # can put COMMANDED speed alongside the speed actually made good. (A live speed change
     # is salient anyway - it sets `note`, which is in SALIENT above - but the trace is what
     # lets you see the boat accelerating onto the new command.)
+    # ⚠ THE 1 Hz TRACE CARRIES WHAT DESCRIBES THE MISSION BETWEEN SNAPSHOTS (Andy, 2026-11-05: "add in data that fully
+    # describes any given mission"). The set she was carried by, her crab, pitch and roll, the speed she was told, the
+    # fuel of a fuel hull (the DriX logged battery_v: null and nothing else) and the sim's own forcing all moved in 10 s
+    # steps or not at all. `if k in st` below already leaves out what a frame does not carry, so a real link's frame
+    # adds only what it reports. env_set_kn stays THE SUM (tests/currents.py pins it); `forcing` is the split.
     TELEM_FIELDS = ("lat_deg", "lon_deg", "heading_deg", "cog_deg", "sog_kn", "speed_key",
-                    "battery_v", "battery_pct", "battery_state", "holding", "laps")
+                    "battery_v", "battery_pct", "battery_state", "holding", "laps",
+                    "env_set_kn", "env_set_deg", "env_set_src", "crab_deg", "pitch_deg", "roll_deg",
+                    "speed_target_kn", "fuel_l", "fuel_pct", "fuel_state", "off_station_m", "drifting", "forcing")
+    # ⚠ THE ENVIRONMENT IS ITS OWN STREAM, WRITTEN ON A VALUE CHANGE (2026-11-05). The four blocks were 43% of every
+    # logged state and 95% repeats - only their ages ticked. They go into `env` records when a value changes (ages,
+    # fetch stamps and page URLs are not values; a monitor_error IS one), in full at the first state after start and
+    # after every wake, and the LOGGED state leaves them out. The SSE frame keeps them: the page reads them there.
+    ENV_BLOCKS = ("env", "water", "current", "density")
+    ENV_KEY_SKIP = ("age_s", "fetched_at", "page", "page_for", "sampled_t")
+    # ⚠ A RESAMPLE THAT CHANGED NOTHING STILL SAYS SO, THIS OFTEN (review 2026-11-05). The current is computed again
+    # every minute, and near max flood its 2 dp speed holds for 10-20 minutes - no change, no record, so the replay aged
+    # the last block from its OWN sample: '12 min', '18 min', where the live card never read past a minute. A block whose
+    # sampled_t moved this far past the last one written gets a small record of its own (that block alone, not full).
+    ENV_RESAMPLE_LOG_S = 60.0
+    ENV_CHECK_S = 1.0               # the change key is looked at no more often than this - never per 4 Hz frame
+    # "Active" in the Engine's own vocabulary (idle | running | paused | stopped | complete): a run is under way, or
+    # paused and resumable. Station-keeping at a Go-To's end is still `running`, and still that run.
+    RUN_ACTIVE = ("running", "paused")
+    # ⚠ THE 4 Hz FRAMES AROUND A SAFETY EVENT ARE KEPT (2026-11-05). The guard acts on 4 Hz frames; the log keeps 1 Hz
+    # and 10 s, so a guard frame replay (replay_hold.cjs, idx-1/idx/idx+1) had nothing to replay. A ring of slim
+    # frames, the last INCIDENT_PRE_S of them, and on a trigger INCIDENT_POST_S more: ONE `incident` record.
+    INCIDENT_PRE_S = 60.0
+    INCIDENT_POST_S = 30.0
+    # ⚠ A TRIGGER INSIDE THE WINDOW EXTENDS IT (review 2026-11-05): an E-STOP 28 s after a guard override kept 2 s of
+    # 4 Hz frames, and its own edge was spent. Each joining trigger gets its INCIDENT_POST_S - up to this long after
+    # the FIRST, so a storm of triggers cannot hold one window open without end.
+    INCIDENT_MAX_POST_S = 120.0
+    INCIDENT_COLS = ("t", "lat", "lon", "hdg", "cog", "sog", "wp_index", "run", "autonomy", "behavior",
+                     "env_set_kn", "env_set_deg", "holding", "hold_clear_m", "speed_key", "speed_target_kn",
+                     "avoiding")
+    # the page's own safety episodes, as they arrive at /api/logevent (berth_grant only when the guard took the helm)
+    INCIDENT_PAGE_KINDS = ("avoiding", "ais_avoid", "ais_around", "guard_override", "guard_low", "hold_disc")
 
     def __init__(self, enabled=True, log_dir=LOG_DIR, quiet_after_s=LOG_QUIET_AFTER_S):
         self._lock = threading.Lock()
@@ -1044,6 +1095,25 @@ class SessionLogger:
         self._last_salient = None
         self._last_state_t = 0.0
         self._last_full_t = 0.0
+        # A stream that keyframes reads this: every wake() moves it, so a quiet gap however short is seen (TargetRecorder).
+        self.wakes = 0
+        # Hooks main() sets, so this class reads no module state of its own and a suite can drive it with stubs:
+        # env_extra(blocks) -> {buoys, stations} beside an `env` record; mission_source() -> the plan on disk.
+        self.env_extra = None
+        self.mission_source = None
+        self._env_key = None
+        self._env_full_due = True
+        self._env_check_t = 0.0
+        self._env_sampled = {}      # block -> the sampled_t last written (see ENV_RESAMPLE_LOG_S)
+        self._run_lock = threading.Lock()
+        self._run = None
+        self._runs_closed = False   # end_runs() ran: the disconnect's frames after it start nothing
+        self._seq_hi = None         # the highest run_seq seen, and the highest that has ENDED (see _track_run)
+        self._seq_ended = None
+        self._inc_lock = threading.Lock()
+        self._ring = collections.deque()
+        self._inc = None
+        self._prev_frame = {}
         if self.enabled:
             try:
                 os.makedirs(log_dir, exist_ok=True)
@@ -1056,8 +1126,10 @@ class SessionLogger:
                 self.enabled = False
                 self._f = None
 
-    def _write(self, kind, payload):
+    def _write(self, kind, payload, routine=False):
         if not self.enabled or self._f is None:
+            return
+        if routine and self.quiet:
             return
         rec = {"t": round(time.time(), 3),
                "iso": time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -1067,6 +1139,11 @@ class SessionLogger:
         try:
             line = json.dumps(rec, default=str) + "\n"
             with self._lock:
+                # ⚠ A ROUTINE RECORD ASKS AGAIN UNDER THE LOCK. The env, targets and incident writers run on threads
+                # of their own, and quiet_on() raises the flag BEFORE it writes `log_quiet`: asked here, no routine
+                # line can land after that record, whichever thread got the lock first.
+                if routine and self.quiet:
+                    return
                 if self._f is not None:
                     self._f.write(line)
         except (ValueError, TypeError):
@@ -1085,23 +1162,52 @@ class SessionLogger:
         """Record a lifecycle marker (session_start/end, connect, disconnect)."""
         self._write(kind, payload)
 
-    def command(self, path, body, code, error=None):
-        """Record one received command/setting/action + its outcome."""
+    def routine(self, kind, payload):
+        """Record one ROUTINE stream record (env, targets, track_info, incident). ⚠ DROPPED WHILE QUIET, BY THIS CALL:
+        event() does not ask, because lifecycle records must land whatever - so a routine writer that used event()
+        would bring back the overnight growth the quiet rule exists to stop."""
+        self._write(kind, payload, routine=True)
+
+    def command(self, path, body, code, error=None, client=None, rx_t=None, ms=None):
+        """Record one received command/setting/action + its outcome.
+
+        ⚠ WHO ASKED, AND WHEN (2026-11-05). `client` is the first 8 characters of the tab's X-ASV-Client - the same cut
+        the supervisor_* records make, so a command joins the tab that held the post - `rx_t` the epoch it was received
+        and `ms` how long it took. The record's own `t` is stamped AFTER dispatch, which put file order up to 1.74 s
+        out of time order (measured); rx_t is the moment the operator's request arrived."""
         p = {"path": path, "body": _redact(body), "code": code}
         if error:
             p["error"] = error
+        if client:
+            p["client"] = str(client)[:8]
+        if rx_t is not None:
+            p["rx_t"] = _rec_num(rx_t, 3)
+        if ms is not None:
+            p["ms"] = _rec_num(ms, 1)
         self._write("command", p)
 
     def state(self, event):
         """Record a state snapshot: full on any salient transition, else a
         throttled slim motion sample. Called on every Engine state publish."""
-        if not self.enabled or self._f is None or self.quiet:
+        if not self.enabled or self._f is None:
+            return
+        now = time.time()
+        # ⚠ THE RUN BOOKKEEPING COMES BEFORE THE QUIET RETURN. A run cannot START while quiet (a start wakes), but a
+        # bookkeeping that depended on the log being awake would lose the end of one that outlived a wake race.
+        try:
+            self._track_run(event, now)
+        except Exception:           # noqa: BLE001 - the recorder never disturbs the C2 path
+            pass
+        if self.quiet:
             return
         try:
             salient = tuple(event.get(k) for k in self.SALIENT)
         except Exception:
             return
-        now = time.time()
+        try:
+            self._incident_frame(event, now)
+        except Exception:           # noqa: BLE001
+            pass
         # ⚠ A FULL SNAPSHOT AT LEAST EVERY STATE_FULL_INTERVAL, salient or not (2026-09-25). Playback
         # populates every card - wind, sea, water, current, comms, ROCs, supervisor - from the last full
         # snapshot at its cursor, and between two salient transitions there used to be none for as long
@@ -1111,32 +1217,311 @@ class SessionLogger:
             self._last_salient = salient
             self._last_state_t = now
             self._last_full_t = now
-            self._write("state", {"state": event})
+            self._env_check(event, now)
+            # the LOGGED copy only: the env stream carries the four blocks (see ENV_BLOCKS); the SSE frame keeps them.
+            # ⚠ FINITE, AS THE FRAME IS: _publish sends finite_only(event), and this copy was written raw - one NaN in
+            # the status and playback's JSON.parse dropped the whole snapshot the operator's page had shown.
+            self._write("state", {"state": finite_only({k: v for k, v in event.items() if k not in self.ENV_BLOCKS})})
         elif (now - self._last_state_t) >= self.STATE_MIN_INTERVAL:
             self._last_state_t = now
+            self._env_check(event, now)
             st = event.get("status") or {}
             self._write("telemetry", {
                 "run": event.get("run"),
                 "wp_index": event.get("wp_index"),
-                "status": {k: st.get(k) for k in self.TELEM_FIELDS if k in st},
+                "status": finite_only({k: st.get(k) for k in self.TELEM_FIELDS if k in st}),
             })
+
+    # -- the environment stream (A9) ------------------------------------------------------------------------------ #
+    @classmethod
+    def _env_key_of(cls, block):
+        if not isinstance(block, dict):
+            return block
+        return {k: v for k, v in block.items() if k not in cls.ENV_KEY_SKIP}
+
+    def _env_check(self, ev, now):
+        """An `env` record when a block's VALUE changed - or in full, after start and after every wake."""
+        try:
+            if not self._env_full_due and now - self._env_check_t < self.ENV_CHECK_S:
+                return
+            self._env_check_t = now
+            blocks = finite_only({k: ev[k] for k in self.ENV_BLOCKS if isinstance(ev.get(k), dict)})
+            if not blocks:
+                return
+            extra = {}
+            if callable(self.env_extra):
+                try:
+                    extra = finite_only(self.env_extra(blocks) or {})
+                except Exception as e:      # noqa: BLE001 - said in the record, never raised into the loop
+                    extra = {"error": "%s: %s" % (type(e).__name__, e)}
+            key = {k: self._env_key_of(v) for k, v in blocks.items()}
+            key["_extra"] = extra
+            full = self._env_full_due
+            if not full and key == self._env_key:
+                self._env_resampled(blocks)
+                return
+            prev = self._env_key or {}
+            changed = sorted(k for k in blocks if prev.get(k) != key[k])
+            if prev.get("_extra") != extra:
+                changed.append("extra")
+            self._env_key = key
+            self._env_full_due = False
+            self._note_sampled(blocks)
+            self._write("env", {"blocks": blocks, "extra": extra, "full": full, "changed": changed}, routine=True)
+        except Exception:           # noqa: BLE001 - the recorder never disturbs the C2 path
+            pass
+
+    @staticmethod
+    def _sampled_of(block):
+        s = block.get("sampled_t") if isinstance(block, dict) else None
+        return s if isinstance(s, (int, float)) and not isinstance(s, bool) and math.isfinite(s) else None
+
+    def _note_sampled(self, blocks):
+        for k, v in blocks.items():
+            s = self._sampled_of(v)
+            if s is not None:
+                self._env_sampled[k] = s
+
+    def _env_resampled(self, blocks):
+        """The blocks recomputed with the same value, ENV_RESAMPLE_LOG_S past the last written: one partial record."""
+        part = {}
+        for k, v in blocks.items():
+            s = self._sampled_of(v)
+            last = self._env_sampled.get(k)
+            if s is not None and (last is None or s - last >= self.ENV_RESAMPLE_LOG_S):
+                part[k] = v
+        if part:
+            self._note_sampled(part)
+            self._write("env", {"blocks": part, "extra": {}, "full": False, "changed": [], "resampled": sorted(part)},
+                        routine=True)
+
+    # -- runs (A6) ------------------------------------------------------------------------------------------------ #
+    @staticmethod
+    def _run_frame(ev, st):
+        return {"run": ev.get("run"), "note": ev.get("note"), "autonomy": ev.get("autonomy"),
+                "behavior": ev.get("behavior"), "wp_index": ev.get("wp_index"), "wp_total": ev.get("wp_total")}
+
+    @staticmethod
+    def _energy_of(st):
+        """(kind, unit, value) of the gauge this hull uses: a fuel hull's liters, else the pack's percent (volts when
+        no percent is reported)."""
+        kind = st.get("energy_type") or POWER_TYPE
+        if kind == "fuel":
+            return "fuel", "L", _rec_num(st.get("fuel_l"), 2)
+        pct = _rec_num(st.get("battery_pct"), 2)
+        if pct is not None:
+            return "battery", "%", pct
+        return "battery", "V", _rec_num(st.get("battery_v"), 3)
+
+    def _track_run(self, ev, now):
+        """⚠ A RUN HAS A START AND AN END IN THE FILE (2026-11-05). A mission existed in the log only implicitly, and its
+        end table only if a chart page was open and awake. `run_seq` names the motion (Engine: a new one for every
+        commanded motion, never for a resume or a re-approach), so a new run_seq ends the run before it - superseded -
+        and a run leaving running/paused ends in the state it reached. Distance is summed between the fixes seen."""
+        if not isinstance(ev, dict):
+            return
+        seq, run = ev.get("run_seq"), ev.get("run")
+        st = ev.get("status") or {}
+        # ⚠ MONOTONIC IN run_seq (review 2026-11-05). Frames reach here from the telemetry thread AND every command
+        # thread, outside the Engine's lock, so one built before a Go-To bumped run_seq can arrive after it: that ended
+        # the new run 'superseded' by the OLD one and opened both again. An older run_seq than one already seen is a
+        # late frame, and a run_seq that has ended never opens again (a resume keeps its run_seq but is never ended:
+        # paused is active). Engine numbers motions with ints; anything else is taken as it comes.
+        num = isinstance(seq, int) and not isinstance(seq, bool)
+        with self._run_lock:
+            if self._runs_closed:
+                return
+            if num and self._seq_hi is not None and seq < self._seq_hi:
+                return
+            if num:
+                self._seq_hi = seq
+            cur = self._run
+            if cur is not None and seq != cur["seq"]:
+                self._end_run(cur, dict(cur["last"] or {}, run="superseded"), now, next_run_seq=seq)
+                cur = self._run = None
+            active = run in self.RUN_ACTIVE
+            if cur is None and active and num and self._seq_ended is not None and seq <= self._seq_ended:
+                return                          # a late 'running' frame of a run that has already ended
+            if cur is None and active:
+                cur = self._run = {"seq": seq, "id": "%s:%s" % (self.session_id, seq), "t0": now, "dist_m": 0.0,
+                                   "fix": None, "e": None, "last": None}
+                self._write("run_start", {"run_id": cur["id"], "run_seq": seq, "behavior": ev.get("behavior"),
+                                          "completion": ev.get("run_completion"), "wp_total": ev.get("wp_total"),
+                                          "speed_key": st.get("speed_key"), "vessel_id": ev.get("vessel_id")})
+            if cur is None:
+                return
+            # this frame counts toward the run it belongs to - the one that ENDS it included (its fix, its gauge)
+            lat, lon = _rec_num(st.get("lat_deg"), 7), _rec_num(st.get("lon_deg"), 7)
+            if lat is not None and lon is not None:
+                if cur["fix"] is not None:
+                    cur["dist_m"] += _haversine_km(cur["fix"][0], cur["fix"][1], lat, lon) * 1000.0
+                cur["fix"] = (lat, lon)
+            kind, unit, val = self._energy_of(st)
+            if val is not None:
+                if cur["e"] is None:
+                    cur["e"] = {"kind": kind, "unit": unit, "start": val, "end": val}
+                elif cur["e"]["kind"] == kind and cur["e"]["unit"] == unit:
+                    cur["e"]["end"] = val
+            cur["last"] = self._run_frame(ev, st)
+            if not active:
+                self._end_run(cur, cur["last"], now)
+                self._run = None
+
+    def _end_run(self, cur, frame, now, **extra):
+        s = cur.get("seq")
+        if isinstance(s, int) and not isinstance(s, bool) and (self._seq_ended is None or s > self._seq_ended):
+            self._seq_ended = s
+        e = cur.get("e")
+        energy = (dict(e, used=_rec_num(e["start"] - e["end"], 2)) if e else None)
+        p = {"run_id": cur["id"], "run_seq": cur["seq"], "run": frame.get("run"), "note": frame.get("note"),
+             "autonomy": frame.get("autonomy"), "behavior": frame.get("behavior"),
+             "dur_s": _rec_num(now - cur["t0"], 1), "dist_m": _rec_num(cur["dist_m"], 1),
+             "wp_index": frame.get("wp_index"), "wp_total": frame.get("wp_total"), "energy": energy}
+        p.update(extra)
+        self._write("run_end", finite_only(p))
+
+    def end_runs(self, why="session_end"):
+        """The session is ending: a run still active gets its run_end (run = `why`), an open incident is written as it
+        stands. Called before the Engine disconnects, so the run is not first ended as the disconnect's `idle`."""
+        with self._run_lock:
+            cur, self._run = self._run, None
+            self._runs_closed = True
+            if cur is not None:
+                self._end_run(cur, dict(cur["last"] or {}, run=why), time.time())
+        with self._inc_lock:
+            inc, self._inc = self._inc, None
+        if inc is not None:
+            self._write_incident(inc)
+
+    # -- incidents (A11) ------------------------------------------------------------------------------------------ #
+    def _incident_frame(self, ev, now):
+        st = ev.get("status") or {}
+        sup = ev.get("supervisor") or {}
+        fr = [round(now, 3), _rec_num(st.get("lat_deg"), 6), _rec_num(st.get("lon_deg"), 6),
+              _rec_num(st.get("heading_deg"), 1), _rec_num(st.get("cog_deg"), 1), _rec_num(st.get("sog_kn"), 2),
+              ev.get("wp_index"), ev.get("run"), ev.get("autonomy"), ev.get("behavior"),
+              _rec_num(st.get("env_set_kn"), 2), _rec_num(st.get("env_set_deg"), 0), bool(st.get("holding")),
+              _rec_num(st.get("hold_clear_m"), 1), st.get("speed_key"), _rec_num(st.get("speed_target_kn"), 2),
+              bool(isinstance(sup, dict) and sup.get("avoiding"))]
+        p = self._prev_frame
+        aut = ev.get("autonomy")
+        fired = []
+        if p is None:
+            pass                                # the first frame after a wake seeds the edges (see wake)
+        else:
+            if ev.get("estop") and not p.get("estop"):
+                fired.append("estop")
+            if aut in ("failsafe", "e-stop") and aut != p.get("autonomy"):
+                fired.append("autonomy:" + aut)
+            if ev.get("loop_fault") and not p.get("loop_fault"):
+                fired.append("loop_fault")
+            if ev.get("supervisor_held") and not p.get("supervisor_held"):
+                fired.append("supervisor_stand_down")
+        self._prev_frame = {"estop": bool(ev.get("estop")), "autonomy": aut,
+                            "loop_fault": bool(ev.get("loop_fault")), "supervisor_held": bool(ev.get("supervisor_held"))}
+        done = None
+        with self._inc_lock:
+            self._ring.append(fr)
+            while self._ring and self._ring[0][0] < now - self.INCIDENT_PRE_S:
+                self._ring.popleft()
+            if self._inc is not None:
+                self._inc["post"].append(fr)
+            for name in fired:
+                self._incident_open(name, now)
+            if self._inc is not None and now >= self._inc["until"]:
+                done, self._inc = self._inc, None
+        if done is not None:
+            # ⚠ SERIALIZED OFF THE TELEMETRY THREAD: ~360 frames is a few tens of KB of JSON, and this is the loop
+            # the guard's frames come from.
+            threading.Thread(target=self._write_incident, args=(done,), daemon=True).start()
+
+    def _incident_open(self, name, now):
+        """Under _inc_lock. One open window at a time; a trigger inside it joins it."""
+        if self._inc is None:
+            self._inc = {"first": name, "fired": [[round(now, 3), name]], "t0": now, "until": now + self.INCIDENT_POST_S,
+                         "pre": [f for f in self._ring if f[0] >= now - self.INCIDENT_PRE_S], "post": []}
+        else:
+            self._inc["fired"].append([round(now, 3), name])
+            self._inc["until"] = min(self._inc["t0"] + self.INCIDENT_MAX_POST_S,
+                                     max(self._inc["until"], now + self.INCIDENT_POST_S))
+
+    def incident_trigger(self, kind, data=None, now=None):
+        """A page safety episode arrived at /api/logevent: open (or join) the incident window. Quiet-gated: the
+        page's events are dropped while quiet, and so is what they would trigger. `now` is the frames' clock (a suite's)."""
+        if not self.enabled or self.quiet:
+            return
+        if not (kind in self.INCIDENT_PAGE_KINDS
+                or (kind == "berth_grant" and isinstance(data, dict) and data.get("event") == "helm_taken")):
+            return
+        with self._inc_lock:
+            self._incident_open(kind if kind != "berth_grant" else "berth_grant:helm_taken",
+                                time.time() if now is None else now)
+
+    def _write_incident(self, inc):
+        names = []
+        for _t, n in inc["fired"]:
+            if n not in names:
+                names.append(n)
+        p = {"trigger": inc["first"], "triggers": names, "fired": inc["fired"],
+             "cols": list(self.INCIDENT_COLS), "frames": inc["pre"] + inc["post"],
+             "pre_s": self.INCIDENT_PRE_S, "post_s": self.INCIDENT_POST_S}
+        if inc.get("cut"):
+            p["cut"] = inc["cut"]               # the window was closed early - by the log going quiet
+        self._write("incident", p, routine=True)
 
     def quiet_on(self, reason):
         """Stop the routine stream until wake(). One record marks the pause so a reader of the file
         knows the silence is deliberate and what ends it."""
         if self.quiet or not self.enabled:
             return
+        # ⚠ AN OPEN INCIDENT IS WRITTEN NOW, AS IT STANDS (review 2026-11-05) - before the flag, while a routine record
+        # still lands. Left open, its window could not reach `until` (no frames while quiet): it was written at the wake,
+        # hours on, with a frame from the far side of the gap - or dropped, when the console ended quiet.
+        with self._inc_lock:
+            inc, self._inc = self._inc, None
+            self._ring.clear()
+        if inc is not None:
+            inc["cut"] = "log_quiet"
+            self._write_incident(inc)
+        # the flag FIRST: a routine writer on another thread asks it under the write lock (see _write)
+        self.quiet = True
         self._write("log_quiet", {"reason": reason,
                                   "resumes": "when a mission is planned or saved, or the boat is commanded"})
-        self.quiet = True
 
     def wake(self, reason):
-        """Resume the routine stream. The first frame after the pause is a full snapshot again."""
+        """Resume the routine stream. The first frame after the pause is a full snapshot again - and the environment,
+        the targets (wakes) and the plan on disk are written in full again, so a reader may start at the resume."""
         if not self.quiet:
             return
         self.quiet = False
         self._last_salient = None
+        self._env_full_due = True
+        # ⚠ THE EDGES ARE RE-SEEDED, NOT FIRED (review 2026-11-05): no frame reaches _incident_frame while quiet, so the
+        # last one seen is from before the gap - an E-STOP latched at the dock while quiet fired an 'estop' incident at
+        # the wake, hours after it was pressed. The first frame after a wake seeds; and the ring starts empty, so a
+        # post-wake incident never takes pre-quiet frames as its `pre`.
+        with self._inc_lock:
+            self._ring.clear()
+        self._prev_frame = None
+        self.wakes += 1
         self._write("log_resume", {"reason": reason})
+        # ⚠ THE PLAN IS READ OFF THIS THREAD: wake() is called under Engine._lock (upload, start, route), and a
+        # 65-140 KB plan file read there would stall every command behind it.
+        if callable(self.mission_source):
+            threading.Thread(target=self.write_mission, args=("log_resume",), daemon=True).start()
+
+    def write_mission(self, why):
+        """A `mission` record: the plan on disk as the console reads it, with its digest - or {error}, never a raise."""
+        src = self.mission_source
+        if not callable(src):
+            return
+        try:
+            m = src()
+            p = {"why": why, "rev": m.get("rev") if isinstance(m, dict) else None, "sha256": _plan_digest(m),
+                 "mission": finite_only(m)}
+        except Exception as e:      # noqa: BLE001 - MissionUnavailable and the rest: said, never a failed boot
+            p = {"why": why, "error": "%s: %s" % (type(e).__name__, e)}
+        self._write("mission", p)
 
     def close(self):
         with self._lock:
@@ -1163,11 +1548,16 @@ LOG = None
 _mission_lock = threading.RLock()     # the READS hold it too - see _read_mission_file
 
 
+def _completion_value(v):
+    """An end-of-plan value, validated (rth when it is not one of the four). Reads nothing, writes nothing."""
+    return v if v in ("complete", "loiter", "repeat", "rth") else "rth"
+
+
 def _cache_plan_completion(v):
     """Validate an end-of-plan value and refresh the cache. Every mission read and write
     funnels through here, so `plan_completion()` cannot drift from what is on disk."""
     global _PLAN_COMPLETION
-    _PLAN_COMPLETION = v if v in ("complete", "loiter", "repeat", "rth") else "rth"
+    _PLAN_COMPLETION = _completion_value(v)
     return _PLAN_COMPLETION
 
 
@@ -1764,13 +2154,18 @@ def mission_params():
     return dict(_MISSION_CACHE)
 
 
-def load_mission():
+def load_mission(refresh=True):
     """The plan, normalized. A missing file is the empty plan; a file that is there but cannot be
-    read as a plan RAISES MissionUnavailable - see _read_mission_file for why never an empty one."""
+    read as a plan RAISES MissionUnavailable - see _read_mission_file for why never an empty one.
+
+    ⚠ refresh=False IS A PURE READ (review 2026-11-05): the session record's mission source. A read that refreshed
+    _MISSION_CACHE and _PLAN_COMPLETION from a background thread, with no lock held after the file read, could land
+    an OLDER revision on top of a save that finished in between - and those two caches are what the console commands
+    (end-of-plan, arrival and approach radii). A logging thread must never change what the boat is told."""
     global _MISSION_CACHE
     m = _read_mission_file()
     if m is not None:
-        _MISSION_CACHE = {
+        view = {
             "waypoints": m.get("waypoints") or [],
             "lines": m.get("lines") or [],
             "arrival_radius_m": m.get("arrival_radius_m", ARRIVAL_DEFAULT_M),
@@ -1780,7 +2175,7 @@ def load_mission():
             # plan-run completion semantics (Survey/search as a typed behavior):
             # complete (stop) | loiter (station-keep at the last wp) | repeat (loop)
             # | rth (chain the ENC-routed Return-to-Home). Default: rth.
-            "completion": _cache_plan_completion(m.get("completion")),
+            "completion": _completion_value(m.get("completion")),
             # keep-clear buffer (m) around every nogo zone - the tightness the
             # ASV threads between piers; smaller for tight marinas.
             "buffer_m": m.get("buffer_m", NOGO_BUFFER_DEFAULT_M),
@@ -1835,15 +2230,20 @@ def load_mission():
             "rev": (m.get("rev") if isinstance(m.get("rev"), int) and not isinstance(m.get("rev"), bool)
                     and m.get("rev") >= 0 else 0),
         }
-        return dict(_MISSION_CACHE)
-    _MISSION_CACHE = {"waypoints": [], "lines": [], "arrival_radius_m": ARRIVAL_DEFAULT_M,
+        if refresh:
+            _MISSION_CACHE = view
+            _cache_plan_completion(view["completion"])
+        return dict(view)
+    view = {"waypoints": [], "lines": [], "arrival_radius_m": ARRIVAL_DEFAULT_M,
             "approach_radius_m": WP_APPROACH_M, "speed": "survey",
             "speeds": _norm_speeds(None), "completion": "rth",
             "buffer_m": NOGO_BUFFER_DEFAULT_M, "min_depth_m": 2.0,
             "lead_mode": "m", "lead_in": 0, "lead_out": 0, "turn_ease": "arc",
             "boundary": [], "boundary_closed": False, "survey_bounded": None, "surveys": [], "breaks": [], "strikes": [], "passage": None, "passage_hold": None,
             "rev": 0}
-    return dict(_MISSION_CACHE)
+    if refresh:
+        _MISSION_CACHE = view
+    return dict(view)
 
 
 # The operator's END-OF-PLAN setting, cached so the 4 Hz telemetry loop never touches
@@ -5224,6 +5624,8 @@ class WaterLevel:
             # fetched it, which is minutes later (review #13). The page stops applying it past
             # WATER_STALE_S. A reading whose time cannot be read is aged from its fetch.
             base["age_s"] = (_age_s(_coops_epoch(base.get("t")) or fetched) if base.get("ok") else None)
+        # the station's own time as an EPOCH: CO-OPS' "YYYY-MM-DD HH:MM" is GMT, which a browser's Date reads as local
+        base["obs_t"] = _coops_epoch(base.get("t")) if base.get("t") else None
         base["fetched_at"] = fetched
         base["monitor_error"] = err
         # THE STATION'S OWN PAGE, BUILT HERE AND NOWHERE ELSE. The console page opens and
@@ -5471,6 +5873,11 @@ def _fetch_ndbc_obs(station_id, timeout=15.0):
     return rec
 
 
+# The NDBC realtime2 columns a buoy's own row carries into the session record (fetch_environment's `buoys`): wind,
+# gust, sea, pressure, air and water temperature, dew point, visibility. A column the row lacks is left out.
+NDBC_ROW_KEYS = ("WDIR", "WSPD", "GST", "WVHT", "DPD", "APD", "MWD", "PRES", "ATMP", "WTMP", "DEWP", "VIS")
+
+
 def _ndbc_epoch(rec):
     """An NDBC realtime2 row's own time (#YY MM DD hh mm, UTC) -> epoch seconds, or None."""
     try:
@@ -5521,6 +5928,18 @@ def fetch_environment(lat, lon):
             if rec:
                 obs.append((d, s["id"], rec))
     obs.sort(key=lambda t: t[0])
+    # EVERY BUOY'S OWN ROW, as it was read - stale ones too, each with its own time (the 2026-11-05 mission record). The
+    # blend below keeps only wind, sea and water temperature; pressure, air temperature, dew point and visibility were
+    # parsed and thrown away. Riding the session record only (EnvMonitor.buoys), never the state frame.
+    _pos = {s["id"]: s for _d, s in cand}
+    buoys = []
+    for d, sid, r in obs:
+        row = {"id": sid, "dist_km": round(d, 1), "lat": _pos.get(sid, {}).get("lat"), "lon": _pos.get(sid, {}).get("lon"),
+               "t": _ndbc_epoch(r)}
+        for k in NDBC_ROW_KEYS:
+            if r.get(k) is not None:
+                row[k] = _rec_num(r[k], 2)
+        buoys.append(row)
     # ⚠ A LAGGING BUOY DOES NOT DATE THE BLEND (Andy, 2026-09-24: "the mission card wind entry is
     # more than an hour out of date. it should be the most recent data"). Every reachable buoy's LATEST
     # row went into the blend whatever its time, and the blend is honestly dated by its oldest input -
@@ -5600,7 +6019,7 @@ def fetch_environment(lat, lon):
                       "stations": [{"id": sid, "dist_km": round(d, 1)} for d, sid, _ in tset]}
     if not wind and not sea:
         return {"ok": False, "source": "none",
-                "note": "buoys reachable but reporting no wind/wave right now"}
+                "note": "buoys reachable but reporting no wind/wave right now", "buoys": buoys}
     src = "derived" if (derived and not (sea and not sea["derived"])) else "buoy"
     note = ("NDBC buoys" + (" (sea state estimated from wind)" if derived else "")
             + (" - every report in reach is older than %d h" % (ENV_STALE_S // 3600) if all_stale else ""))
@@ -5617,7 +6036,7 @@ def fetch_environment(lat, lon):
             "obs_t": (min(times) if times else None),
             "station": (used[0][1] if used else None),
             "stations": [{"id": sid, "dist_km": round(d, 1)} for d, sid, _ in used],
-            "water_temp": water_temp}
+            "water_temp": water_temp, "buoys": buoys}
 
 
 class EnvMonitor:
@@ -5732,7 +6151,18 @@ class EnvMonitor:
                 # HOW OLD (review #13): from the oldest buoy observation in the blend, else from the
                 # fetch; none under a manual override, whose values are the operator's.
                 "age_s": (None if man or not base.get("ok") else _age_s(base.get("obs_t") or fetched)),
+                # WHEN THE BUOYS SAW IT, and the water they measured - computed by fetch_environment and dropped here
+                # until 2026-11-05: an `env` record ages a block from its own observation, not from a frozen age_s
+                "obs_t": base.get("obs_t"),
+                "water_temp": base.get("water_temp"),
                 "monitor_error": err}
+
+    def buoys(self):
+        """Each buoy's own latest row from the last fetch (fetch_environment's `buoys`) - for the session record only.
+        NOT in snapshot(): that rides every 4 Hz frame, and the blend is what the page reads."""
+        with self._lock:
+            rows = (self._last or {}).get("buoys")
+        return [dict(r) for r in rows] if rows else []
 
     def water_temp(self):
         """The buoys' blended water temperature from the last reading, {c, stations} or None (for WaterDensity)."""
@@ -6207,6 +6637,7 @@ class CurrentsMonitor:
             out = dict(self._last)
             at, err, ofs = self._sampled_at, self._error, self._ofs
         out["age_s"] = _age_s(at) if out.get("ok") else None      # since it was computed (review #13)
+        out["sampled_t"] = round(at, 1) if at is not None else None   # WHEN it was computed (the env record ages from it)
         out["monitor_error"] = err
         out["page"], out["page_for"] = current_page(out, ofs)   # the top bar's Current window (2026-10-09)
         return out
@@ -7317,6 +7748,7 @@ class SimVcu(VcuLink):
         drift_e = drift_n = set_kn = 0.0
         set_dir = None
         rel_w = beam = 0.0
+        ws = wfrom = gust = rho_w = None                     # the forcing as APPLIED, for status.forcing below
         if env:
             rho_w = DENSITY.rho()                            # the water's own density at her position (2026-10-09)
             vb = self.sog_kn * 0.514444                      # boat speed m/s
@@ -7421,6 +7853,7 @@ class SimVcu(VcuLink):
         # no readable stream (New Castle, 2026-09-26: "gomofs frames are not hourly") the whole
         # set still read 0.00 - see the wind block for what that cost. `deployed` now gates the
         # INTEGRATION of both halves here and the REPORT of neither.
+        lee_e, lee_n = drift_e, drift_n                     # the leeway alone, before the stream joins it (forcing)
         set_e, set_n = drift_e + cur_e, drift_n + cur_n
         if deployed:
             drift_e, drift_n = set_e, set_n
@@ -7531,7 +7964,30 @@ class SimVcu(VcuLink):
             "env_set_kn": round(set_kn, 2),
             "env_set_deg": round(set_dir, 0) if set_dir is not None else None,
             "crab_deg": round(crab, 1) if crab is not None else None,
+            # ⚠ THE TRUTH OF A SIM RUN, SPLIT - AND NEW FIELDS ONLY (2026-11-05). env_set_kn stays THE SUM: tests/currents.py
+            # pins it and ~20 page consumers act on it, so no page code reads this. What it adds is what the sum hides:
+            # the wind the hull felt (the buoys' mean, gusted and veered), the leeway it made against the stream that
+            # carried her, and the sea and density applied - so a replay can say whether wind or tide set her off the
+            # line. SimVcu only: a real link's frame has no `forcing`, because nothing here forces a real hull.
+            "forcing": self._forcing(env, ws, wfrom, gust, rho_w, lee_e, lee_n, cur_e, cur_n),
         }
+
+    @staticmethod
+    def _forcing(env, ws, wfrom, gust, rho_w, lee_e, lee_n, cur_e, cur_n):
+        def kn_deg(e, n):
+            mag = math.hypot(e, n)
+            return (_rec_num(mag * 1.9438, 2),
+                    _rec_num(math.degrees(math.atan2(e, n)) % 360.0, 1) if mag > 1e-4 else None)
+        lee_kn, lee_deg = kn_deg(lee_e, lee_n)
+        st_kn, st_deg = kn_deg(cur_e, cur_n)
+        return {"wind_kn": _rec_num(ws * 1.9438, 2) if ws is not None else 0.0,
+                "wind_from_deg": _rec_num(wfrom % 360.0, 1) if wfrom is not None else None,
+                "gust_mult": _rec_num(gust, 3),
+                "leeway_kn": lee_kn, "leeway_deg": lee_deg, "stream_kn": st_kn, "stream_deg": st_deg,
+                "hs_m": _rec_num(env.get("hs_m"), 2) if env else 0.0,
+                "tp_s": _rec_num(env.get("tp_s"), 1) if env else None,
+                "wave_from_deg": _rec_num(env.get("wave_from_deg"), 0) if env else None,
+                "rho": _rec_num(rho_w, 2)}
 
 
 def _turn_toward(cur, target, max_step):
@@ -7759,6 +8215,10 @@ class Engine:
         self._rth_last_target = None   # last arrival point issued to the link (drift throttle)
         self._rth_params = None        # captured run params (arrival/speed/approach) for the chase
         self._rth_lost_link = False    # the ROC's GPS link died MID-chase; said once per outage
+        # The chase's re-targets as `plan_loaded` records, at most one per CHASE_LOG_S (see _log_chase).
+        self._chase_pending = None
+        self._chase_logged = None
+        self._chase_logged_t = 0.0
         self.link = self.LINK_IDLE
         self.note = "Not connected."
         self.status = {}           # latest telemetry
@@ -8011,6 +8471,12 @@ class Engine:
             link.upload_plan(wpts, m.get("arrival_radius_m", 2.0), _sp["transit"],
                              m.get("approach_radius_m", WP_APPROACH_M), completion=completion,
                              hold_clear_m=hold_clear_m, name="survey")
+            # what the link was GIVEN, recorded after the lock (an upload is flown by the NEXT run: Start bumps run_seq)
+            plan_rec = {"behavior": "survey", "name": "survey", "arrival_radius_m": m.get("arrival_radius_m", 2.0),
+                        "approach_radius_m": m.get("approach_radius_m", WP_APPROACH_M), "speed_key": _sp["transit"],
+                        "completion": completion, "hold_clear_m": hold_clear_m, "coast_from_m": None,
+                        "staged": bool(link.plan_staged), "run_seq": self.run_seq,
+                        "source": "route" if route else "mission", "_route": wpts}
             self.plan_uploaded = True
             self._log_wake("plan uploaded")
             if link.plan_staged:
@@ -8033,7 +8499,50 @@ class Engine:
                 self.wp_index = 0
                 self.note = "Run plan uploaded (%d waypoints%s, %s)." % (
                     len(wpts), " · ENC-routed" if route else "", self.run_completion)
+        self._plan_loaded(plan_rec)
         self._push_state()
+
+    # ⚠ WHAT THE LINK WAS ACTUALLY GIVEN GOES INTO THE RECORD, FROM EVERY CALL SITE (2026-11-05). The command record
+    # holds the page's BODY; the arrival and approach radii, the speed, the completion and the routes the console
+    # built itself (an upload from the saved plan, a hold at her fix, a direct Go-To or RTH, the escape, the chase's
+    # targets) were never written anywhere. A `plan_loaded` is built UNDER the lock at each site - upload, _run_route,
+    # amend and the RTH chase - and written here, AFTER it: no file I/O, and no hashing of a 20,000-point route, may
+    # hold the lock every command and the telemetry loop wait on.
+    PLAN_LOG_MAX_PTS = 5000             # a route longer than this is recorded by its digest and length only
+    CHASE_LOG_S = 10.0                  # the chase re-targets ~1/s; a record of it at most this often
+
+    def _plan_loaded(self, rec):
+        if LOG is None or not rec:
+            return
+        try:
+            rec = dict(rec)
+            pts = [[round(float(p["lat"]), 6), round(float(p["lon"]), 6)] for p in (rec.pop("_route", None) or [])]
+            rec["n"] = len(pts)
+            rec["route_sha"] = hashlib.sha1(json.dumps(pts, separators=(",", ":")).encode("utf-8")).hexdigest()
+            if len(pts) <= self.PLAN_LOG_MAX_PTS:
+                rec["route"] = pts
+            LOG.event("plan_loaded", **finite_only(rec))
+        except Exception:               # noqa: BLE001 - the recorder never disturbs the C2 path
+            pass
+
+    def _log_chase(self):
+        """The RTH chase's latest re-target, at most every CHASE_LOG_S - on the telemetry thread, after its lock. A
+        re-target inside the throttle waits here, so the LAST target of a chase is written even when nothing follows."""
+        tgt = self._chase_pending
+        if tgt is None or LOG is None:
+            return
+        now = time.time()
+        if now - self._chase_logged_t < self.CHASE_LOG_S:
+            return
+        try:
+            prev = self._chase_logged
+            moved = (range_bearing(prev["lat"], prev["lon"], tgt["lat"], tgt["lon"])[0] if prev else None)
+            self._chase_pending, self._chase_logged, self._chase_logged_t = None, dict(tgt), now
+            LOG.event("plan_loaded", behavior="rth_chase", run_seq=self.run_seq,
+                      target={"lat": _rec_num(tgt.get("lat"), 6), "lon": _rec_num(tgt.get("lon"), 6)},
+                      moved_m=_rec_num(moved, 1))
+        except Exception:               # noqa: BLE001
+            self._chase_pending = None
 
     def set_approach(self, m):
         """Live-tune the waypoint approach radius on the connected link (sim).
@@ -8255,8 +8764,8 @@ class Engine:
             # The last good plan settings, never a file read that could fail a Go-To, a hold or
             # the escape - and the speed the vessel is ACTUALLY running, not a copy of it on disk.
             m = mission_params()
-            link.upload_plan(route, m.get("arrival_radius_m", 2.0),
-                             getattr(link, "speed_key", None) or m.get("speed", "survey"),
+            speed = getattr(link, "speed_key", None) or m.get("speed", "survey")
+            link.upload_plan(route, m.get("arrival_radius_m", 2.0), speed,
                              m.get("approach_radius_m", WP_APPROACH_M), completion="loiter",
                              hold_clear_m=hold_clear_m, coast_from_m=coast_from_m,
                              name=behavior)
@@ -8293,6 +8802,11 @@ class Engine:
                 self.status = dict(self.status, holding=False)
             self.behavior = link.loaded_name        # see the completion read-back above
             self.note = note
+            plan_rec = {"behavior": self.behavior, "name": behavior, "arrival_radius_m": m.get("arrival_radius_m", 2.0),
+                        "approach_radius_m": m.get("approach_radius_m", WP_APPROACH_M), "speed_key": speed,
+                        "completion": "loiter", "hold_clear_m": hold_clear_m, "coast_from_m": coast_from_m,
+                        "staged": False, "run_seq": self.run_seq, "continuing": bool(continuing), "_route": route}
+        self._plan_loaded(plan_rec)
         self._push_state()
 
     @staticmethod
@@ -8524,6 +9038,11 @@ class Engine:
             # as for every other command that changes what the run is doing (see _run_loop).
             self._commanded()
             self.note = note or ("Deviation: the remaining track was amended (%d wpts) to keep clear." % len(r))
+            # the route REPLACES the plan aboard from `splice_at` on (the link's live index), the rest of it kept
+            plan_rec = {"behavior": self.behavior, "name": "amend", "staged": False, "run_seq": self.run_seq,
+                        "splice_at": at if isinstance(at, int) and not isinstance(at, bool) else None,
+                        "wp_total": self.wp_total, "_route": r}
+        self._plan_loaded(plan_rec)
         self._push_state()
 
     def set_home(self, lat=None, lon=None):
@@ -8782,6 +9301,8 @@ class Engine:
                                     "speed": getattr(self._link, "speed_key", None) or m.get("speed", "survey"),
                                     "approach": m.get("approach_radius_m", WP_APPROACH_M)}
                 self._rth_last_target = dict(home)
+                # the chase's records measure from the target _run_route just recorded, and wait their CHASE_LOG_S
+                self._chase_pending, self._chase_logged, self._chase_logged_t = None, dict(home), time.time()
 
     # -- telemetry loop ---------------------------------------------------- #
     # ⚠ THE TELEMETRY LOOP SURVIVES ITS OWN FAULTS, AND SAYS SO (review #12, 2026-09-14). It had no
@@ -9055,12 +9576,14 @@ class Engine:
                                                  completion="loiter", name="rth")
                                 link.start()
                                 self._rth_last_target = dict(tgt)
+                                self._chase_pending = dict(tgt)      # written after the lock (_log_chase)
                             except Exception:
                                 pass
                 else:
                     self._misses += 1
                     if self._misses >= self.MISS_LOST and self.link != self.LINK_LOST:
                         self._link_lost(link)
+            self._log_chase()
             self._push_state()
             self._loop_clean()
 
@@ -9180,6 +9703,10 @@ class Engine:
             "autonomy": self._autonomy_label(),
             "behavior": self.behavior,
             "run_seq": self.run_seq,                   # which commanded motion this is (review #23)
+            # WHICH HULL AND WHICH BASE - ids only: this is the 4 Hz frame to every tab, and the profile and the port
+            # entry are written once, as `vessel` and `port` records, when they change (the mission record, 2026-11-05)
+            "vessel_id": (VESSEL or {}).get("id") if isinstance(VESSEL, dict) else None,
+            "port_id": PORTS.get("active"),
             "berth": self.berth,                       # the launch grant, if one is latched (R16)
             "supervisor": SUPERVISION.snapshot(),      # which tab is in charge, and whether it is still there (#14)
             # ⚠ THE STAND-DOWN HAS TO BE ON THE CHART, NOT ONLY IN `note` (2026-11-02). The server's standing note
@@ -9278,9 +9805,84 @@ def list_logs():
         if gz:
             row["compressed"], row["on_disk"] = True, stat.st_size
             row["size"] = _gz_raw_size(p) or stat.st_size
+        row.update(_log_label(p, base, stat.st_size, stat.st_mtime))
         out.append(row)
     out.sort(key=lambda r: r["mtime"], reverse=True)
     return out
+
+
+# ⚠ THE PICKER SAYS WHICH CONSOLE MADE EACH RECORDING (2026-11-05). 37 of 371 sessions were written into the same logs/
+# by verification consoles on other ports, and the list named only a time and a size. Each file's HEAD is read once per
+# (name, size, mtime) - the first LOG_LABEL_HEAD_B bytes, never the whole file (a field log runs to 80 MB) - for the
+# HTTP port, the mode, the hull and the base: from the new manifest / vessel / port records, else from session_start's
+# argv and the first connect, which every recording since July has.
+LOG_LABEL_HEAD_B = 16384
+_LOG_LABELS = {}
+_LOG_LABELS_LOCK = threading.Lock()
+
+
+def _argv_value(argv, flag):
+    try:
+        i = argv.index(flag)
+        return argv[i + 1] if i + 1 < len(argv) else None
+    except (ValueError, AttributeError):
+        for a in argv or []:
+            if isinstance(a, str) and a.startswith(flag + "="):
+                return a.split("=", 1)[1]
+    return None
+
+
+def _log_label(path, name, size, mtime):
+    key = (name, size, mtime)
+    with _LOG_LABELS_LOCK:
+        hit = _LOG_LABELS.get(key)
+    if hit is not None:
+        return dict(hit)
+    lab = {"port": None, "mode": None, "vessel": None, "argv": None, "base": None}
+    try:
+        if path.endswith(".gz"):
+            with gzip.open(path, "rb") as f:
+                head = f.read(LOG_LABEL_HEAD_B)
+        else:
+            with open(path, "rb") as f:
+                head = f.read(LOG_LABEL_HEAD_B)
+    except (OSError, EOFError, zlib.error):
+        head = b""
+    for line in head.decode("utf-8", "replace").splitlines():
+        try:
+            r = json.loads(line)
+        except ValueError:
+            continue                            # the cut last line, or a line that is not a record
+        if not isinstance(r, dict):
+            continue
+        k = r.get("kind")
+        if k == "session_start":
+            lab["port"] = r.get("port")
+            lab["argv"] = r.get("argv") if isinstance(r.get("argv"), list) else None
+        elif k == "manifest" and lab["mode"] is None:
+            lab["mode"] = r.get("mode")
+        elif k == "vessel" and lab["vessel"] is None:
+            lab["vessel"] = r.get("id")
+        elif k == "port" and lab["base"] is None:
+            pe = r.get("port") if isinstance(r.get("port"), dict) else {}
+            lab["base"] = pe.get("name") or pe.get("id")
+        elif k == "connect" and lab["mode"] is None:
+            lab["mode"] = "sim" if r.get("mode") == "sim" else ("real" if r.get("mode") else None)
+    argv = lab["argv"] or []
+    if lab["vessel"] is None and lab["argv"] is not None:
+        lab["vessel"] = _argv_value(argv, "--vessel")
+    if lab["base"] is None and lab["argv"] is not None:
+        lab["base"] = _argv_value(argv, "--base")
+    if lab["mode"] is None and lab["argv"] is not None:
+        lab["mode"] = "sim" if "--sim" in argv else ("real" if _argv_value(argv, "--vcu") else None)
+    # ⚠ THE ARGV IS READ, NOT SERVED (review 2026-11-05): the picker reads port, mode, vessel and base, and a recording
+    # older than the redaction carries its command line raw - an AIS base with user:password in it.
+    del lab["argv"]
+    with _LOG_LABELS_LOCK:
+        if len(_LOG_LABELS) > 4096:
+            _LOG_LABELS.clear()
+        _LOG_LABELS[key] = lab
+    return dict(lab)
 
 
 def safe_log_path(name):
@@ -9628,99 +10230,20 @@ class Handler(BaseHTTPRequestHandler):
         # but beyond the range come back in `beyond`, apart from `vessels`, so the card can delete her. Nothing else
         # reads `beyond`: the guard's model stays the in-range contacts.
         held = set(x for x in (params.get("held") or [""])[0].split(",")[:400] if x)
-        # THE PASSAGE'S RANGE (Andy, 2026-10-16: "widen the AIS range to 15 nm during a passage"). Offshore on his night
-        # passage the card's 5 nm showed nothing for 64% of the night - the nearest ship 10-40 km off - so while the page
-        # sails a passage it asks for at least `floor_km`. The operator's setting (AIS_SHOW_RADIUS_KM) is NOT touched: a
-        # wider one stands, and it is back in force on the first poll that does not ask. Clamped to what is collected, as
-        # the setting is. The area reports both (`show_km` in force, `set_km` the setting) so the card can say why.
-        try:
+        try:                                      # a passage's floor (ais_traffic says why)
             floor_km = float((params.get("floor_km") or ["0"])[0])
         except ValueError:
             floor_km = 0.0
-        show_km = (max(AIS_SHOW_RADIUS_KM, min(AIS_COLLECT_RADIUS_KM, floor_km)) if floor_km > 0
-                   else AIS_SHOW_RADIUS_KM)
+        if not math.isfinite(floor_km):
+            floor_km = 0.0
+        _AIS_FLOOR_ASKED[:] = [floor_km, time.monotonic()]     # the session record asks with it (see _ais_targets)
         if lat is None:
             return self._send(200, json.dumps({"ok": False, "vessels": [], "count": 0,
                               "area": {"mode": "none"}, "note": "no position for the AIS area"}))
-        lake = _lake_of(lat, lon)
-        bbox = _ais_query_bbox(lat, lon)              # the whole lake, or the COLLECT box (_ais_follow asks the same)
-        if lake:                                     # whole enclosed lake
-            area = {"mode": "lake", "name": "Lake " + lake.capitalize()}
-        else:                                         # open water: the COLLECT box
-            # NO display string here. The lake branch's "name" is a real place name the
-            # client cannot derive; this one used to be "%g km", which put the CLIENT's
-            # choice of unit in the server and made one field mean two different things.
-            # The client formats its own label from show_km (it reads in nautical miles).
-            area = {"mode": "sea", "show_km": show_km, "set_km": AIS_SHOW_RADIUS_KM,
-                    "collect_km": AIS_COLLECT_RADIUS_KM}
-        url = "%s/vessels?bbox=%.4f,%.4f,%.4f,%.4f&max=2000" % (
-            AIS_BASE.rstrip("/"), bbox[0], bbox[1], bbox[2], bbox[3])
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "asv-console/ais-proxy"})
-            with urllib.request.urlopen(req, timeout=6) as r:
-                data = json.loads(r.read().decode("utf-8", "replace"))
-            # FILTER TO THE OPERATOR'S RADIUS - at sea only. A true great-circle range
-            # from the boat, not the collect BOX, so "50 km" means a 50 km circle and the
-            # corners of the box are not quietly included. Filtering here rather than in
-            # the browser keeps ONE decision about what is displayed, so the chart overlay,
-            # the table and the count cannot disagree with each other.
-            # On a lake there is no filter: the area IS the lake and every contact stands.
-            vs = data.get("vessels") or []
-            area["collected"] = len(vs)
-            if area.get("mode") == "sea" and show_km > 0:
-                kept = []
-                beyond = []                       # the held contacts collected beyond the range (above)
-                nearest = None
-                for v in vs:
-                    try:
-                        d_km = _haversine_km(lat, lon, float(v["lat"]), float(v["lon"]))
-                    except (KeyError, TypeError, ValueError):
-                        continue                  # no usable position: not placeable, not shown
-                    # The nearest of everything COLLECTED, not of what survives the filter.
-                    # It is what makes an empty card actionable: "none within 27 nm" reads
-                    # like a dead feed, while "nearest 44 nm" says widen the range. Measured
-                    # at Lewes, where aisstream has no receiver inside 44 nm - the feed was
-                    # healthy and the card still looked broken.
-                    if nearest is None or d_km < nearest:
-                        nearest = d_km
-                    if d_km <= show_km:
-                        v["range_m"] = round(d_km * 1000.0)
-                        kept.append(v)
-                    elif str(v.get("mmsi")) in held:
-                        v["range_m"] = round(d_km * 1000.0)
-                        beyond.append(v)
-                vs = kept
-                data["vessels"] = vs
-                data["count"] = len(vs)
-                data["beyond"] = beyond
-                if nearest is not None:
-                    area["nearest_km"] = round(nearest, 1)
-            tests = _ais_test_snapshot(lat, lon)
-            if tests:                                 # the rehearsal's moored hulls, beside the real traffic
-                vs = list(vs) + tests
-                data["vessels"] = vs
-                data["count"] = len(vs)
-            area["shown"] = len(vs)
-            # THE CONTACTS INTO THE SESSION LOG (2026-09-25), so a replay can draw the traffic the operator
-            # saw: at most one `ais` record every AIS_LOG_INTERVAL_S whatever the page's polling, and none
-            # while the recording is quiet (the page keeps polling while the boat sits at home).
-            if LOG is not None and not LOG.quiet and (time.time() - _ais_log_t[0]) >= AIS_LOG_INTERVAL_S:
-                _ais_log_t[0] = time.time()
-                LOG.event("ais", count=len(vs), area=area, vessels=vs[:80])
-            data["area"] = area
-            self._send(200, json.dumps(data), "application/json")
-        except Exception as e:
-            # THE TEST CONTACTS STAND WITHOUT THE SERVICE: a rehearsal must not need the live feed, and an
-            # {ok:false} here would read as a dead poll to the page, emptying the guard's model of them.
-            tests = _ais_test_snapshot(lat, lon)
-            if tests:
-                area["collected"] = area["shown"] = len(tests)
-                return self._send(200, json.dumps({"ok": True, "vessels": tests, "count": len(tests), "area": area,
-                                                   "sources": {}, "note": "AIS service offline - test contacts only"}),
-                                  "application/json")
-            self._send(200, json.dumps({"ok": False, "vessels": [], "count": 0, "area": area,
-                                        "note": "AIS service unreachable at %s (%s)"
-                                        % (AIS_BASE, type(e).__name__)}))
+        # ⚠ THE ANSWER IS ais_traffic's, THE SAME FUNCTION THE SESSION RECORD ASKS (2026-11-05): the page and the record
+        # cannot disagree about the radius, the lake, or the test contacts with the service up or down. This handler
+        # writes NOTHING to the log any more - the TargetRecorder does, round the boat, whether or not a page polls.
+        self._send(200, json.dumps(ais_traffic(lat, lon, held=held, floor_km=floor_km)), "application/json")
 
     def _bbox_from_query(self):
         """Parse ?bbox=W,S,E,N off self.path - plain commas or %2C, parse_qs decodes
@@ -9808,10 +10331,14 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, json.dumps(data))
 
     def do_POST(self):
+        rx_t = time.time()                       # when the operator's request ARRIVED (the record's own t is later)
         body = self._read_json()
         refused = post_refusal(self.path, self.headers.get("Content-Type"), body)   # review #25: JSON, or a stop
         if not refused:              # review #14: one tab supervises; the others watch (a stop is still taken)
             refused = supervisor_refusal(self.path, self.headers.get("X-ASV-Client"), body)
+        # perf_counter, NOT monotonic: on Windows monotonic is GetTickCount64, which steps every 15.6 ms - the first live
+        # recording wrote ms 0.0 for nearly every command and 16.0 for the rest (2026-11-05)
+        t0 = time.perf_counter()
         try:
             code, obj = refused if refused else self._dispatch_post(self.path, body)
         except Exception as e:
@@ -9825,11 +10352,13 @@ class Handler(BaseHTTPRequestHandler):
         # a supervising tab reports in every SUPERVISOR_BEAT_S, and thirty records a minute of "a tab is still here"
         # would bury the record the operator actually reads. What MATTERS about supervision - a tab taking the post,
         # taking over, letting it go, going quiet, coming back - is written by the registry itself, as events.
-        # ... and while the recording is quiet the page's event posts do not land as commands either - the
-        # activity row every 30 s arriving as `command /api/logevent` is the same growth by another door.
-        if LOG is not None and self.path not in LOG_QUIET_POSTS and not (LOG.quiet and self.path == "/api/logevent"):
+        # ... and the page's own event posts are not commands at all: /api/logevent is in LOG_QUIET_POSTS (2026-11-05),
+        # because its `client:<kind>` record already holds every byte of the body - each one was written TWICE.
+        if LOG is not None and self.path not in LOG_QUIET_POSTS:
             LOG.command(self.path, body, code,
-                        obj.get("error") if isinstance(obj, dict) else None)
+                        obj.get("error") if isinstance(obj, dict) else None,
+                        client=(self.headers.get("X-ASV-Client") or "")[:8] or None,
+                        rx_t=rx_t, ms=(time.perf_counter() - t0) * 1000.0)
         self._send(code, json.dumps(finite_only(obj)))   # nothing non-finite leaves by a POST either (finding 21)
 
     def _dispatch_post(self, path, body):
@@ -9847,6 +10376,7 @@ class Handler(BaseHTTPRequestHandler):
                 return 409, {"error": str(e), "rev": e.rev}
             except (OSError, MissionUnavailable) as e:
                 return 503, {"error": "the plan could not be saved: %s" % e}
+            log_mission_saved(rev)
             return 200, {"ok": True, "rev": rev}
         if path == "/api/enc/corridor":
             # READ THE CHART ALONG A ROUTE (2026-10-11, step 3 of the long-transit plan): {route: [{lat, lon}], half_km}
@@ -9883,10 +10413,16 @@ class Handler(BaseHTTPRequestHandler):
             # session log should swallow an odd field name, not reject the operator's
             # event over it - and the flat record shape stays intact for playback.
             data = {(k + "_" if k in ("kind", "self") else k): v for k, v in data.items()}
+            # WHICH TAB SAID IT (2026-11-05): the first 8 characters of X-ASV-Client, the cut the supervisor_* records
+            # make. A key the page cannot send (it would arrive as data); absent when the page sent no header.
+            tab = (self.headers.get("X-ASV-Client") or "")[:8] if getattr(self, "headers", None) is not None else ""
+            if tab:
+                data["_tab"] = tab
             # ... but not while the recording is quiet: the page's activity and health rows every
             # 30 s are exactly the growth the quiet rule stops. Answered 200 either way.
             if LOG is not None and not LOG.quiet:
                 LOG.event("client:" + kind, **data)
+                LOG.incident_trigger(kind, data)    # a page safety episode keeps the 4 Hz frames round it (incident)
             return 200, {"ok": True}
         if path == "/api/vessel":
             # Switch the active vessel. Only when SAFE (disarmed, not e-stopped,
@@ -9904,6 +10440,7 @@ class Handler(BaseHTTPRequestHandler):
             except (OSError, ValueError) as e:
                 return 400, {"error": "vessel '%s': %s" % (vid, e)}
             apply_vessel(v)
+            log_vessel_record("switch")             # the hull in force from here on, as a record of its own
             if st.get("mode") == "sim":
                 ENGINE.connect("sim", "", DEFAULT_VCU_PORT, "tcp")
             # the new profile may spawn in a completely different sea area - re-point the
@@ -9984,6 +10521,7 @@ class Handler(BaseHTTPRequestHandler):
                 PORTS["active"] = pid
             saved = save_ports()
             apply_port()
+            log_port_record("switch", found=found)  # the base in force, its spawn and model, as a record of its own
             if st.get("mode") == "sim":
                 ENGINE.connect("sim", "", DEFAULT_VCU_PORT, "tcp")   # respawn at the new base
             # a different base is a different sea area - re-point the AIS subscription
@@ -10812,7 +11350,10 @@ SUPERVISOR_LOST_DEFAULT_S = 45.0  # ... and take the way off after this long (4-
 SUPERVISOR_UI_RETRY_S = 120.0    # ... and then try ONCE for a fresh chart window, after she is already stopped
 SUPERVISOR_ANY = ("/api/cmd/stop", "/api/cmd/pause", "/api/cmd/estop")
 LOG_QUIET_POSTS = ("/api/supervisor",    # the heartbeat is not a command; the registry logs what matters about it
-                   "/api/enc/corridor")  # a chart read moves nothing; the page logs the operator's own (corridor_read)
+                   "/api/enc/corridor",  # a chart read moves nothing; the page logs the operator's own (corridor_read)
+                   # ⚠ A PAGE EVENT IS RECORDED ONCE, AS ITS client:<kind> (2026-11-05): every one was ALSO written as a
+                   # `command` carrying the same body - 777 duplicates, 5.4% of a three-hour log
+                   "/api/logevent")
 
 
 def supervisor_lost_setting():
@@ -11684,6 +12225,735 @@ def _sweep_leftovers(dirs=None, min_age_s=None, now=None):
     return gone
 
 
+# =================================================================================================================== #
+#  THE MISSION RECORD (2026-11-05)                                                                                     #
+# =================================================================================================================== #
+# Andy, 2026-11-05: "The playback function should display targets from AIS and any other sensor we may add. It should
+# have all the environmental data for playback. Look at the logging function(s) and add in data that fully describes
+# any given mission."
+#
+# The recording logged motion and commands well and almost no CONTEXT: which hull, which base, the plan on disk at
+# boot, what the link was actually given, the console's own build and clock, and the file this one continues. And the
+# only target record was the page's AIS poll, written only while a page polled. What follows describes the mission
+# once, as records of their own, and records targets from the console itself for any sensor that registers.
+#
+# ⚠ NO SECRETS, BY WHITELIST. _redact masks one top-level password in a command body and nothing else, so nothing here
+# dumps a config file or an object's attributes: every field is named. COMMS._password, the aisstream key and a ROC's
+# GPS host and port appear in none of THESE records. (A ROC's do appear in the file: the logged `state` carries the ROC
+# set with its `gps` block, as it did before, and the gps_attach command its body - review 2026-11-05, refuted as a
+# regression, kept as a fact. Neither is a credential.)
+
+PREV_TAIL_B = 65536                      # the previous recording is read from its last 64 KB, never whole
+_ARG_SECRET_RE = re.compile(r"pass|secret|token|key$", re.I)
+
+
+def _url_no_userinfo(url):
+    """A URL with any user:password@ taken out - an AIS base typed with credentials in it is not written down."""
+    try:
+        u = urllib.parse.urlsplit(str(url))
+        if u.username is None and u.password is None:
+            return url
+        host = u.hostname or ""
+        return urllib.parse.urlunsplit((u.scheme, host + (":%d" % u.port if u.port else ""), u.path, u.query, u.fragment))
+    except ValueError:
+        return None
+
+
+_USERINFO_RE = re.compile(r"^[^/@:\s]+:[^/@\s]*@")
+
+
+def _value_scrub(v):
+    """One command-line value as it may be written down: a URL without its user:password@ (a scheme-less
+    `user:pw@host` too). Anything else is returned as it is."""
+    if not isinstance(v, str) or "@" not in v:
+        return v
+    if "://" in v:
+        s = _url_no_userinfo(v)
+        return s if s is not None else "<redacted>"
+    return _USERINFO_RE.sub("", v)
+
+
+def _argv_redacted(argv):
+    """⚠ THE COMMAND LINE AS THE RECORD MAY CARRY IT (review 2026-11-05). session_start wrote sys.argv raw, two records
+    before a manifest that filters the very same flags - so `--ais http://bob:pw@host` was in the file anyway, and in
+    every /api/logs row. ONE redaction for both: the value after a flag whose name reads as a secret (_ARG_SECRET_RE, as
+    the manifest's args) is replaced, `--flag=value` alike, and every other value goes through _value_scrub."""
+    out = []
+    hide_next = False
+    for a in argv or []:
+        a = str(a)
+        if hide_next:
+            out.append("<redacted>")
+            hide_next = False
+            continue
+        if a.startswith("--"):
+            name, eq, val = a[2:].partition("=")
+            if _ARG_SECRET_RE.search(name):
+                if eq:
+                    out.append("--%s=<redacted>" % name)
+                else:
+                    out.append(a)
+                    hide_next = True
+                continue
+            out.append(("--%s=%s" % (name, _value_scrub(val))) if eq else a)
+            continue
+        out.append(_value_scrub(a))
+    return out
+
+
+def _path_for_record(p, app_rel=True):
+    """⚠ A PATH AS THE RECORD MAY CARRY IT (review 2026-11-05): relative to the app (`<app>/...`) or to the user's home
+    (`~/...`), so a checkout under the user profile does not put the account name in every shared recording. A path
+    under neither (another drive, a shared folder) is written as it is. app_rel=False skips the app root - for the app
+    directory itself."""
+    if not p:
+        return None
+    try:
+        # ⚠ realpath BOTH SIDES: Windows hands the temp folder over in its 8.3 form (C:\Users\<NAME~1>\...), which
+        # relpath does not see as under C:\Users\<the long name> - and the short form names the account too.
+        ap = os.path.realpath(os.path.abspath(str(p)))
+        roots = ((APP_DIR, "<app>"),) if app_rel else ()
+        for root, tag in roots + ((os.path.expanduser("~"), "~"),):
+            try:
+                rel = os.path.relpath(ap, os.path.realpath(root))
+            except ValueError:                 # another drive
+                continue
+            if rel == ".":
+                return tag
+            if not (rel == ".." or rel.startswith(".." + os.sep)):
+                return tag + "/" + rel.replace(os.sep, "/")
+        return ap
+    except (TypeError, ValueError):
+        return None
+
+
+def _git_ident(app_dir=None):
+    """{head, branch} of the checkout this console runs from, READ FROM .git BY FILE - never by spawning git (a console
+    that shells out at boot is one that hangs at boot). A worktree's .git is a FILE ("gitdir: <path>"); its HEAD is
+    there and its refs in the common dir (`commondir`). Anything unreadable is null, never a failed boot."""
+    out = {"head": None, "branch": None}
+    try:
+        app_dir = app_dir or APP_DIR
+        dotgit = os.path.join(app_dir, ".git")
+        if os.path.isfile(dotgit):
+            with open(dotgit, "r", encoding="utf-8") as f:
+                first = f.readline().strip()
+            if not first.startswith("gitdir:"):
+                return out
+            gitdir = first[len("gitdir:"):].strip()
+            if not os.path.isabs(gitdir):
+                gitdir = os.path.normpath(os.path.join(app_dir, gitdir))
+        elif os.path.isdir(dotgit):
+            gitdir = dotgit
+        else:
+            return out
+        common = gitdir
+        cd = os.path.join(gitdir, "commondir")
+        if os.path.isfile(cd):
+            with open(cd, "r", encoding="utf-8") as f:
+                c = f.read().strip()
+            common = c if os.path.isabs(c) else os.path.normpath(os.path.join(gitdir, c))
+        with open(os.path.join(gitdir, "HEAD"), "r", encoding="utf-8") as f:
+            head = f.read().strip()
+        sha_re = re.compile(r"^[0-9a-f]{40}([0-9a-f]{24})?$")
+        if head.startswith("ref:"):
+            ref = head[4:].strip()
+            out["branch"] = ref[len("refs/heads/"):] if ref.startswith("refs/heads/") else ref
+            sha = None
+            for base in (gitdir, common):
+                p = os.path.join(base, *ref.split("/"))
+                if os.path.isfile(p):
+                    with open(p, "r", encoding="utf-8") as f:
+                        sha = f.read().strip()
+                    break
+            if sha is None:
+                pr = os.path.join(common, "packed-refs")
+                if os.path.isfile(pr):
+                    with open(pr, "r", encoding="utf-8") as f:
+                        for line in f:
+                            parts = line.strip().split(" ")
+                            if len(parts) == 2 and parts[1] == ref:
+                                sha = parts[0]
+                                break
+            out["head"] = sha if sha and sha_re.match(sha) else None
+        elif sha_re.match(head):
+            out["head"] = head
+    except (OSError, ValueError, UnicodeDecodeError):
+        pass
+    return out
+
+
+def _tz_info():
+    """The CONSOLE's zone - `iso` and the file name are its local time with no offset, and the boat may sail in another
+    (every measured log: a New York console, a Honolulu mission). The offset is the one in force now, DST included."""
+    lt = time.localtime()
+    dst = lt.tm_isdst > 0
+    off = getattr(lt, "tm_gmtoff", None)
+    if off is None:
+        off = -(time.altzone if dst else time.timezone)
+    return {"name": time.tzname[1 if dst else 0], "utc_offset_s": int(off)}
+
+
+PREV_SCAN_N = 64                         # how many of the newest recordings are looked at for this console's own
+
+
+def _prev_session(log_dir, own_path, port=None):
+    """The recording this one CONTINUES: the newest other asv_*.jsonl, read from a bounded tail. One file per process
+    and no link between them - 124 file pairs began under ten minutes after the last ended, 11 ended armed and
+    running (measured over 371 recordings) - so the mission a crashed console left running is named here.
+
+    ⚠ THIS CONSOLE'S OWN, BY ITS PORT (review 2026-11-05). 37 of those 371 were verification consoles on other ports
+    writing into the same logs/: the newest file of ANY console hid the crashed, armed mission behind a clean
+    verification run, or called a verification console still running a crash. With `port`, the newest file whose
+    session_start names that port (its head, as /api/logs reads it) - and not one that never served (another console
+    already held the port). port=None is the newest file of any."""
+    try:
+        own = os.path.basename(own_path or "")
+        names = sorted(n for n in os.listdir(log_dir) if n.startswith("asv_") and n.endswith(".jsonl") and n != own)
+    except OSError:
+        return None
+    if not names:
+        return None
+    if port is None:
+        return _prev_tail(log_dir, names[-1])
+    for name in reversed(names[-PREV_SCAN_N:]):
+        path = os.path.join(log_dir, name)
+        try:
+            st = os.stat(path)
+        except OSError:
+            continue
+        if _log_label(path, name, st.st_size, st.st_mtime).get("port") != port:
+            continue
+        out = _prev_tail(log_dir, name)
+        if out.pop("never_served", False):
+            continue
+        return out
+    return None
+
+
+def _prev_tail(log_dir, name):
+    """The end of one recording, read from its last PREV_TAIL_B: how it ended, and the run it was on."""
+    out = {"name": name, "ended_clean": False, "last_t": None, "last_kind": None, "run": None, "armed": None,
+           "behavior": None, "wp_index": None, "wp_total": None}
+    try:
+        with open(os.path.join(log_dir, name), "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            start = max(0, size - PREV_TAIL_B)
+            f.seek(start)
+            tail = f.read()
+    except OSError as e:
+        out["error"] = "%s: %s" % (type(e).__name__, e)
+        return out
+    lines = tail.decode("utf-8", "replace").splitlines()
+    if start > 0 and lines:
+        lines = lines[1:]                      # the first line of a tail is cut
+    recs = []
+    for ln in lines:
+        try:
+            r = json.loads(ln)
+        except ValueError:
+            continue
+        if isinstance(r, dict):
+            recs.append(r)
+    if not recs:
+        return out
+    last = recs[-1]
+    out.update(last_t=last.get("t"), last_kind=last.get("kind"), ended_clean=last.get("kind") == "session_end")
+    if last.get("kind") == "session_end" and last.get("reason") == "port in use":
+        out["never_served"] = True
+    st = tel = None
+    for r in reversed(recs):
+        k = r.get("kind")
+        if st is None and k == "state" and isinstance(r.get("state"), dict):
+            st = r
+        elif tel is None and k == "telemetry":
+            tel = r
+        if st is not None and tel is not None:
+            break
+    if st is not None:
+        s = st["state"]
+        out.update(run=s.get("run"), armed=s.get("armed"), behavior=s.get("behavior"),
+                   wp_index=s.get("wp_index"), wp_total=s.get("wp_total"))
+    # a slim sample AFTER the last snapshot is the newer word on the run and the waypoint
+    if tel is not None and (st is None or (tel.get("t") or 0) >= (st.get("t") or 0)):
+        if "run" in tel:
+            out["run"] = tel["run"]
+        if "wp_index" in tel:
+            out["wp_index"] = tel["wp_index"]
+    return finite_only(out)
+
+
+def _manifest(args):
+    """The console's own description of itself: build and git, runtime, zone, every parsed flag, where its state
+    lives, the AIS and current configuration, and the file it continues."""
+    import platform
+    a = {k: ([_value_scrub(x) for x in v] if isinstance(v, list) else _value_scrub(v))
+         for k, v in vars(args).items() if not _ARG_SECRET_RE.search(k)}
+    return finite_only({
+        "build": {"fingerprint": BUILD.boot, "git": _git_ident()},
+        "runtime": {"python": platform.python_version(), "platform": platform.platform()},
+        "tz": _tz_info(),
+        "mode": "sim" if args.sim else ("real" if args.vcu else None),
+        "session_id": LOG.session_id if LOG is not None else None,
+        "boot_id": BOOT_ID,
+        "args": a,
+        "paths": {"app_dir": _path_for_record(APP_DIR, app_rel=False),
+                  "state_dir": _path_for_record(args.state_dir) if args.state_dir else None,
+                  "mission": _path_for_record(MISSION_PATH), "ports": _path_for_record(PORTS_PATH),
+                  "roc": _path_for_record(getattr(ROC, "_config_path", None)),
+                  "log": _path_for_record(LOG.path if LOG is not None else None)},
+        "ais": {"base": _url_no_userinfo(AIS_BASE), "source": AIS_SOURCE_ARG, "show_km": AIS_SHOW_RADIUS_KM,
+                "collect_km": AIS_COLLECT_RADIUS_KM, "nmea": list(AIS_NMEA_SPECS), "opencpn": AIS_OPENCPN or None,
+                "service": not args.no_ais_service},
+        "currents_cli_ofs": CURRENTS_CLI_OFS or None,
+        "station_windows": {"tide": not args.no_tide_window, "weather": not args.no_weather_window},
+        "quiet_after_s": LOG.quiet_after_s if LOG is not None else None,
+        "comms": {"mode": getattr(COMMS, "mode", None)},
+        "prev": _prev_session(LOG_DIR, LOG.path if LOG is not None else None, port=getattr(args, "port", None)),
+    })
+
+
+def log_vessel_record(why):
+    """The hull in force: its file's digest (the file under one id can be edited between a session and its replay), the
+    validated profile, and what apply_vessel derived from it - the numbers that turn a recorded wind into leeway."""
+    if LOG is None:
+        return
+    try:
+        v = VESSEL if isinstance(VESSEL, dict) else {}
+        sha = None
+        try:
+            with open(vessel_path(v.get("id")), "rb") as f:
+                sha = hashlib.sha256(f.read()).hexdigest()
+        except (OSError, TypeError):
+            pass
+        secs, act = supervisor_lost_setting()
+        derived = {"min_nav_depth_m": MIN_NAV_DEPTH_M, "coast_length_m": COAST_LENGTH_M,
+                   "speed_steps_kn": list(SPEED_STEPS_KN), "supervisor_lost": {"s": secs, "action": act},
+                   "power_type": POWER_TYPE, "slow_law": SLOW_LAW,
+                   "WIND_A_SIDE": WIND_A_SIDE, "WIND_A_FRONT": WIND_A_FRONT, "WIND_CD": WIND_CD, "HULL_CD": HULL_CD,
+                   "HULL_A_LAT": HULL_A_LAT, "BOAT_BEAM_M": BOAT_BEAM_M, "LEEWAY_CAP_MS": LEEWAY_CAP_MS}
+        LOG.event("vessel", why=why, id=v.get("id"), sha256=sha, profile=finite_only(v), derived=finite_only(derived))
+    except Exception as e:                    # noqa: BLE001 - a description that cannot be built says so
+        LOG.event("vessel", why=why, error="%s: %s" % (type(e).__name__, e))
+
+
+def log_port_record(why, found=None):
+    """The base in force: its registry entry (named fields only), where the sim spawns, and the current model it
+    put in force - and, for a base found by name, what the name resolved to."""
+    if LOG is None:
+        return
+    try:
+        p = active_port() or {}
+        pay = {"why": why,
+               "port": ({k: p.get(k) for k in ("id", "name", "lat", "lon", "ofs", "note")} if p else None),
+               "spawn": {"lat": SPAWN_LAT, "lon": SPAWN_LON},
+               "ofs_in_force": (getattr(CURRENTS, "_ofs", None) or None)}
+        if p.get("unverified") is not None:
+            pay["unverified"] = bool(p.get("unverified"))
+        if found:
+            pay["found"] = found
+        LOG.event("port", **finite_only(pay))
+    except Exception as e:                    # noqa: BLE001
+        LOG.event("port", why=why, error="%s: %s" % (type(e).__name__, e))
+
+
+def log_mission_saved(rev):
+    """After a SUCCESSFUL save: the new revision and its digest. The body is already in the command record."""
+    if LOG is None:
+        return
+    try:
+        doc = mission_params()
+        if doc.get("rev") == rev:
+            LOG.event("mission_saved", rev=rev, sha256=_plan_digest(doc), n_wpts=len(doc.get("waypoints") or []),
+                      n_lines=len(doc.get("lines") or []), n_surveys=len(doc.get("surveys") or []))
+        else:                                 # another save landed between the two: say so rather than digest the wrong one
+            LOG.event("mission_saved", rev=rev, sha256=None, note="a later save replaced it before it was read")
+    except Exception:                         # noqa: BLE001
+        pass
+
+
+def log_session_context(args):
+    """manifest, then port, vessel and the plan on disk - right after session_start, NOT quiet-gated. The port before
+    the vessel: /api/logs labels a file from its first 16 KB, and a vessel profile runs to 12 KB."""
+    if LOG is None or not LOG.enabled:
+        return
+    try:
+        LOG.event("manifest", **_manifest(args))
+    except Exception as e:                    # noqa: BLE001 - never a failed boot
+        LOG.event("manifest", error="%s: %s" % (type(e).__name__, e))
+    log_port_record("boot")
+    log_vessel_record("boot")
+    LOG.write_mission("boot")
+
+
+# -- the environment's companions (A9): the buoys' own rows and the stations' positions ------------------------------ #
+_WATER_POS = {"src": None, "map": {}}
+
+
+def _water_station_pos():
+    """id -> (name, lat, lon) from the CO-OPS station list ALREADY in memory - never a fetch or a file read here."""
+    with _water_stations_lock:
+        sts = _water_stations
+    if not sts:
+        return {}
+    if _WATER_POS["src"] is not sts:
+        _WATER_POS["map"] = {s["id"]: (s.get("name"), s.get("lat"), s.get("lng"))
+                             for s in sts if isinstance(s, dict) and "id" in s}
+        _WATER_POS["src"] = sts
+    return _WATER_POS["map"]
+
+
+def _env_extra(blocks):
+    """Beside an `env` record: each buoy's own row, and where the water and current stations ARE (the blocks name them
+    by id and distance only, so a replay could not put them on its chart)."""
+    w = blocks.get("water") or {}
+    ids = [s.get("id") for s in (w.get("stations") or []) if isinstance(s, dict)] or (
+        [w["station"]] if w.get("station") else [])
+    pos = _water_station_pos()
+    water = [{"id": i, "name": pos[i][0], "lat": pos[i][1], "lon": pos[i][2]} for i in ids if i in pos]
+    c = blocks.get("current") or {}
+    cids = [r[0] for r in (c.get("stations") or []) if isinstance(r, (list, tuple)) and r]
+    tabs = {}
+    src = getattr(CURRENTS, "_sources", None)
+    if src is not None and cids:
+        for tab in src.tables() or ():
+            tabs[tab.id] = tab
+    current = [{"id": i, "name": tabs[i].name, "lat": tabs[i].lat, "lon": tabs[i].lon, "bin": tabs[i].bin}
+               for i in cids if i in tabs]
+    return {"buoys": ENV.buoys(), "stations": {"water": water, "current": current}}
+
+
+# -- TARGETS (A10): the generic, sensor-agnostic target stream -------------------------------------------------------- #
+# ⚠ ONE STREAM FOR EVERY SENSOR, WRITTEN BY THE CONSOLE (2026-11-05). The only target record was `ais`, written by the
+# /api/ais handler: only while a page polled, with no center, cut to the 80 freshest by AGE (the moored ships nearest
+# her were the ones dropped), nothing on the service-offline branch, and a passage-point poll could be logged as the
+# boat's traffic. Now a TargetRecorder asks every registered sensor round the BOAT's own fix every TARGETS_LOG_S and
+# writes `targets` (membership, health and the rows that changed) and `track_info` (the static facts, on change). A new
+# sensor - radar ARPA, a camera, sonar contacts, manual marks - is ONE register_target_sensor call: no recorder or
+# playback change. A sensor fn(fix) answers {ok, note, center, area, health, tracks: [{id, obs_t, lat, lon, sog, cog,
+# hdg, nav, name, cls, feed, len_m, beam_m, dim, info}]}; `hdg` null means NOT REPORTED and is never written as 0.
+TARGETS_LOG_S = 10.0             # how often every sensor is asked
+TARGETS_HEARTBEAT_S = 60.0       # a sensor holding nothing, unchanged, still writes this often
+TRACK_HEARTBEAT_S = 60.0         # a row is re-written when its report's obs_t moved this far past the last one logged
+TARGETS_KEYFRAME_S = 600.0       # every id gets a row this often (and on the first record after start and every wake)
+_TARGET_SENSORS = collections.OrderedDict()
+
+
+def register_target_sensor(name, fn):
+    """Add a target source to the session record: fn(fix) -> the answer above. fix = {lat, lon} of the boat, or None."""
+    _TARGET_SENSORS[str(name)] = fn
+
+
+def ais_traffic(lat, lon, held=(), floor_km=0.0):
+    """⚠ THE ONE ANSWER TO "WHAT TRAFFIC IS ROUND (lat, lon)": the /api/ais handler serves it and the session record
+    logs it, so the two cannot disagree - the radius, the lake, and the test contacts with the service up or DOWN.
+
+    The console queries the AIS service so the browser never touches the feeds or any API key. It picks the AREA here:
+    on a Great Lake the WHOLE lake (enclosed water); at sea the COLLECT box round the boat, filtered to the display
+    radius. `held` - the contacts the card is holding (2026-10-10) - come back in `beyond` when collected past the range,
+    apart from `vessels`, so the card can delete her; nothing else reads `beyond`."""
+    held = set(str(x) for x in (held or ()))
+    # THE PASSAGE'S RANGE (Andy, 2026-10-16: "widen the AIS range to 15 nm during a passage"). Offshore on his night
+    # passage the card's 5 nm showed nothing for 64% of the night - the nearest ship 10-40 km off - so while the page
+    # sails a passage it asks for at least `floor_km`. The operator's setting (AIS_SHOW_RADIUS_KM) is NOT touched: a
+    # wider one stands, and it is back in force on the first poll that does not ask. Clamped to what is collected, as
+    # the setting is. The area reports both (`show_km` in force, `set_km` the setting) so the card can say why.
+    show_km = (max(AIS_SHOW_RADIUS_KM, min(AIS_COLLECT_RADIUS_KM, floor_km)) if floor_km > 0
+               else AIS_SHOW_RADIUS_KM)
+    lake = _lake_of(lat, lon)
+    bbox = _ais_query_bbox(lat, lon)              # the whole lake, or the COLLECT box (_ais_follow asks the same)
+    if lake:                                     # whole enclosed lake
+        area = {"mode": "lake", "name": "Lake " + lake.capitalize()}
+    else:                                         # open water: the COLLECT box
+        # NO display string here. The lake branch's "name" is a real place name the
+        # client cannot derive; this one used to be "%g km", which put the CLIENT's
+        # choice of unit in the server and made one field mean two different things.
+        # The client formats its own label from show_km (it reads in nautical miles).
+        area = {"mode": "sea", "show_km": show_km, "set_km": AIS_SHOW_RADIUS_KM,
+                "collect_km": AIS_COLLECT_RADIUS_KM}
+    url = "%s/vessels?bbox=%.4f,%.4f,%.4f,%.4f&max=2000" % (
+        AIS_BASE.rstrip("/"), bbox[0], bbox[1], bbox[2], bbox[3])
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "asv-console/ais-proxy"})
+        with urllib.request.urlopen(req, timeout=6) as r:
+            data = json.loads(r.read().decode("utf-8", "replace"))
+        # FILTER TO THE OPERATOR'S RADIUS - at sea only. A true great-circle range
+        # from the boat, not the collect BOX, so "50 km" means a 50 km circle and the
+        # corners of the box are not quietly included. Filtering here rather than in
+        # the browser keeps ONE decision about what is displayed, so the chart overlay,
+        # the table and the count cannot disagree with each other.
+        # On a lake there is no filter: the area IS the lake and every contact stands.
+        vs = data.get("vessels") or []
+        area["collected"] = len(vs)
+        if area.get("mode") == "sea" and show_km > 0:
+            kept = []
+            beyond = []                       # the held contacts collected beyond the range (above)
+            nearest = None
+            for v in vs:
+                try:
+                    d_km = _haversine_km(lat, lon, float(v["lat"]), float(v["lon"]))
+                except (KeyError, TypeError, ValueError):
+                    continue                  # no usable position: not placeable, not shown
+                # The nearest of everything COLLECTED, not of what survives the filter.
+                # It is what makes an empty card actionable: "none within 27 nm" reads
+                # like a dead feed, while "nearest 44 nm" says widen the range. Measured
+                # at Lewes, where aisstream has no receiver inside 44 nm - the feed was
+                # healthy and the card still looked broken.
+                if nearest is None or d_km < nearest:
+                    nearest = d_km
+                if d_km <= show_km:
+                    v["range_m"] = round(d_km * 1000.0)
+                    kept.append(v)
+                elif str(v.get("mmsi")) in held:
+                    v["range_m"] = round(d_km * 1000.0)
+                    beyond.append(v)
+            vs = kept
+            data["vessels"] = vs
+            data["count"] = len(vs)
+            data["beyond"] = beyond
+            if nearest is not None:
+                area["nearest_km"] = round(nearest, 1)
+        tests = _ais_test_snapshot(lat, lon)
+        if tests:                                 # the rehearsal's moored hulls, beside the real traffic
+            vs = list(vs) + tests
+            data["vessels"] = vs
+            data["count"] = len(vs)
+        area["shown"] = len(vs)
+        data["area"] = area
+        return data
+    except Exception as e:
+        # THE TEST CONTACTS STAND WITHOUT THE SERVICE: a rehearsal must not need the live feed, and an
+        # {ok:false} here would read as a dead poll to the page, emptying the guard's model of them.
+        tests = _ais_test_snapshot(lat, lon)
+        if tests:
+            area["collected"] = area["shown"] = len(tests)
+            return {"ok": True, "vessels": tests, "count": len(tests), "area": area,
+                    "sources": {}, "note": "AIS service offline - test contacts only"}
+        return {"ok": False, "vessels": [], "count": 0, "area": area,
+                "note": "AIS service unreachable at %s (%s)" % (_url_no_userinfo(AIS_BASE), type(e).__name__)}
+
+
+# ⚠ THE `info` BAG IS EVERY PARTICULAR THE SERVICE SERVES, BY EXCLUSION - not a list of its own here. The service's
+# serializer (ais_service Registry.snapshot, STATIC_KEYS) is already the whitelist, and a second list of the same
+# particulars in this file is one more place a new field goes to die. What is left out: the track's own fields, and
+# what moves on every report (`age`, `range_m`, `pos_gap`) - in the bag, those would re-write track_info every 10 s.
+AIS_NOT_INFO = ("mmsi", "lat", "lon", "sog", "cog", "heading", "nav", "name", "cat", "src", "length", "beam", "dim",
+                "obs_t", "age", "range_m", "pos_gap")
+
+
+def _ais_track(v, now):
+    """One AIS contact as a track. obs_t is when the SERVICE heard her (its obs_t; else now - age, a test contact now)."""
+    obs = v.get("obs_t")
+    if isinstance(obs, bool) or not isinstance(obs, (int, float)):
+        age = v.get("age")
+        obs = now - float(age) if isinstance(age, (int, float)) and not isinstance(age, bool) else now
+    test = v.get("src") == "test" or v.get("cat") == "test"
+    return {"id": str(v.get("mmsi")), "obs_t": obs, "lat": v.get("lat"), "lon": v.get("lon"),
+            "sog": v.get("sog"), "cog": v.get("cog"), "hdg": v.get("heading"), "nav": v.get("nav"),
+            "name": v.get("name"), "cls": "test" if test else v.get("cat"), "feed": v.get("src"),
+            "len_m": v.get("length"), "beam_m": v.get("beam"), "dim": v.get("dim"),
+            "info": {k: val for k, val in v.items() if k not in AIS_NOT_INFO and val is not None}}
+
+
+def _ais_health(sources):
+    """The service's `sources`, WHITELISTED: per feed, its state, stalled, quiet_s and report count - no notes (they can
+    carry an address), no URLs, no keys."""
+    out = {}
+    for name, s in (sources or {}).items() if isinstance(sources, dict) else ():
+        if isinstance(s, dict):
+            out[str(name)[:40]] = {"state": s.get("state"), "stalled": bool(s.get("stalled")),
+                                   "quiet_s": _rec_num(s.get("quiet_s"), 0), "n": s.get("reports")}
+    return out
+
+
+# ⚠ THE RECORD ASKS WITH THE PAGE'S RANGE (review 2026-11-05). On a passage the page polls with floor_km (15 nm) and
+# its card and the guard's keep-outs hold ships 10-28 km off; a recorder asking with no floor wrote 5 nm of them, and
+# the replay drew an empty sea under rings with no contact. The last floor a poll asked for, while it is fresh: a
+# page that stopped polling (closed, asleep) stops widening the record after AIS_FLOOR_TTL_S.
+AIS_FLOOR_TTL_S = 30.0
+_AIS_FLOOR_ASKED = [0.0, None]            # [floor_km, time.monotonic() of the poll]
+
+
+def _ais_floor_in_force(now=None):
+    km, at = _AIS_FLOOR_ASKED[0], _AIS_FLOOR_ASKED[1]
+    if at is None or km <= 0:
+        return 0.0
+    return km if ((time.monotonic() if now is None else now) - at) <= AIS_FLOOR_TTL_S else 0.0
+
+
+def _ais_targets(fix):
+    if not fix:
+        return {"ok": False, "note": "no position for the AIS area", "center": None, "area": None, "health": {},
+                "tracks": []}
+    data = ais_traffic(fix["lat"], fix["lon"], floor_km=_ais_floor_in_force())
+    now = time.time()
+    return {"ok": bool(data.get("ok")), "note": str(data.get("note") or ""), "center": dict(fix),
+            "area": data.get("area"), "health": _ais_health(data.get("sources")),
+            "tracks": [_ais_track(v, now) for v in (data.get("vessels") or []) if isinstance(v, dict)]}
+
+
+def _roc_targets(fix):
+    """The ROC set (shore stations, the Mothership) as tracks - and NOT their GPS host or port."""
+    snap = ROC.snapshot()
+    now = time.time()
+    tracks = []
+    for r in snap.get("rocs") or []:
+        if r.get("lat") is None or r.get("lon") is None:
+            continue
+        age = r.get("age_s")
+        tracks.append({"id": r.get("id"), "obs_t": (now - float(age)) if isinstance(age, (int, float)) else None,
+                       "lat": r.get("lat"), "lon": r.get("lon"), "sog": r.get("sog"), "cog": r.get("cog"),
+                       "hdg": r.get("heading"), "nav": None, "name": r.get("name"),
+                       "cls": "roc:%s" % (r.get("kind") or "?"), "feed": r.get("source"),
+                       "len_m": None, "beam_m": None, "dim": None,
+                       "info": {"status": r.get("status"), "arrival": r.get("arrival"),
+                                "arrival_bearing": r.get("arrival_bearing"), "link": r.get("link"),
+                                "moving": r.get("moving"), "speed_kn": r.get("speed_kn"), "offset": r.get("offset"),
+                                "home": r.get("id") == snap.get("home_id")}})
+    return {"ok": True, "note": "", "center": dict(fix) if fix else None, "area": None,
+            "health": {"home_id": snap.get("home_id")}, "tracks": tracks}
+
+
+def _boat_fix():
+    st = ENGINE.status or {}
+    lat, lon = _rec_num(st.get("lat_deg"), 6), _rec_num(st.get("lon_deg"), 6)
+    return {"lat": lat, "lon": lon} if lat is not None and lon is not None else None
+
+
+class TargetRecorder:
+    """Asks every registered sensor every TARGETS_LOG_S, round the boat's own fix, and writes `targets` and `track_info`.
+    A daemon thread, started in main() only when the recording is on; ROUTINE records, so nothing while quiet - and the
+    first record after a wake is a keyframe with every track_info again, so a reader may start there."""
+    KIN = ("lat", "lon", "sog", "cog", "hdg", "nav")
+    STATIC = ("name", "cls", "feed", "len_m", "beam_m", "dim", "info")
+
+    def __init__(self, log, fix=None, sensors=None, clock=None):
+        self.log = log
+        self.fix = fix or _boat_fix
+        self.sensors = _TARGET_SENSORS if sensors is None else sensors
+        self.clock = clock or time.time
+        self._st = {}
+        self._wakes = None
+        self._stop = threading.Event()
+
+    def start(self):
+        threading.Thread(target=self._loop, daemon=True, name="target-recorder").start()
+        return self
+
+    def stop(self):
+        self._stop.set()
+
+    def _loop(self):
+        while not self._stop.wait(TARGETS_LOG_S):
+            try:
+                self.tick()
+            except Exception:                 # noqa: BLE001 - the recorder never stops for a bad answer
+                pass
+
+    def tick(self):
+        """One pass over every sensor. False when nothing was asked (no recording, or quiet)."""
+        log = self.log
+        if log is None or not log.enabled or log.quiet:
+            return False
+        restart = log.wakes != self._wakes
+        self._wakes = log.wakes
+        now = self.clock()
+        try:
+            fix = self.fix()
+        except Exception:                     # noqa: BLE001
+            fix = None
+        for name, fn in list(self.sensors.items()):
+            try:
+                res = fn(fix)
+                if not isinstance(res, dict):
+                    raise TypeError("the sensor answered %s, not a dict" % type(res).__name__)
+            except Exception as e:            # noqa: BLE001 - said in the record, on change
+                res = {"ok": False, "note": "%s: %s" % (type(e).__name__, e), "tracks": []}
+            self._record(name, res, now, restart)
+        return True
+
+    @staticmethod
+    def _norm(t):
+        if not isinstance(t, dict) or t.get("id") in (None, ""):
+            return None
+        lat, lon = _rec_num(t.get("lat"), 6), _rec_num(t.get("lon"), 6)
+        if lat is None or lon is None:
+            return None
+        nav = t.get("nav")
+        if isinstance(nav, float) and nav.is_integer():
+            nav = int(nav)
+        if isinstance(nav, bool) or not (nav is None or isinstance(nav, (int, str))):
+            nav = None
+        dim = t.get("dim") if isinstance(t.get("dim"), dict) else None
+        if dim:
+            dim = {k: _rec_num(dim.get(k), 1) for k in ("a", "b", "c", "d") if dim.get(k) is not None} or None
+
+        def s(k, n=64):
+            return str(t[k])[:n] if t.get(k) is not None else None
+        return {"id": str(t["id"])[:64], "obs_t": _rec_num(t.get("obs_t"), 1), "lat": lat, "lon": lon,
+                "sog": _rec_num(t.get("sog"), 2), "cog": _rec_num(t.get("cog"), 1), "hdg": _rec_num(t.get("hdg"), 1),
+                "nav": nav, "name": s("name"), "cls": s("cls"), "feed": s("feed"),
+                "len_m": _rec_num(t.get("len_m"), 1), "beam_m": _rec_num(t.get("beam_m"), 1), "dim": dim,
+                "info": finite_only(t["info"]) if isinstance(t.get("info"), dict) else {}}
+
+    def _record(self, name, res, now, restart):
+        s = self._st.get(name)
+        if s is None or restart:
+            s = self._st[name] = {"ids": [], "rows": {}, "info": {}, "ok": None, "note": None,
+                                  "write_t": float("-inf"), "key_t": float("-inf"), "key_due": True, "info_due": True}
+        ok, note = bool(res.get("ok")), str(res.get("note") or "")[:300]
+        center = res.get("center") if isinstance(res.get("center"), dict) else None
+        by = {}
+        for t in res.get("tracks") or []:
+            n = self._norm(t)
+            if n is not None:
+                by[n["id"]] = n
+        c_lat = _rec_num((center or {}).get("lat"), 7)
+        c_lon = _rec_num((center or {}).get("lon"), 7)
+
+        def rng(n):
+            return (_haversine_km(c_lat, c_lon, n["lat"], n["lon"]) if c_lat is not None and c_lon is not None else 0.0)
+        tracks = sorted(by.values(), key=lambda n: (rng(n), n["id"]))   # ids sorted by RANGE - and NO cap
+        ids = [n["id"] for n in tracks]
+        gone = [i for i in s["ids"] if i not in by]
+        status_changed = (ok, note) != (s["ok"], s["note"])
+        if not (ids or s["ids"] or status_changed or s["key_due"] or now - s["write_t"] >= TARGETS_HEARTBEAT_S):
+            return
+        keyframe = s["key_due"] or now - s["key_t"] >= TARGETS_KEYFRAME_S
+        rows, infos = [], []
+        for n in tracks:
+            last = s["rows"].get(n["id"])
+            moved = last is None or any(last[k] != n[k] for k in self.KIN)
+            beat = (last is not None and n["obs_t"] is not None and last["obs_t"] is not None
+                    and n["obs_t"] - last["obs_t"] >= TRACK_HEARTBEAT_S)
+            if keyframe or moved or beat:
+                row = {"id": n["id"], "obs_t": n["obs_t"]}
+                row.update((k, n[k]) for k in self.KIN)
+                rows.append(row)
+                s["rows"][n["id"]] = row
+            info = {"sensor": name, "id": n["id"]}
+            info.update((k, n[k]) for k in self.STATIC)
+            if s["info_due"] or s["info"].get(n["id"]) != info:
+                infos.append(info)
+                s["info"][n["id"]] = info
+        for i in gone:                        # gone is gone: her return is a first sight, with her particulars again
+            s["rows"].pop(i, None)
+            s["info"].pop(i, None)
+        for info in infos:
+            self.log.routine("track_info", info)
+        self.log.routine("targets", finite_only({
+            "sensor": name, "ok": ok, "note": note, "center": center, "area": res.get("area"),
+            "health": res.get("health") or {}, "ids": ids, "rows": rows, "gone": gone, "keyframe": bool(keyframe)}))
+        s.update(ids=ids, ok=ok, note=note, write_t=now, key_due=False, info_due=False)
+        if keyframe:
+            s["key_t"] = now
+
+
+register_target_sensor("ais", _ais_targets)
+register_target_sensor("roc", _roc_targets)
+
+
 def main():
     global AIS_BASE, AIS_COLLECT_RADIUS_KM, AIS_SHOW_RADIUS_KM
     global AIS_SOURCE_ARG, AIS_NMEA_SPECS, AIS_OPENCPN
@@ -11896,8 +13166,13 @@ def main():
     SUPERVISION.start()                           # says when the supervising tab stops reporting (review #14)
     STOFS.start()                                 # NOAA STOFS-3D's surge forecast, fetched for the domain she is in
     if LOG.enabled:
-        LOG.event("session_start", pid=os.getpid(), argv=sys.argv[1:],
+        LOG.event("session_start", pid=os.getpid(), argv=_argv_redacted(sys.argv[1:]),
                   host=args.host, port=args.port)
+        # THE MISSION RECORD (2026-11-05): what this session IS - manifest, port, vessel, the plan on disk - once,
+        # here; and the hooks the logger reads its context through (it reads no module state of its own)
+        LOG.env_extra = _env_extra
+        LOG.mission_source = lambda: load_mission(refresh=False)     # a PURE read: see load_mission
+        log_session_context(args)
 
     try:
         srv = Server((args.host, args.port), Handler)
@@ -11918,6 +13193,8 @@ def main():
         ENGINE.connect("sim", "", DEFAULT_VCU_PORT, "tcp")
     elif args.vcu:
         ENGINE.connect(args.transport, args.vcu, args.vcu_port, args.transport)
+    # the targets of every registered sensor, round the boat, written by the console - only while recording (A10)
+    targets_rec = TargetRecorder(LOG).start() if LOG.enabled else None
 
     print("ASV Simulator Console serving at %s" % url)
     print("  Vessel: %s (%s)" % (VESSEL["name"], VESSEL["id"]))
@@ -11981,6 +13258,12 @@ def main():
     except KeyboardInterrupt:
         print("\nShutting down...")
     finally:
+        if targets_rec is not None:
+            targets_rec.stop()
+        # ⚠ THE RUN ENDS AS "session_end" BEFORE THE DISCONNECT: disconnect() pushes a frame with run "idle", and a
+        # run ended by it would read as the boat having stopped, when it was the console that went
+        if LOG is not None:
+            LOG.end_runs("session_end")
         ENGINE.disconnect()
         srv.shutdown()
         if LOG is not None:

@@ -94,8 +94,12 @@ STATE = ConsoleState()
 port = free_port()
 env = dict(os.environ, ASV_DOC_OPEN="off")
 srvlog = tempfile.TemporaryFile(mode="w+", encoding="utf-8")
+# ⚠ THE RECORDING CONSOLE ASKS AN AIS BASE EVERY 10 s (its TargetRecorder, since 2026-11-05): left at the default it
+# polled the OPERATOR'S bundled service on 127.0.0.1:8788 whenever his console was up, and filled this suite's
+# recording with his live contacts. A closed port: the AIS sensor records "unreachable", the same every run.
+NO_AIS = ["--ais", "http://127.0.0.1:1"]
 proc = subprocess.Popen([sys.executable, "asv_console.py", "--sim", "--browser", "none", "--port", str(port),
-                         "--no-ais-service", "--no-tide-window", "--no-weather-window", *STATE.args()],
+                         "--no-ais-service", "--no-tide-window", "--no-weather-window", *NO_AIS, *STATE.args()],
                         cwd=APP, stdout=srvlog, stderr=subprocess.STDOUT, env=env)
 try:
     up = False
