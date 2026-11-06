@@ -246,6 +246,9 @@ check("3. an unset operator floor leaves the hull's exactly as it was",
   // A punch the tide throws away is RECORDED and SAID (2026-09-16) - what that means for Add to plan is
   // tests/turn_refusal.js 14; here it only has to exist for the page's function to run.
   let patDropped = null, readouts = 0;
+  // ... and a punch HELD by the blocker clearing is kept through a move under TIDE_REBUILD_M (2026-11-06,
+  // tests/auto_clear.js): none is held here, so every move throws the punch away as this suite has always seen.
+  const patFunnel = null;
   const updatePatReadout = () => { readouts++; };
   const rebuildNogo = () => { rebuilds++;
     nogo.ko = K.buildKeepouts(F, feats, { minDepthM: 4, bufferM: 3, wreckRadiusM: 50, waterOffsetM: sea.waterOffset });
@@ -340,10 +343,11 @@ check("3. an unset operator floor leaves the hull's exactly as it was",
   const dr = { min: Math.max(2.3, 5), max: 15 };        // panel: Min 5, Max 15
   // `aisExcl` joined the clip statement 2026-11-04 (the moored-contact clip); handed empty here -
   // this check's question is the depth window's two models, and a contact in the clip is 17c's.
+  // `cutAt` (2026-11-06): the punch's cut - the water level both models are built at; the wrapper above builds at 0.
   const M = new Function("buildKeepouts", "foldChartInk", "ref", "enf", "dr", "nogo",
-                         "chanExcl", "turnExcl", "aisExcl",
+                         "chanExcl", "turnExcl", "aisExcl", "cutAt",
     stmts.join("\n") + "\nreturn {ko, koClip, koTurn};")(
-      buildKeepouts, () => 0, F, enf, dr, { features: feats }, [], [], []);
+      buildKeepouts, () => 0, F, enf, dr, { features: feats }, [], [], [], { bufM: 3, waterM: 0, held: false });
   // 17c. THE AIS EXCLUSION REACHES EXACTLY THE CLIP (2026-11-04, the moored-contact clip): a hull handed
   // to the same sliced model lands in koClip's polys and in NEITHER ko nor koTurn - the two-model rule's
   // third direction (ceiling to the clip, floor to the turns, contacts to the clip alone).
@@ -351,9 +355,9 @@ check("3. an unset operator floor leaves the hull's exactly as it was",
     const R17 = [{ e: -10, n: 90 }, { e: 10, n: 90 }, { e: 10, n: 110 }, { e: -10, n: 110 }];
     const fake = { ring: R17, bb: { x0: -10, y0: 90, x1: 10, y1: 110 }, kind: "AIS: X (30 x 8 m, moored)", mmsi: 1 };
     const M2 = new Function("buildKeepouts", "foldChartInk", "ref", "enf", "dr", "nogo",
-                            "chanExcl", "turnExcl", "aisExcl",
+                            "chanExcl", "turnExcl", "aisExcl", "cutAt",
       stmts.join("\n") + "\nreturn {ko, koClip, koTurn};")(
-        buildKeepouts, () => 0, F, enf, dr, { features: feats }, [], [], [fake]);
+        buildKeepouts, () => 0, F, enf, dr, { features: feats }, [], [], [fake], { bufM: 3, waterM: 0, held: false });
     check("17c. a moored contact handed to the punch's model reaches the CLIP alone: in koClip's polys, "
           + "in neither ko nor koTurn - lines never through her, turns and leads never refused for her",
           () => M2.koClip.polys.includes(fake) && !M2.ko.polys.includes(fake) && !M2.koTurn.polys.includes(fake),
@@ -403,8 +407,10 @@ check("17b. ... and each model is bound to its own consumer: koClip spreads koCo
       + "spreads the ceiling-free ko",
       () => {
         const po = grab(H, "punchOut");
-        return /const koCov=buildKeepouts\(ref, enf, dr, nogo\.features\);/.test(po)
-            && /const ko=buildKeepouts\(ref, enf, \{min: dr\.min, max: 0\}, nogo\.features\);/.test(po)
+        // (2026-11-06: both built at the punch's CUT level - the live one, or the blocker clearing's hold - and the SAME
+        //  `cutAt.waterM` for both, so the two models cannot come to stand at different water)
+        return /const koCov=buildKeepouts\(ref, enf, dr, nogo\.features, cutAt\.waterM\);/.test(po)
+            && /const ko=buildKeepouts\(ref, enf, \{min: dr\.min, max: 0\}, nogo\.features, cutAt\.waterM\);/.test(po)
             // the moored-contact clip joined the SAME statement 2026-11-04 (aisExcl beside chanExcl), so the
             // slice filter that feeds 17 still carries it - an AIS exclusion spliced via a NEW statement
             // would never reach 17's executed model, and 17 would test a model without the clip

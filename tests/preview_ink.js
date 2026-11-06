@@ -88,7 +88,9 @@ function survey(opts) {
     + " patLeadTotal = () => opts.lead ? 5 : 0, patCoverSeg = (k) => SRC[k], patRoutes = [SRC[0]], patUnsafe = [SRC[1]],"
     + " patSel = opts.sel ? { lat: 0, lon: 5 } : null, patCoverMid = (k) => ({ lat: SRC[k][0].lat, lon: 5 }),"
     + " distTo = (a, b) => Math.hypot(a.lat - b.lat, a.lon - b.lon), boundaryActive = () => false,"
-    + " patScreen = () => null, HANDLE = {};\n"
+    + " patScreen = () => null, HANDLE = {},"
+    // (2026-11-06) Upload's verdict on each red hop (none asked here: patUnsafe's pair stays red) and no clearing target
+    + " patRed = [], clr = { phase: \"idle\", target: null };\n"
     + DECL + "\n" + grab("drawPreviewLabel") + "\n" + grab("drawPattern") + "\n return drawPattern; })()");
   f(toScreen);
   return log;

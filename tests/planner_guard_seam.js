@@ -149,11 +149,24 @@ check("4. ... and a line INSIDE it is - so the number is the boundary, not a saf
       }).join("  "));
 
 // ── 5-6. THE PLANNER ACTUALLY USES IT ───────────────────────────────────────────────
+// ⚠ 5 MOVED WITH THE HOLD (2026-11-06), AND IT IS THE SAME PROPERTY. `clipBuf` is the punch's CUT: the live standoff
+// (patClipBufM) when nothing holds it, or the blocker clearing's hold - the HIGHEST patClipBufM of the window, rounded UP
+// (takePunchHold), raised again whenever the live one goes above it (refreshPunchHold). Never the bare buffer either way;
+// tests/auto_clear.js measures that the held value is never below the live one.
+// (And the review's repairs, 2026-11-06: the cut is resolved AFTER punchOut's chart read - `held`, from a function
+// handed in - and the window samples the DRIFT, its margin taken at the buffer in force now by patClipBufM's own
+// guardStandoffM over the same groundVel speed - so a sample can never carry an old buffer, nor the bare one.)
 check("5. punchOut clips the coverage at the standoff, not at the bare buffer",
       () => /clipLine\(l\[0\],l\[1\],ref,koClip,clipBuf\)/.test(H)
-            && /const clipBuf = patClipBufM\(\);/.test(H),
-      "the clip call reads `clipBuf`, and `clipBuf` is patClipBufM() - the bare `buffer` "
-        + "there is what made a 5 m plan legal in a 2 kn set");
+            && /const held = typeof cut === "function" \? cut\(\) : cut;/.test(H)
+            && /const cutAt = held \|\| \{bufM: patClipBufM\(\), waterM: sea\.waterOffset \|\| 0, setKn: null, held: false\};/.test(H)
+            && /const clipBuf = cutAt\.bufM;/.test(H)
+            && /const d = groundVel\(st\.env_set_deg, st\.env_set_kn\);\s*\n\s*punchMarginSeen\.push\(\{t: now, dMs: d \? Math\.hypot\(d\.e, d\.n\) : 0, setKn\}\)/.test(H)
+            && /return best && \{bufM: guardStandoffM\(nogo\.buffer \|\| 0, best\.dMs\), setKn: best\.setKn\};/.test(H)
+            && /return guardStandoffM\(nogo\.buffer \|\| 0, d \? Math\.hypot\(d\.e, d\.n\) : 0\);/.test(H)
+            && /bufM: holdStepUp\(m\.bufM\)/.test(H),
+      "the clip call reads `clipBuf`, and `clipBuf` is the cut's - patClipBufM() live, or the hold taken from it - the "
+        + "bare `buffer` there is what made a 5 m plan legal in a 2 kn set");
 // ⚠ 5b MOVED WITH THE MECHANISM (2026-09-22), AND IT IS THE SAME PROPERTY. It used to read
 // "patStrikeKey() includes patClipBufM()". That was true, and it was the bug: the set is
 // published rounded to 2 dp at 4 Hz and moves with the gusts, so over one 150 s capture the
@@ -168,15 +181,17 @@ check("5b. ... and the CLIP MEMO names it while the STRIKE key does not - a set 
       () => {
         const si = H.indexOf("function patStrikeKey(){");
         const strike = H.slice(si, H.indexOf("\n}", si));
-        const ci = H.indexOf("function patClipKey(){");
+        // since 2026-11-06 the key takes the punch's CUT - its standoff and its water level - and the strike key names
+        // NEITHER: a strike only removes coverage, so it stands at any level (the water used to throw strikes away too)
+        const ci = H.indexOf("function patClipKey(cut){");
         const clip = H.slice(ci, H.indexOf("\n", ci));
-        return /patClipBufM\(\)\.toFixed\(/.test(clip)
-            && !/patClipBufM\(/.test(strike)
+        return /cut\.bufM\.toFixed\(/.test(clip) && /cut\.waterM\.toFixed\(/.test(clip)
+            && !/patClipBufM\(|waterOffset/.test(strike)
             && /patStrikeKey\(\)/.test(clip)
             // the memo key is DERIVED from patClipKey (strike key + standoff) and, since 2026-11-04,
             // carries the moored-contact signature too - a ship arriving or sailing is a set change
             // of its own kind, and the same property holds: the memo can never serve a stale clip
-            && /const baseKey = patClipKey\(\);/.test(H)
+            && /const baseKey = patClipKey\(cutAt\);/.test(H)
             && /const clipKey = baseKey && baseKey \+ "\|ais:" \+ \(aisClip\.stale \? "stale" : aisClipSig\(aisExcl\)\);/.test(H);
       },
       "the memo reads patClipKey(), which is patStrikeKey() plus the standoff. Without the "

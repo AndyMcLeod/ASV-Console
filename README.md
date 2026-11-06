@@ -1882,7 +1882,11 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
      one), which rolls the boat onto the next line *aligned* with its heading instead of
      pivoting hard; otherwise a straight leg if that is clear, a routed **detour** (amber)
      if not, and **red** if nothing gets through. A red *reversal* keeps the pattern out of
-     the plan until it is fixed; a red hop is routed again at Upload.
+     the plan until it is fixed. A red hop is put to Upload's own router at once, in the
+     background and a few at a time, so a Go-To or an RTH is not kept waiting behind it.
+     One it routes turns amber, and one it cannot route keeps the pattern out too. One
+     whose only way round leaves the chart as read is left to Upload, which reads the
+     chart wider before it routes.
    - *Add to plan* **appends** (once nothing red is a reversal, and not after the water
      level has moved since Punch Out): each run's two ends, then its joining points to the
      next run. A second pattern runs after the first, in the order you added them. Editing
@@ -2008,9 +2012,11 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    it, or strike off one of the two runs; a slower **Turn** speed where the boat could not
    *track* the loop; a wider spacing where every turn is a teardrop; standoff from a
    navigation channel. Never a shorter lead — the ladder has already tried the pair with
-   none. A red **hop** (two runs that do not reverse, with no detour found) does not stop
-   Add to plan: Upload routes every hop again with the full router, and refuses the upload
-   if it still finds no way through.
+   none. A red **hop** (two runs that do not reverse, with no detour found) is put to
+   **Upload's own router** as soon as the punch finishes (since 2026-11-06; until then it
+   was left for Upload to find). If that router finds a way round, the hop is redrawn
+   **amber** and passes. If it cannot, Add to plan is refused for that hop as well,
+   because Upload would refuse the plan.
 
    ⚠ Until 2026-09-16 **nothing stopped a red reversal being added and uploaded**: the red
    was not carried into the plan, and at Upload the straight leg left between the two
@@ -2241,6 +2247,57 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    call. And the rebuild is **coalesced** — strike five runs in a row and the plan
    is re-solved once, at the end. Anything that reads the plan as a result (Add to
    plan) waits for that rebuild first.
+
+   **Clearing blocked lines, automatically (2026-11-06).** When **Punch Out** leaves
+   anything that blocks Add to plan or Upload, the console strikes the runs off for
+   you, **one at a time**, and waits for each re-punch before it judges the next. Three
+   things block: a red reversal; a red hop that Upload's own router cannot route either;
+   and a join that a dry run of Upload's route of the whole plan refuses. The Survey card
+   shows a row under the refusal (*CLEARING BLOCKED LINES — strike 2: run 41 (12 m) for
+   the red turn 41–42 …*) with a **Stop** button. Each run is flashed magenta on the
+   chart before it is struck, and each strike is logged.
+
+   The clearing chooses which run to strike in this order:
+   1. the run beside the most blocked joins;
+   2. then a run at either end of the pattern;
+   3. then the shortest run.
+
+   It stops when nothing is blocked. It also stops after 20 strikes or 2% of the
+   coverage (**Keep clearing** carries on), after four strikes in a row that cleared
+   nothing, when you press Stop, or when you strike or restore a run by hand or press
+   Add to plan. Whatever it struck stays struck either way, and **Put them back**
+   restores it. A stop for a change says which: the pattern, a chart read, the buffer,
+   the chart image, an enforce box or the depth window. When it is done, it routes the
+   whole plan as Upload would and says so: *Cleared: N line(s) struck (X m, Y% of the
+   coverage). Add to plan and Upload are not blocked (Upload's own route of the whole
+   plan, on the chart as read now; Upload reads the chart again before it sends).* If
+   Upload's route still refuses a leg, the banner says which: a join striking has not
+   cleared, a leg along one of the survey's own lines, or a leg outside the survey. It
+   never presses Add to plan or Upload itself. Once you take over (a strike by hand,
+   Put them back, Add to plan), a finished clearing does not start again at the next
+   tide step.
+
+   *Why striking by hand worked only some of the time.* Each punch was cut at the
+   **live** standoff, which the current moves from second to second. On one plan it
+   swung from 11.8 to 12.5 m, so three punches seconds apart gave 333, 332 and 331 runs
+   and three different sets of red joins. And any water-level update threw the punch
+   away, strikes and all. The clearing therefore **holds** both inputs for the whole
+   run:
+   - **the standoff** is held at the highest live value of the last two minutes,
+     rounded up to 0.1 m. It is raised if the current rises, and never lowered.
+   - **the water level** is held at the level when Punch Out was pressed. The runs are
+     cut again only when the level moves 0.1 m or more, or when the update rebuilds the
+     chart model (it was built at another level).
+
+   Both are taken once the chart has been read, so a change during the read is in the
+   cut. The strikes now survive a water change. A committed survey holding a leg
+   **between its own lines** that Upload refused gets an **Unblock** button on its
+   Surveys row. It loads the survey (unless it is already on the card) and presses
+   Punch Out for you. The clearing then checks Upload's route even when nothing is red,
+   and Update S# puts the survey back. After the Update, the button stays away until
+   Upload refuses again. A leg that only *ends* in a survey (the approach, or the leg
+   from the survey before) gets no button, because no strike of its lines changes
+   that water.
    Every turn is built at a radius the boat can actually **hold** at the run speed
    (from the vessel file's `max_turn_rate_deg_s`), in one of two shapes:
 

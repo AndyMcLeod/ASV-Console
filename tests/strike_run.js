@@ -243,9 +243,13 @@ console.log("Striking a punched run off — the gap has to be real, and rebuilt 
   // ⚠ SERIALISED, NOT FIRE-AND-FORGET. punchOut refuses while one is in flight, so a
   // timer that called it directly would silently drop the rebuild for every strike made
   // during a rebuild — the plan on screen then disagrees with the strike list, quietly.
+  // (2026-11-06: the chained step also hands punchOut HOW to take the clearing's hold - after its chart read - awaits
+  //  Upload's verdict on the red hops and redraws the clearing's row - all inside the ONE chained step, so nothing reads
+  //  the punch before they are done.)
   check("8. every scheduled rebuild goes through the serialised punch, not punchOut direct",
-        () => /punchNow\(\)/.test(flush) && !/[^w]punchOut\(\)/.test(flush)
-              && /punchInFlight/.test(now) && /\.then\(\(\)\s*=>\s*punchOut\(\)\)/.test(now),
+        () => /punchNow\(\)/.test(flush) && !/[^w]punchOut\(/.test(flush)
+              && /punchInFlight/.test(now)
+              && /\.then\(async \(\)\s*=>\s*\{[\s\S]*?await punchOut\(heldCutAfterRead\);[\s\S]*?await judgeRedHops\(\);\s*renderClearRow\(\);[^\n]*\s*\}\)/.test(now),
         /punchNow\(\)/.test(flush) ? "flushRepunch -> punchNow -> chained punchOut"
                                    : "flushRepunch calls punchOut directly — a rebuild "
                                      + "arriving during a rebuild is DROPPED by punchBusy");

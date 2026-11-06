@@ -163,7 +163,8 @@ const PAGE_FUNCS = ["punchOut", "currentPattern", "surveyPattern", "patSourceLin
   "makesWayKey", "slowestMakingWayKey", "setMsNow",     // the speed a turn is flown at (2026-09-26)
   "patLeadTotal", "leadMetres", "leadInM", "leadOutM", "easeLsM", "roleSpeed", "roleSpeedMS", "depthRange",
   "kindsSummary", "emptyPunchRefusal", "isStepKey", "spdTxt", "spdAtTxt", "slowestSelectableKey", "punchRefusal", "commitPattern", "resetPattern", "updatePatReadout", "flushRepunch", "punchNow",
-  "dropStruckFromPunch", "strikeSelectedRun", "scheduleRepunch", "applyWaterOffset"];
+  "dropStruckFromPunch", "strikeSelectedRun", "scheduleRepunch", "applyWaterOffset",
+  "patternWaypoints"];                                   // commitPattern's lines and waypoints (2026-11-06)
 const PAGE_DECLS = [/^const NO_LEAD = [^;]*;/m, /^const LEAD_GIVE = [^;]*;/m, /^const MAX_SURVEY_LINES = [^;]*;/m,
   /^const LEAD_MAX_M = [^;]*;/m, /^const REPUNCH_DELAY_MS = [^;]*;/m, /^const TIDE_REBUILD_M = [^;]*;/m, /^const TRIM_MAX_M = [^;]*;/m, /^const JUDGE_RUN_M = [^;]*;/m, /^const SPEED_ROLES = [^;]*;/m];
 
@@ -228,6 +229,13 @@ function makeWorld(opts) {
     + "let patReverse = false; const runBackwards = (o) => o.slice().reverse().map(s => [s[1], s[0]]);\n"
     + "const surveySettingsNow = () => null; const replaceSurvey = () => {}; const surveyById = () => null;\n"
     + "const surveyLabel = () => '';\n"
+    // THE BLOCKER CLEARING (2026-11-06) is tests/auto_clear.js's subject. Inert here: no hold is ever taken, so punchNow
+    // cuts every punch at the live standoff and level as it always has, and no red hop is put to Upload's router - so a
+    // red hop is left to Upload, exactly as check 7 has always asserted.
+    + "const refreshPunchHold = () => null, punchCutNow = () => null, judgeRedHops = async () => {};\n"
+    + "const heldCutAfterRead = () => null, releasePunchHold = () => {}, endClearing = () => {};\n"
+    + "const stopClearingFor = () => {}, noteSurveyUpdated = () => {};\n"
+    + "const renderClearRow = () => {};\n"
     + "const rebuildNogo = () => { nogo.builtOffset = sea.waterOffset; };   // the model's own rebuild is not under test\n"
     + PAGE_FUNCS.map(grab).join("\n")
     // The ladder exactly as punchOut asks it, over the model punchOut builds (a dock has no channel and no chart ink,
@@ -382,10 +390,14 @@ const redList = (w) => redOf(w.get().patRed);
               && enabled7 && !c7.err && hop.mission.lines.length === 10,
         () => (p7.err ? "punch threw: " + p7.err.message + "; " : "") + (h7.patClip || []).length + " runs; red: "
               + redOf(h7.patRed) + "; button enabled: " + enabled7 + "; committed " + hop.mission.lines.length + " lines");
+  // (2026-11-06: the words now say the hop is put to Upload's own router, and what each answer does - tests/auto_clear.js
+  //  drives the asking; a punch run directly, as here, is never asked, and passes as before.)
   check("7b. ... and the punch's own banner says what happens to the hop, instead of the old claim that the boat "
         + "would cross the obstacle",
         () => hop.log.banners.some((b) => /1 hop\(s\) between runs are blocked by land with no detour found here/.test(b)
-                                          && /Upload routes every hop again/.test(b) && !/would cross/.test(b)),
+                                          && /Each is put to Upload's own router now/.test(b)
+                                          && /one it cannot route either keeps the pattern out of the plan/.test(b)
+                                          && !/would cross/.test(b)),
         () => hop.log.banners.slice(-1)[0] || "no banner");
 
   // ── 8. A PUNCH THAT STOPS PART-WAY ──────────────────────────────────────────────────────────────────────────────

@@ -61,6 +61,7 @@ c.push(P("That is the Survey switch on PATTERN, the default. When the survey has
 c.push(H2("4.2  Punch it out"));
 c.push(P("Press `Punch Out`. The console fetches the chart for the survey area and trims every line out of land, structures, hazards and water outside your depth limits. THIS IS THE STEP THAT MAKES THE PLAN TRUSTWORTHY — read what it reports."));
 c.push(NOTE("IF IT SAYS “UNTRACKABLE”", "Your line spacing is tighter than the vessel can turn in at the plan speed. Widen the spacing or drop the speed and punch out again. (Ops manual 9.5.1)"));
+c.push(NOTE("IF SOMETHING BLOCKS ADD TO PLAN", "Punch Out clears it for you: it strikes the blocking lines off one at a time, re-punching after each, and shows each step under the refusal on the Survey card with a Stop button. When the banner says Add to plan and Upload are not blocked, press Add to plan (or Update), then Upload. Put them back restores what it struck. (Ops manual 9.5.1)"));
 c.push(H2("4.3  Commit and run"));
 c.push(B("`Add to plan` — commits the lines and waypoints."));
 c.push(B("`Upload` — pushes the plan to the vessel, routing the approach clear of obstacles."));

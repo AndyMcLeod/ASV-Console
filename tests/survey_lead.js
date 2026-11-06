@@ -491,7 +491,8 @@ console.log("LEAD-IN / LEAD-OUT — the run is longer than the coverage:");
         "a field the save drops survives exactly until the next write");
 
   // The per-line lengths ride in `lines`, which the server passes through wholesale.
-  const commit = grab("commitPattern");
+  // (2026-11-06: built by patternWaypoints, the ONE build commitPattern and the clearing's dry run of Upload share.)
+  const commit = grab("patternWaypoints");
   check("28. a committed line carries the lead ACTUALLY APPLIED — and only if punched",
         () => /const leads = patClip \? patLead : null;/.test(commit)
               && /lead_in_m: ld\.in \|\| 0, lead_out_m: ld\.out \|\| 0/.test(commit),

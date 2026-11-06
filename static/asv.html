@@ -681,6 +681,9 @@
       <!-- WHY ADD TO PLAN IS REFUSED (punchRefusal), directly under the button it explains - in amber like the
            truncated-pattern hint: nothing has reached the boat, the pattern is what has to change. -->
       <div class="phint" id="sp_refuse" style="display:none;color:var(--warn)"></div>
+      <!-- CLEARING BLOCKED LINES (2026-11-06, startClearing): the strikes it makes one at a time, what it is waiting
+           on, Stop; then what it found. Under the refusal it answers; renderClearRow writes it. -->
+      <div class="phint" id="sp_clear" style="display:none"></div>
       <div class="prow" style="gap:4px">
         <button class="ctl small" id="sp_reset" title="Discard the pattern being drawn" style="flex:1">Reset</button>
       </div>
@@ -6808,6 +6811,8 @@ function renderIntent(){
   el.innerHTML = html;
 }
 let runUnsafe = [];                              // uploaded legs that still cross a nogo (flagged red)
+// Surveys Updated since the refusal in runUnsafe (`of`: that very array) - their refused legs are gone (surveysUploadBlocked)
+let unblockDone = {of: null, sv: new Set()};
 let mode = "pan", saveTimer = null;
 // THE PATH PLANNING CARD's state (2026-10-13): the tab it shows, the Go-To point and its two folds. Up here beside `mode`
 // because setMode reads pathTab. A TAB is what the card shows; DRAWING is the chart's mode (PATH_TAB_OF names the tab
@@ -6971,6 +6976,51 @@ let patStruckKey = null;
 let patSel = null;                             // {lat,lon,length} — the run awaiting Delete
 let patRepunchT = null;                        // pending coalesced re-punch (see scheduleRepunch)
 let punchInFlight = null;                      // the punch currently running — see punchNow
+// ── THE BLOCKER CLEARING (2026-11-06, Andy: "auto delete lines one by one after punch out and before upload so the
+// manual deletion of lines becomes unnecessary. Proceed with one line deletion at a time and wait for the replan
+// process to continue before deleting the next. Allow the GUI to display this activity ... Alert when complete and the
+// add to plan and upload are not blocked") - his five calls taken as recommended: it starts by itself after Punch Out,
+// stops and asks at CLEAR_CAP_STRIKES strikes or CLEAR_CAP_FRAC of the coverage, holds the margin rounded UP, stops at
+// "ready" (he presses Add/Update and Upload), and outside a clearing a water move still throws the punch away.
+//
+// ⚠⚠ WHY HIS STRIKES "WORKED IN SOME INSTANCES, NOT IN OTHERS" - MEASURED on a copy of his Castine S1 (92 lines, 326
+// runs), and the reason the clearing HOLDS the punch's inputs. Two of them move under every re-punch:
+//   1. THE CLIP MARGIN, patClipBufM: the buffer plus the drift of the set NOW, read fresh each punch. The set drifted
+//      1.02-1.07 kn in 30 s and the margin 11.8-12.5 m with it, and THREE Punch Outs of the same pattern seconds apart,
+//      no strike between them, came out 333 / 332 / 331 runs with three different red sets. Held at 12.6 m: identical.
+//   2. THE WATER LEVEL: a station update every 6 minutes, and applyWaterOffset threw the punch away on ANY change (one
+//      read "+0.27 m to +0.27 m") - and the level was in patStrikeKey, so every strike went with it.
+// A one-strike-at-a-time loop on the LIVE inputs went from 5 blocked joins to 11 and was stopped; on HELD inputs it went
+// 11 -> 0 without once going up, in 12 strikes of 4-21 m slivers (134 m, 0.08% of the coverage), and Update + Upload then
+// went through with no leg blocked.
+//
+// THE HOLD: while a clearing holds them, every punch is cut at `punchHold` instead of the live inputs. The margin is the
+// HIGHEST the live one read over PUNCH_HOLD_WINDOW_MS, rounded UP to PUNCH_HOLD_STEP_M - never less than the live value
+// at the start, which oscillates ~0.7 m within seconds - and the water is the level at the start. Either is RAISED / moved
+// (refreshPunchHold) when the live margin goes above the held one or the level moves TIDE_REBUILD_M (the step the
+// keep-out model itself rebuilds at), and the clearing simply re-judges the new punch, its strikes kept. A sub-threshold
+// level move no longer throws a HELD punch away (applyWaterOffset). Released by resetPattern (a commit, a Reset), by a
+// fresh Punch Out (which takes its own), and when the pattern or its settings change (clearingTick).
+let punchHold = null;                          // {bufM, waterM, setKn, at, why} while held, else null
+const PUNCH_HOLD_STEP_M = 0.1;                 // the held margin is rounded UP to this
+const PUNCH_HOLD_WINDOW_MS = 120000;           // ... and is the highest the live margin read over this long
+let punchMarginSeen = [];                      // [{t, dMs, setKn}] - the set's drift, one sample a frame (notePunchMargin)
+// UPLOAD'S VERDICT ON EACH RED HOP, cached by the model it was asked on (routeKoId), the buffer and the two ends: a hop
+// the punch's routeAround could not route is routed again by Upload's legPath, which searches further - 3 of the 5 on
+// his plan went round, 2 did not - so the page asks legPath itself, off its thread, and a hop that cannot be routed
+// there blocks Add to plan as it would block Upload (judgeRedHops). An unroutable hop runs legPath to its time budget,
+// ~7 s each, so the same hop is never asked twice of the same model.
+const hopVerdicts = new Map();
+const HOP_ASK_CHUNK = 4;                       // red hops a message to the route worker - a few budgets, far inside its timeout
+// THE CLEARING'S OWN STATE. `phase`: idle | running | checking (the dry run of Upload's route at the end) | ready |
+// stopped | capped. `gen` moves on every start and stop, so a loop waiting on a punch knows it has been replaced. `key`
+// is the strike key it was started on (a reshaped pattern ends it). `strikes` [{run, lenM, why}]; `verdictClip` the
+// patClip the dry run judged, so "Upload is not blocked" is never shown about a different punch.
+let clr = {gen: 0, phase: "idle"};
+const CLEAR_CAP_STRIKES = 20;                  // it stops and asks after this many strikes ...
+const CLEAR_CAP_FRAC = 0.02;                   // ... or this fraction of the coverage struck, whichever first
+const CLEAR_STALE_MAX = 4;                     // ... and stops when this many strikes in a row did not reduce the count
+const CLEAR_FLASH_MS = 700;                    // the run is shown before it goes, so the operator sees which
 // The ENC-clipped runs, keyed on everything that decides them. Striking a run re-punches,
 // and the clip is the most expensive phase of a punch by a wide margin while being the
 // one phase a strike cannot change. See the block that fills it.
@@ -10799,13 +10849,20 @@ function patStrikeKey(){
           // none crossing it. The key has to name the READ, not just the ENC features.
           (chartInk.key||"-").replace(/\|/g,"~"),
           chartInk.lines.length+"/"+(chartInk.areas||[]).length,
-          JSON.stringify(nogo.enf||{}), dr.min, dr.max,
-          (sea.waterOffset||0).toFixed(3)].join("|");
+          JSON.stringify(nogo.enf||{}), dr.min, dr.max].join("|");
+          // ⚠ AND NOT THE WATER LEVEL (2026-11-06, the blocker clearing). It was here, so every station update - a few
+          // centimeters every 6 minutes, one read "+0.27 m to +0.27 m" - discarded every run the operator had struck off,
+          // which is half of why his strikes "worked in some instances, not in others". The level decides the CLIP and
+          // stays in patClipKey; a strike asks whether the run he clicked still EXISTS, and keptRuns' 1 m midpoint test
+          // answers that at any level - a run the new level re-cut comes back and is judged like any other. A strike
+          // only ever REMOVES coverage, so carrying one across a level change cannot make a plan less safe.
 }
 
 /**
- * THE MEMO's key: the strike key plus the standoff this punch clips at. DERIVED from the
- * strike key rather than written out again, so the two cannot come to name different inputs.
+ * THE MEMO's key: the strike key plus the standoff AND THE WATER LEVEL this punch clips at
+ * (`cut`, punchOut's - the inputs the clip is taken at, held or live). DERIVED from the
+ * strike key rather than written out again, so the two cannot come to name different inputs;
+ * and handed the punch's own `cut`, so the key cannot name a margin the clip was not taken at.
  *
  * ⚠⚠ THE STANDOFF IS HERE AND NOT IN patStrikeKey, AND THE SPLIT IS THE WHOLE POINT. The
  * CLIP must not be reused across a set change - two punches at the same buffer in a
@@ -10819,7 +10876,74 @@ function patStrikeKey(){
  * and every change silently discarded every run the operator had struck off, because
  * activeStruck() returns [] the moment the keys differ.
  */
-function patClipKey(){ const k = patStrikeKey(); return k && k + "|" + patClipBufM().toFixed(2); }
+function patClipKey(cut){ const k = patStrikeKey(); return k && k + "|" + cut.bufM.toFixed(2) + "|" + cut.waterM.toFixed(3); }
+
+/** The inputs the next punch is cut at WHILE A CLEARING HOLDS THEM, else null - and punchOut then reads the live ones
+ *  itself, in one place, so "held" and "live" are each written exactly once. See punchHold. */
+function punchCutNow(){
+  return punchHold ? {bufM: punchHold.bufM, waterM: punchHold.waterM, setKn: punchHold.setKn, held: true} : null;
+}
+/**
+ * One sample of the SET, a frame (clearingTick) - what the hold's "highest over the window" reads. ⚠ THE DRIFT IS
+ * SAMPLED, NOT THE MARGIN (review 2026-11-06): a margin carries the buffer in force when it was read, so a buffer lowered
+ * from 25 m to 3 m left two minutes of 25 m samples, and the next Punch Out cut at 25 m and said a 0.00 kn set needed it.
+ * The margin is the drift's at the buffer in force NOW (punchMarginMax) - patClipBufM's own two lines, over a sample.
+ */
+function notePunchMargin(now){
+  const st = (S && S.status) || {};
+  const setKn = (st.env_set_kn != null && st.env_set_deg != null) ? +st.env_set_kn : 0;
+  const d = groundVel(st.env_set_deg, st.env_set_kn);
+  punchMarginSeen.push({t: now, dMs: d ? Math.hypot(d.e, d.n) : 0, setKn});
+  while(punchMarginSeen.length && now - punchMarginSeen[0].t > PUNCH_HOLD_WINDOW_MS) punchMarginSeen.shift();
+}
+/** The highest live clip margin over the window, NOW included, at the buffer in force now: {bufM, setKn}. */
+function punchMarginMax(){
+  const now = Date.now();
+  notePunchMargin(now);
+  let best = null;
+  for(const x of punchMarginSeen) if(now - x.t <= PUNCH_HOLD_WINDOW_MS && (!best || x.dMs > best.dMs)) best = x;
+  return best && {bufM: guardStandoffM(nogo.buffer || 0, best.dMs), setKn: best.setKn};
+}
+/** What punchNow hands punchOut: the hold, moved where the live inputs have gone past it, taken when punchOut ASKS -
+ *  after its chart read - or null with no hold (punchOut then reads the live inputs). */
+function heldCutAfterRead(){ refreshPunchHold(); return punchCutNow(); }
+/** THE HOLD GOES, in one place: the hold and the mark it left on the punch on the card, so a punch cut at a hold that
+ *  is gone is an ordinary one again (applyWaterOffset drops it at any move of the level, as it always did). */
+function releasePunchHold(){
+  punchHold = null;
+  if(patFunnel && patFunnel.cut && patFunnel.cut.held) patFunnel.cut = {...patFunnel.cut, held: false};
+}
+/** Rounded UP to the hold's step - a held margin is never less than the one it was taken from. */
+function holdStepUp(m){ return Math.ceil(m / PUNCH_HOLD_STEP_M - 1e-9) * PUNCH_HOLD_STEP_M; }
+/** Take the hold: the highest margin over the window, rounded up, and the level now. */
+function takePunchHold(){
+  const m = punchMarginMax();
+  punchHold = {bufM: holdStepUp(m.bufM), waterM: sea.waterOffset || 0, setKn: m.setKn, at: Date.now(), why: null};
+  return punchHold;
+}
+/**
+ * Move the hold where the water or the current has gone past it: the margin RAISED when the live one (highest over the
+ * window) reads above the held, the level moved when the live one is TIDE_REBUILD_M off it. Returns what moved, in
+ * words, or null - and leaves it on the hold (`why`) for the clearing's row. Never LOWERS the margin: slack water does
+ * not hand back coverage mid-clearing, which would re-cut every run for less margin than the start had.
+ */
+function refreshPunchHold(){
+  if(!punchHold) return null;
+  const why = [];
+  const m = punchMarginMax();
+  if(m && m.bufM > punchHold.bufM + 1e-9){
+    punchHold.bufM = holdStepUp(m.bufM); punchHold.setKn = m.setKn;
+    why.push("the current's standoff rose to " + m.bufM.toFixed(1) + " m (held now at " + punchHold.bufM.toFixed(1) + " m)");
+  }
+  const w = sea.waterOffset || 0;
+  if(Math.abs(w - punchHold.waterM) >= TIDE_REBUILD_M - 1e-9){
+    const lvl = v => (v >= 0 ? "+" : "") + v.toFixed(2) + " m";
+    why.push("the water level moved from " + lvl(punchHold.waterM) + " to " + lvl(w));
+    punchHold.waterM = w;
+  }
+  punchHold.why = why.length ? why.join(" and ") : null;
+  return punchHold.why;
+}
 
 /** The strikes that still apply. A read — see patStrikeKey. */
 function activeStruck(){ return patStruckKey && patStruckKey === patStrikeKey() ? patStruck : []; }
@@ -10867,8 +10991,14 @@ function runNear(cx, cy, tolPx){
     const d=distPtSegPx(cx,cy, a.x-o.x,a.y-o.y, b.x-o.x,b.y-o.y);
     if(d<=bd){ bd=d; best=k; } });
   if(best < 0) return null;
-  const cov = patCoverSeg(best);
-  return cov ? {...runMid(cov), length: distTo(cov[0], cov[1])} : null;
+  // ⚠ NAMED BY patCoverMid, THE MIDPOINT EVERY MATCHER READS (2026-11-06). This was runMid(patCoverSeg) - the coverage
+  // AFTER a turn-water trim - while dropStruckFromPunch, keptRuns and the selection check in updatePatReadout all match
+  // patCoverMid, which puts the trim back (patIdentSeg). On a run with one end pulled back for a turn the two differ by
+  // half the trim (his Castine S1 had 111 reversals trimmed, up to 75 m), so the click selected nothing the readout could
+  // find: the selection was dropped on the next render and Delete did nothing - one more of the strikes that "worked in
+  // some instances, not others". The LENGTH stays the coverage's: it is what the card quotes and what is lost.
+  const cov = patCoverSeg(best), mid = patCoverMid(best);
+  return cov && mid ? {...mid, length: distTo(cov[0], cov[1])} : null;
 }
 
 /** Select the run under the click. Returns true if one was hit. */
@@ -10979,7 +11109,18 @@ function scheduleRepunch(){
  * leave every later one waiting on a rejected promise. punchOut has its own try/finally.
  */
 function punchNow(){
-  punchInFlight = Promise.resolve(punchInFlight).catch(()=>{}).then(()=>punchOut());
+  punchInFlight = Promise.resolve(punchInFlight).catch(()=>{}).then(async ()=>{
+    // THE HELD INPUTS (the blocker clearing, 2026-11-06): HOW to take them goes to the punch, not the inputs themselves.
+    // ⚠ punchOut takes them only once its chart read is done (heldCutAfterRead): taken here, before the await, a buffer
+    // raised or a level moved while the chart was read was not in the cut - the review measured a punch cut at 3 m with
+    // the buffer at 25 m, and one at +0.00 m with the level at +0.30 m, both silent. With no hold it answers null and
+    // punchOut reads the live inputs exactly as it always has.
+    await punchOut(heldCutAfterRead);
+    // ... AND THE RED HOPS PUT TO UPLOAD'S OWN ROUTER BEFORE THE PUNCH COUNTS AS DONE: whatever awaits this promise -
+    // Add to plan (flushRepunch), repunchSurvey, the clearing - reads their verdicts, never the moment before them.
+    await judgeRedHops();
+    renderClearRow();                          // the row after the punch: punchOut's own readout ran while it was busy
+  });
   return punchInFlight;
 }
 
@@ -10998,6 +11139,543 @@ function punchNow(){
 function flushRepunch(){
   if(patRepunchT){ clearTimeout(patRepunchT); patRepunchT = null; return punchNow(); }
   return Promise.resolve(punchInFlight).catch(()=>{});
+}
+
+// ── UPLOAD'S VERDICT ON THE RED HOPS, AND THE ONE LIST OF BLOCKERS (2026-11-06) ──────────────────────────────────────
+
+/**
+ * Put every red hop this punch left to UPLOAD'S OWN ROUTER: legPath, with the model, frame and buffer routePlan gives a
+ * leg between a plan's waypoints (passage.js: `legPath(prev, wp, ref, ko, buf)`), off this page's thread (route_job.js
+ * "hops"; on it only where there is no worker, as with every search). Each hop's `upload` becomes
+ *   true  - Upload routes it: drawn amber, not a blocker;
+ *   false - it cannot either: a BLOCKER, refused at Add to plan exactly as Upload would refuse the plan;
+ *   null  - the question could not be put, or the only way round leaves the chart as read (Upload reads it wider and
+ *           routes again): left to Upload, as every red hop was before;
+ * and "pending" while it is asked, which punchRefusal says. A hop never asked (a punch run outside punchNow) stays
+ * undefined and is left to Upload too. Before this a red hop passed Add to plan and blocked Upload: on his S1, 5 red
+ * hops went into the plan and Upload refused 2 of them - the two legs either side of line 173.
+ */
+async function judgeRedHops(){
+  if(!patClip || !patJoined || !nogo.ready || !nogo.ko) return;
+  const hops = patRed.filter(r => !r.turn && r.a && r.b);
+  if(!hops.length) return;
+  const ko = nogo.ko, mid = routeKoId(ko), buf = +nogo.buffer || 0;
+  const pt = p => p.lat.toFixed(7) + "," + p.lon.toFixed(7);
+  const key = r => mid + "|" + buf + "|" + pt(r.a) + ";" + pt(r.b);
+  const ask = [];
+  for(const r of hops){
+    const v = hopVerdicts.get(key(r));
+    if(v === true || v === false) r.upload = v; else { r.upload = "pending"; ask.push(r); }
+  }
+  if(ask.length){
+    const red = patRed;
+    updatePatReadout();                        // "checking N red hop(s) against Upload's router" while it is asked
+    // ⚠ ON THE BACKGROUND LANE, A FEW AT A TIME, AND NEVER ON THIS THREAD (review 2026-11-06). An unroutable hop runs
+    // legPath to its wall-clock budget (seconds each), and on the COMMAND lane in one message a Go-To or an RTH pressed
+    // during a punch waited behind every one of them - and past ROUTE_WORKER_TIMEOUT_MS the worker was killed and the
+    // whole list re-run HERE, holding the page (the guard, the readouts, the supervision) for minutes. So: the ETA
+    // lane, HOP_ASK_CHUNK pairs a message (one in flight, well inside the timeout), and with no worker to ask, no
+    // verdict (null) - the hop is left to Upload, as every red hop was before this.
+    for(let s = 0; s < ask.length; s += HOP_ASK_CHUNK){
+      const part = ask.slice(s, s + HOP_ASK_CHUNK);
+      let res = null;
+      try{
+        const pairs = part.map(r => [{lat: r.a.lat, lon: r.a.lon}, {lat: r.b.lat, lon: r.b.lon}]);
+        res = await planOffThread({op: "hops", args: {pairs}}, () => null, undefined, "est");
+      }catch(e){ res = null; }
+      if(patRed !== red) return;               // a newer punch rebuilt the joins while the router answered: it asks again
+      const fresh = nogo.ko === ko;            // an answer about a model since replaced is used once, never cached
+      part.forEach((r, i) => {
+        const v = Array.isArray(res) && typeof res[i] === "boolean" ? res[i] : null;
+        r.upload = v;
+        if(v !== null && fresh){ if(hopVerdicts.size > 4000) hopVerdicts.clear(); hopVerdicts.set(key(r), v); }
+      });
+    }
+  }
+  updatePatReadout(); render();
+}
+/** Does this red join BLOCK? A reversal with no flyable turn always does (Add to plan refuses it); a hop only when
+ *  Upload's router cannot route it either (judgeRedHops). ONE predicate: punchRefusal and the clearing both read it. */
+function redBlocks(r){ return !!r && (!!r.turn || r.upload === false); }
+/** The joins blocking Add to plan or Upload in the punch on the card: [{k, run, turn, by}], `k` the 0-based index of
+ *  the pair's first run (the join is patClip[k] -> patClip[k+1]). Empty with no finished punch. */
+function punchBlockers(){
+  if(!patClip || !patJoined) return [];
+  const out = patRed.filter(redBlocks).map(r => ({k: r.run - 1, run: r.run, turn: !!r.turn, by: r.by || null}));
+  // ... AND A JOIN THE CLEARING'S DRY RUN OF UPLOAD REFUSED that the punch had found a way round (finishClearing): named
+  // by its two ends, which a strike elsewhere re-indexes but does not move, so it is found again after every re-punch.
+  for(const d of (clr && clr.dryRefused) || []){
+    for(let k = 0; k + 1 < patClip.length; k++){
+      if(distTo(patClip[k][1], d.a) < 1 && distTo(patClip[k + 1][0], d.b) < 1){
+        if(!out.some(x => x.k === k)) out.push({k, run: k + 1, turn: false, by: "Upload's route of the plan"});
+        break;
+      }
+    }
+  }
+  return out;
+}
+/** Run `k`'s coverage in meters (0 for none) - what a strike of it costs. */
+function patCoverLenM(k){ const c = patCoverSeg(k); return c ? distTo(c[0], c[1]) : 0; }
+/** The punch's whole coverage in meters. */
+function patCoverTotalM(){ let s = 0; if(patClip) for(let k = 0; k < patClip.length; k++) s += patCoverLenM(k); return s; }
+
+/**
+ * WHICH RUN TO STRIKE for `blockers` over `n` runs (`lenOf(k)`: run k's coverage, m), in this order:
+ *   1. the run in the MOST blocked joins - a run between two red joins clears both with one strike;
+ *   2. then a run at either END of the pattern - striking it makes no new join, where any other strike joins its two
+ *      neighbors across a gap twice as wide;
+ *   3. then the SHORTEST - the least coverage for the same effect (every run struck on his plan was a 4-21 m sliver);
+ *   4. then the earlier, so the same question gets the same answer every time.
+ * A run with no coverage is never picked: a strike is identified by its coverage midpoint. Returns {k, score, end, lenM}
+ * or null. Pure: tests/auto_clear.js asks it directly.
+ */
+function pickStrike(blockers, n, lenOf){
+  const score = new Map();
+  for(const b of blockers || []) for(const k of [b.k, b.k + 1]) if(k >= 0 && k < n) score.set(k, (score.get(k) || 0) + 1);
+  let best = null;
+  for(const [k, s] of score){
+    const lenM = lenOf(k);
+    if(!(lenM > 0)) continue;
+    const c = {k, score: s, end: (k === 0 || k === n - 1) ? 0 : 1, lenM};
+    if(!best || c.score > best.score
+       || (c.score === best.score && (c.end < best.end
+       || (c.end === best.end && (c.lenM < best.lenM || (c.lenM === best.lenM && c.k < best.k)))))) best = c;
+  }
+  return best;
+}
+
+/**
+ * The lines and waypoints Add to plan commits for the punch on the card - commitPattern's own build, and the clearing's
+ * dry run of Upload reads the same one, so the plan Upload is asked about is the plan that would be added.
+ * `pairOf[i]` names the join waypoint i's INCOMING leg belongs to: k for patClip[k] -> patClip[k+1] (the turn or detour
+ * points, and the next line's start), -1 for a line's own leg and for the first waypoint (the leg into the survey).
+ */
+function patternWaypoints(){
+  const lines = patClip || patSourceLines();  // punched > boundary-clipped > full
+  const transits = patClip ? patTransits : null;   // auto-routed detour waypoints
+  // ⚠ LEADS ONLY EXIST ON A PUNCHED PLAN, and committing an un-punched one must carry
+  // NONE. The lead is the one part of the geometry whose safety argument is the chart
+  // check that produced it (see extendLead); a lead attached to lines that were never
+  // clipped would be an extension into water nobody looked at, wearing the same field
+  // name as one that was. `patLead` is parallel to `patClip` and to nothing else.
+  const leads = patClip ? patLead : null;
+  // ⚠⚠ AND THE SLOW-RADIUS FLAG RIDES WITH THE LINE, NOT WITH THE PUNCH. `turnSlowAt` is
+  // keyed by PUNCH GAP; the governor reads it by MISSION-LINE index, because `turnSeg.from`
+  // is currentLegLine's answer. Two index spaces that agree only for ONE pattern committed
+  // onto an EMPTY plan, never re-punched, never reloaded, with no line struck off. Measured,
+  // all four against the real governor: commit a second pattern and gap 0 names line 0, so
+  // the boat is slowed at a reversal nobody measured and flown at the PLAN speed through
+  // the one that only fitted at the slow radius; the saved plan carries no mark at all, so
+  // any RELOAD flies every reversal at the plan speed; and striking one line off re-indexes
+  // every later reversal, moving the flag onto a different turn.
+  //
+  // On the LINE it is persisted with the plan and re-indexed by the same append and splice
+  // that move the lines. `slow_turn_out` = "the reversal OUT of this line only fitted at the
+  // slow radius" - the same direction `lead_out_m` already means, and the same index
+  // `turnSeg.from` already is. Same lesson as cornerSlowFor, one declaration below
+  // turnSlowAt: a set of indices may not outlive the thing it indexes.
+  const slowOut = patClip ? turnSlowAt : null;
+  const outL = [], wps = [], pairOf = [];
+  lines.forEach((l,k)=>{
+    const ld = (leads && leads[k]) || NO_LEAD;
+    outL.push({a:{lat:l[0].lat,lon:l[0].lon}, b:{lat:l[1].lat,lon:l[1].lon},
+               lead_in_m: ld.in || 0, lead_out_m: ld.out || 0,
+               slow_turn_out: !!(slowOut && slowOut[k])});
+    wps.push({lat:l[0].lat,lon:l[0].lon}, {lat:l[1].lat,lon:l[1].lon}); pairOf.push(k - 1, -1);
+    if(transits && k<lines.length-1 && transits[k])       // interleave the turn/detour
+      transits[k].forEach(v=>{ wps.push({lat:v.lat, lon:v.lon, turn:true}); pairOf.push(k); });
+  });
+  return {lines: outL, wps, pairOf};
+}
+
+/**
+ * UPLOAD'S ROUTE OF THE PLAN AS IT WOULD STAND WITH THIS PUNCH ADDED - nothing sent, nothing drawn: routePlan in the
+ * route worker, handed what doUpload hands it (the boat's position, every waypoint, the transit standoff, the legs into
+ * each survey), so "Upload is not blocked" is MEASURED. The whole plan, not the part a survey hold would send now: the
+ * rest goes at Continue and is routed the same way. Returns {inside: [k] - joins of this punch whose leg Upload refuses,
+ * line: n - legs of this punch's own lines it refuses, outside: [words] - legs elsewhere (the approach, the leg into
+ * this survey, another survey), unchecked: why | null}.
+ */
+async function uploadDryRun(){
+  const none = why => ({inside: [], line: 0, outside: [], unchecked: why});
+  if(!asv) return none("no position fix yet, and Upload routes the approach from the boat");
+  if(!nogo.ready) return none("there is no chart model");
+  const own = patternWaypoints();
+  if(!own.wps.length) return none("the punch has no waypoints");
+  const ed = editingSv && surveyById(editingSv) ? editingSv : null;
+  const sv = ed || "S?";                       // a new survey's id is chosen at commit; any tag that differs will do
+  const tagged = own.wps.map(w => ({...w, sv}));
+  const m = {lines: mission.lines || [], waypoints: mission.waypoints || []};
+  if(ed) replaceSurvey(m, sv, own.lines.map(l => ({...l, sv})), tagged);
+  else m.waypoints = [...m.waypoints, ...tagged];
+  const wps = m.waypoints, first = wps.indexOf(tagged[0]);
+  const start = {lat: asv.lat, lon: asv.lon}, std = transitStandoffM(), at = surveyEntries(wps);
+  let plan;
+  try{
+    // On the BACKGROUND lane (review 2026-11-06): a whole plan's route on the command lane stood in front of any Go-To
+    // or RTH pressed while it ran. With no worker it is routed here, as Upload itself would be.
+    plan = await planOffThread({op: "route", args: {start, wps, keepRightAll: false, standoffM: std, transitAt: at}},
+                               () => routePlan(start, wps, false, std, at), undefined, "est");
+  }catch(e){ return none("the route search failed: " + ((e && e.message) || e)); }
+  if(!plan) return none("the route search gave no answer");
+  if(plan.uncharted) return none("the route runs past the chart read, which Upload reads over and routes again");
+  if(plan.error) return none(String(plan.error));
+  const inside = new Set(), outside = [];
+  let line = 0, j = 0;
+  for(const leg of plan.unroutable || []){
+    const w = leg[1];
+    while(j < wps.length && !_eqLL(wps[j], w)) j++;           // routePlan lists them in waypoint order
+    if(j >= wps.length) break;
+    const x = j - first;
+    if(first >= 0 && x > 0 && x < tagged.length){ const k = own.pairOf[x]; if(k >= 0) inside.add(k); else line++; }
+    else outside.push(j === 0 ? "the approach from the boat" : x === 0 ? "the leg into this survey"
+                      : "a leg of " + (wps[j].sv ? (surveyById(wps[j].sv) ? surveyLabel(surveyById(wps[j].sv)) : wps[j].sv)
+                                                 : "the plan outside any survey"));
+    j++;
+  }
+  return {inside: [...inside], line, outside, unchecked: null};
+}
+
+// ── THE BLOCKER CLEARING ITSELF (2026-11-06) ─────────────────────────────────────────────────────────────────────────
+const clearPause = ms => new Promise(res => setTimeout(res, ms));
+/** Is the punch on the card cut at something other than the hold? (taken before the hold, or the hold moved since) */
+function punchCutStale(){
+  const c = patFunnel && patFunnel.cut;
+  return !!punchHold && !(c && c.held && c.bufM === punchHold.bufM && c.waterM === punchHold.waterM);
+}
+/**
+ * START (or resume) CLEARING the joins that block Add to plan or Upload, one run struck at a time. `why`: what started
+ * it, for the log. `opts.resume`: carry on with the strikes, the coverage base and a cap raised by one more step (the
+ * row's "Keep clearing"); `opts.recheck`: start even with nothing blocked (the water or the current moved past a
+ * finished clearing's hold - the punch is re-cut and judged again).
+ */
+async function startClearing(why, opts){
+  const o = opts || {};
+  // not over a clearing still running, nor under Punch Out's own punch (punchOutPressed starts it when that is done)
+  if(clr.phase === "running" || clr.phase === "checking" || clr.phase === "punching") return false;
+  if(!currentPattern()) return false;
+  if(!patClip && !(o.recheck && patDropped)) return false;    // a recheck re-cuts a punch the water threw away
+  if(!o.recheck && !(patJoined && punchBlockers().length)) return false;
+  const prev = clr, key = patStrikeKey();
+  const resume = !!o.resume && prev.key === key && !!prev.strikes;
+  const gen = prev.gen + 1;
+  clr = {gen, phase: "running", why, key, started: Date.now(),
+         strikes: resume ? prev.strikes : [], lostM: resume ? prev.lostM : 0,
+         covM: resume ? prev.covM : patCoverTotalM(),
+         capN: resume ? (o.raise ? prev.capN + CLEAR_CAP_STRIKES : prev.capN) : CLEAR_CAP_STRIKES,
+         capFrac: resume ? (o.raise ? prev.capFrac + CLEAR_CAP_FRAC : prev.capFrac) : CLEAR_CAP_FRAC,
+         best: Infinity, stale: 0, recuts: 0, target: null, say: "Starting…", verdictClip: null,
+         dryRefused: resume ? (prev.dryRefused || []) : []};
+  if(!punchHold) takePunchHold();
+  logClient("clear_start", {why, blocked: punchBlockers().length, runs: patClip ? patClip.length : 0,   // a recheck: none
+                            hold: {buf_m: +punchHold.bufM.toFixed(2), water_m: +punchHold.waterM.toFixed(3)}});
+  renderClearRow(); render();
+  try { await runClearing(gen); }
+  catch(e){ if(clr.gen === gen) endClearing("stopped", "it failed (" + ((e && e.message) || e) + ")"); }
+  return true;
+}
+/**
+ * WHAT CHANGED IN A STRIKE KEY, in words - so a clearing stopped by it names the real cause (review 2026-11-06: a chart
+ * read landing mid-clearing said "the pattern or its settings changed"). ⚠ Reads patStrikeKey's fields BY POSITION:
+ * the three corners, the alignment, the boundary; the band and the feature count; the buffer; the chart image's key and
+ * counts; the enforce boxes; the depth window. tests/auto_clear.js 36 changes each and reads the words back.
+ */
+function strikeKeyChange(a, b){
+  if(!b) return "the pattern was cleared";
+  const x = String(a || "").split("|"), y = String(b).split("|");
+  if(x.length !== y.length) return "the pattern or its settings changed";
+  const moved = (lo, hi) => { for(let i = lo; i <= hi; i++) if(x[i] !== y[i]) return true; return false; };
+  const what = [];
+  if(moved(0, 4)) what.push("the pattern was changed");
+  if(moved(5, 6)) what.push("the chart was read again");
+  if(moved(7, 7)) what.push("the buffer was changed");
+  if(moved(8, 9)) what.push("the chart image was read again");
+  if(moved(10, 10)) what.push("an enforce box was changed");
+  if(moved(11, 12)) what.push("the depth window was changed");
+  if(!what.length) return "the pattern or its settings changed";
+  const ours = moved(0, 4) || moved(7, 7) || moved(10, 12);
+  return what.join(" and ") + (ours ? "" : " - the runs are cut anew and the strikes made on the old cut no longer apply");
+}
+/** The loop: re-cut where needed, judge, strike ONE run, wait for the re-punch, judge again. Ends through
+ *  finishClearing (nothing blocked) or endClearing (a stop rule, the cap, the operator, the pattern changing). */
+async function runClearing(gen){
+  const live = () => clr.gen === gen;
+  for(;;){
+    if(!live()) return;
+    { const k = patStrikeKey(); if(!currentPattern() || k !== clr.key) return endClearing("stopped", strikeKeyChange(clr.key, k)); }
+    // THE PUNCH ON THE CARD MUST BE THE HELD ONE: re-cut where it was thrown away, never finished, was cut before the
+    // hold was taken, or the hold has moved (the water past TIDE_REBUILD_M, the current above the held margin).
+    refreshPunchHold();
+    if(patDropped || !patClip || !patJoined || punchCutStale()){
+      // ⚠ NEVER A LOOP OF RE-CUTS: a punch that does not come back cut at the hold would be re-cut for ever, the page
+      // punching flat out and nothing struck (a mutation that made punchOut ignore the cut hung the suite until killed).
+      // The tide cannot move 0.1 m three times inside three punches; anything that does is a fault, said and stopped.
+      if(++clr.recuts > 3)
+        return endClearing("stopped", "the runs would not stay cut at the held inputs (re-cut 3 times in a row)");
+      clr.say = "Re-cutting the runs at the held inputs" + (punchHold.why ? " (" + punchHold.why + ")" : "") + "…";
+      clr.best = Infinity; clr.stale = 0;     // a new cut is a new picture: progress is counted from it
+      renderClearRow();
+      await punchNow();
+      if(!live()) return;
+      if(!patClip || !patJoined)
+        return endClearing("stopped", "the punch did not finish (" + ($("#sp_hint").textContent || "no chart").slice(0, 120) + ")");
+      continue;
+    }
+    const b = punchBlockers();
+    if(!b.length) return finishClearing(gen);
+    if(clr.best === Infinity) clr.best = b.length;
+    if(clr.strikes.length >= clr.capN || clr.lostM >= clr.capFrac * clr.covM - 1e-9)
+      return endClearing("capped", clr.strikes.length + " line(s) struck, " + fmtDist(clr.lostM) + " of coverage - the most it "
+                         + "strikes before asking (" + clr.capN + " lines or " + (100 * clr.capFrac).toFixed(0) + "% of the coverage)");
+    const n = patClip.length;
+    const pick = pickStrike(b, n, patCoverLenM);
+    if(!pick) return endClearing("stopped", "no run beside a blocked join has coverage of its own to strike");
+    const seg = patCoverSeg(pick.k), mid = patCoverMid(pick.k);
+    const j = b.find(x => x.k === pick.k || x.k + 1 === pick.k);
+    const what = j ? (j.turn ? "red turn " : "hop Upload cannot route, ") + j.run + "–" + (j.run + 1) + (j.by ? ", " + j.by : "") : "";
+    clr.target = {seg, k: pick.k};
+    clr.say = "strike " + (clr.strikes.length + 1) + ": run " + (pick.k + 1) + " (" + Math.round(pick.lenM) + " m) for the "
+            + what + (pick.score > 1 ? ", and the join on its other side" : "");
+    renderClearRow(); render();
+    await clearPause(CLEAR_FLASH_MS);          // shown before it goes
+    if(!live()) return;
+    // ⚠ AND THE PATTERN IS ASKED AGAIN BEFORE THE STRIKE, not only at the top of the loop: an edit made while the run was
+    // being shown leaves the runs on the card from the OLD pattern until its re-punch, and a strike made now would be
+    // stored against the new one (tests/auto_clear.js 20).
+    { const k = patStrikeKey(); if(!currentPattern() || k !== clr.key) return endClearing("stopped", strikeKeyChange(clr.key, k)); }
+    const now = patClip && patClip.length === n ? patCoverMid(pick.k) : null;
+    if(!now || distTo(now, mid) >= 1){ clr.target = null; continue; }   // the punch changed under the pause: judge again
+    patSel = {lat: mid.lat, lon: mid.lon, length: pick.lenM};
+    if(!strikeSelectedRun()) return endClearing("stopped", "the strike was refused");
+    clr.strikes.push({run: pick.k + 1, lenM: pick.lenM, why: what});
+    clr.lostM += pick.lenM; clr.recuts = 0;
+    recordAction("note", "Clearing blocked lines: struck run " + (pick.k + 1) + " (" + Math.round(pick.lenM) + " m) for the " + what);
+    logClient("clear_strike", {n: clr.strikes.length, run: pick.k + 1, len_m: Math.round(pick.lenM), why: what,
+                               blocked: b.length, runs: n});
+    clr.target = null;
+    clr.say = "strike " + clr.strikes.length + " made (run " + (pick.k + 1) + ") - re-punching and judging the joins again…";
+    renderClearRow(); render();
+    await flushRepunch();                      // the replan finishes before anything else is judged or struck
+    if(!live()) return;
+    if(punchHold && punchHold.why){ clr.best = Infinity; clr.stale = 0; continue; }   // re-cut by the hold: a new picture
+    const nb = punchBlockers().length;
+    if(nb < clr.best){ clr.best = nb; clr.stale = 0; }
+    else if(++clr.stale >= CLEAR_STALE_MAX)
+      return endClearing("stopped", CLEAR_STALE_MAX + " strikes in a row did not reduce the blocked joins");
+  }
+}
+/** Nothing blocks Add to plan: ask Upload's own route of the whole plan (uploadDryRun), then say so - or go back to
+ *  striking for a join of this survey Upload refuses that the hop check did not catch. */
+async function finishClearing(gen){
+  clr.phase = "checking"; clr.target = null;
+  clr.say = "nothing blocks Add to plan; checking the whole plan with Upload's own router…";
+  renderClearRow(); updatePatReadout(); render();
+  const clip = patClip;                        // the punch the dry run is asked about
+  const dry = await uploadDryRun();
+  if(clr.gen !== gen) return;
+  { const k = patStrikeKey(); if(!currentPattern() || k !== clr.key) return endClearing("stopped", strikeKeyChange(clr.key, k)); }
+  // ⚠ THE ANSWER IS ABOUT THE PUNCH IT WAS ASKED OF (review 2026-11-06): a re-punch under the same strike key (a speed
+  // change, the units pill, the other window) or a level step that dropped the punch while Upload's route ran left
+  // another punch on the card - its joins indexed differently, never judged. Not stopped: judged again from the top.
+  if(patClip !== clip || !patClip || !patJoined){ clr.phase = "running"; renderClearRow(); return runClearing(gen); }
+  // A JOIN OF THIS SURVEY UPLOAD'S ROUTE REFUSES is a blocker too, and goes back to the strikes: a red hop is marked as
+  // Upload's (`upload` false, so Add to plan refuses it as well); a join the punch HAD found a way round is held by its
+  // ends (clr.dryRefused, read by punchBlockers). Only a join not seen before sends it back - so it cannot circle.
+  if(dry.inside.length){
+    let more = 0;
+    clr.dryRefused = clr.dryRefused || [];
+    for(const k of dry.inside){
+      if(k + 1 >= patClip.length) continue;
+      const r = patRed.find(x => !x.turn && x.run === k + 1);
+      if(r){ if(r.upload !== false){ r.upload = false; more++; } continue; }
+      const a = patClip[k][1], bb = patClip[k + 1][0];
+      if(!clr.dryRefused.some(d => distTo(d.a, a) < 1 && distTo(d.b, bb) < 1)){
+        clr.dryRefused.push({a: {lat: a.lat, lon: a.lon}, b: {lat: bb.lat, lon: bb.lon}}); more++;
+      }
+    }
+    if(more){
+      logClient("clear_dry_refused", {joins: dry.inside.map(k => k + 1), new: more});
+      clr.best = Infinity; clr.stale = 0;      // new blockers: progress is counted from this picture, not the last
+      clr.phase = "running"; updatePatReadout(); return runClearing(gen);
+    }
+  }
+  const refused = punchRefusal();
+  if(refused) return endClearing("stopped", "Add to plan is still refused: " + refused.short);
+  const lost = clr.lostM, pct = clr.covM > 0 ? 100 * lost / clr.covM : 0, inForce = activeStruck().length;
+  const head = (clr.strikes.length
+    ? "Cleared: " + clr.strikes.length + " line(s) struck (" + fmtDist(lost) + ", " + pct.toFixed(2) + "% of the coverage)"
+    : "Nothing needed striking")
+    + (inForce !== clr.strikes.length ? " - " + inForce + " struck in all" : "");
+  const insideLeft = dry.inside.length, lineLeft = dry.line;
+  const stillBy = [];
+  if(insideLeft) stillBy.push(insideLeft + " join(s) of this survey striking a line beside has not cleared");
+  if(lineLeft) stillBy.push(lineLeft + " leg(s) along this survey's own lines - strike those lines by hand, or Punch Out again");
+  if(dry.outside.length) stillBy.push(dry.outside.length + " leg(s) outside it (" + [...new Set(dry.outside)].join(", ")
+                                      + ") - striking lines cannot fix those; reposition the boat or edit the plan");
+  const tail = stillBy.length
+    ? "Add to plan is not blocked, but Upload WOULD STILL BE BLOCKED by " + stillBy.join("; and by ")
+    : dry.unchecked
+      ? "Add to plan is not blocked. Upload's route could not be checked from here (" + dry.unchecked + "); Upload checks it again"
+      : "Add to plan and Upload are not blocked (Upload's own route of the whole plan, on the chart as read now; Upload "
+        + "reads the chart again before it sends)";
+  const ed = editingSv ? surveyById(editingSv) : null;
+  clr.phase = "ready"; clr.verdictClip = patClip; clr.dry = dry;
+  clr.say = head + ". " + tail + ".";
+  showBanner(clr.say + (tail.startsWith("Add to plan and Upload") ? " Press " + (ed ? "Update S" + ed.no : "Add to plan") + ", then Upload." : ""));
+  flashNote(head + (tail.startsWith("Add to plan and Upload") ? " - Add to plan and Upload are not blocked." : " - see the banner."));
+  logClient("clear_done", {strikes: clr.strikes.length, lost_m: Math.round(lost), pct: +pct.toFixed(3), runs: patClip.length,
+                           ms: Date.now() - clr.started, inside: insideLeft, line: lineLeft, outside: dry.outside,
+                           unchecked: dry.unchecked});
+  renderClearRow(); updatePatReadout(); render();
+}
+/**
+ * END THE CLEARING. `phase` "stopped" | "capped": it says why on its row and the hold STAYS, so a strike by hand, Keep
+ * clearing or Add to plan works on the same punch the clearing judged. `phase` null: gone with the pattern - idle, row
+ * empty (resetPattern, a fresh Punch Out, the pattern changing under a finished one).
+ */
+function endClearing(phase, why){
+  const was = clr.phase;
+  clr.gen++; clr.target = null;
+  if(!phase){ clr.phase = "idle"; clr.say = ""; clr.key = null; clr.dryRefused = []; renderClearRow(); return; }
+  clr.phase = phase;
+  const n = punchBlockers().length;
+  // the counts are NOT written into the words: the row reads them when it is drawn (renderClearRow), so a strike by hand
+  // or Put them back after the stop is not contradicted by a number frozen at it (review 2026-11-06)
+  clr.say = (phase === "capped" ? "Stopped at the cap: " : "Stopped: ") + why + ".";
+  if(was === "running" || was === "checking"){
+    flashNote("Clearing blocked lines stopped: " + why + ".");
+    logClient("clear_stop", {phase, why, strikes: (clr.strikes || []).length, blocked: n});
+  }
+  renderClearRow(); render();
+}
+/** The operator has taken the pattern over (a strike by hand, Put them back, Add to plan): a running clearing stops,
+ *  saying why - and so does a FINISHED one (review 2026-11-06): a "ready" clearing left standing re-checked itself at
+ *  the next tide step and struck again the very runs he had put back. */
+function stopClearingFor(why){
+  if(clr.phase === "running" || clr.phase === "checking" || clr.phase === "ready") endClearing("stopped", why);
+}
+/** Put them back undid the clearing's work: its own count and the coverage it cost start again from none, so the cap is
+ *  not reached early on strikes that no longer stand. */
+function forgetClearingStrikes(){
+  clr.strikes = []; clr.lostM = 0; clr.dryRefused = [];
+  renderClearRow();
+}
+/** A frame (onState): sample the live margin for the hold's window, and watch a FINISHED clearing - the pattern changing
+ *  ends it and releases the hold; the water or the current going past the hold clears it again, its strikes kept. */
+function clearingTick(){
+  notePunchMargin(Date.now());
+  if(clr.phase === "running" || clr.phase === "checking" || clr.phase === "punching" || !punchHold) return;
+  if(!currentPattern() || (clr.key && patStrikeKey() !== clr.key)){ releasePunchHold(); if(clr.phase !== "idle") endClearing(null); return; }
+  if(clr.phase !== "ready" || punchBusy || patRepunchT) return;
+  const m = punchMarginMax();
+  if(patDropped || (m && m.bufM > punchHold.bufM + 1e-9) || Math.abs((sea.waterOffset || 0) - punchHold.waterM) >= TIDE_REBUILD_M - 1e-9)
+    startClearing("the water or the current moved past the hold", {resume: true, recheck: true});
+}
+/** THE CLEARING'S ROW on the Survey card (#sp_clear), under the refusal it answers. */
+function renderClearRow(){
+  const el = $("#sp_clear"); if(!el) return;
+  // ⚠ THE BUTTON IS ONE ELEMENT FOR THE LIFE OF THE PAGE, its words and handler swapped in place: this row is redrawn
+  // at every step of a clearing, and a Stop rebuilt between the operator's mouse-down and mouse-up is a click lost.
+  if(!el._txt){
+    el.textContent = "";
+    el._txt = el.appendChild(document.createElement("span"));
+    el._btn = el.appendChild(document.createElement("button"));
+    el._btn.type = "button"; el._btn.className = "ctl small"; el._btn.id = "sp_clear_btn";
+  }
+  const show = (txt, color, btn) => {
+    if(el._txt.textContent !== txt) el._txt.textContent = txt;
+    el.style.color = color || "";
+    if(btn){ el._btn.textContent = btn.label; el._btn.title = btn.title; el._btn.onclick = btn.fn; el._btn.style.display = ""; }
+    else { el._btn.onclick = null; el._btn.style.display = "none"; }
+    el.style.display = "";
+  };
+  const hide = () => { el._btn.onclick = null; el._btn.style.display = "none"; el.style.display = "none"; };
+  const lvl = v => (v >= 0 ? "+" : "") + v.toFixed(2) + " m";
+  const held = punchHold ? " Held: standoff " + punchHold.bufM.toFixed(1) + " m, water " + lvl(punchHold.waterM) + "." : "";
+  const ph = clr.phase, onThis = clr.key && clr.key === patStrikeKey();
+  // Punch Out's own punch is running: nothing on the card is the punch it will judge, so nothing here is pressable
+  if(ph === "punching") return hide();
+  if(ph === "running" || ph === "checking")
+    return show("CLEARING BLOCKED LINES - " + clr.say + " " + punchBlockers().length + " join(s) blocked; "
+                + clr.strikes.length + " struck (at most " + clr.capN + ")." + held + " ", "var(--warn)",
+                {label: "Stop", title: "Stop clearing. The lines struck so far stay struck - Put them back restores them.",
+                 fn: () => endClearing("stopped", "you pressed Stop")});
+  if(ph === "ready" && onThis && patClip && clr.verdictClip === patClip) return show("✓ " + clr.say + held, "var(--ok)", null);
+  if((ph === "stopped" || ph === "capped") && onThis && (patClip || patDropped))
+    return show(clr.say + " " + activeStruck().length + " line(s) struck so far, " + punchBlockers().length
+                + " join(s) still blocked." + held + " ", "var(--warn)",
+                {label: ph === "capped" ? "Keep clearing" : "Clear again",
+                 title: ph === "capped" ? "Carry on striking, one line at a time, up to " + CLEAR_CAP_STRIKES + " more lines or "
+                                          + (100 * CLEAR_CAP_FRAC).toFixed(0) + "% more of the coverage"
+                                        : "Clear again: judge the punch, strike what blocks one line at a time, and check Upload's route",
+                 // recheck ALWAYS: with nothing blocked it still runs the check of Upload's route and says so - "Clear
+                 // again" that did nothing at all, with nothing blocked, was a button that lied (review 2026-11-06)
+                 fn: () => startClearing("the operator", {resume: true, raise: ph === "capped", recheck: true})});
+  const n = punchBlockers().length;
+  if(n && !punchBusy)
+    return show(n + " join(s) block Add to plan or Upload. ", "",
+                {label: "Clear blocked lines", title: "Strike the runs beside them off one at a time, re-punching and judging "
+                 + "again after each, until nothing blocks Add to plan or Upload", fn: () => startClearing("the operator")});
+  hide();
+}
+/**
+ * PUNCH OUT, PRESSED. A fresh start: any clearing ends and its hold goes. The punch is taken at a NEW hold - the
+ * highest margin of the window, rounded up, and the level now - so that if anything blocks, the clearing starts on the
+ * very punch the operator is looking at instead of re-cutting it first; with nothing blocking the hold is released at
+ * once and the card is the punch it always was (cut at a margin never less than the live one). `opts.dry` (Unblock):
+ * clear even with nothing red - the refusal Unblock answers is Upload's, which only the check of its route finds.
+ */
+async function punchOutPressed(opts){
+  const o = opts || {};
+  endClearing(null); releasePunchHold();
+  if(currentPattern()) takePunchHold();
+  // ⚠ "punching" WHILE ITS OWN PUNCH RUNS (review 2026-11-06): the row hides, so the old punch's "Clear blocked lines"
+  // cannot be pressed under it, and startClearing refuses; anything that ends or starts a clearing meanwhile moves
+  // `gen`, and then what follows here is not ours to do - its tail once released the hold under a clearing begun so.
+  clr.phase = "punching";
+  const gen = clr.gen;
+  renderClearRow();
+  try { await punchNow(); }
+  finally { if(clr.gen === gen && clr.phase === "punching") clr.phase = "idle"; }
+  if(clr.gen !== gen) return;
+  if(patClip && patJoined && (punchBlockers().length || o.dry)) return startClearing(o.why || "Punch Out", {recheck: !!o.dry});
+  // Nothing blocks: the hold goes, and the punch is an ordinary one again - a water move drops it (applyWaterOffset).
+  releasePunchHold();
+  renderClearRow();
+}
+/** THE SURVEY ROW'S "Unblock": load a committed survey onto the card (✎) and Punch Out - the clearing starts by itself,
+ *  checks Upload's route of the plan, and strikes for the joins it refuses; Update S# replaces the survey when it is
+ *  done. Offered on a row holding a leg the last Upload refused (surveysUploadBlocked). A survey ALREADY on the card is
+ *  not loaded again: ✎ resets the card, and every strike on it would go (review 2026-11-06). */
+async function unblockSurvey(id){
+  if(editingSv !== id){
+    await editSurvey(id);
+    if(editingSv !== id) return;               // declined, or the survey went
+  }
+  await punchOutPressed({dry: true, why: "Unblock"});
+}
+/**
+ * Surveys holding a leg the last Upload refused (runUnsafe). ⚠ A LEG INSIDE ONE SURVEY ONLY - both its ends that
+ * survey's waypoints (review 2026-11-06): the approach from the boat and the leg into a survey were blamed on the survey
+ * they END in, and Unblock was offered for water no strike of its lines can change. And not a survey Updated since that
+ * refusal (unblockDone, keyed on the very runUnsafe array: every route command writes a new one), whose legs are not the
+ * ones refused.
+ */
+function surveysUploadBlocked(){
+  const out = new Set(), wps = mission.waypoints || [];
+  const done = unblockDone.of === runUnsafe ? unblockDone.sv : null;
+  const svOf = (w) => { const hit = w && wps.find(p => p.sv && _eqLL(p, w)); return hit ? hit.sv : null; };
+  for(const leg of runUnsafe || []){
+    if(!leg) continue;
+    const a = svOf(leg[0]), b = svOf(leg[1]);
+    if(a && a === b && !(done && done.has(a))) out.add(a);
+  }
+  return out;
+}
+/** Update S# after an Upload refusal: that survey's refused legs are history until the next route command. */
+function noteSurveyUpdated(sv){
+  if(unblockDone.of !== runUnsafe) unblockDone = {of: runUnsafe, sv: new Set()};
+  unblockDone.sv.add(sv);
 }
 
 // exact clip of segment a->b (latlon) to the interior of ring (ENU) -> sub-segs
@@ -11122,8 +11800,23 @@ function drawPattern(toScreen){
         ctx.setLineDash([]);
       }
       if(patUnsafe.length){                        // transits with no clear route
-        ctx.setLineDash([4,4]); ctx.strokeStyle="rgba(217,83,79,0.95)"; ctx.lineWidth=3; seg(patUnsafe);
+        // ⚠ A RED HOP UPLOAD'S ROUTER ROUTES IS DRAWN AMBER, NOT RED (2026-11-06, judgeRedHops): it does not block, and
+        // Upload lays its way round. patRed is pushed in the same statement as each patUnsafe pair, so entry i is pair
+        // i's - matched on the very end objects, so a pair it does not describe stays red.
+        const routable = (pr, i) => { const r = patRed[i]; return !!r && r.a === pr[0] && !r.turn && r.upload === true; };
+        ctx.setLineDash([4,4]); ctx.strokeStyle="rgba(217,83,79,0.95)"; ctx.lineWidth=3;
+        seg(patUnsafe.filter((pr, i) => !routable(pr, i)));
+        const amber = patUnsafe.filter(routable);
+        if(amber.length){ ctx.setLineDash([2,5]); ctx.strokeStyle="rgba(217,154,43,0.95)"; ctx.lineWidth=2.4; seg(amber); }
         ctx.setLineDash([]);
+      }
+      // THE RUN THE CLEARING IS ABOUT TO STRIKE (2026-11-06): magenta, wider than the selection's amber, for the moment
+      // before it goes (CLEAR_FLASH_MS) - so the operator watching sees which line it takes, one at a time.
+      if(clr.target && clr.target.seg){
+        const t = clr.target.seg;
+        ctx.setLineDash([]); ctx.strokeStyle="rgba(224,92,255,0.95)"; ctx.lineWidth=11; seg([t]);
+        ctx.fillStyle="rgba(224,92,255,0.95)";
+        [t[0], t[1]].forEach(p=>{ const s=toScreen(p.lat,p.lon); ctx.beginPath(); ctx.arc(s.x, s.y, 6, 0, Math.PI*2); ctx.fill(); });
       }
       // THE SELECTED RUN, RESOLVED AGAINST THE RUNS THAT EXIST NOW. The selection is a
       // midpoint, not a remembered segment, so reshaping the box or re-extracting the
@@ -11309,6 +12002,7 @@ function updatePatReadout(){
   renderSurveyTable();
   { const el = $("#sp_refuse");
     if(el){ el.textContent = refused ? refused.text : ""; el.style.display = refused ? "" : "none"; } }
+  renderClearRow();                            // the clearing's row, under the refusal it answers
   // ── THE STRIKE ROW, rendered in ONE place for every branch below ──────────────────
   // What is selected and what Delete will do; then, separately, how many runs the
   // operator has taken out and the way to put them back. Both are read off the same
@@ -11337,7 +12031,7 @@ function updatePatReadout(){
       const b = document.createElement("button");
       b.type = "button"; b.className = "ctl small"; b.textContent = "Put them back";
       b.title = "Restore every run struck off by hand and rebuild the survey around them";
-      b.onclick = ()=>{ if(restoreStruckRuns()) render(); };
+      b.onclick = ()=>{ stopClearingFor("you put the struck runs back"); if(restoreStruckRuns()){ forgetClearingStrikes(); render(); } };
       el.appendChild(b);
     }
     el.style.display = (patSel || struck) ? "" : "none";
@@ -11410,6 +12104,9 @@ function resetPattern(){ pat = {A:null,B:null,C:null,align:pat.align}; patDrag=n
   // exists and end in a render against state this just cleared.
   patStruck=[]; patStruckKey=null; patSel=null; patClipMemo=null;
   clearTimeout(patRepunchT); patRepunchT=null;
+  // ⚠ AND THE CLEARING AND ITS HOLD GO WITH IT (review 2026-11-06): a hold left standing after the pattern went was
+  // taken up by the NEXT pattern's first strike by hand - cut at a margin and a level measured for another drawing.
+  endClearing(null); releasePunchHold();
   ["#v_surveydur","#v_approach"].forEach(id=>{ const el=$(id); if(el) el.textContent="--"; }); updatePatReadout(); }
 /**
  * WHY ADD TO PLAN IS REFUSED, or null. The button (disabled, the reason as its tooltip), the row under it and
@@ -11425,7 +12122,9 @@ function resetPattern(){ pat = {A:null,B:null,C:null,align:pat.align}; patDrag=n
  * either line of the pair (or both) only moves the zero-radius reversal to the next waypoint.
  *
  * A RED HOP DOES NOT REFUSE (his call, the same day): Upload routes every hop again with legPath, and refuses the upload
- * if it still finds no way round.
+ * if it still finds no way round. ⚠ AMENDED 2026-11-06 (the blocker clearing, approved by him): the punch now ASKS
+ * legPath that same question first (judgeRedHops), and a hop it cannot route either is refused here - it is exactly the
+ * hop Upload would refuse, and here a strike is one re-punch away. A hop it routes still passes (drawn amber).
  *
  * ⚠ KEYED ON THE LIVE PUNCH. Every change that makes different runs nulls patClip, and an un-punched pattern was never
  * judged at all - so with no patClip there is nothing here to refuse, whatever patRed still holds.
@@ -11480,7 +12179,28 @@ function punchRefusal(){
   if(!patClip.length) return emptyPunchRefusal(patFunnel);
   const turns = patRed.filter(r => r.turn);
   const n = turns.length;
-  if(!n) return null;
+  // ⚠ AND A RED HOP UPLOAD'S OWN ROUTER CANNOT ROUTE EITHER (2026-11-06, judgeRedHops). A red hop used to pass here and
+  // block Upload instead: on his S1, 5 red hops went into the plan and Upload refused the 2 it could not route - after
+  // the plan was committed, where the remedy is ✎, Punch Out and Update. Asked of legPath with the model and buffer
+  // routePlan gives that leg, a hop Upload would refuse is refused HERE, where striking a run is the remedy. A hop it
+  // routes (`upload` true) is drawn amber and passes; one never asked, or whose question could not be put, is left to
+  // Upload as before. `redBlocks` is the same predicate the clearing strikes by.
+  const hops = patRed.filter(r => !r.turn && r.upload === false);
+  const asking = patRed.filter(r => !r.turn && r.upload === "pending").length;
+  const runsOf = list => list.slice(0, 12).map(r => r.run + "–" + (r.run + 1)).join(", ")
+                       + (list.length > 12 ? " and " + (list.length - 12) + " more" : "");
+  const hopWords = () => "the hop between runs " + runsOf(hops) + (hops.length > 1 ? " each" : "") + " crosses "
+                 + kindsSummary(hops.map(r => ({info: {kind: r.by}}))) + ", and Upload's router finds no way round it either";
+  if(!n){
+    if(hops.length) return {short: hops.length + " hop(s) between runs Upload cannot route (red)",
+      text: "ADD TO PLAN REFUSED — " + hops.length + " hop(s) between runs have NO ROUTE (dashed red): " + hopWords()
+          + ". Added, Upload would refuse the plan. To fix: strike off one of the two runs beside each (the row "
+          + "under this note does it one line at a time), or draw the box so those lines end short of what is in the way."};
+    if(asking) return {short: "checking " + asking + " red hop(s) against Upload's router",
+      text: "Checking " + asking + " red hop(s) between runs against Upload's own router before this pattern can be "
+          + "added - a hop it cannot route would block Upload."};
+    return null;
+  }
   const pairs = turns.slice(0, 12).map(r => r.run + "–" + (r.run + 1)).join(", ")
               + (n > 12 ? " and " + (n - 12) + " more" : "");
   const count = why => turns.filter(r => r.why === why).length;
@@ -11512,7 +12232,8 @@ function punchRefusal(){
     text: "ADD TO PLAN REFUSED — " + n + " reversal(s) have NO FLYABLE TURN (dashed red; runs " + pairs + "): "
         + causes.join("; ") + ". Added, each would hand the boat a 180° at zero radius beside what refused its turn. "
         + "To fix: " + fixes.slice(0, -1).join(", ") + " or " + fixes[fixes.length - 1]
-        + ". Right-click a red join to see which runs it joins."};
+        + ". Right-click a red join to see which runs it joins."
+        + (hops.length ? " And " + hops.length + " hop(s) Upload cannot route: " + hopWords() + "." : "")};
 }
 /**
  * EACH SURVEY'S NAME ON THE CHART (sequenced surveys phase 2, 2026-10-02): "S3 Rye ledge" beside its first line's
@@ -11601,7 +12322,9 @@ function renderSurveyTable(){
     + " replaces it where it stands (its number, name and place in the run kept). Reset cancels the edit.";
   if(!show){ if(_svTableKey !== "") { tb.innerHTML = ""; _svTableKey = ""; } return; }
   const pick = cardSurveyId();
-  const rows = list.map((s, i) => ({s, i, f: surveyFigures(s.id), p: surveyProgress(s.id), t: surveyTideMoved(s)}));
+  const blocked = surveysUploadBlocked();     // surveys holding a leg the last Upload refused (2026-11-06)
+  const rows = list.map((s, i) => ({s, i, f: surveyFigures(s.id), p: surveyProgress(s.id), t: surveyTideMoved(s),
+                                    blk: blocked.has(s.id)}));
   const pa = $("#sv_punchall");
   if(pa){ const can = list.some(s => s.pattern && s.pattern.A && s.pattern.B);
     pa.disabled = !can || punchAllBusy;
@@ -11611,7 +12334,7 @@ function renderSurveyTable(){
   const key = JSON.stringify([rows.map(r => [r.s.id, r.s.no, r.s.name || "", r.f.lines, Math.round(r.f.m), !!r.s.punched,
                                             !!(r.s.pattern && r.s.pattern.A && r.s.pattern.B), r.p.done, r.p.of, r.p.any,
                                             r.t == null ? null : r.t.toFixed(2), !!(r.s.settings && r.s.settings.reverse),
-                                            !!r.s.hold]),
+                                            !!r.s.hold, r.blk]),
                               editingSv, pick, pendingHold && pendingHold.sv, holdWaiting()]);
   if(key === _svTableKey) return;
   // ⚠ NOT UNDER THE OPERATOR'S CURSOR: a rebuild while a name is being typed would throw the typing away.
@@ -11619,7 +12342,7 @@ function renderSurveyTable(){
   if(foc && tb.contains(foc) && foc.tagName === "INPUT") return;
   _svTableKey = key;
   const n = list.length;
-  tb.innerHTML = rows.map(({s, i, f, p, t}) => {
+  tb.innerHTML = rows.map(({s, i, f, p, t, blk}) => {
     const canEdit = !!(s.pattern && s.pattern.A && s.pattern.B);
     // DONE / PARTIAL (3a): by drawn line, from what this page saw her run (trackLineCoverage).
     const state = (p.of && p.done === p.of) ? "✓" : p.any ? p.done + "/" + p.of + " " : "";
@@ -11651,6 +12374,9 @@ function renderSurveyTable(){
     const cont = !waiting ? "" : `<span class="svbr"></span><button class="ctl small svcont" id="svr${i}_cont" data-act="cont" data-sv="${rocEsc(s.id)}"${there ? "" : " disabled"} title="${there
         ? "CONTINUE: upload the plan from this survey on and start it. She is holding at its start."
         : "She is on her way to this survey's start, where the uploaded part of the plan ends - Continue opens when she is holding there."}">${there ? "Continue " + rocEsc(surveyLabel(s)) + " ▶" : "Holding at its start - on her way"}</button>`;
+    // UNBLOCK (2026-11-06): on a survey holding a leg the last Upload refused, whether or not it is picked - it is the
+    // way on from that refusal. ✎, Punch Out and the clearing, which leaves Update S# ready (unblockSurvey).
+    const unb = !(blk && canEdit) ? "" : `<span class="svbr"></span><button class="ctl small svcont" id="svr${i}_unb" data-act="unblock" data-sv="${rocEsc(s.id)}" title="UNBLOCK: load this survey back onto the card and Punch Out; the lines beside the joins Upload refused are struck off one at a time, re-punching after each, until nothing blocks. Then press Update S${s.no} and Upload.">Unblock ${rocEsc(surveyLabel(s))}</button>`;
     return `<div class="svrow${s.id === pick ? " on" : ""}${s.id === editingSv ? " edit" : ""}" id="svr${i}" data-act="pick" data-sv="${rocEsc(s.id)}" title="${tip}">`
       + `<span class="svno">S${s.no}</span>`
       + `<input class="svname" id="svr${i}_name" data-sv="${rocEsc(s.id)}" maxlength="120" placeholder="name" value="${rocEsc(s.name || "")}" title="The survey's name - shown on the chart and in the LINES card. Its number S${s.no} stays with it."/>`
@@ -11661,7 +12387,7 @@ function renderSurveyTable(){
           ? "EDIT: load this survey's drawing back onto the card - its pattern, boundary, Max depth, leads and turn shape. Punch Out, then Update replaces it where it stands."
           : "No drawing was recorded for this survey (it was planned before surveys were kept), so it cannot be loaded back. Draw it again, Add to plan, and delete this one."}">✎</button>`
       + `<button class="ctl small" id="svr${i}_del" data-act="del" data-sv="${rocEsc(s.id)}" title="DELETE this survey from the plan: its lines and waypoints. The others keep their numbers and order.">✕</button>`
-      + acts + cont + `</div>`;
+      + acts + cont + unb + `</div>`;
   }).join("");
 }
 // THE TIDE SINCE A SURVEY WAS PUNCHED (3a): a quarter meter either way is flagged on its row. Smaller moves are inside
@@ -11878,6 +12604,7 @@ function clearSurveyProgress(id){
       else if(act === "clr") clearSurveyProgress(id);
       else if(act === "hold") toggleSurveyHold(id);
       else if(act === "cont") continueHold(id).catch(err => flashNote("Continue failed: " + ((err && err.message) || err)));
+      else if(act === "unblock") unblockSurvey(id).catch(err => flashNote("Unblock failed: " + ((err && err.message) || err)));
       else if(act === "pick"){ cardSv = id; updatePatReadout(); }
     });
     tb.addEventListener("change", e => {
@@ -11888,6 +12615,8 @@ function clearSurveyProgress(id){
   if(pa) pa.onclick = () => punchAll().catch(err => flashNote("Punch all failed: " + ((err && err.message) || err))); }
 async function commitPattern(){
   const sp = currentPattern(); if(!sp) return;
+  // the operator has taken it from here: a clearing still striking stops before the plan is read (review 2026-11-06)
+  stopClearingFor("you pressed Add to plan");
   // ⚠ THE PENDING RE-PUNCH IS SETTLED BEFORE ANY OF THIS IS READ. Striking a run
   // schedules the rebuild 400 ms out, which is longer than it takes to press Delete and
   // then Add to plan — and committing inside that window would commit the plan from
@@ -11913,40 +12642,13 @@ async function commitPattern(){
     return;
   }
   planKind = "survey";                        // the committed plan is a survey (Mission card Type)
-  const lines = patClip || patSourceLines();  // punched > boundary-clipped > full
-  const transits = patClip ? patTransits : null;   // auto-routed detour waypoints
   const firstLine = mission.lines.length, firstWp = mission.waypoints.length;   // where this survey begins (below)
-  // ⚠ LEADS ONLY EXIST ON A PUNCHED PLAN, and committing an un-punched one must carry
-  // NONE. The lead is the one part of the geometry whose safety argument is the chart
-  // check that produced it (see extendLead); a lead attached to lines that were never
-  // clipped would be an extension into water nobody looked at, wearing the same field
-  // name as one that was. `patLead` is parallel to `patClip` and to nothing else.
-  const leads = patClip ? patLead : null;
-  // ⚠⚠ AND THE SLOW-RADIUS FLAG RIDES WITH THE LINE, NOT WITH THE PUNCH. `turnSlowAt` is
-  // keyed by PUNCH GAP; the governor reads it by MISSION-LINE index, because `turnSeg.from`
-  // is currentLegLine's answer. Two index spaces that agree only for ONE pattern committed
-  // onto an EMPTY plan, never re-punched, never reloaded, with no line struck off. Measured,
-  // all four against the real governor: commit a second pattern and gap 0 names line 0, so
-  // the boat is slowed at a reversal nobody measured and flown at the PLAN speed through
-  // the one that only fitted at the slow radius; the saved plan carries no mark at all, so
-  // any RELOAD flies every reversal at the plan speed; and striking one line off re-indexes
-  // every later reversal, moving the flag onto a different turn.
-  //
-  // On the LINE it is persisted with the plan and re-indexed by the same append and splice
-  // that move the lines. `slow_turn_out` = "the reversal OUT of this line only fitted at the
-  // slow radius" - the same direction `lead_out_m` already means, and the same index
-  // `turnSeg.from` already is. Same lesson as cornerSlowFor, one declaration below
-  // turnSlowAt: a set of indices may not outlive the thing it indexes.
-  const slowOut = patClip ? turnSlowAt : null;
-  lines.forEach((l,k)=>{
-    const ld = (leads && leads[k]) || NO_LEAD;
-    mission.lines.push({a:{lat:l[0].lat,lon:l[0].lon}, b:{lat:l[1].lat,lon:l[1].lon},
-                        lead_in_m: ld.in || 0, lead_out_m: ld.out || 0,
-                        slow_turn_out: !!(slowOut && slowOut[k])});
-    mission.waypoints.push({lat:l[0].lat,lon:l[0].lon}, {lat:l[1].lat,lon:l[1].lon});
-    if(transits && k<lines.length-1 && transits[k])       // interleave the turn/detour
-      transits[k].forEach(v=> mission.waypoints.push({lat:v.lat, lon:v.lon, turn:true}));
-  });
+  // THE LINES AND WAYPOINTS ARE patternWaypoints' (2026-11-06): the ONE build of them, which the clearing's dry run
+  // of Upload (uploadDryRun) asks Upload's router about - so the plan judged "not blocked" is the plan added here.
+  // Its header carries why leads and the slow-turn flag ride only on a punched plan, and on the line.
+  const built = patternWaypoints();
+  mission.lines.push(...built.lines);
+  mission.waypoints.push(...built.wps);
   // THE PATTERN IS A SURVEY (sequenced surveys, phase 1, 2026-10-02). Everything it has just put in the plan - its
   // lines, their ends, its turns - is tagged with its id, and it is listed after the surveys already there, which is
   // the order the plan runs them in. Its NUMBER is one past the highest the plan holds and STAYS WITH IT (Andy: "keep
@@ -11969,9 +12671,12 @@ async function commitPattern(){
     pattern: drawnFrom ? {A: pos(drawnFrom.A), B: pos(drawnFrom.B), C: pos(drawnFrom.C), align: drawnFrom.align | 0}
                        : null,
     settings: surveySettingsNow(),             // the drawing's own settings, so ✎ can put them back (Andy's per-survey list)
-    // THE WATER IT WAS CUT AT (phase 3a): a punch is thrown away the moment the level moves (applyWaterOffset), so the
-    // level now IS the level its depth window was judged at. The table flags a survey the tide has since left behind.
-    water_m: patClip ? Math.round((sea.waterOffset || 0) * 1000) / 1000 : null,
+    // THE WATER IT WAS CUT AT (phase 3a): the level its depth window was judged at, which the table flags a survey the
+    // tide has since left behind against. ⚠ THE PUNCH'S OWN, not the live one (2026-11-06): a clearing's punch is cut at
+    // its HELD level (patFunnel.cut), which is kept through a move under TIDE_REBUILD_M - the live level is then up to
+    // that far from the one the runs were cut at. Outside a hold a punch is still thrown away at any move, so the two agree.
+    water_m: patClip ? Math.round(((patFunnel && patFunnel.cut ? patFunnel.cut.waterM : sea.waterOffset) || 0) * 1000) / 1000
+                     : null,
     punched_at: patClip ? new Date().toISOString() : null};
   for(let i = firstLine; i < mission.lines.length; i++) mission.lines[i].sv = sv;
   for(let i = firstWp; i < mission.waypoints.length; i++) mission.waypoints[i].sv = sv;
@@ -11979,6 +12684,7 @@ async function commitPattern(){
     const nl = mission.lines.splice(firstLine), nw = mission.waypoints.splice(firstWp);
     replaceSurvey(mission, sv, nl, nw);
     mission.surveys = mission.surveys.map(s => s.id === sv ? rec : s);
+    noteSurveyUpdated(sv);                     // its legs the last Upload refused are not these (surveysUploadBlocked)
   } else {
     mission.surveys = [...(mission.surveys || []), rec];
   }
@@ -12642,15 +13348,30 @@ function applyWaterOffset(wl){
   // tide update and one click on the chart. patDropped keeps Add to plan refused (punchRefusal)
   // until Punch Out runs again; the readout is refreshed here so the button and the note say so
   // now, not at whatever the operator touches next.
-  if(sea.waterOffset !== prev && patClip){
+  //
+  // ⚠ EXCEPT A HELD PUNCH, WITHIN TIDE_REBUILD_M OF ITS LEVEL (2026-11-06). A clearing cuts every punch at the level it
+  // HOLDS (punchHold.waterM, built into both models: punchOut's `cutAt`), so a move smaller than the step the guard's own
+  // model rebuilds at leaves it cut at exactly the water it was judged at - the same tolerance the guard flies by. Measured
+  // in the lab: a sub-centimeter station update ("+0.27 m to +0.27 m") threw the punch away in the middle of a clearing, and
+  // with it the picture the next strike had been chosen on. A move of TIDE_REBUILD_M or more drops it as before, and the
+  // clearing re-cuts at the new level (refreshPunchHold). The strikes survive either way: the level is no longer in
+  // patStrikeKey.
+  // ⚠ NOT WHEN THIS VERY UPDATE REBUILDS THE GUARD'S MODEL (review 2026-11-06). The model is rebuilt from the level IT
+  // was built at (nogo.builtOffset), which need not be the hold's: a hold taken at +0.27 m on a model built at +0.22 m
+  // sees +0.32 m as 0.05 m from the hold, and the model rebuilds all the same. The punch's red hops and Upload's route
+  // were judged against the model that is now gone, so the punch goes and the clearing judges it again on the new one.
+  // The 1e-9: 0.3 - 0.2 is 0.0999... in floating point, and a 0.1 m move must count as one.
+  const rebuilds = !!(nogo.features && nogo.features.length && nogo.builtOffset != null
+                      && Math.abs(sea.waterOffset - nogo.builtOffset) >= TIDE_REBUILD_M - 1e-9);
+  const heldCut = patFunnel && patFunnel.cut && patFunnel.cut.held ? patFunnel.cut : null;
+  const keepHeld = !!heldCut && !rebuilds && Math.abs(sea.waterOffset - heldCut.waterM) < TIDE_REBUILD_M - 1e-9;
+  if(sea.waterOffset !== prev && patClip && !keepHeld){
     patClip = null;
     const lvl = v => (v >= 0 ? "+" : "") + v.toFixed(2) + " m";
     patDropped = "the water level moved (" + lvl(prev) + " to " + lvl(sea.waterOffset) + ")";
     updatePatReadout();
   }
-  // The 1e-9: 0.3 - 0.2 is 0.0999... in floating point, and a 0.1 m move must count as one.
-  if(nogo.features && nogo.features.length && nogo.builtOffset != null
-     && Math.abs(sea.waterOffset - nogo.builtOffset) >= TIDE_REBUILD_M - 1e-9) rebuildNogo();
+  if(rebuilds) rebuildNogo();
 }
 // The extract in flight, so a caller that arrives mid-fetch can WAIT for it rather than be
 // told "done". Settled in refreshNogo's own `finally`, on every path including the throw.
@@ -16916,16 +17637,19 @@ function extendLead(from, toward, want, ref, ko, buf){
   return {p: first[1], m: distTo(from, first[1])};
 }
 
-async function punchOut(){
+async function punchOut(cut){
   if(punchBusy) return;
   const sp=currentPattern();
   if(!sp){ $("#sp_hint").textContent="Draw a survey pattern first (Survey tab, Draw, then 3 clicks)."; return; }
-  const surveyDr=depthRange();                     // survey COVERAGE window (panel)
-  const dr={min: Math.max(V.NOGO_MIN_DEPTH_M, surveyDr.min), max: surveyDr.max};  // >= the fixed nogo floor
   applyNogoControls();                             // fold panel buffer/enforce into the shared nogo
   punchBusy=true; $("#sp_punch").disabled=true; $("#sp_hint").textContent="Extracting ENC / nogo for the survey area…";
   try{
     const ok=await ensureNogoArea();
+    // ⚠ THE DEPTH WINDOW IS READ AFTER THE CHART READ, as the buffer and the cut are (review 2026-11-06): read before
+    // it, a Min depth raised while the chart was read clipped at the old one while patStrikeKey - read after - named the
+    // new, so the memo served that clip to the next punch at the new depth (measured: 5 runs where a fresh punch gives 3).
+    const surveyDr=depthRange();                   // survey COVERAGE window (panel)
+    const dr={min: Math.max(V.NOGO_MIN_DEPTH_M, surveyDr.min), max: surveyDr.max};  // >= the fixed nogo floor
     encShow=true; $("#chrtBtn").classList.add("on"); render();
     if(!ok || !nogo.features || !nogo.features.length){
       // THIS punch's answer, said in the banner below: no chart, so the un-punched pattern is what Add to plan
@@ -16962,8 +17686,16 @@ async function punchOut(){
     // floor the coverage model uses; with Max depth blank `depthRange()` returns max 0 and
     // the two builds are identical. Second build measured over 1,318 features: 4.2 ms,
     // against the 15,978 ms punch the memo note below is measured on.
-    const koCov=buildKeepouts(ref, enf, dr, nogo.features);
-    const ko=buildKeepouts(ref, enf, {min: dr.min, max: 0}, nogo.features);
+    // ⚠ THE CUT IS TAKEN ONCE, HERE (2026-11-06): the standoff the coverage is clipped at and the water level both models
+    // are built at. `cut` is the clearing's HOLD - the same two numbers every punch of it, so a strike is judged against
+    // the punch it was chosen on - or, with none, the live ones, as every punch read them before. Both are named in
+    // patClipKey, so the memo cannot serve a clip cut at other inputs. Measured: the live standoff swung 11.8-12.5 m in
+    // seconds in a 1 kn set and three punches with no strikes gave 333, 332 and 331 runs. `cut` may be HOW to take it
+    // (punchNow's heldCutAfterRead), asked here - after the chart read above, so whatever moved while it ran is in it.
+    const held = typeof cut === "function" ? cut() : cut;
+    const cutAt = held || {bufM: patClipBufM(), waterM: sea.waterOffset || 0, setKn: null, held: false};
+    const koCov=buildKeepouts(ref, enf, dr, nogo.features, cutAt.waterM);
+    const ko=buildKeepouts(ref, enf, {min: dr.min, max: 0}, nogo.features, cutAt.waterM);
     // ⚠ AND THE STRUCTURES READ OFF THE CHART, which this model used to be blind to. It
     // is built fresh from `nogo.features` so it can carry the SURVEY's own depth window,
     // and that rebuild silently dropped everything the chart scan had added - so a Go-To
@@ -17011,13 +17743,13 @@ async function punchOut(){
     // The standoff this punch clips its COVERAGE at, read once. patClipKey() names it, so
     // the memo cannot serve a clip taken in a different set - while the STRIKE key does not,
     // so a gust no longer throws away the runs the operator struck off.
-    const clipBuf = patClipBufM();
-    const setKnNow = (() => { const st = (S && S.status) || {};
+    const clipBuf = cutAt.bufM;
+    const setKnNow = cutAt.setKn != null ? +cutAt.setKn : (() => { const st = (S && S.status) || {};
       return (st.env_set_kn != null && st.env_set_deg != null) ? +st.env_set_kn : 0; })();
     // ... PLUS THE MOORED CONTACTS THE CLIP WAS TAKEN AGAINST (2026-11-04): aisClipSig names who, where to
     // 5 m and how big, and the stale flag - so the first punch after a ship sails, arrives, or the feed goes
     // stale takes a FRESH clip instead of serving the old one byte-identical (the chartInk lesson, same memo).
-    const baseKey = patClipKey();       // the strike key PLUS this punch's standoff
+    const baseKey = patClipKey(cutAt);  // the strike key PLUS this punch's standoff and water level
     const clipKey = baseKey && baseKey + "|ais:" + (aisClip.stale ? "stale" : aisClipSig(aisExcl));
     if(clipKey && patClipMemo && patClipMemo.key === clipKey){
       // A COPY, not the cached array. The caller sorts, re-orients and filters what it is
@@ -17171,7 +17903,8 @@ async function punchOut(){
     // clip's remnants under a meter, which the filter above drops - shortenSeg hands a run too short for both margins
     // back WHOLE, so nothing else reaches it - and they are the chart's doing, not a stage of their own.
     patFunnel = {drawn: src.length, clipped: clipped.length, struck: nStruck,
-                 slivers: ro.ordered.length - shortened.length, short: nShort, minLine, chans: chanExcl.length};
+                 slivers: ro.ordered.length - shortened.length, short: nShort, minLine, chans: chanExcl.length,
+                 cut: cutAt};
     // ── LEAD-IN / LEAD-OUT ────────────────────────────────────────────────────────────
     // Applied LAST, and every word of that is load-bearing:
     //
@@ -17533,9 +18266,10 @@ async function punchOut(){
         }
         patTransits.push(via); patRoutes.push([Ap,...via,Bp]);
       }
-      // A RED HOP: no straight leg and no detour. It does NOT refuse Add to plan (Andy, 2026-09-16) -
+      // A RED HOP: no straight leg and no detour. It does NOT refuse Add to plan by itself (Andy, 2026-09-16) -
       // Upload routes it again with legPath, which searches further than routeAround, and refuses
-      // the upload if it still finds no way round. Recorded with what blocks the straight line, so
+      // the upload if it still finds no way round; since 2026-11-06 the page asks legPath that question
+      // after the punch (judgeRedHops), and refuses only a hop legPath cannot route. Recorded with what blocks the straight line, so
       // the chart can say so when it is right-clicked - and the banner names and highlights what
       // THIS model found, not what a second model might.
       else { const fb=firstBlockAlong(Ap, Bp, ref, koHere, buffer);
@@ -17606,7 +18340,8 @@ async function punchOut(){
       (clipBuf > buffer + 0.05
         ? `, clipped at ${clipBuf.toFixed(1)} m not ${buffer} m: a ${setKnNow.toFixed(2)} kn set `+
           `needs that standoff for the guard to leave the lines, leads and turns alone (${GUARD_HELM_S} s of drift `+
-          `plus half the buffer)`
+          `plus half the buffer)` + (cutAt.held ? `, HELD at the highest of the last ${PUNCH_HOLD_WINDOW_MS / 60000} min `+
+          `rounded up, so every punch of the clearing is cut the same` : ``)
         : "")+
       // THE LEAD IS QUOTED AS RUN, NOT AS COVERAGE, and says so. Every other number on
       // this line is coverage the operator is getting or losing; this one is distance
@@ -17678,7 +18413,7 @@ async function punchOut(){
       (nChanTurn?`, ${nChanTurn} missing turn(s) refused by a navigation channel`:``)+
       (nRoute?`, ${nRoute} routed around obstacles`:``)+
       (nHopInside?`, ${nHopInside} hop(s) inside the ${clipBuf.toFixed(1)} m standoff (no route at that clearance) — the guard will slow or hold her there`:``)+
-      (nUnsafeLeg?`, ${nUnsafeLeg} hop(s) with no way round found (red; Upload tries again)`:``)+
+      (nUnsafeLeg?`, ${nUnsafeLeg} hop(s) with no way round found here (red; each is put to Upload's router - one it routes turns amber)`:``)+
       (chanExcl.length?`, ${chanExcl.length} channel(s) excluded (survey spans across)`:``)+
       // THE TWO "DISREGARD" OPTIONS ARE SAID ON EVERY PUNCH THEY SHAPE (2026-09-30): the operator unchecked them, and
       // this line is where a plan that runs across a channel or over a wreck has to say why.
@@ -17719,7 +18454,7 @@ async function punchOut(){
       const refusal = punchRefusal();            // the same words as the note under Add to plan
       showBanner(
         (nUnsafeTurn && refusal?`${refusal.text} `:``)+
-        (nUnsafeLeg?`${nUnsafeLeg} hop(s) between runs are blocked by ${kindsSummary(hopBlocks)} with no detour found here (dashed red). A red hop does not keep the pattern out of the plan: Upload routes every hop again with the full router, and refuses the upload if it still finds no way round.`:``)); }
+        (nUnsafeLeg?`${nUnsafeLeg} hop(s) between runs are blocked by ${kindsSummary(hopBlocks)} with no detour found here (dashed red). Each is put to Upload's own router now: a hop it routes turns amber and does not block; one it cannot route either keeps the pattern out of the plan, as it would block Upload - Clear blocked lines strikes the runs beside it one at a time.`:``)); }
     // ⚠ ONLY A FOLDED DETOUR REACHES THIS BRANCH NOW: every refused reversal is red and takes
     // the one above, so what is left of nNoTurn is nKnotFold - a routed detour that folds back
     // on itself at a line end, round an obstacle it had to clear. It ships WITH its fold (the
@@ -18131,8 +18866,15 @@ function identifyAt(ll){
           + "FLYABLE TURN" + (r.by ? " — every loop the boat could fly there enters " + r.by : "") + ". It is not in the "
           + "plan, and ADD TO PLAN is refused until it is fixed (the note under that button says how)."
         : "a RED HOP in the pattern preview: from run " + r.run + " to run " + (r.run + 1) + " no way round "
-          + (r.by || "the obstacle") + " was found here. It does not keep the pattern out of the plan — Upload routes "
-          + "every hop again with the full router, and refuses the upload if it still finds none.");
+          + (r.by || "the obstacle") + " was found here. " + (r.upload === true
+            ? "Upload's own router DOES route it (drawn amber), so it does not block."
+            : r.upload === false
+            ? "Upload's own router finds no way round it either, so ADD TO PLAN is refused until a run beside it is struck "
+              + "(the clearing row on the Survey card does it one line at a time)."
+            : r.upload === "pending"
+            ? "Upload's own router is being asked whether it can route it; Add to plan waits for the answer."
+            : "It does not keep the pattern out of the plan — Upload routes every hop again with the full router, and "
+              + "refuses the upload if it still finds none."));
     }
   }
   // 3b. the pattern preview - CYAN, drawn straight over whatever is committed, and NOT in the plan. This is the layer
@@ -18346,6 +19088,7 @@ window.addEventListener("keydown", e=>{
   // WorldView: "click to select, Delete to strike". Refused with no selection, so the
   // key does nothing surprising when nothing is chosen.
   if(e.key === "Delete" || e.key === "Backspace"){
+    if(patSel) stopClearingFor("you struck a line by hand");
     if(patSel && strikeSelectedRun()){ e.preventDefault(); render(); }
     return;
   }
@@ -18710,7 +19453,7 @@ $("#enf_openwater").onchange = ()=>{ V.OPEN_WATER = $("#enf_openwater").value !=
 // Through `punchNow`, not straight at `punchOut`, so the button shares the ONE chain
 // every punch is serialised on. Pressing it while a strike’s rebuild is in flight then
 // queues behind that rebuild instead of being dropped by `punchBusy`.
-$("#sp_punch").onclick = punchNow;
+$("#sp_punch").onclick = () => { punchOutPressed(); };    // takes the hold; clears what blocks (2026-11-06)
 $("#chrtBtn").onclick = ()=>{ encShow=!encShow; $("#chrtBtn").classList.toggle("on", encShow); render(); };
 // THE FOUR DOCUMENTS ON THE COMMAND BAR (Andy, 2026-10-19). A button asks the console (POST /api/open_doc) to open its
 // Word document: "word" - the console's own machine opened it (the browser is on it); "download" - the browser is to
@@ -20943,7 +21686,14 @@ async function doUpload(opts){
     // That is a real, unfixed cost of drawing here, written down rather than explained away.
     runRoute = plan.route; runUnsafe = unsafe; setPlanIntent("survey", plan, plan.route);
     const reasons=legReasons(unsafe); setViolations(reasons); render();
-    showBanner(unsafe.length+" transit(s) blocked by "+kindsSummary(reasons)+" with NO clear detour (highlighted) — UPLOAD BLOCKED. Reposition the boat or edit the plan, then Upload again.");
+    // ... AND WHERE THE REFUSED LEGS ARE A SURVEY'S, ITS ROW OFFERS "Unblock" (2026-11-06): ✎, Punch Out and the clearing.
+    const svB = [...surveysUploadBlocked()].map(id => surveyById(id)).filter(Boolean);
+    showBanner(unsafe.length+" transit(s) blocked by "+kindsSummary(reasons)+" with NO clear detour (highlighted) — UPLOAD BLOCKED. Reposition the boat or edit the plan, then Upload again."
+               + (svB.length ? " " + svB.map(s => surveyLabel(s)).join(", ") + (svB.length > 1 ? " hold" : " holds") + " blocked legs between "
+                  + (svB.length > 1 ? "their" : "its") + " own lines: Unblock on " + (svB.length > 1 ? "their rows" : "its row")
+                  + " strikes the lines beside them off one at a time and checks Upload's route, then press Update and Upload."
+                  : ""));
+    renderSurveyTable();
     flashNote("Upload blocked: "+unsafe.length+" transit(s) — "+kindsSummary(reasons)+".");
     return;
   }
@@ -23744,6 +24494,7 @@ function onState(s){
   // enough from the one the model was built at - HERE, before the clearance guard reads that
   // model further down this same frame. See applyWaterOffset.
   applyWaterOffset(water);
+  clearingTick();                              // the standoff window, and a finished clearing's hold (2026-11-06)
   // Chart source card: follow the vessel (zone of confidence is position-dependent).
   // Both calls no-op cheaply unless the card is open and something actually changed.
   if($("#chartPanel") && $("#chartPanel").style.display !== "none"){ ensureChartInfo(); updateChartCard(); }

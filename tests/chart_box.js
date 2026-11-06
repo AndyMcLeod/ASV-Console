@@ -521,10 +521,18 @@ const fresh = () => { banners = []; downs = []; covers = []; aisTaken = 0; cover
               && iUpUn > iUpPlan && iUpUn < iUpPost && iUpUn < iUpDraw,
         "planInsideChart " + iUpPlan + ", uncharted refusal " + iUpUn + ", post " + iUpPost + ", draw " + iUpDraw);
   const rpCalls = (H.match(/routePlan\(/g) || []).length - (H.match(/function routePlan\(/g) || []).length;
-  check("6e. no other routePlan caller on the page: four calls - the Transit's, the Upload's, the Upload's degraded one "
-        + "with no model (which routePlan answers before it judges anything), and a passage's section's (6c2)",
-        () => rpCalls === 4 && /const raw = routePlan\(\{lat:asv\.lat, lon:asv\.lon\}, wps, false, transitStandoffM\(\)\);/.test(up),
-        rpCalls + " routePlan( calls");
+  // ... AND THE CLEARING'S DRY RUN OF UPLOAD (2026-11-06, uploadDryRun): a JUDGMENT, not a plan - it asks routePlan
+  // whether Upload would refuse a leg and draws, posts and flies nothing, so it needs no chart widening (an uncharted
+  // answer is reported as "not checked here; Upload checks it again"). Pinned to that function and to doing nothing else.
+  const dry = grab("uploadDryRun");
+  check("6e. no other routePlan caller on the page: five calls - the Transit's, the Upload's, the Upload's degraded one "
+        + "with no model (which routePlan answers before it judges anything), a passage's section's (6c2), and the "
+        + "blocker clearing's dry run of Upload, which posts, draws and flies nothing",
+        () => rpCalls === 5 && /const raw = routePlan\(\{lat:asv\.lat, lon:asv\.lon\}, wps, false, transitStandoffM\(\)\);/.test(up)
+              && (dry.match(/routePlan\(/g) || []).length === 1
+              && !/cmd\(|runRoute\s*=|setPlanIntent|mission\.(lines|waypoints)\s*=|saveMission/.test(dry)
+              && /if\(plan\.uncharted\) return none\(/.test(dry),
+        rpCalls + " routePlan( calls, " + (dry.match(/routePlan\(/g) || []).length + " in uploadDryRun");
   // 6c2. A PASSAGE'S SECTION (2026-10-12, step 5): planned as the Transit is - through planInsideChart, its hold point worked
   // out inside the plan, an uncharted plan refused before anything is posted or drawn. (Posted as a Transit, or as an
   // RTH on the way home along a passage - step 6.)

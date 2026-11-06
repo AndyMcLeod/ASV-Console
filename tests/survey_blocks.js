@@ -204,13 +204,14 @@ const world = () => new Function("\"use strict\";\n"
   + "const $ = () => ({disabled: false}); const flushRepunch = async () => {}; const updatePatReadout = () => {};\n"
   + "const currentPattern = () => ({anchors: ANCHORS}); const patSourceLines = () => drawn;\n"
   + "const resetPattern = () => {}; const recalcCommittedForSpeed = () => {}; const saveMission = () => {};\n"
+  + "const stopClearingFor = () => {}; const noteSurveyUpdated = () => {};   // the clearing: tests/auto_clear.js\n"
   + "const render = () => {}; const showBanner = () => {}; const flashNote = () => {};\n"
   // phase 2 (2026-10-02): no survey is being edited here, so every Add to plan is a NEW survey; the settings recorder
   // and the edit's replace are tests/survey_table.js's subject.
   + "let editingSv = null, cardSv = null; const surveySettingsNow = () => null; const replaceSurvey = () => {};\n"
   // phase 3a: the commit records the water level the punch was cut at
   + "const sea = {waterOffset: 0};\n"
-  + grab(H, "emptyPunchRefusal") + "\n" + grab(H, "punchRefusal") + "\n" + grab(H, "commitPattern")
+  + grab(H, "emptyPunchRefusal") + "\n" + grab(H, "punchRefusal") + "\n" + grab(H, "patternWaypoints") + "\n" + grab(H, "commitPattern")
   + "\nreturn { mission, commitPattern, set: (o) => { patClip = o.clip || null; patTransits = o.transits || [];"
   + " patLead = o.lead || []; drawn = o.drawn || []; ANCHORS = o.anchors || null; } };")();
 const P = (n) => ({ lat: 43.07 + n * 1e-4, lon: -70.71 });

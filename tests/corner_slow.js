@@ -548,10 +548,18 @@ check("20. the unrouted upload path clears the set rather than leaving a stale o
   };
   // commitPattern's OWN statements: the two model lines and the push loop, verbatim. The
   // `slowOut` each pushed line receives is whatever the page hands it.
+  // ⚠ SINCE 2026-11-06 THE LOOP IS patternWaypoints' (the ONE build commitPattern and the blocker clearing's dry run of
+  // Upload share), and commitPattern pushes what it returns. So the slice is that function's loop, followed by the two
+  // pushes commitPattern makes of it - and commitPattern is pinned to making exactly those pushes, so the slice is still
+  // what Add to plan does.
   const cs = H.indexOf("  const leads = patClip ? patLead : null;");
-  const ce = H.indexOf("\n  });", cs);
-  if (cs < 0 || ce < 0) throw new Error("anchor gone: commitPattern's commit loop");
-  const COMMIT = H.slice(cs, ce + 6);
+  const ce = H.indexOf("\n  return {lines: outL, wps, pairOf};", cs);
+  const CP = H.indexOf("async function commitPattern(){");
+  if (cs < 0 || ce < 0 || CP < 0) throw new Error("anchor gone: patternWaypoints' build loop");
+  if (!/const built = patternWaypoints\(\);\s*mission\.lines\.push\(\.\.\.built\.lines\);\s*mission\.waypoints\.push\(\.\.\.built\.wps\);/
+        .test(H.slice(CP, H.indexOf("\nfunction ", CP))))
+    throw new Error("anchor gone: commitPattern no longer pushes patternWaypoints' lines and waypoints");
+  const COMMIT = H.slice(cs, ce) + "\n  mission.lines.push(...outL); mission.waypoints.push(...wps);";
   // punchOut's OWN per-gap write, verbatim, in a wrapper supplying exactly what punchOut does
   const PUNCH = "if(t.slow){ nTurnSlow++; turnSlowAt[k]=true; }";
   if (H.indexOf(PUNCH) < 0) throw new Error("anchor gone: punchOut's per-gap slow write");

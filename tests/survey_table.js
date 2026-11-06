@@ -443,6 +443,51 @@ function commit(w, lines, anchors) {
     e2.w.renderSurveyTable();
     check("12g. a plan with no surveys shows no table", () => e2.env.els["#sv_table"].style.display === "none"
           && e2.env.els["#sv_head"].style.display === "none");
+    // 12h. UNBLOCK (2026-11-06): a survey holding a leg the last Upload refused gets the way on from that refusal on its
+    // row - picked or not - and only that survey; one with no drawing to punch again is not offered it.
+    v.w.editingSv = null;
+    const s2wp = v.w.mission.waypoints.filter((p) => p.sv === "S2");
+    const s3wp = v.w.mission.waypoints.filter((p) => p.sv === "S3");
+    v.w.runUnsafe = [[s2wp[0], { lat: s2wp[1].lat, lon: s2wp[1].lon }], [s3wp[0], { lat: s3wp[1].lat, lon: s3wp[1].lon }]];
+    v.w.renderSurveyTable();
+    const h12 = tb.innerHTML;
+    v.w.runUnsafe = [];
+    v.w.renderSurveyTable();
+    const h12b = tb.innerHTML;
+    check("12h. a survey holding a leg the last Upload refused offers Unblock on its own row (and only it); one with no "
+          + "recorded drawing is not offered it; with the refusal gone, neither is",
+          () => /id="svr1_unb" data-act="unblock" data-sv="S2"/.test(h12) && !/id="svr0_unb"/.test(h12)
+                && !/id="svr2_unb"/.test(h12) && !/data-act="unblock"/.test(h12b),
+          () => [...h12.matchAll(/id="(svr\d_unb)"/g)].map((m) => m[1]).join(",") + " | after: "
+                + [...h12b.matchAll(/id="(svr\d_unb)"/g)].map((m) => m[1]).join(","));
+    // 12i. (review 2026-11-06) ONLY A LEG INSIDE ONE SURVEY: the approach from the boat into S2, and the leg from S1's
+    // end into S2's start, both END in S2 - and no strike of S2's lines changes the water they cross
+    const unbs = (h) => [...h.matchAll(/id="(svr\d_unb)"/g)].map((m) => m[1]).join(",");
+    const s1wp = v.w.mission.waypoints.filter((p) => p.sv === "S1");
+    v.w.runUnsafe = [[P(-500, -500), { lat: s2wp[0].lat, lon: s2wp[0].lon }],
+                     [s1wp[s1wp.length - 1], { lat: s2wp[0].lat, lon: s2wp[0].lon }]];
+    v.w.renderSurveyTable();
+    const h12i = tb.innerHTML;
+    check("12i. a refused leg that only ENDS in a survey - the approach from the boat, the leg from the survey before - "
+          + "does not offer Unblock: both its ends must be that survey's own",
+          () => !/data-act="unblock"/.test(h12i), () => "offered: " + (unbs(h12i) || "none"));
+    // 12j. Update S2 after the refusal: the refused legs are history - until the next route command refuses again
+    v.w.runUnsafe = [[s2wp[0], { lat: s2wp[1].lat, lon: s2wp[1].lon }]];
+    v.w.editingSv = "S2";
+    await commit(v.w, pattern(2, 100, 10, 0, 300), ANCH(300));     // the same drawing: its waypoints where they were
+    v.w.renderSurveyTable();
+    const h12j = tb.innerHTML;
+    const s2now = v.w.mission.waypoints.filter((p) => p.sv === "S2");
+    const sameEnds = s2now.length === s2wp.length && Math.abs(s2now[0].lat - s2wp[0].lat) < 1e-9
+                     && Math.abs(s2now[1].lat - s2wp[1].lat) < 1e-9;
+    v.w.runUnsafe = [[s2now[0], { lat: s2now[1].lat, lon: s2now[1].lon }]];          // a NEW refusal (a new array)
+    v.w.renderSurveyTable();
+    const h12k = tb.innerHTML;
+    check("12j. Update S2 after the refusal takes its Unblock away - even with its waypoints back where the refused leg "
+          + "ran - and the next refusal of S2's legs offers it again",
+          () => sameEnds && !/id="svr1_unb"/.test(h12j) && /id="svr1_unb" data-act="unblock" data-sv="S2"/.test(h12k),
+          () => "same ends " + sameEnds + "; after Update: " + (unbs(h12j) || "none") + "; next refusal: " + (unbs(h12k) || "none"));
+    v.w.runUnsafe = [];
   }
 
   // ── 13. the LINES card ─────────────────────────────────────────────────────────────────────────────────────────
@@ -859,14 +904,19 @@ function buildWorld(env) {
     + "const guiConfirm = (title, msg, opts) => { env.log.asked.push({title, msg, opts}); return Promise.resolve(env.answer); };\n"
     + "const setMode = (m) => { env.log.modes.push(m); mode = m; };\n"
     + "const updateLeadNote = () => {}; const updateEaseNote = () => {};\n"
+    // UNBLOCK (2026-11-06): the legs the last Upload refused, which a row's Unblock button is offered against (12h)
+    + "let runUnsafe = [];\n" + decl(/^const _eqLL=[^;]*;/m) + "\n" + decl(/^let unblockDone = [^;]*;/m) + "\n"
+    // the clearing itself is tests/auto_clear.js's: here only what Add to plan tells it (stop; this survey was Updated)
+    + "const stopClearingFor = () => {};\n"
     + ["rocEsc", "depthRange", "boundaryActive", "lineSetKey", "linePartContinues", "drawnLines", "lineNo", "lineCount",
        "committedPatternInfo", "surveySettingsNow", "applySurveySettings", "surveyById", "surveyFigures",
        "renderSurveyTable", "cardSurveyId", "surveysChanged", "editSurvey", "deleteSurvey", "moveSurveyRow",
-       "renameSurvey", "emptyPunchRefusal", "isStepKey", "spdTxt", "spdAtTxt", "slowestSelectableKey", "punchRefusal", "commitPattern",
+       "renameSurvey", "emptyPunchRefusal", "isStepKey", "spdTxt", "spdAtTxt", "slowestSelectableKey", "punchRefusal", "patternWaypoints", "commitPattern",
        // phase 3a
        "lineCovFrame", "lineGeoKey", "trackLineCoverage", "saveLineCov", "lineDoneFrac", "surveyProgress",
        "surveyTideMoved", "goToSurvey", "uploadFromSurvey", "repunchSurvey", "withCardKept", "punchAll",
-       "reverseSurvey", "clearSurveyProgress", "holdWaiting", "toggleSurveyHold", "continueHold"].map(grab).join("\n")
+       "reverseSurvey", "clearSurveyProgress", "holdWaiting", "toggleSurveyHold", "continueHold",
+       "surveysUploadBlocked", "noteSurveyUpdated"].map(grab).join("\n")
     + "\nreturn { get mission(){ return mission; }, set mission(v){ mission = v; },"
     + " get editingSv(){ return editingSv; }, set editingSv(v){ editingSv = v; }, get cardSv(){ return cardSv; },"
     + " set cardSv(v){ cardSv = v; }, get pat(){ return pat; }, get boundary(){ return boundary; },"
@@ -877,6 +927,7 @@ function buildWorld(env) {
     + " trackLineCoverage, saveLineCov, lineDoneFrac, surveyProgress, surveyTideMoved, goToSurvey, uploadFromSurvey,"
     + " repunchSurvey, punchAll, reverseSurvey, clearSurveyProgress, lineGeoKey, toggleSurveyHold, continueHold,"
     + " get pendingHold(){ return pendingHold; }, set pendingHold(v){ pendingHold = v; },"
+    + " set runUnsafe(v){ runUnsafe = v; },"
     + " get lineCov(){ return lineCov; }, set lineCov(v){ lineCov = v; }, get patReverse(){ return patReverse; },"
     + " setPatReverse: (v) => { patReverse = v; }, at: (k, p) => { runLineIdx = k; asv = p; },"
     + " set missionLoaded(v){ missionLoaded = v; }, get punchAllBusy(){ return punchAllBusy; },"

@@ -457,10 +457,13 @@ check("12b. ⚠ AND THE SURVEY CLIP SEES THEM TOO. punchOut builds its OWN keep-
       // on whichever half was missed. The ORDER still matters for the same reason: both
       // folds have to precede the spreads that make koClip and koTurn.
       () => {
-        const po = H.slice(H.indexOf("async function punchOut"),
-                           H.indexOf("async function punchOut") + 6000);
-        const both = /const koCov=buildKeepouts\(ref, enf, dr, nogo\.features\);/.test(po)
-            && /const ko=buildKeepouts\(ref, enf, \{min: dr\.min, max: 0\}, nogo\.features\);/.test(po);
+        // "punchOut(" WITH ITS PAREN: "async function punchOutPressed" (2026-11-06) comes first in the page, and the bare
+        // name sliced that instead. 9000: the window reaches past channelSpanKeepouts, 6.2 k into punchOut since then.
+        const po = H.slice(H.indexOf("async function punchOut("),
+                           H.indexOf("async function punchOut(") + 9000);
+        // (both at the level the punch is CUT at, since 2026-11-06: a clearing's held water - tests/auto_clear.js)
+        const both = /const koCov=buildKeepouts\(ref, enf, dr, nogo\.features, cutAt\.waterM\);/.test(po)
+            && /const ko=buildKeepouts\(ref, enf, \{min: dr\.min, max: 0\}, nogo\.features, cutAt\.waterM\);/.test(po);
         const folded = /foldChartInk\(koCov, ref\);/.test(po) && /foldChartInk\(ko, ref\);/.test(po);
         const beforeSpreads = po.indexOf("foldChartInk(ko, ref)") > po.indexOf("const ko=buildKeepouts")
             && po.indexOf("foldChartInk(koCov, ref)") > po.indexOf("const koCov=buildKeepouts")

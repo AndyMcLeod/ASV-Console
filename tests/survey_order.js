@@ -196,12 +196,13 @@ const commitWorld = new Function("\"use strict\";\n"
   + "const $ = () => ({disabled: false}); const flushRepunch = async () => {}; const updatePatReadout = () => {};\n"
   + "const currentPattern = () => ({}); const patSourceLines = () => drawn;\n"
   + "const resetPattern = () => {}; const recalcCommittedForSpeed = () => {}; const saveMission = () => {};\n"
+  + "const stopClearingFor = () => {}; const noteSurveyUpdated = () => {};   // the clearing: tests/auto_clear.js\n"
   + "const render = () => {}; const showBanner = () => {}; const flashNote = () => {};\n"
   // phase 2 (2026-10-02): no survey is being edited here (tests/survey_table.js drives the edit)
   + "let editingSv = null, cardSv = null; const surveySettingsNow = () => null; const replaceSurvey = () => {};\n"
   + "const sea = {waterOffset: 0};\n"                              // phase 3a: the water level the commit records
   + grab(H, "emptyPunchRefusal") + "\n" + grab(H, "punchRefusal") + "\n"
-  + grab(H, "commitPattern")
+  + grab(H, "patternWaypoints") + "\n" + grab(H, "commitPattern")
   + "\nreturn { mission, commitPattern, set: (o) => { patClip = o.clip || null; patTransits = o.transits || [];"
   + " patLead = o.lead || []; drawn = o.drawn || []; } };")();
 const tag = (p) => (p.turn ? "T" : "") + xy(p);

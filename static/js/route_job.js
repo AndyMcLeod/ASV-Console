@@ -22,7 +22,7 @@
 // each decided for themselves would drift; this one does as it is told, in the order the searches were sent.
 import { V, nogo, sea } from "./state.js";
 import { planeFrame } from "./geodesy.js";
-import { planNogoRoute, routePlan, holdTarget } from "./passage.js";
+import { planNogoRoute, routePlan, holdTarget, legPath, beyondChart } from "./passage.js";
 
 const models = new Map();
 
@@ -106,6 +106,17 @@ function run(op, a){
     if(ht.error) return {ht, plan: null};
     return {ht, plan: routePlan(a.start, [...(a.via || []), ht.to], a.keepRightAll, a.standoffM, undefined, a.ropts)};
   }
+  // The red hops a punch left (asv.html judgeRedHops): would UPLOAD route each one? legPath, with the frame, model and
+  // buffer routePlan hands a leg between a plan's waypoints - one answer a pair, in order: false (no route), true (a
+  // route inside the chart as read), or null - ⚠ A ROUTE ROUND IT THAT LEAVES THE READ BOX (review 2026-11-06), or runs
+  // through a square that could not be read. Upload refuses that route as uncharted and reads the chart wider before it
+  // routes again (routePlan's `uncharted`), so "Upload routes it" would be a claim about water nobody has read: it is
+  // left to Upload, as every red hop was before.
+  if(op === "hops") return (a.pairs || []).map((p) => {
+    const leg = legPath(p[0], p[1], nogo.frame, nogo.ko, nogo.buffer);
+    if(!leg) return false;
+    return beyondChart([{lat: p[0].lat, lon: p[0].lon}, ...leg], nogo.bbox, undefined, nogo.unread) ? null : true;
+  });
   throw new Error("no such search: " + op);
 }
 
