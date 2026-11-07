@@ -88,7 +88,7 @@ const fs = require("fs");
 const path = require("path");
 
 // THE REAL MODULES, not source text lifted out of the page.
-const { distTo, llEN, fromEN, planeFrame } = require("../static/js/geodesy.js");
+const { distTo, llEN, fromEN, toEN, planeFrame } = require("../static/js/geodesy.js");
 const { shortenSeg } = require("../static/js/core_turns.js");
 const { regionOrder } = require("../static/js/passage.js");
 
@@ -144,6 +144,8 @@ eval(grab("runMid"));
 eval(grab("activeStruck"));
 // eslint-disable-next-line no-eval
 eval(grab("keptRuns"));
+// eslint-disable-next-line no-eval
+eval(grab("distToRunM") + "\n" + grab("isStruckRun"));
 // A LEAD-IN / LEAD-OUT splits the run the boat flies from the coverage it surveys, and
 // every midpoint that identifies a run has to come off the coverage half. Real bodies for
 // the same reason as the three above - these are the exact functions the strike path calls.
@@ -205,6 +207,42 @@ console.log("Striking a punched run off — the gap has to be real, and rebuilt 
         () => SPACING > 2 && !keptRuns(runs).some(s => distTo(runMid(s), runMid(runs[2])) < 1)
               && keptRuns(runs).length === runs.length - 1,
         "spacing " + SPACING.toFixed(0) + " m against a 1 m tolerance");
+
+  // ⚠ 4b. A RE-CUT MOVES THE RUN'S ENDS, AND THE STRIKE MUST STAY (2026-11-06, "2 refusals that are not auto
+  // correcting"). The clearing's hold rises with the current and the tide steps the level, and each re-cuts every run:
+  // the struck one's ends move along its line, its MIDPOINT moves, and a strike matched by midpoint let it back - his
+  // run 100 struck at 23:20:33 and again at 23:23:11. The struck point still lies ON the re-cut run, which is the match.
+  const lat2 = runs[2][0].lat, dLon = m => m / (111320 * Math.cos(lat2 * Math.PI / 180));
+  const along = (m) => P(lat2, runs[2][0].lon + dLon(m));
+  const recut = runs.map((r, i) => i === 2 ? [along(40), along(995)] : r);      // the west end 40 m in, the east 5 m
+  const keptRecut = keptRuns(recut);
+  const shrunk = [along(600), along(1000)];                                     // lost 600 m from the west: past the point
+  patClip = recut.map(r => [r[0], r[1]]); patLead = []; patTrim = [];
+  dropStruckFromPunch();
+  const dropped = patClip;
+  patClip = null;
+  check("4b. a re-cut that moves the struck run's ends keeps it struck (its midpoint moved " +
+        distTo(runMid(recut[2]), runMid(runs[2])).toFixed(1) + " m) - in the punch's filter and in dropStruckFromPunch; "
+        + "a run cut back past the struck point is a different run and comes back",
+        () => distTo(runMid(recut[2]), runMid(runs[2])) > 10
+              && keptRecut.length === 4 && !keptRecut.includes(recut[2])
+              && dropped.length === 4 && !dropped.some(s => s[0] === recut[2][0])
+              && keptRuns([shrunk]).length === 1,
+        "kept " + keptRecut.length + " of 5 re-cut, dropped to " + dropped.length + ", the cut-back run kept "
+        + keptRuns([shrunk]).length);
+
+  // 4c. ...BUT A RUN THAT GREW PAST TWICE ITS LENGTH (and 50 m) IS A DIFFERENT RUN (review 2026-11-06): a rising tide that
+  // merges a struck piece of a line with its neighbor must not take the merged run whole. The strike carries its length.
+  patStruck = [Object.assign(runMid(runs[2]), { lenM: 1000 })];
+  const grown = [along(-1600), along(1000)], longer = [along(-400), along(1000)];
+  const sliver = Object.assign(runMid([along(494), along(506)]), { lenM: 12 });
+  check("4c. a strike made on a 1000 m run still takes it re-cut to " + distTo(...longer).toFixed(0) + " m, and to "
+        + distTo(...recut[2]).toFixed(0) + " m, but not grown to " + distTo(...grown).toFixed(0) + " m; one on a 12 m sliver "
+        + "takes it at 60 m, not merged into 760 m",
+        () => keptRuns([longer]).length === 0 && keptRuns([recut[2]]).length === 0 && keptRuns([grown]).length === 1
+              && (patStruck = [sliver], keptRuns([[along(470), along(530)]]).length === 0
+                                        && keptRuns([[along(-200), along(560)]]).length === 1),
+        "kept longer/recut/grown " + [keptRuns([longer]).length, keptRuns([recut[2]]).length, keptRuns([grown]).length].join("/"));
   patStruck = []; patStruckKey = null;
 }
 
@@ -249,7 +287,7 @@ console.log("Striking a punched run off — the gap has to be real, and rebuilt 
   check("8. every scheduled rebuild goes through the serialised punch, not punchOut direct",
         () => /punchNow\(\)/.test(flush) && !/[^w]punchOut\(/.test(flush)
               && /punchInFlight/.test(now)
-              && /\.then\(async \(\)\s*=>\s*\{[\s\S]*?await punchOut\(heldCutAfterRead\);[\s\S]*?await judgeRedHops\(\);\s*renderClearRow\(\);[^\n]*\s*\}\)/.test(now),
+              && /\.then\(async \(\)\s*=>\s*\{[\s\S]*?await punchOut\(heldCutAfterRead, PUNCH_SLICE\)[\s\S]*?await judgeRedHops\(\);\s*renderClearRow\(\);[^\n]*\s*\}\)/.test(now),
         /punchNow\(\)/.test(flush) ? "flushRepunch -> punchNow -> chained punchOut"
                                    : "flushRepunch calls punchOut directly — a rebuild "
                                      + "arriving during a rebuild is DROPPED by punchBusy");

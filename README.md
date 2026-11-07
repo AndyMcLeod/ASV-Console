@@ -2298,7 +2298,25 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
      chart model (it was built at another level).
 
    Both are taken once the chart has been read, so a change during the read is in the
-   cut. The strikes now survive a water change. A committed survey holding a leg
+   cut. The strikes now survive a water change, and every re-cut: a struck run is
+   matched by the point it was struck at lying **on** it, so a re-cut that moves its
+   ends (a raised hold, a tide step) no longer brings it back to be struck a second time.
+   It comes back only if the re-cut takes more than half of it off one end, or makes it
+   more than twice as long (and 50 m longer). That happens when a rising tide merges it
+   with the next piece of its line. Either way it is a different run and is judged again.
+
+   *Punch Out no longer freezes the page.* Joining the runs (a turn ladder for each
+   reversal, a route round each hop) used to hold the page for the whole punch, 10–20 s
+   on a 115-run survey and longer on bigger ones. The chart, the clearance guard and the
+   supervisor's heartbeat all stopped, so the other tab took over. Now the punch hands
+   the page back every 0.1 s. Add to plan says *Punch Out is still joining the runs*
+   meanwhile, and the hint counts the joins. If you change the pattern, a setting or a
+   speed mid-punch, the punch stops; a speed change punches again at the new speed, and
+   Add to plan, if you pressed it meanwhile, waits for that punch. A number half-typed
+   in a box does not count until you leave the box. If the chart is read again, or the
+   water moves past the cut, it starts again, up to three times, and then says it
+   stopped part-way. In a hidden tab the clearing skips its show-the-run pause.
+   A committed survey holding a leg
    **between its own lines** that Upload refused gets an **Unblock** button on its
    Surveys row. It loads the survey (unless it is already on the card) and presses
    Punch Out for you. The clearing then checks Upload's route even when nothing is red,
@@ -3968,6 +3986,10 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    Worker** (`static/js/home_field.js`): the RTH planner is far too slow to ask from every
    point of a mission, and the clearance guard shares the page's thread. It runs a little
    short of the planner's route, which keeps right in channels; the reserve covers that.
+   Each point reads the field at its **own** cell. Only a point on a blocked cell (alongside,
+   inside the buffer) steps to the nearest open cell, never to one across land that is nearer
+   home (2026-11-06). That lookup used to scan every cell within 300 m. Asked at every step of
+   an 814-waypoint survey, it froze the page for 2.3 s every 12 s.
    Until it is built, or where it cannot reach her, the rows say **straight line**. In the
    simulator, the chart menu's **Set fuel to the RTH point** puts the tank just below it,
    to rehearse the alert and the shift home (`/api/cmd/energy {level}`, sim only). **While she is

@@ -158,24 +158,39 @@ export function homeSeeds(g, blk, home, radM) {
  * HER WATER DISTANCE HOME from plane point `p`, meters: the field at her cell plus her offset from its center - or,
  * when her own cell is blocked or cut off (alongside, inside the buffer), at the nearest cell within `radM` that does
  * reach home, plus the straight distance to it. Null outside the grid or with nothing reachable near her.
+ *
+ * ⚠ HER OWN CELL FIRST, AND THE NEAREST CELL ONLY WHEN IT CANNOT ANSWER (2026-11-06, "the chart page is freezing up").
+ * This took the LEAST of (field + straight hop) over every cell of the (2R+1)^2 square, and its early exit compared that
+ * whole distance home - kilometers - against a ring's radius, so it never fired: every call read every cell, ~14,600 at
+ * the 300 m reach and 5 m cells. fuelProjection asks it at every step of the mission ahead, and with his 814-waypoint
+ * DriX survey running it froze the page 2.3 s every 12 s (profiled). And the least total was the WRONG answer as well as
+ * the slow one: a cell across a strip of land up to the reach away, nearer home by water, gave the field there plus a
+ * straight hop THROUGH the land - a way home shorter than any she can sail, the unsafe side for a fuel reserve. Now:
+ * her own cell's field when it reaches home; else the nearest cell that does (the least straight distance, ties to the
+ * shorter way home), the search stopping once no further ring can hold a nearer one.
  */
 export function fieldDistM(g, dist, blk, p, radM) {
   const c = cellOf(g, p);
   if (!c) return null;
+  const via = (x, y) => {
+    if (x < 0 || y < 0 || x >= g.W || y >= g.H) return null;
+    const i = y * g.W + x;
+    if (blk[i] || !Number.isFinite(dist[i])) return null;
+    const at = cellCenter(g, x, y), h = Math.hypot(at.e - p.e, at.n - p.n);
+    return { h, m: dist[i] * g.cell + h };
+  };
+  const own = via(c.gx, c.gy);
+  if (own) return own.m;
   const R = Math.ceil(radM / g.cell);
   let best = null;
-  for (let r = 0; r <= R; r++) {
-    if (best !== null && best <= (r - 1) * g.cell) break;   // a cell on ring r is at least r - 1 cells from her
-    for (let y = c.gy - r; y <= c.gy + r; y++) {
-      for (let x = c.gx - r; x <= c.gx + r; x++) {
-        if (Math.max(Math.abs(x - c.gx), Math.abs(y - c.gy)) !== r) continue;
-        if (x < 0 || y < 0 || x >= g.W || y >= g.H) continue;
-        const i = y * g.W + x;
-        if (blk[i] || !Number.isFinite(dist[i])) continue;
-        const at = cellCenter(g, x, y), m = dist[i] * g.cell + Math.hypot(at.e - p.e, at.n - p.n);
-        if (best === null || m < best) best = m;
-      }
-    }
+  const take = (x, y) => {
+    const v = via(x, y);
+    if (v && (!best || v.h < best.h - 1e-9 || (v.h <= best.h + 1e-9 && v.m < best.m))) best = v;
+  };
+  for (let r = 1; r <= R; r++) {
+    if (best && (r - 1) * g.cell > best.h) break;   // every cell on ring r is at least r - 1 cells from her
+    for (let x = c.gx - r; x <= c.gx + r; x++) { take(x, c.gy - r); take(x, c.gy + r); }
+    for (let y = c.gy - r + 1; y <= c.gy + r - 1; y++) { take(c.gx - r, y); take(c.gx + r, y); }
   }
-  return best;
+  return best ? best.m : null;
 }

@@ -152,7 +152,7 @@ const FINGER_NEAR = () => dock(24.5, 25.5, 185, 240);  // the same pier 10 m int
 const FAR = () => dock(124.5, 125.5, 185, 240);         // the same pier, 100 m east of the pattern
 
 const PAGE_FUNCS = ["punchOut", "currentPattern", "surveyPattern", "patSourceLines", "boundaryActive", "clipLine",
-  "patStrikeKey", "activeStruck", "keptRuns", "runMid", "extendLead", "runWithLeads", "patCoverSeg", "patCoverMid",
+  "patStrikeKey", "strikeKeyChart", "punchSpeedSig", "activeStruck", "keptRuns", "distToRunM", "isStruckRun", "runMid", "extendLead", "runWithLeads", "patCoverSeg", "patCoverMid",
   "patIdentSeg", "trimEnd", "judgeJoin",
   // patClipBufM IS THE PLANNER/GUARD SEAM (2026-09-19) and punchOut calls it twice - for the
   // clip standoff and from patClipKey. Missing from this list it is a bare ReferenceError
@@ -166,7 +166,8 @@ const PAGE_FUNCS = ["punchOut", "currentPattern", "surveyPattern", "patSourceLin
   "dropStruckFromPunch", "strikeSelectedRun", "scheduleRepunch", "applyWaterOffset",
   "patternWaypoints"];                                   // commitPattern's lines and waypoints (2026-11-06)
 const PAGE_DECLS = [/^const NO_LEAD = [^;]*;/m, /^const LEAD_GIVE = [^;]*;/m, /^const MAX_SURVEY_LINES = [^;]*;/m,
-  /^const LEAD_MAX_M = [^;]*;/m, /^const REPUNCH_DELAY_MS = [^;]*;/m, /^const TIDE_REBUILD_M = [^;]*;/m, /^const TRIM_MAX_M = [^;]*;/m, /^const JUDGE_RUN_M = [^;]*;/m, /^const SPEED_ROLES = [^;]*;/m];
+  /^const LEAD_MAX_M = [^;]*;/m, /^const REPUNCH_DELAY_MS = [^;]*;/m, /^const TIDE_REBUILD_M = [^;]*;/m, /^const TRIM_MAX_M = [^;]*;/m, /^const JUDGE_RUN_M = [^;]*;/m, /^const SPEED_ROLES = [^;]*;/m,
+  /^const PUNCH_SLICE = [^;]*;/m];
 
 function makeWorld(opts) {
   const o = opts || {};
@@ -196,6 +197,8 @@ function makeWorld(opts) {
     + "const {channelLaneRoute, channelSpanKeepouts, channelTurnKeepouts, junctionKnot, pruneJunctionKnots,"
     + " regionOrder, routeAround} = PS;\n"
     + "const {blocked, buildKeepouts, firstBlockAlong, legReasons, effectiveWaterOffset} = C;\n"
+    // punchNow's punch pauses between joins (PUNCH_SLICE): one turn of the loop, as the page's own (auto_clear 51-52)
+    + "const punchYield = () => new Promise((r) => setImmediate(r));\n"
     + PAGE_DECLS.map(decl).join("\n") + "\n"
     + "let pat = {A:null, B:null, C:null, align:0}, patDrag = null, patMoveLast = null, patClip = null, patLead = [], patTrim = [];\n"
     + "let patUnsafe = [], patRed = [], patJoined = false, patDropped = null, patFunnel = null, patRoutes = [], patTransits = [];\n"

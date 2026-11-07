@@ -10657,7 +10657,7 @@ function runMid(seg){ return {lat:(seg[0].lat+seg[1].lat)/2, lon:(seg[0].lon+seg
  * taken back off.
  *
  * ⚠ AND EVERY MIDPOINT THAT IDENTIFIES A RUN MUST COME THROUGH HERE. A strike is
- * remembered as a midpoint and matched against one, and the strike list is built BEFORE
+ * remembered as a midpoint (and matched to the run it lies ON - isStruckRun), and the strike list is built BEFORE
  * the leads are added (`keptRuns(clipped)`), so it holds COVERAGE midpoints. Match a
  * struck coverage midpoint against a RUN midpoint and a symmetric lead still agrees -
  * which is exactly what makes the fault invisible in the ordinary case - while an
@@ -10867,9 +10867,9 @@ function patStrikeKey(){
           // ⚠ AND NOT THE WATER LEVEL (2026-11-06, the blocker clearing). It was here, so every station update - a few
           // centimeters every 6 minutes, one read "+0.27 m to +0.27 m" - discarded every run the operator had struck off,
           // which is half of why his strikes "worked in some instances, not in others". The level decides the CLIP and
-          // stays in patClipKey; a strike asks whether the run he clicked still EXISTS, and keptRuns' 1 m midpoint test
-          // answers that at any level - a run the new level re-cut comes back and is judged like any other. A strike
-          // only ever REMOVES coverage, so carrying one across a level change cannot make a plan less safe.
+          // stays in patClipKey; a strike asks whether the run he clicked still EXISTS, and isStruckRun answers that at
+          // any level - a run the new level re-cut stays struck while it still runs through the point it was struck at.
+          // A strike only ever REMOVES coverage, so carrying one across a level change cannot make a plan less safe.
 }
 
 /**
@@ -10882,7 +10882,7 @@ function patStrikeKey(){
  * CLIP must not be reused across a set change - two punches at the same buffer in a
  * different set are two different clips, which is what the note this replaces was about.
  * A STRIKE is a different question: it asks whether the run the operator clicked still
- * EXISTS, and keptRuns' 1 m midpoint test already answers that.
+ * EXISTS, and isStruckRun (the struck point lies ON the run) already answers that.
  *
  * The set is published rounded to two decimals at 4 Hz and moves with the gusts. Measured
  * over one 150 s capture it ran 0.36-0.40 kn, which at a 5 m buffer is a standoff of
@@ -10963,18 +10963,46 @@ function refreshPunchHold(){
 function activeStruck(){ return patStruckKey && patStruckKey === patStrikeKey() ? patStruck : []; }
 
 /**
- * `runs` minus anything struck off.
+ * `runs` minus anything struck off: a run a strike lies ON (isStruckRun).
  *
- * A meter of tolerance. The runs are rebuilt deterministically from the same corners and
- * the same chart, so an untouched plan reproduces its midpoints exactly; the tolerance
- * only stops floating point resurrecting a struck run. It is far below any usable line
- * spacing, so it can never reach a neighbor.
+ * A meter of tolerance, ACROSS the line. A re-cut never moves a run sideways - every run lies on its pattern line, and
+ * only its ends move - so the tolerance only stops floating point resurrecting a struck run. It is far below any
+ * usable line spacing, so it can never reach a neighbor.
  */
 function keptRuns(runs){
   const struck = activeStruck();
   if(!struck.length) return runs;
-  return runs.filter(seg=>{ const m = runMid(seg);
-    return !struck.some(d=>distTo(d,m) < 1); });
+  return runs.filter(seg => !isStruckRun(seg, struck));
+}
+/** Meters from point `d` to run `seg` (its nearest point, the ends clamped), in the plane about `d`. */
+function distToRunM(d, seg){
+  const a = toEN(seg[0], d), b = toEN(seg[1], d), dx = b.e - a.e, dy = b.n - a.n, L2 = dx * dx + dy * dy;
+  const t = L2 > 0 ? Math.max(0, Math.min(1, -(a.e * dx + a.n * dy) / L2)) : 0;
+  return Math.hypot(a.e + t * dx, a.n + t * dy);
+}
+/**
+ * IS `seg` A STRUCK RUN - does one of `struck` (the coverage midpoints the strikes were made at) lie ON it?
+ *
+ * ⚠⚠ ON THE RUN, NOT AT ITS MIDPOINT (2026-11-06, "2 refusals that are not auto correcting"). A strike used to match
+ * only a run whose midpoint was within a meter of the stored one - so any RE-CUT that moved either end of the struck
+ * run by two meters brought it back: a raised hold (the current's standoff 5.8 to 5.9 m), a water level step, a buffer
+ * the clearing did not change. Measured on his console: run 100 struck at 23:20:33 and struck AGAIN at 23:23:11, the
+ * same 128 m line; on the lab's 224 runs one line struck twice across a hold rise. Every return costs a strike from
+ * the clearing's cap, a whole re-punch, and the lost coverage counted twice. A re-cut moves a run's ENDS along its
+ * line and nothing else, so the point it was struck at stays on it - unless the run lost more than half its length
+ * from one side, when it is fairly a different run and comes back to be judged.
+ *
+ * ⚠ AND A RUN THAT GREW PAST TWICE ITS LENGTH (and 50 m) IS A DIFFERENT RUN TOO (review 2026-11-06): a rising tide that
+ * opens a shoal between two pieces of a line makes them one run, and a strike on a 12 m sliver took the 800 m run it
+ * merged into - coverage the clearing never chose and never counted (its loss is the struck length at the strike). So a
+ * strike carries the run's length when it was made (`lenM`, its CLIP length - patIdentSeg's, what this is handed), and
+ * a run more than max(2 x lenM, lenM + 50 m) long comes back to be judged. A re-cut's few meters stay struck; a strike
+ * without a length (none is made so now) matches at any length.
+ */
+function isStruckRun(seg, struck){
+  if(!seg) return false;
+  const len = distTo(seg[0], seg[1]);
+  return struck.some(d => distToRunM(d, seg) < 1 && !(d.lenM > 0 && len > Math.max(2 * d.lenM, d.lenM + 50)));
 }
 
 /**
@@ -11052,7 +11080,11 @@ function strikeSelectedRun(){
   const key = patStrikeKey();
   if(!key) return false;
   if(patStruckKey !== key){ patStruck = []; patStruckKey = key; }
-  patStruck.push({lat:patSel.lat, lon:patSel.lon});
+  // ...with the struck run's CLIP length, so a run a rising tide later grows through the point is not taken whole
+  // (isStruckRun). The run is the one the selection names - its coverage midpoint, as every selection reader asks.
+  const k = patClip.findIndex((s, i) => { const m = patCoverMid(i); return m && distTo(m, patSel) < 1; });
+  const id = k >= 0 ? patIdentSeg(k) : null;
+  patStruck.push({lat:patSel.lat, lon:patSel.lon, lenM: id ? distTo(id[0], id[1]) : null});
   patSel = null;
   // The cheap, certain half NOW: the run leaves the picture it was struck from, so the
   // gesture is visibly acknowledged. The turns around it are still the old ones for a
@@ -11082,8 +11114,7 @@ function dropStruckFromPunch(){
   if(!patClip || !struck.length) return;
   const keepC = [], keepL = [];
   for(let k=0;k<patClip.length;k++){
-    const m = patCoverMid(k);
-    if(m && struck.some(d=>distTo(d, m) < 1)) continue;
+    if(isStruckRun(patIdentSeg(k), struck)) continue;    // the CLIP run, as keptRuns matched it
     keepC.push(patClip[k]); keepL.push(patLead[k] || NO_LEAD);
   }
   patClip = keepC; patLead = keepL;
@@ -11122,6 +11153,16 @@ function scheduleRepunch(){
  * `.catch` on the tail, not the head: a punch that throws must not poison the chain and
  * leave every later one waiting on a rejected promise. punchOut has its own try/finally.
  */
+/** One turn of the page's event loop, as a promise - a MESSAGE, not a timer, so a hidden tab's timer throttling (1 s,
+ *  and a minute after five minutes hidden) does not stretch a punch that hands the page back between its joins. */
+const punchYield = (() => {
+  const ch = new MessageChannel(), q = [];
+  ch.port1.onmessage = () => { const r = q.shift(); if(r) r(); };
+  return () => new Promise(r => { q.push(r); ch.port2.postMessage(0); });
+})();
+/** How punchNow's punch hands the page back: after `sliceMs` of joining, `pause`; a punch the chart, the water or the
+ *  pattern moved under while it was paused is run again up to `again` times (punchOut's "again"). */
+const PUNCH_SLICE = {sliceMs: 100, pause: punchYield, again: 3};
 function punchNow(){
   punchInFlight = Promise.resolve(punchInFlight).catch(()=>{}).then(async ()=>{
     // THE HELD INPUTS (the blocker clearing, 2026-11-06): HOW to take them goes to the punch, not the inputs themselves.
@@ -11129,7 +11170,28 @@ function punchNow(){
     // raised or a level moved while the chart was read was not in the cut - the review measured a punch cut at 3 m with
     // the buffer at 25 m, and one at +0.00 m with the level at +0.30 m, both silent. With no hold it answers null and
     // punchOut reads the live inputs exactly as it always has.
-    await punchOut(heldCutAfterRead);
+    //
+    // ⚠⚠ AND THE PUNCH HANDS THE PAGE BACK BETWEEN ITS JOINS (2026-11-06, "the chart page is also freezing up"). Joining
+    // the runs - a turn ladder per reversal, a route round per hop - held the page's one thread for the whole of it: 26 s
+    // of the lab's 224 runs, 11-20 s on his 115 (page_stall in his log), during which the guard, the frame and the
+    // supervisor's heartbeat all stopped (supervisor_lapsed, the other tab taking over). The clearing punches once per
+    // strike, so a clearing was minutes of that. Now the join loop pauses every PUNCH_SLICE.sliceMs; a punch whose inputs
+    // moved while it paused stops there (punchOut says how) and, when the CHART or the WATER moved it rather than the
+    // operator, is run again here - so whatever awaits this promise still gets a finished punch, or a part-way one said.
+    let res;
+    for(let i = 0; i < PUNCH_SLICE.again; i++){
+      res = await punchOut(heldCutAfterRead, PUNCH_SLICE);
+      if(res !== "again") break;
+    }
+    // A punch that stopped part-way: the card's words read NOW, with punchBusy down - a pause may have drawn "still
+    // joining" (review 2026-11-06) - and then why, unless a strike's re-punch is already on its way.
+    if(res === "again" || res === "stopped"){
+      updatePatReadout();
+      if(res === "again") $("#sp_hint").textContent = "Punch Out stopped part-way " + PUNCH_SLICE.again + " times: the "
+                                                    + "chart or the water level kept changing while it joined the runs. Punch Out again.";
+      else if(!patRepunchT) $("#sp_hint").textContent = "Punch Out stopped part-way: the pattern, a setting or a speed "
+                                                      + "changed while it ran.";
+    }
     // ... AND THE RED HOPS PUT TO UPLOAD'S OWN ROUTER BEFORE THE PUNCH COUNTS AS DONE: whatever awaits this promise -
     // Add to plan (flushRepunch), repunchSurvey, the clearing - reads their verdicts, never the moment before them.
     await judgeRedHops();
@@ -11351,7 +11413,9 @@ async function uploadDryRun(){
 }
 
 // ── THE BLOCKER CLEARING ITSELF (2026-11-06) ─────────────────────────────────────────────────────────────────────────
-const clearPause = ms => new Promise(res => setTimeout(res, ms));
+// The pause that SHOWS a run before it goes - and in a hidden tab, where nobody sees it, one turn of the event loop: a
+// hidden tab's timer waits a second at least, and a minute once it has been hidden five minutes, per strike.
+const clearPause = ms => document.hidden ? punchYield() : new Promise(res => setTimeout(res, ms));
 /** Is the punch on the card cut at something other than the hold? (taken before the hold, or the hold moved since) */
 function punchCutStale(){
   const c = patFunnel && patFunnel.cut;
@@ -11394,6 +11458,11 @@ async function startClearing(why, opts){
  * the three corners, the alignment, the boundary; the band and the feature count; the buffer; the chart image's key and
  * counts; the enforce boxes; the depth window. tests/auto_clear.js 36 changes each and reads the words back.
  */
+/** The CHART's fields of a strike key - strikeKeyChange's "the chart was read again" (5-6) and "the chart image was read
+ *  again" (8-9), by the same positions. What a paused punch is run again for (punchOut); the rest is the operator's. */
+function strikeKeyChart(k){ const x = String(k || "").split("|"); return [x[5], x[6], x[8], x[9]].join("|"); }
+/** What a punch reads LIVE at every join besides the chart: the speeds (judgeJoin, roleSpeed) and the approach radius. */
+function punchSpeedSig(){ return JSON.stringify([mission.speeds, V.SPEED_KN, mission.approach_radius_m]); }
 function strikeKeyChange(a, b){
   if(!b) return "the pattern was cleared";
   const x = String(a || "").split("|"), y = String(b).split("|");
@@ -12184,6 +12253,9 @@ function punchRefusal(){
     text: "ADD TO PLAN REFUSED — Punch Out's runs were thrown away when " + patDropped + ": they were cut against "
         + "the chart at the old level. Adding now would commit the pattern UN-punched - its lines as drawn, through "
         + "anything in the way, with no turns between them. Punch Out again."};
+  // A punch still JOINING (it hands the page back between joins - punchNow): not yet a part-way one, and not said as one.
+  if(!patJoined && punchBusy) return {short: "Punch Out is still joining the runs",
+    text: "ADD TO PLAN REFUSED — Punch Out is still joining the runs. Wait for it to finish."};
   if(!patJoined) return {short: "the last Punch Out stopped part-way",
     text: "ADD TO PLAN REFUSED — the last Punch Out stopped part-way, so the turns between these runs were never all "
         + "built, and adding them would hand the boat straight legs where its turns belong. Punch Out again."};
@@ -12641,7 +12713,10 @@ async function commitPattern(){
   // half a second is indistinguishable from one that did nothing at all.
   if(patRepunchT || punchInFlight){
     $("#sp_add").disabled = true;
-    try { await flushRepunch(); }
+    // ...and AGAIN while a newer punch was chained during the wait (review 2026-11-06): a punch now hands the page back
+    // between its joins, so a speed changed meanwhile chains its re-punch (recalcForSpeed) behind the one this waited on,
+    // and that one stops part-way. Bounded: the operator's own changes are what chain one.
+    try { for(let i = 0; i < 5; i++){ const p = punchInFlight; await flushRepunch(); if(!patRepunchT && punchInFlight === p) break; } }
     finally { updatePatReadout(); }
     if(!currentPattern()) return;              // the pattern went while we waited
   }
@@ -17651,7 +17726,7 @@ function extendLead(from, toward, want, ref, ko, buf){
   return {p: first[1], m: distTo(from, first[1])};
 }
 
-async function punchOut(cut){
+async function punchOut(cut, slicer){
   if(punchBusy) return;
   const sp=currentPattern();
   if(!sp){ $("#sp_hint").textContent="Draw a survey pattern first (Survey tab, Draw, then 3 clicks)."; return; }
@@ -18001,7 +18076,32 @@ async function punchOut(cut){
     // For each line-to-line transit: prefer a generated TURN (semicircle or teardrop -
     // either way the ASV rolls onto the next line aligned); else keep straight if clear;
     // else route around; else flag.
+    //
+    // ⚠⚠ HANDED BACK BETWEEN JOINS (`slicer`, punchNow's PUNCH_SLICE - absent, the loop runs straight through as it always
+    // did). While it is paused the page runs, and anything may happen to the punch: the operator edits the pattern or a
+    // setting (patClip set null), strikes a run (patClip filtered and a re-punch scheduled), the water moves past the
+    // cut (applyWaterOffset: patClip null, patDropped said), the chart is read again or its frame moves (patStrikeKey,
+    // nogo.frame). So after every pause the punch asks whether it is still the one on the card and still cut against the
+    // chart it began on, and stops at once if not - before it writes another join into arrays that may no longer be
+    // its own. It leaves patJoined false, so Add to plan refuses the part-way punch (punchRefusal) and the clearing
+    // re-cuts it. "again" when the chart or the water moved it (punchNow runs it again); "stopped" when the operator did.
+    //
+    // ⚠ THE CHART'S PART OF THE KEY, NOT ALL OF IT (review 2026-11-06): patStrikeKey reads the depth boxes' LIVE text, so
+    // a digit typed mid-punch looked like a chart read and re-punched at the half-typed value. The operator's fields
+    // drop the punch through their own change handlers (patClip null), as they always did. ⚠ AND THE SPEEDS: the loop
+    // reads them at every join (judgeJoin, `fly`), so a change mid-punch judged its joins at two speeds and Add to plan,
+    // pressed meanwhile, committed that; a change STOPS it (recalcForSpeed chains the re-punch at the new ones).
+    const myClip = patClip, chartJ = strikeKeyChart(patStrikeKey()), spdJ = punchSpeedSig();
+    let sliceT = slicer ? performance.now() : 0;
     for(let k=0;k<patClip.length-1;k++){
+      if(slicer && performance.now() - sliceT >= slicer.sliceMs){
+        $("#sp_hint").textContent = "Punch Out: joining the runs - " + k + " of " + (patClip.length - 1) + " joins done…";
+        await slicer.pause();
+        const chartMoved = nogo.frame !== ref || strikeKeyChart(patStrikeKey()) !== chartJ;
+        if(patClip !== myClip || chartMoved || punchSpeedSig() !== spdJ)
+          return (patClip === myClip ? chartMoved : !patClip && !!patDropped) ? "again" : "stopped";
+        sliceT = performance.now();
+      }
       let Ap=patClip[k][1], Bp=patClip[k+1][0];
       const hE=azTo(patClip[k][0], patClip[k][1]), hF=azTo(patClip[k+1][0], patClip[k+1][1]);
       const antiParallel = Math.abs(((hF-hE+360)%360)-180) < 50;   // ~reversal (boustrophedon)

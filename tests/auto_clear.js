@@ -149,7 +149,7 @@ const LAND = () => ({ role: "land", props: {}, geometry: { type: "Polygon", coor
   [[-3000, 1000], [3000, 1000], [3000, 2000], [-3000, 2000], [-3000, 1000]].map(([x, y]) => { const p = at(x, y); return [p.lon, p.lat]; })] } });
 
 const PAGE_FUNCS = ["punchOut", "currentPattern", "surveyPattern", "patSourceLines", "boundaryActive", "clipLine",
-  "patStrikeKey", "activeStruck", "keptRuns", "runMid", "extendLead", "runWithLeads", "patCoverSeg", "patCoverMid",
+  "patStrikeKey", "strikeKeyChart", "punchSpeedSig", "activeStruck", "keptRuns", "distToRunM", "isStruckRun", "runMid", "extendLead", "runWithLeads", "patCoverSeg", "patCoverMid",
   "patIdentSeg", "trimEnd", "judgeJoin", "patClipBufM", "patClipKey", "bandWord",
   "makesWayKey", "slowestMakingWayKey", "setMsNow",
   "patLeadTotal", "leadMetres", "leadInM", "leadOutM", "easeLsM", "roleSpeed", "roleSpeedMS", "depthRange",
@@ -172,7 +172,7 @@ const PAGE_DECLS = [/^const NO_LEAD = [^;]*;/m, /^const LEAD_GIVE = [^;]*;/m, /^
   /^let punchMarginSeen = [^;]*;/m, /^const hopVerdicts = [^;]*;/m, /^let clr = [^;]*;/m,
   /^const CLEAR_CAP_STRIKES = [^;]*;/m, /^const CLEAR_CAP_FRAC = [^;]*;/m, /^const CLEAR_STALE_MAX = [^;]*;/m,
   /^const CLEAR_FLASH_MS = [^;]*;/m, /^const clearPause = [^;]*;/m, /^const HOP_ASK_CHUNK = [^;]*;/m,
-  /^let runUnsafe = [^;]*;/m, /^let unblockDone = [^;]*;/m];
+  /^let runUnsafe = [^;]*;/m, /^let unblockDone = [^;]*;/m, /^const PUNCH_SLICE = [^;]*;/m];
 
 function makeWorld(opts) {
   const o = opts || {};
@@ -195,6 +195,8 @@ function makeWorld(opts) {
     + " regionOrder, routeAround, routePlan} = PS;\n"
     + "const {blocked, buildKeepouts, firstBlockAlong, legReasons, effectiveWaterOffset} = C;\n"
     + "const {surveyEntries} = SV;\n"
+    // the punch's pause between joins (PUNCH_SLICE, the page's own): a check puts something to happen DURING it (51-52)
+    + "const punchYield = () => HOOK.pause ? HOOK.pause() : Promise.resolve();\n"
     + PAGE_DECLS.map(decl).join("\n") + "\n"
     + "let pat = {A:null, B:null, C:null, align:0}, patDrag = null, patMoveLast = null, patClip = null, patLead = [], patTrim = [];\n"
     + "let patUnsafe = [], patRed = [], patJoined = false, patDropped = null, patFunnel = null, patRoutes = [], patTransits = [];\n"
@@ -253,7 +255,8 @@ function makeWorld(opts) {
     + " set asv(v){ asv = v; }, set editingSv(v){ editingSv = v; },"
     + " water: (m) => applyWaterOffset({ok: true, offset_m: m, stations: [{dist_km: 2}]}),"
     + " setPat: (A, B, Cc) => { pat = {A, B, C: Cc, align: 0}; },"
-    + " setRed: (r, joined) => { patRed = r; patJoined = joined; } };")(
+    + " setRed: (r, joined) => { patRed = r; patJoined = joined; },"
+    + " slice: PUNCH_SLICE, dropClip: () => { patClip = null; }, get busy(){ return punchBusy; }, clearPause, doc: document };")(
     G, U, S, SRV, T, PS, C, GU, GEOM, SV, $, document, log, HOOK, require("../static/js/coast.js"));
   W.SRV = SRV;
   S.V.SPEED_KN = { low: 1.5, survey: 3.0, high: 6.0 };
@@ -1130,6 +1133,139 @@ const kinds = (w) => w.log.client.map((x) => x.k);
                 && route.length === 1 && route[0].L === "est" && fake.every((r) => r.upload === true),
           () => "hops " + JSON.stringify(hops) + "; route " + JSON.stringify(route) + "; verdicts "
                 + fake.map((r) => String(r.upload)).join(","));
+  }
+  {
+    // 51. THE PUNCH HANDS THE PAGE BACK BETWEEN JOINS (2026-11-06, "the chart page is also freezing up"): punchNow's
+    // punch pauses at every join here (sliceMs 0), the page is told it is still joining while it does, and the punch it
+    // finishes is the one it finishes without pausing
+    const plain = makeWorld({ ready: true });
+    plain.slice.sliceMs = 1e9;
+    await safely(() => plain.punchNow());
+    const p = plain.get();
+    const w = makeWorld({ ready: true });
+    w.slice.sliceMs = 0;
+    const seen = [];
+    w.HOOK.pause = async () => { const r = w.punchRefusal(); seen.push({busy: w.busy, joined: w.get().patJoined, r: r && r.short});
+                                 await sleep(1); };
+    await safely(() => w.punchNow());
+    const g = w.get();
+    const same = JSON.stringify([g.patClip, g.patTransits, g.patRed.map((r) => [r.turn, r.run])])
+              === JSON.stringify([p.patClip, p.patTransits, p.patRed.map((r) => [r.turn, r.run])]);
+    check("51. Punch Out hands the page back between its joins - a pause at each of the " + (p.patClip ? p.patClip.length - 1 : "?")
+          + " joins here, Add to plan saying it is still joining meanwhile - and finishes the same punch as one that never paused",
+          () => p.patJoined && g.patJoined && same && seen.length === p.patClip.length - 1
+                && seen.every((s) => s.busy && !s.joined && s.r === "Punch Out is still joining the runs"),
+          () => "pauses " + seen.length + " " + JSON.stringify(seen[0]) + "; same punch " + same + "; joined " + g.patJoined);
+  }
+  {
+    // 52. ... AND A PUNCH WHOSE INPUTS MOVE WHILE IT PAUSES STOPS THERE: the operator's change (the punch thrown away) is
+    // not punched again; the water moving past the cut, or the chart read again, is - at the new inputs; and one moved
+    // at every attempt stops after PUNCH_SLICE.again of them, saying so, part-way, and Add to plan refuses it
+    const run = async (atPause) => {
+      const w = makeWorld({ ready: true });
+      w.slice.sliceMs = 0;
+      let n = 0, reads = 0;
+      w.HOOK.ensure = async () => { reads++; n = 0; };
+      w.HOOK.pause = async () => { n++; atPause(w, n, reads); };
+      const r = await safely(() => w.punchNow());
+      const g = w.get();
+      return {w, g, reads, err: r.err, hint: w.$("#sp_hint").textContent, refusal: (w.punchRefusal() || {}).short};
+    };
+    const edit = await run((w, n) => { if (n === 2) w.dropClip(); });
+    const tide = await run((w, n, reads) => { if (n === 2 && reads === 1) w.water(0.5); });
+    const chart = await run((w, n, reads) => { if (n === 2 && reads === 1) S.nogo.features = S.nogo.features.concat([FINGER()]); });
+    const tides = await run((w, n, reads) => { if (n === 2) w.water(0.5 * reads); });
+    check("52. a punch whose inputs move while it pauses stops there: an operator's change is not punched again (1 read, no "
+          + "punch, nothing said as a failure); the water past the cut or the chart read again is (2 reads, finished, cut at "
+          + "the new level); moved at every attempt it stops after " + 3 + ", part-way, said, and Add to plan refuses it",
+          () => !edit.err && edit.reads === 1 && edit.g.patClip === null && !/failed/i.test(edit.hint)
+                && !tide.err && tide.reads === 2 && tide.g.patJoined && !tide.g.patDropped && tide.g.patFunnel.cut.waterM === 0.5
+                && !chart.err && chart.reads === 2 && chart.g.patJoined
+                && !tides.err && tides.reads === 3 && !tides.g.patJoined && /part-way 3 times/.test(tides.hint)
+                && !!tides.refusal,
+          () => "edit " + JSON.stringify([edit.reads, edit.g.patClip, edit.hint.slice(0, 60)]) + "; tide "
+                + JSON.stringify([tide.reads, tide.g.patJoined, tide.g.patDropped, tide.g.patFunnel && tide.g.patFunnel.cut])
+                + "; chart " + JSON.stringify([chart.reads, chart.g.patJoined]) + "; every time "
+                + JSON.stringify([tides.reads, tides.g.patJoined, tides.hint.slice(0, 70), tides.refusal]));
+  }
+  {
+    // 53. the pause that shows a run before it goes is a TIMER in a visible tab and one turn of the loop in a hidden one
+    const w = makeWorld();
+    let turns = 0;
+    w.HOOK.pause = async () => { turns++; };
+    w.doc.hidden = true;
+    let t0 = Date.now();
+    await w.clearPause(700);
+    const hiddenMs = Date.now() - t0, hiddenTurns = turns;
+    w.doc.hidden = false;
+    t0 = Date.now();
+    await w.clearPause(300);
+    const shownMs = Date.now() - t0;
+    check("53. the clearing's show-the-run pause waits its 700 ms in a visible tab, and in a HIDDEN one - nobody to see it, "
+          + "and a timer there waits a second or a minute - only one turn of the event loop",
+          () => hiddenTurns === 1 && hiddenMs < 100 && turns === 1 && shownMs >= 280,
+          () => "hidden " + hiddenMs + " ms (" + hiddenTurns + " turn); shown " + shownMs + " ms");
+  }
+
+  {
+    // 54. THE REVIEW'S PAUSES (2026-11-06): what moves under a paused punch, and what the punch then does
+    const run = async (atPause, after) => {
+      const w = makeWorld({ ready: true });
+      w.slice.sliceMs = 0;
+      let n = 0, reads = 0;
+      w.HOOK.ensure = async () => { reads++; n = 0; };
+      w.HOOK.pause = async () => { n++; w.updatePatReadout(); await atPause(w, n, reads); };
+      const r = await safely(() => w.punchNow());
+      const o = {w, reads, err: r.err, hint: w.$("#sp_hint").textContent, joined: w.get().patJoined,
+                 tip: w.$("#sp_add").title, n0: (w.get().patClip || []).length};
+      if (after) await after(w, o);
+      return o;
+    };
+    // the frame moves (a chart read elsewhere): punched again
+    const frame = await run(async (w, n, reads) => { if (n === 2 && reads === 1) S.nogo.frame = Object.assign({}, S.nogo.frame); });
+    // a strike during the pause: NOT punched again at once - the strike's own re-punch follows, and the hint is its
+    let struck = null;
+    const strike = await run(async (w, n, reads) => {
+      if (n === 2 && reads === 1) { const g = w.get(); w.setSel(w.patCoverMid(0)); struck = w.strikeSelectedRun(); }
+    }, async (w, o) => { o.hintAtStop = o.hint; await w.flushRepunch(); o.readsAfter = o.reads; o.after = w.get(); });
+    // a digit typed into Max depth (no change event) during the pause: the punch goes on, at the depth it began with
+    const typed = await run(async (w, n, reads) => { if (n === 2) w.$("#sp_maxdepth").value = "1"; });
+    // the speeds changed during the pause: the punch STOPS (recalcForSpeed chains the re-punch) - not run again itself
+    const speed = await run(async (w, n, reads) => { if (n === 2 && reads === 1) w.mission.speeds = { turn: "low" }; });
+    check("54. under a paused punch: the chart's frame moving punches it again (2 reads, finished); a strike does not (1 "
+          + "read, the strike's re-punch then finishes one run short, its hint left alone); a digit typed into Max depth "
+          + "neither stops nor re-punches it (only the chart's fields of the key count); a speed change STOPS it, said, "
+          + "not punched again; and a stopped punch's card does not still say it is joining",
+          () => !frame.err && frame.reads === 2 && frame.joined
+                && struck === true && strike.reads === 1 && !/stopped part-way/.test(strike.hintAtStop)
+                && strike.after.patJoined && strike.after.patClip.length === frame.n0 - 1
+                && strike.after.patStruck.length === 1 && strike.after.patStruck[0].lenM > 100
+                && !typed.err && typed.reads === 1 && typed.joined
+                && !speed.err && speed.reads === 1 && !speed.joined && /a speed/.test(speed.hint)
+                && !/still joining/.test(speed.tip) && /stopped part-way/.test(speed.tip),
+          () => "frame " + JSON.stringify([frame.reads, frame.joined]) + "; strike " + JSON.stringify([struck, strike.reads,
+                strike.hintAtStop.slice(0, 50), strike.after && strike.after.patJoined, strike.after && strike.after.patClip.length,
+                frame.n0]) + "; typed " + JSON.stringify([typed.reads, typed.joined]) + "; speed "
+                + JSON.stringify([speed.reads, speed.joined, speed.hint.slice(0, 70), speed.tip.slice(0, 60)]));
+  }
+  {
+    // 55. Add to plan pressed during a paused punch, and a speed changed after it (its re-punch chained behind): the
+    // commit waits for the re-punch and adds IT - not the punch judged at two speeds, and not a refusal of the stopped one
+    // (the pier moved 400 m east, clear of the runs: nothing red, so the commit goes through)
+    const w = makeWorld({ ready: true, features: [dock(400, 401, 100, 240)] });
+    w.slice.sliceMs = 0;
+    let n = 0, reads = 0, commit = null;
+    w.HOOK.ensure = async () => { reads++; n = 0; };
+    w.HOOK.pause = async () => {
+      n++;
+      if (n === 2 && reads === 1) { commit = w.commitPattern(); w.mission.speeds = { turn: "low" }; w.punchNow(); }
+    };
+    await safely(() => w.punchNow());
+    await safely(() => commit);
+    check("55. Add to plan pressed mid-punch, then a speed change: the commit waits for the speed's re-punch and adds that "
+          + "one (2 reads, lines committed, nothing refused)",
+          () => reads === 2 && w.mission.lines.length > 0 && !w.log.notes.some((t) => /Not added/.test(t)),
+          () => "reads " + reads + "; lines " + w.mission.lines.length + "; notes " + JSON.stringify(w.log.notes.slice(-2)));
   }
 
   __finished = true;

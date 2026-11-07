@@ -15,8 +15,9 @@
 //   5     where on a plan she reaches it, against the closed form for a run straight away from home;
 //   6     the monitor's decision table (fuel.js rthDecision);
 //   7     the water distance home (home_field.js): never short of the true shortest path, within 3% of it, never
-//         through a blocked corner, and blind where it should be;
-//   8     the page's monitor, lifted out of the page and driven frame by frame: alert and send ONCE, the operator's
+//         through a blocked corner, and blind where it should be; 7d her OWN cell first, never a hop across land to a
+//         cell nearer home, and a lookup that reads a few cells, not the whole reach (the 2.3 s page stall, 2026-11-06);
+//   8    the page's monitor, lifted out of the page and driven frame by frame: alert and send ONCE, the operator's
 //         change after it stands, a point reached while she cannot be sent is sent the frame she can be;
 //   9     the wiring: one estimate of the way home for monitor and card, the monitor caught inside the frame handler,
 //         the build off the page's thread, the rows and the rehearsal row in the markup.
@@ -331,6 +332,43 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
               && HF.fieldDistM(g, db, blk, { e: 1000, n: 1000 }, 50) > 0,
         () => "seed " + (seeds ? seeds[0].d.toFixed(2) + " cells from home" : "none") + "; in the basin "
             + HF.fieldDistM(g, db, blk, { e: 1700, n: 1700 }, 50));
+  // 7d. HER OWN CELL, THEN THE NEAREST - NEVER A SHORTCUT THROUGH LAND, AND NO WHOLE-SQUARE SCAN (2026-11-06, "the chart
+  // page is freezing up"). fieldDistM took the least (field + straight hop) over every cell within the reach, and its
+  // early exit never fired: ~14,600 cells a call at the page's 300 m reach, asked at every step of the mission ahead
+  // (fuelProjection) - 2.3 s of frozen page every 12 s on his 814-waypoint DriX survey. And the least total ran the hop
+  // THROUGH land: a boat beside a thin wall, home on its far side, read the far side's field plus the hop across it.
+  // The field's reads are COUNTED (a Proxy over it), so a whole-square scan cannot hide behind a right answer.
+  {
+    const counted = (arr) => { const c = { n: 0 }; c.arr = new Proxy(arr, { get(t, k) {
+      if (typeof k === "string" && k !== "" && !Number.isNaN(+k)) c.n++;
+      const v = t[k]; return typeof v === "function" ? v.bind(t) : v; } }); return c; };
+    // (a) a 1-cell wall from the bottom to 1800 m, home west of it, the boat 30 m east of it in open water
+    const thin = new Uint8Array(g.W * g.H);
+    for (let y = 0; y < 180; y++) thin[y * g.W + 100] = 1;
+    const dt = HF.homeField(thin, g.W, g.H, HF.homeSeeds(g, thin, home, 100)), boatA = { e: 1033, n: 200 };
+    const ca = counted(dt), byWater = HF.fieldDistM(g, ca.arr, thin, boatA, 100);
+    const truA = Math.hypot(1000 - 200, 1800 - 200) + Math.hypot(boatA.e - 1010, 1800 - boatA.n);
+    const own = HF.cellOf(g, boatA), ownAt = HF.cellCenter(g, own.gx, own.gy);
+    const ownM = dt[own.i] * g.cell + Math.hypot(ownAt.e - boatA.e, ownAt.n - boatA.n);
+    // (b) the boat INSIDE a blocked strip one cell from its west edge, home east of it: the nearest clear cell is west
+    // (round the strip's end), the east edge is 10 cells off and nearer home by water - a hop through the strip
+    const strip = new Uint8Array(g.W * g.H);
+    for (let y = 0; y < 150; y++) for (let x = 60; x < 70; x++) strip[y * g.W + x] = 1;
+    const homeB = { e: 1500, n: 200 }, ds = HF.homeField(strip, g.W, g.H, HF.homeSeeds(g, strip, homeB, 100));
+    const boatB = { e: 605, n: 205 }, cb = counted(ds), inStrip = HF.fieldDistM(g, cb.arr, strip, boatB, 150);
+    const westAt = HF.cellCenter(g, 59, 20), westM = ds[20 * g.W + 59] * g.cell + Math.hypot(westAt.e - boatB.e, westAt.n - boatB.n);
+    const eastAt = HF.cellCenter(g, 70, 20), eastM = ds[20 * g.W + 70] * g.cell + Math.hypot(eastAt.e - boatB.e, eastAt.n - boatB.n);
+    const sq = (2 * Math.ceil(150 / g.cell) + 1) ** 2;
+    check("7d. ... her OWN cell when it reaches home (beside a thin wall: the way round its end, never the far side's field "
+          + "plus a hop through it; the field read for that one cell alone), else the NEAREST clear cell (inside a blocked "
+          + "strip: out its near side, not across it to the side nearer home), the search stopping at the ring that holds it",
+          () => Math.abs(byWater - ownM) < 1e-9 && byWater >= truA - 1 && byWater <= truA * 1.03 && ca.n <= 2
+                && Math.abs(inStrip - westM) < 1e-9 && eastM < westM - 500 && cb.n < sq / 4,
+          () => "beside the wall " + byWater.toFixed(0) + " m (own cell " + ownM.toFixed(0) + ", true " + truA.toFixed(0)
+              + ", straight across " + Math.hypot(boatA.e - home.e, boatA.n - home.n).toFixed(0) + ") reading the field "
+              + ca.n + "x; in the strip " + inStrip.toFixed(0) + " m (west " + westM.toFixed(0) + ", east across it "
+              + eastM.toFixed(0) + ") reading it " + cb.n + "x of a " + sq + "-cell square");
+  }
 }
 
 // ── 8. THE PAGE'S MONITOR, DRIVEN FRAME BY FRAME ──────────────────────────────────────────────────────────────────
