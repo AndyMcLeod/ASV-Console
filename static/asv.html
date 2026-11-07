@@ -1967,6 +1967,20 @@ function routeSpeedKeys(route){
     return roleSpeed("transit"); };
 }
 /**
+ * ONE ANSWER PER LEG FOR ONE WALK (2026-11-06, the ~2 s freeze at Upload). cornerSlowPlan's flownTrack asks
+ * `keyAt` for the leg it is on at EVERY time step, and routeSpeedKeys answers every ask through legIsLine - all the
+ * committed lines, four distTo each. On his 44-line plan that was ~19 M distTo, ~1.55 s of a 2.2 s walk with the page
+ * frozen between the route worker's answer and the post. Kept per leg index, the walk asks each leg once: 2230 ->
+ * 440 ms measured, the walk's result byte-identical. turns.js calls keyAt PURE, and it is never handed anything else.
+ * ⚠ AT doUpload's CALL ONLY, never inside routeSpeedKeys: runLegKeys' table (`_legKeys`, the governor's lead) is held
+ * across an in-place drag of a line's ends - its `sig` names no line geometry - and legIsLine re-reads the lines live
+ * there; a memo inside would keep a dragged line's old key. One walk is one route of one plan, so here it may.
+ */
+function memoLegKeys(keyAt){
+  const seen = new Map();
+  return i => { if(!seen.has(i)) seen.set(i, keyAt(i)); return seen.get(i); };
+}
+/**
  * THE KEY THE GOVERNOR WILL COMMAND ON EACH LEG OF THE ROUTE ABOARD: routeSpeedKeys, with the corner set
  * Upload measured for this route laid over it exactly as speedGovernor reads it (a flagged vertex slows the
  * leg into it and the leg out). `i` indexes `route`, which is the array the vessel's wp_index counts into.
@@ -21786,10 +21800,11 @@ async function doUpload(opts){
     // indexes the uploaded route. So: walk [boat, ...route], then subtract one.
     const walkRoute = [{lat: asv.lat, lon: asv.lon}, ...plan.route];
     // ⚠ AT THE SPEED EACH LEG IS COMMANDED, not at `planKey` everywhere (2026-09-24, see routeSpeedKeys):
-    // planKey stays the CAP the walk steps at and the key a leg falls back to.
+    // planKey stays the CAP the walk steps at and the key a leg falls back to. Each leg's key asked ONCE (memoLegKeys:
+    // the walk asks it every time step, and that was the ~2 s the page froze at Upload).
     const raw = await cornerSlowPlan(walkRoute, nogo.frame, nogo.ko, nogo.buffer || 0, planKey, "low",
                               {approachM: Math.max(0.5, +(mission.approach_radius_m) || 1)},
-                              routeSpeedKeys(walkRoute));
+                              memoLegKeys(routeSpeedKeys(walkRoute)));
     cs = {slow: raw.slow.map(i => i - 1).filter(i => i >= 0),
           unanswered: raw.unanswered.map(i => i - 1).filter(i => i >= 0)}
          || cs;

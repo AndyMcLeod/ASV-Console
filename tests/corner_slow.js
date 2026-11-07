@@ -422,6 +422,49 @@ function boxKo(e0, n0, e1, n1) {
                 && k4 === "transit,survey,turn,turn,survey,low,low,survey,turn,turn,survey"
                 && kHop === NONE + ",transit,transit,transit,survey",
           "10 m, line k marked: " + k10.slice(1).join(" | ") + "; 4 m, line 1 marked: " + k4 + "; a hop: " + kHop);
+    // 14e. ONE ANSWER PER LEG FOR ONE WALK (2026-11-06, the ~2 s freeze at Upload). The walk asks keyAt at every time
+    // step, and the page's keyAt pays legIsLine (every committed line, four distTo) on every ask: ~19 M distTo on his
+    // 44-line plan. doUpload hands the walk memoLegKeys(routeSpeedKeys(walkRoute)). Driven here: the SAME walk result
+    // with and without it, the inner keyAt asked once per leg (a null answer remembered too), and every answer equal
+    // to the raw one, asked in any order. And it is at that call ONLY: runLegKeys' table is kept across an in-place
+    // drag of a line, where legIsLine must be read again - shown below by a drag that changes the raw answer, which
+    // a memo would have kept.
+    // eslint-disable-next-line no-new-func
+    const memoLegKeys = new Function(grabFn("memoLegKeys") + "\nreturn memoLegKeys;")();
+    const counted = () => { const c = { asks: 0, legs: new Set() };
+      c.keyAt = (i) => { c.asks++; c.legs.add(i); return (i === CORNER_I || i === CORNER_I + 1) ? "high" : (i === 0 ? null : "survey"); };
+      return c; };
+    const rawC = counted(), memC = counted();
+    const wRaw = await cornerSlowPlan(route, F, ko, BUF, "survey", "low", undefined, rawC.keyAt);
+    const wMem = await cornerSlowPlan(route, F, ko, BUF, "survey", "low", undefined, memoLegKeys(memC.keyAt));
+    const nullC = counted(), nullK = memoLegKeys(nullC.keyAt);
+    const nulls = [0, 0, 0].map(nullK);
+    const mixed = counted(), mixK = memoLegKeys(mixed.keyAt), order = [3, 1, 2, 1, 3, 0, 2, 5, 1, 4, 4, 0];
+    const sameAnswers = order.every((i) => mixK(i) === counted().keyAt(i));
+    // the drag: a line's end moved in place - same plan, same waypoints, same sig - and the raw table re-reads it
+    mission.lines = [{ a: ll(0, 0), b: ll(0, 100) }, { a: ll(10, 100), b: ll(10, 0) }];
+    mission.waypoints = [ll(0, 0), ll(0, 100), tpt, ll(10, 100)];
+    const rawLive = keysOf(walk), memoHeld = memoLegKeys(keysOf(walk));
+    const before = [rawLive(2), memoHeld(2)];
+    mission.lines[0].b = ll(0, 160);                     // dragged 60 m along: leg 2 is no longer that line
+    const after = [rawLive(2), memoHeld(2)];
+    const upSrc = HH.slice(HH.indexOf("async function doUpload("), HH.indexOf("cs = {slow: raw.slow", HH.indexOf("async function doUpload(")));
+    const uses = (HH.match(/memoLegKeys\(/g) || []).length;
+    check("14e. Upload's walk asks each leg's key ONCE (memoLegKeys): the same walk result, the inner keyAt asked once "
+          + "per leg where the raw walk asks it every step, a null remembered, every answer the raw one in any order - "
+          + "and only at doUpload's call: the governor's table must re-read a line dragged in place, which a memo would not",
+          () => JSON.stringify(wRaw) === JSON.stringify(wMem) && (wMem.slow.includes(CORNER_I) || wMem.unanswered.includes(CORNER_I))
+                && rawC.asks > 4 * rawC.legs.size && memC.asks === memC.legs.size && memC.legs.size === rawC.legs.size
+                && nulls.every((v) => v === null) && nullC.asks === 1
+                && sameAnswers && mixed.asks === new Set(order).size
+                && before.join() === "survey,survey" && after.join() === "transit,survey"
+                && /cornerSlowPlan\(walkRoute,[^;]*memoLegKeys\(routeSpeedKeys\(walkRoute\)\)\);/.test(upSrc)
+                && uses === 2
+                && !/memoLegKeys/.test(grabFn("routeSpeedKeys") + grabFn("runLegKeys") + grabFn("leadFor")),
+          "walk raw " + JSON.stringify(wRaw) + " vs memo " + JSON.stringify(wMem) + "; inner keyAt asked " + rawC.asks
+            + "x raw / " + memC.asks + "x memo over " + memC.legs.size + " legs; nulls " + nulls + " (" + nullC.asks
+            + " ask); mixed order " + mixed.asks + " asks; drag: raw " + before[0] + " -> " + after[0] + ", memo "
+            + before[1] + " -> " + after[1] + "; memoLegKeys( x" + uses);
   }
 }
 

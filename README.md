@@ -2137,6 +2137,14 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    presents is what Upload accepts (`tests/turn_refusal.js` 16–17b, `tests/corner_slow.js`
    14b–14c).
 
+   *And the walk asks each leg's speed once* (2026-11-06). The walk asks for the leg's speed at
+   every time step, and each answer scanned every committed line, so a 44-line plan froze the
+   page for about two seconds between the router's answer and the post. Upload now hands the
+   walk each leg's speed asked once (`memoLegKeys`): the same walk to the last deviation, the
+   freeze about a fifth of what it was. It is used at Upload's call only; the governor's own
+   per-leg table must see a line dragged in place, which a remembered answer would not
+   (`tests/corner_slow.js` 14e).
+
    *And on a hull that slows in gear, the governor slows AHEAD of a slower leg* (2026-10-03,
    Andy: "Model the in-gear slow-down in the sim", then "Lead + walk + sim"). The DriX does not
    shed a commanded cut on the 1.5 kn/s ramp the walk used to assume: measured from her own logs

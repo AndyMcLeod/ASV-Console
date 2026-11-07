@@ -710,6 +710,9 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     // here: these are two-point fixtures with no committed lines, and null is the planKey
     // fallback - the real body is driven in tests/corner_slow.js 14c.
     const routeSpeedKeys = () => () => null;
+    // ... asked once per leg through the page's own memoLegKeys (2026-11-06, the Upload freeze; corner_slow.js 14e)
+    // eslint-disable-next-line no-eval
+    const memoLegKeys = eval("(" + grab("memoLegKeys") + ")");
     let cornerSlow = new Set(), cornerUnanswered = [], cornerPlanKey = "survey";
     // doUpload disables the Upload button for as long as it is measuring corners and
     // restores it in a finally, so the world needs the command-state applier. Recorded
