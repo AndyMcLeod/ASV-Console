@@ -256,7 +256,9 @@ check("7. lines, leads and turns take the standoff; hops and transits try it fir
             // and to the page's own search beside it - tests/route_worker.js)
             && /routePlan\(\{lat:asv\.lat, lon:asv\.lon\}, wps, false, transitStandoffM\(\)\)/.test(H)
             && /const start = \{lat:asv\.lat, lon:asv\.lon\}, std = transitStandoffM\(\), at = surveyEntries\(wps\);/.test(H)
-            && /routePlan\(start, wps, false, std, at\)/.test(H)
+            // (Upload's and the clearing's dry run's search here, since 2026-11-08 with each survey's own legs at the water
+            // it was cut for - `legsAt()`, tests/route_worker.js 13b - and the same `std`)
+            && (H.match(/routePlan\(start, wps, false, std, at, legsAt\(\)\)/g) || []).length === 2
             && /std = transitStandoffM\(\);[\s\S]{0,700}?return routePlan\(from, line, true, std\);/.test(H)
             && (H.match(/\{\.\.\.holdOpts\(\), standoffM: transitStandoffM\(\)\}/g) || []).length === 2
             && !/routePlan\([^)]*patClipBufM\(\)/.test(H) && !/\{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\)\}/.test(H)

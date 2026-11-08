@@ -1099,6 +1099,13 @@ export function keepStandoff(kr, fallback, ref, ko, want){
                chartedShortM: ride ? ride.shortM : (h.chartedShortM || 0)};
   return {route, lane, partial: lane && (how.gaps || mk.wrong > 0), how, marks: kr.marks, keep: shipped.keep};
 }
+/** The model a plan's leg INTO `wp` is routed on when it is a survey's own leg (routePlan's `ropts.svKo`, keyed by the
+ *  survey's id on the waypoint), or null - the chart's own. routePlan records it beside each leg it refuses
+ *  (`unroutableSv`), so the page finds the reason on the model that refused it (asv.html planLegReasons). */
+export function surveyLegKo(ropts, wp){
+  const m = ropts && ropts.svKo;
+  return m && wp && wp.sv != null && Object.prototype.hasOwnProperty.call(m, wp.sv) ? (m[wp.sv] || null) : null;
+}
 // Route an ENTIRE run plan clear of nogo: the approach from `start` (present
 // position) to wp0, plus every inter-waypoint transit. Detour waypoints are
 // inserted where a leg would cross land / a nogo zone. The APPROACH (a transit)
@@ -1117,6 +1124,15 @@ export function keepStandoff(kr, fallback, ref, ko, want){
  * `transitAt` (2026-10-02, sequenced surveys phase 2): a Set of waypoint indexes whose INCOMING leg is a transit too -
  * the leg into each later survey (surveys.js surveyEntries). Routed exactly as the approach is: at the standoff where
  * the water allows, keeping right in a buoyed channel (Rule 9, Andy's call). Absent, nothing changes.
+ *
+ * `ropts.svKo` (2026-11-08): {surveyId: model} - A SURVEY'S OWN LEGS ON THE CHART AT THE WATER IT WAS CUT FOR. A survey
+ * is punched at the lowest water predicted over its flight (asv.html readPunchLevel), and its lines and turns are cut
+ * clear at that level; the hops between them were still routed here on the chart at the water NOW, so a hop routed near
+ * high water ran over water that is shoal by the time she flies it. Each leg inside a survey - not the approach, not
+ * the leg into a later survey: those are transits, routed on the chart at the water now - is routed on that survey's
+ * model (the page's koAtLevel), at the buffer as before. A survey with no entry, a leg into a waypoint with no survey:
+ * the chart's own. ⚠ NOT YET: a transit is flown when she gets there - the leg into a later survey after the surveys
+ * before it, perhaps hours on - and is not judged at the water she will be in then.
  */
 export function routePlan(start, wps, keepRightAll, standoffM, transitAt, ropts){
   const failedRead = chartFailedRefusal();             // a FAILED read routes nothing, not even straight (A3)
@@ -1126,7 +1142,7 @@ export function routePlan(start, wps, keepRightAll, standoffM, transitAt, ropts)
   // THE TRANSIT LEGS ARE LAID ROUND THE VESSELS NOT UNDER WAY (passageKo, 2026-10-07); a pattern's own legs - its
   // coverage lines and the hops between them - are not: a moored ship reconfigures no survey (Andy, 2026-09-25).
   const koT = passageKo(ko);
-  const out=[]; const unroutable=[]; let prev={lat:start.lat, lon:start.lon};
+  const out=[]; const unroutable=[], unroutableSv=[]; let prev={lat:start.lat, lon:start.lon};
   // ANY leg riding a lane makes it true for the plan. Accumulated here rather than read
   // back afterwards: this runs channelLaneRoute once per leg, so a per-call flag would
   // report only whichever leg happened to be last.
@@ -1152,11 +1168,16 @@ export function routePlan(start, wps, keepRightAll, standoffM, transitAt, ropts)
   const owLegs = [];
   wps.forEach((wp, i)=>{
     const transit = keepRightAll || i===0 || !!(transitAt && transitAt.has(i));   // the legs the page routes itself
-    const kL = transit ? koT : ko;                               // (a transit's model holds the vessels not under way)
+    // (a transit's model holds the vessels not under way; a survey's own leg is on its survey's water - `svKo`)
+    const kSv = transit ? null : surveyLegKo(ropts, wp);
+    const kL = transit ? koT : (kSv || ko);
     let leg = legPath(prev, wp, ref, kL, transit ? want : buf);  // the standoff first (2026-09-26)
     let atStandoff = transit && want > buf + 0.05;               // ... and whether the leg was FOUND there
     if(!leg && transit && want > buf){ leg = legPath(prev, wp, ref, kL, buf); if(leg){ insideStandoff++; atStandoff = false; } }
-    if(!leg){ unroutable.push([prev, {lat:wp.lat,lon:wp.lon}]); out.push({lat:wp.lat,lon:wp.lon}); prev=wp; return; }
+    if(!leg){
+      unroutable.push([prev, {lat:wp.lat,lon:wp.lon}]); unroutableSv.push(kSv ? wp.sv : null);
+      out.push({lat:wp.lat,lon:wp.lon}); prev=wp; return;
+    }
     const routerLeg = leg, owChart = {box: nogo.bbox, unread: nogo.unread, edgeM: CHART_EDGE_M};
     let owEntry = null;
     if(transit && owMode && (owMode === "all" || leg.length > 1)){
@@ -1242,7 +1263,10 @@ export function routePlan(start, wps, keepRightAll, standoffM, transitAt, ropts)
   const uncharted = beyondChart([{lat: start.lat, lon: start.lon}, ...out], nogo.bbox, undefined, nogo.unread);
   return {route: out, unroutable, lane, partial, how, insideStandoff, standoffM: want, uncharted, openWater: owLegs,
           moored: mooredPassed([{lat: start.lat, lon: start.lon}, ...out], ref, koT.moored),
-          deep: dfs.length ? deepSaid(dfs, runs) : null};
+          deep: dfs.length ? deepSaid(dfs, runs) : null,
+          // (beside `unroutable`, in its order: the survey whose own chart refused each leg, or null - the chart's own.
+          //  Only with survey charts handed in, so a plan routed without them answers exactly as it always did.)
+          ...(ropts && ropts.svKo ? {unroutableSv} : {})};
 }
 
 // ── A PORT'S SECTION JOINS THE PASSAGE LINE JUST OUTSIDE THE HARBOR (Andy, 2026-10-15) ─────────────────────────────────

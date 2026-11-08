@@ -32,6 +32,11 @@
 //          inside the hold keeps it, past the hold re-cuts it with the strike kept; commit records the CUT level
 //   12b    a clearing started on a punch cut before the hold re-cuts it at the hold before the first strike
 //   13-16  red hops put to Upload's router: refused / passed / asked (said as pending) / a stale answer never on new joins
+//   16b-16g  (2026-11-08) THE WATER THE PUNCH WAS CUT FOR: the red hops asked on the chart at the cut (16b), the verdict
+//          kept while that chart stands (16c), the dry run's survey on it (16d), the refusal's reason and words (16e),
+//          each survey's level (16f), and koAtLevel's keep and its atMost (16g); the re-review's: the chart replaced
+//          between two messages of the hops (16h) or dropped (16l), the words at the water now under a cut (16i), a reason
+//          looked for after the chart was replaced (16j), surveyLegKos' cuts and chart and the floor in the keep (16k)
 //   17-20  the stop rules: the coverage cap (and Keep clearing), no progress, Stop, the pattern changing
 //   21-22  the dry run of Upload: legs mapped to joins and to "outside"; a join only Upload refuses goes back to the strikes
 //   23     the route worker's "hops" op answers with legPath's own verdicts
@@ -69,6 +74,14 @@
 // sandbox, killed by their own suites: Q2 (12i), Q5 and Q6 (12j) in tests/survey_table.js - an Unblock offer for a
 // leg that only ENDS in a survey, and after an Update - and Z1, Z2 (23b's question put to a mutated COPY of
 // route_job.js) - a way round past the read box answered true.
+// THE WATER THE PUNCH WAS CUT FOR (2026-11-08; 51 mutations, page ones on a SIDECAR through ASV_HTML, passage.js and
+// route_job.js ones on a sidecar copy of static/ through ASV_APP, the real files hashed unchanged after; re-run on the
+// review's and the re-review's repairs): 49 killed, by 16b-16l here, route_worker 7d/7e/7f/13b and pause_resume 1z7 -
+// N12 (planLegReasons without its `if(!ko)`) by a crash in 16e's call, legReason handed no chart. Two live:
+//   R19  judgeRedHops' `fresh` forced true - EQUIVALENT: a verdict cached under a model the chart has replaced is keyed by
+//        that model's id, which nothing will ask again.
+//   R6p  doUpload's worker post without `ropts`, run against pause_resume - its world's planOffThread runs the fallback,
+//        so the post is never read there; the same mutant (R6) is killed by route_worker 13b.
 //
 // NOTE: the page's script is <script type="module">, which runs STRICT; these functions are evaluated strict here.
 
@@ -171,7 +184,9 @@ const PAGE_FUNCS = ["punchOut", "currentPattern", "surveyPattern", "patSourceLin
   // ... over the route the punch made, and the held cut's words (the third review, 2026-11-07)
   "turnTimeFactor", "flightOwnM", "punchFlownM", "punchFlightOutgrewRead",
   // ... and Upload's read of the same survey, which must agree with it (5p)
-  "uploadTideRisk", "lineOfLeg", "onLineM"];
+  "uploadTideRisk", "lineOfLeg", "onLineM",
+  // THE RED HOPS AND UPLOAD'S SURVEY LEGS AT THE SURVEY'S OWN WATER (2026-11-08)
+  "koAtLevel", "surveyRouteLevel", "surveyCutM", "surveyLegKos", "atWaterLevel", "planLegReasons", "planLegLevelsSay"];
 const PAGE_DECLS = [/^const NO_LEAD = [^;]*;/m, /^const LEAD_GIVE = [^;]*;/m, /^const MAX_SURVEY_LINES = [^;]*;/m,
   /^const LEAD_MAX_M = [^;]*;/m, /^const REPUNCH_DELAY_MS = [^;]*;/m, /^const TIDE_REBUILD_M = [^;]*;/m,
   /^const TRIM_MAX_M = [^;]*;/m, /^const JUDGE_RUN_M = [^;]*;/m, /^const SPEED_ROLES = [^;]*;/m,
@@ -183,7 +198,8 @@ const PAGE_DECLS = [/^const NO_LEAD = [^;]*;/m, /^const LEAD_GIVE = [^;]*;/m, /^
   /^let runUnsafe = [^;]*;/m, /^let unblockDone = [^;]*;/m, /^const PUNCH_SLICE = [^;]*;/m,
   /^let punchLevel = [^;]*;/m, /^let punchFlown = [^;]*;/m, /^const PUNCH_FLIGHT_SLACK = [^;]*;/m, /^const PUNCH_FLIGHT_REREAD = [^;]*;/m, /^const PUNCH_LEVEL_TTL_MS = [^;]*;/m, /^const PUNCH_LEVEL_SETTLE = [^;]*;/m, /^const PUNCH_LEVEL_RETRY_MS = [^;]*;/m, /^const WATER_WINDOW_MAX_H = [^;]*;/m,
   /^const WATER_SAMPLE_M = [^;]*;/m, /^const WATER_ALONG_MAX_PTS = [^;]*;/m, /^const WATER_ETA_SLACK = [^;]*;/m,
-  /^const WATER_WINDOW_PAD_S = [^;]*;/m, /^const WATER_ALONG_TIMEOUT_MS = [^;]*;/m, /^const LINE_MATCH_M = [^;]*;/m];
+  /^const WATER_WINDOW_PAD_S = [^;]*;/m, /^const WATER_ALONG_TIMEOUT_MS = [^;]*;/m, /^const LINE_MATCH_M = [^;]*;/m,
+  /^const KO_LEVEL_KEEP = [^;]*;/m, /^const koLevelKept = [^;]*;/m];
 
 function makeWorld(opts) {
   const o = opts || {};
@@ -204,7 +220,7 @@ function makeWorld(opts) {
     + "const {turnWithRetry, joinBreaches} = T; const {acrossTrackM} = GEOM; const {slowLaw, slowLeadM} = CO;\n"
     + "const {channelLaneRoute, channelSpanKeepouts, channelTurnKeepouts, junctionKnot, pruneJunctionKnots,"
     + " regionOrder, routeAround, routePlan} = PS;\n"
-    + "const {blocked, buildKeepouts, firstBlockAlong, legReasons, effectiveWaterOffset} = C;\n"
+    + "const {blocked, buildKeepouts, firstBlockAlong, legReason, legReasons, effectiveWaterOffset, nogoDR} = C;\n"
     + "const {surveyEntries} = SV;\n"
     // the punch's pause between joins (PUNCH_SLICE, the page's own): a check puts something to happen DURING it (51-52)
     + "const punchYield = () => HOOK.pause ? HOOK.pause() : Promise.resolve();\n"
@@ -230,7 +246,9 @@ function makeWorld(opts) {
     + "const committedPatternInfo = () => null; const restoreStruckRuns = () => false;\n"
     + "let editingSv = null, cardSv = null; const renderSurveyTable = () => {}; const cardSurveyId = () => null;\n"
     + "let patReverse = false; const runBackwards = (o) => o.slice().reverse().map(s => [s[1], s[0]]);\n"
-    + "const surveySettingsNow = () => null; const replaceSurvey = () => {}; const surveyById = () => null;\n"
+    + "const surveySettingsNow = () => null; const replaceSurvey = () => {};\n"
+    // (the plan's surveys, by id, where a check puts some in: 16e's stamped cut levels)
+    + "const surveyById = (id) => (HOOK.surveys && HOOK.surveys[id]) || null;\n"
     + "const surveyLabel = () => '';\n"
     // ✎ (Unblock loads the survey with it): recorded, and the survey is then the one on the card
     + "const editSurvey = async (id) => { log.edits = (log.edits || []).concat([id]); editingSv = id; };\n"
@@ -243,11 +261,15 @@ function makeWorld(opts) {
     // the route worker and Upload's router: the real ones unless a check puts its own verdict in
     // ⚠ the "hops" job has NO page-thread answer (judgeRedHops hands `() => null`): the worker's own reply is emulated
     // here, as route_job.js gives it - legPath (this sandbox's, so a check's verdict goes in), then the read box
-    + "const workerHops = (pairs) => pairs.map((p) => { const L = legPath(p[0], p[1], nogo.frame, nogo.ko, nogo.buffer);"
+    // (on the model the job stands on - `job.ko`, the chart at the punch's cut level since 2026-11-08 - as the worker is)
+    + "const workerHops = (pairs, ko) => pairs.map((p) => { const L = legPath(p[0], p[1], nogo.frame, ko || nogo.ko, nogo.buffer);"
     + " return !L ? false : (PS.beyondChart([p[0], ...L], nogo.bbox, undefined, nogo.unread) ? null : true); });\n"
-    + "const planOffThread = (job, here, adopt, L) => { (HOOK.lanes = HOOK.lanes || []).push({op: job.op, L, n: job.args.pairs ? job.args.pairs.length : null});"
+    + "const planOffThread = (job, here, adopt, L) => { (HOOK.lanes = HOOK.lanes || []).push({op: job.op, L, n: job.args.pairs ? job.args.pairs.length : null,"
+    + " ko: job.ko || null, svKo: (job.args.ropts && job.args.ropts.svKo) || null});"
     + " return HOOK.planOffThread ? HOOK.planOffThread(job, here)"
-    + " : Promise.resolve(job.op === 'hops' ? workerHops(job.args.pairs) : here()); };\n"
+    + " : Promise.resolve(job.op === 'hops' ? workerHops(job.args.pairs, job.ko) : here()); };\n"
+    // koAtLevel's builder, as this world's chart is built (model(), below) at the level asked
+    + "const nogoModelAt = (m) => buildKeepouts(nogo.frame, nogo.enf, {min: Math.max(V.NOGO_MIN_DEPTH_M, depthRange().min), max: 0}, nogo.features, m);\n"
     + "const legPath = (...a) => { HOOK.asked++; return HOOK.legPath ? HOOK.legPath(...a) : PS.legPath(...a); };\n"
     + "const transitStandoffM = () => nogo.buffer;\n"
     // /api/water/along, as the server answers it: a check puts its own predicted low in (HOOK.low_m); by default a
@@ -270,6 +292,7 @@ function makeWorld(opts) {
     + " strikeKeyChange, forgetClearingStrikes, unblockSurvey, surveysUploadBlocked, noteSurveyUpdated, releasePunchHold,"
     + " liveCut, punchWaterM, refreshPunchLevel, punchLevelFor, punchLevelSay, punchLevelKey, settlePunchLevel, get punchLevel(){ return punchLevel; }, set punchLevel(v){ punchLevel = v; },"
     + " uploadTideRisk, punchFlightM, punchFlownM, patSourceLines,"
+    + " koAtLevel, surveyRouteLevel, surveyCutM, surveyLegKos, planLegReasons, planLegLevelsSay,"
     + " set runUnsafe(v){ runUnsafe = v; }, get editingSv(){ return editingSv; }, setSel: (s) => { patSel = s; },"
     + " get: () => ({pat, patClip, patRed, patJoined, patDropped, patTransits, patUnsafe, patRepunchT, patLead, patTrim,"
     + "               patStruck, patFunnel, punchHold, clr, punchMarginSeen}),"
@@ -839,6 +862,229 @@ const kinds = (w) => w.log.client.map((x) => x.k);
     check("16. an answer about joins a newer punch has replaced never lands on the new ones (they are asked again)",
           () => w4.get().patRed === fresh && fresh.every((r) => r.upload === undefined),
           () => fresh.map((r) => String(r.upload)).join(","));
+  }
+
+  // ── 16b-16g. THE RED HOPS, AND UPLOAD'S SURVEY LEGS, AT THE WATER THE PUNCH WAS CUT FOR (2026-11-08) ──────────────
+  {
+    // a bar charted 0.5 m right across the gap between the two cells: 1.5 m of water at the live +1.00 m, 0.2 m at the
+    // predicted low -0.30 m the punch is cut at - the lines are cut at its edges, and the hop between the cells crosses it
+    const BAR = () => ({ role: "depth_area", cls: "Depth_Area", props: { DRVAL1: 0.5, DRVAL2: 1 }, geometry: { type: "Polygon",
+      coordinates: [[[-3000, 1000], [3000, 1000], [3000, 2000], [-3000, 2000], [-3000, 1000]].map(([x, y]) => { const p = at(x, y); return [p.lon, p.lat]; })] } });
+    const w = makeWorld({ features: [BAR()], hop: true });
+    S.sea.waterOffset = 1.0; S.nogo.builtOffset = 1.0; S.nogo.ko = w.model(); S.nogo.ready = true;
+    const live = S.nogo.ko, seen = [];
+    // Upload's router as a straight leg or none, ON THE MODEL IT IS HANDED - which chart the hop is judged on is the point
+    w.HOOK.legPath = (a, b, f, ko, buf) => { seen.push(ko); return C.firstBlockAlong(a, b, f, ko, buf) ? null : [a, b]; };
+    w.HOOK.low_m = -0.3;
+    await safely(() => w.punchNow());
+    const red = w.get().patRed.filter((r) => !r.turn);
+    const cut = w.get().patFunnel && w.get().patFunnel.cut;
+    const clearLive = red.length ? !C.firstBlockAlong(red[0].a, red[0].b, FRAME, live, S.nogo.buffer) : null;
+    const job = (w.HOOK.lanes || []).filter((l) => l.op === "hops").pop();
+    const lowKo = seen[0];
+    check("16b. THE RED HOP IS JUDGED AT THE WATER THE PUNCH WAS CUT FOR (2026-11-08): a hop over a bar 1.5 m deep at the "
+          + "live +1.00 m and 0.2 m at the predicted low -0.30 m is put to Upload's router on the chart AT -0.30 m - the "
+          + "worker handed that chart - and is a BLOCKER; on the chart now it routed straight ('Upload routes it', amber)",
+          () => cut && cut.waterM === -0.3 && red.length === 1 && red[0].upload === false && clearLive === true
+                && seen.length === 1 && !!lowKo && lowKo !== live && !!job && job.ko === lowKo
+                && w.punchBlockers().length === 1 && S.nogo.ko === live,
+          () => "cut " + JSON.stringify(cut && cut.waterM) + "; red " + red.map((r) => r.run + ":" + r.upload).join(",")
+                + "; straight at the live level clear " + clearLive + "; asked on " + seen.map((k) => k === live ? "live" : "another").join(",")
+                + "; job.ko " + (job ? (job.ko === lowKo ? "the low chart" : job.ko === live ? "live" : String(job.ko)) : "none"));
+    // ⚠ OVER THE SAME CHART (the review, 2026-11-08): this world's applyNogoControls does not rebuild the chart; the
+    // page's does, at the start of every punch (applyNogoControls -> rebuildNogo), so on the page each punch builds its
+    // level's model afresh and asks its red hops afresh - as each punch asked them on the chart before. What this pins is
+    // the model's id lasting while its chart does (the punch's hops, the dry run after them, Upload's surveys at one level)
+    const asked = w.HOOK.asked;
+    await safely(() => w.punchNow());
+    const red2 = w.get().patRed.filter((r) => !r.turn);
+    check("16c. ... and while the chart stands the verdict is KEPT: the same hop at the same level over the SAME chart asks "
+          + "nothing - the chart at a level is kept beside the chart it was built from (koAtLevel), so its id, and the "
+          + "verdicts keyed by it, last as long as that chart does",
+          () => w.HOOK.asked === asked && red2.length === 1 && red2[0].upload === false && seen.length === 1,
+          () => "legPath asked " + asked + " then " + w.HOOK.asked + "; " + red2.map((r) => r.run + ":" + r.upload).join(","));
+    // 16d. the clearing's dry run of Upload: its route job carries the card's survey on the chart at the punch's cut, and
+    // a refusal of that survey's own leg maps back to the join. Upload's router here is routePlan's leg choice, straight
+    // or nothing: each survey's own leg on its `svKo` model, every other leg on the chart's (tests/route_worker.js runs
+    // the real routePlan)
+    w.asv = at(-300, 0);
+    let routeJob = null;
+    w.HOOK.planOffThread = async (job, here) => {
+      if (job.op !== "route") return here();
+      routeJob = job;
+      const svKo = (job.args.ropts && job.args.ropts.svKo) || {};
+      const unroutable = [], unroutableSv = [];
+      let prev = job.args.start;
+      job.args.wps.forEach((p, i) => {
+        const transit = i === 0 || job.args.transitAt.has(i);
+        const k = !transit && p.sv != null && svKo[p.sv] ? svKo[p.sv] : S.nogo.ko;
+        if (C.firstBlockAlong(prev, p, FRAME, k, S.nogo.buffer)) { unroutable.push([prev, p]); unroutableSv.push(k === S.nogo.ko ? null : p.sv); }
+        prev = p;
+      });
+      return {route: job.args.wps, unroutable, unroutableSv};
+    };
+    const d = await w.uploadDryRun();
+    const sk = routeJob && routeJob.args.ropts && routeJob.args.ropts.svKo;
+    check("16d. the clearing's DRY RUN of Upload routes the card's survey on the chart at its punch's cut (`ropts.svKo`, "
+          + "the survey's tag -> the -0.30 m chart): the hop's leg is refused, and mapped to its join",
+          () => !!sk && Object.keys(sk).length === 1 && sk["S?"] === lowKo && d.unchecked === null
+                && JSON.stringify(d.inside) === JSON.stringify([red2[0].run - 1]) && !d.outside.length,
+          () => JSON.stringify(d) + "; svKo " + (sk ? Object.keys(sk).map((k) => k + ":" + (sk[k] === lowKo ? "low" : "other")).join(",") : "none"));
+    w.HOOK.planOffThread = null;
+    // 16e. Upload's refusal: the reason on the chart that refused the leg, and the words saying which water that was
+    const plan = {unroutable: [[red2[0].a, red2[0].b]], unroutableSv: ["S?"]};
+    const lk = {svKo: {"S?": lowKo}, levels: {"S?": -0.3}, base: live};
+    const why = w.planLegReasons(plan, lk), whyLive = w.planLegReasons({unroutable: plan.unroutable, unroutableSv: [null]}, lk);
+    const say = w.planLegLevelsSay(plan, lk);
+    // (each leg by ITS OWN survey, in order: a leg the chart now refused, then the survey's hop)
+    const whyMixed = w.planLegReasons({unroutable: [plan.unroutable[0], plan.unroutable[0]], unroutableSv: [null, "S?"]}, lk);
+    check("16e. UPLOAD'S REFUSAL NAMES WHAT IS IN THE WAY ON THE CHART THAT REFUSED THE LEG - the survey's, at its own water "
+          + "(on the chart now the hop is clear: nothing to name), each leg by its own survey - and its banner says which "
+          + "water that was",
+          () => why.length === 1 && why[0].mode === "leg" && !!why[0].info && whyLive.length === 0 && S.nogo.ko === live
+                && whyMixed.length === 1
+                && say === " S?'s legs are judged at -0.30 m, the water it was cut for (+1.00 m now)."
+                && w.planLegLevelsSay({unroutable: plan.unroutable, unroutableSv: [null]}, lk) === ""
+                && w.planLegLevelsSay(plan, null) === "",
+          () => JSON.stringify({why: why.length, whyLive: whyLive.length, whyMixed: whyMixed.length, say}));
+    // 16i (the re-review, 2026-11-08). The words when the water now is UNDER a survey's cut: surveyRouteLevel routes it at
+    // the water now, and the banner said "the water it was cut for" of that
+    const sayUnder = w.planLegLevelsSay({unroutable: plan.unroutable, unroutableSv: ["S?"]},
+                                        {svKo: {"S?": lowKo}, levels: {"S?": 0.95}, cuts: {"S?": 1.3}, base: live});
+    const sayBoth = w.planLegLevelsSay({unroutable: [plan.unroutable[0], plan.unroutable[0]], unroutableSv: ["A", "B"]},
+                                       {svKo: {A: lowKo, B: lowKo}, levels: {A: -0.3, B: 0.95}, cuts: {A: -0.3, B: 1.3}, base: live});
+    check("16i. ... and where a survey's legs were judged at the WATER NOW, under the level it was cut for, the banner says "
+          + "so - not \"the water it was cut for\" - beside a survey judged at its cut",
+          () => sayUnder === " S?'s legs are judged at +0.95 m, the water now, under the +1.30 m it was cut for."
+                && sayBoth === " A's legs are judged at -0.30 m, the water it was cut for (+1.00 m now); B's legs are judged at "
+                              + "+0.95 m, the water now, under the +1.30 m it was cut for.",
+          () => JSON.stringify({sayUnder, sayBoth}));
+    // 16j (the re-review). A refused leg's reason when the chart was REPLACED while the search ran: the survey's model was
+    // built in the old chart's frame, and legReason reads the frame now - so the level's model of the chart now is asked.
+    // The survey's model here is one the hop is CLEAR on (built at the water now): asked, it would name nothing
+    const clearKo = w.model();
+    const whyKept = w.planLegReasons(plan, {svKo: {"S?": clearKo}, levels: {"S?": -0.3}, base: live});
+    const whyStale = w.planLegReasons(plan, {svKo: {"S?": clearKo}, levels: {"S?": -0.3}, base: {}});
+    check("16j. ... and with the chart replaced since the survey's models were built, the reason is found on the chart NOW "
+          + "at the survey's level (koAtLevel), not on the model built from the old chart; with the chart the same, on that "
+          + "model",
+          () => whyKept.length === 0 && whyStale.length === 1 && whyStale[0].mode === "leg" && S.nogo.ko === live,
+          () => JSON.stringify({kept: whyKept.length, stale: whyStale.length}));
+    // 16f. the level each survey's legs are routed at, and which surveys get a chart of their own
+    w.HOOK.surveys = {S1: {water_m: -0.3}, S2: {water_m: 5}, S3: {}, S4: {water_m: ""}};
+    const lv = [null, "", "abc", -0.3, 2.0, 1.0].map((v) => w.surveyRouteLevel(v));
+    const cm = [{water_m: -0.3}, {water_m: "-0.25"}, {water_m: ""}, {}, null].map((s) => w.surveyCutM(s));
+    const wps = [{sv: "S1"}, {sv: "S1"}, {sv: "S2"}, {sv: "S3"}, {sv: "S4"}, {}];
+    const k1 = w.surveyLegKos(wps), k2 = w.surveyLegKos(wps, {sv: "S2", m: -0.3}), k3 = w.surveyLegKos([{sv: "S2"}, {}]);
+    check("16f. a survey's legs are routed at the level it was CUT at - or the water now where that is lower - and only a "
+          + "survey whose level is not the chart's own gets a chart of its own (none recorded, or above the water now: the "
+          + "chart's); the survey on the card goes at its punch's cut, over its record",
+          () => JSON.stringify(lv) === JSON.stringify([null, null, null, -0.3, 1.0, 1.0])
+                && JSON.stringify(cm) === JSON.stringify([-0.3, -0.25, null, null, null])
+                && k1 && JSON.stringify(Object.keys(k1.svKo)) === '["S1"]' && k1.svKo.S1 === lowKo && k1.levels.S1 === -0.3
+                && k2 && JSON.stringify(Object.keys(k2.svKo).sort()) === '["S1","S2"]' && k2.svKo.S2 === lowKo && k3 === null,
+          () => JSON.stringify({lv, cm, k1: k1 && k1.levels, k2: k2 && k2.levels, k3}));
+    w.HOOK.surveys = null;
+    // 16g. the chart at a level, kept: KO_LEVEL_KEEP levels a chart, and a new chart starts afresh
+    const KEEP = +/^const KO_LEVEL_KEEP = (\d+);/m.exec(H)[1];
+    const same = w.koAtLevel(-0.3) === lowKo, near = w.koAtLevel(0.95) === live && w.koAtLevel(1.09) === live;
+    const fill = [];
+    for (let i = 1; i < KEEP; i++) fill.push(w.koAtLevel(-0.3 + 0.2 * i));
+    const keptAll = fill.every((k, i) => w.koAtLevel(-0.3 + 0.2 * (i + 1)) === k) && w.koAtLevel(-0.3) === lowKo;
+    w.koAtLevel(-0.3 + 0.2 * KEEP);                     // one more level: the oldest goes
+    const dropped = w.koAtLevel(-0.3) !== lowKo;
+    const before = w.koAtLevel(-0.1);
+    S.nogo.ko = w.model();                              // the chart rebuilt (a control, a read, the chart ink)
+    const afresh = w.koAtLevel(-0.1) !== before && w.koAtLevel(-0.1) === w.koAtLevel(-0.1);
+    // (a survey's - `atMost`, the review 2026-11-08: the chart itself only where it was built at or below the level asked;
+    // built 0.05 m above it, it gave the survey's hops 0.05 m more water than its lines were cut at)
+    const chart = S.nogo.ko, up5 = w.koAtLevel(0.95, true), dn5 = w.koAtLevel(1.05, true), at0 = w.koAtLevel(1.0, true);
+    const atMost = up5 !== chart && !!up5 && dn5 === chart && at0 === chart;
+    w.HOOK.surveys = {S5: {water_m: 0.95}};
+    const k5 = w.surveyLegKos([{sv: "S5"}]);
+    const svAtMost = !!k5 && k5.svKo.S5 === up5 && k5.levels.S5 === 0.95;
+    w.HOOK.surveys = null;
+    S.nogo.ready = false;
+    const unready = w.koAtLevel(-0.3) === S.nogo.ko;
+    check("16g. the chart at a level is KEPT: the same model for the same level over the same chart, the chart itself within "
+          + "TIDE_REBUILD_M of its own level, " + KEEP + " levels at most (the oldest dropped), and a rebuilt chart starts "
+          + "afresh; for a SURVEY the chart itself only where it was built at or below the survey's level - never more water",
+          () => same && near && keptAll && dropped && afresh && unready && atMost && svAtMost,
+          () => JSON.stringify({same, near, keptAll, dropped, afresh, unready, atMost, svAtMost}));
+    // 16h (the re-review, 2026-11-08). THE CHART REPLACED BETWEEN TWO OF judgeRedHops' MESSAGES: planOffThread sends the
+    // frame as it is at each message, and the frame moves with the chart - so each message asks on the level's model of
+    // the chart as it is when it goes, and only an answer whose chart still stands is kept. Six hops: two messages
+    S.nogo.ready = true;
+    const chartA = S.nogo.ko = w.model();
+    const hops6 = [0, 1, 2, 3, 4, 5].map((i) => ({run: i + 1, turn: false, a: at(-900 + 300 * i, 900), b: at(-900 + 300 * i, 2100)}));
+    w.setRed(hops6, true);
+    const msgs = []; let chartB = null, swap = true;
+    w.HOOK.planOffThread = async (job) => {
+      if (job.op !== "hops") return null;
+      msgs.push({ko: job.ko, n: job.args.pairs.length, chart: S.nogo.ko});
+      if (swap){ swap = false; S.nogo.ko = chartB = w.model(); }      // a read lands while the first message is out (once)
+      return job.args.pairs.map(() => true);
+    };
+    await safely(() => w.judgeRedHops());
+    const kB = w.koAtLevel(-0.3, true);
+    const each = msgs.length === 2 && msgs[0].n === 4 && msgs[1].n === 2 && msgs[0].chart === chartA && msgs[1].chart === chartB
+                 && !!msgs[0].ko && msgs[0].ko !== chartA && msgs[1].ko === kB && msgs[1].ko !== msgs[0].ko
+                 && hops6.every((r) => r.upload === true);
+    const first = msgs.slice();
+    msgs.length = 0;
+    await safely(() => w.judgeRedHops());
+    const kept = msgs.length === 1 && msgs[0].n === 4 && msgs[0].ko === kB && msgs[0].chart === chartB
+                 && hops6.every((r) => r.upload === true);
+    w.HOOK.planOffThread = null;
+    check("16h. the chart REPLACED between two of judgeRedHops' messages: the second asks on the level's model of the chart "
+          + "as it is then, not the old chart's (whose frame has gone); the answers on the replaced chart are used once, "
+          + "those on the chart that stands are kept - asked again, only the first four go",
+          () => each && kept,
+          () => JSON.stringify({each, kept, first: first.map((x) => ({n: x.n, chart: x.chart === chartA ? "A" : x.chart === chartB ? "B" : "?",
+                                ko: x.ko === kB ? "B@low" : x.ko === chartA ? "A" : "other"})), again: msgs.map((x) => x.n)}));
+    // 16l. ... and the chart DROPPED between two messages (no chart to ask on): what is left is left to Upload (null), and
+    // the judge finishes - nothing stays "pending"
+    const hops6b = hops6.map((r) => ({run: r.run, turn: false, a: at(-950 + 300 * (r.run - 1), 900), b: at(-950 + 300 * (r.run - 1), 2100)}));
+    w.setRed(hops6b, true);
+    let drop = true; msgs.length = 0;
+    w.HOOK.planOffThread = async (job) => {
+      if (job.op !== "hops") return null;
+      msgs.push({n: job.args.pairs.length});
+      if (drop){ drop = false; S.nogo.ready = false; S.nogo.ko = null; }
+      return job.args.pairs.map(() => true);
+    };
+    let threw = null;
+    try { await w.judgeRedHops(); } catch (e) { threw = e; }
+    w.HOOK.planOffThread = null;
+    S.nogo.ready = true; S.nogo.ko = chartB;
+    check("16l. ... and the chart DROPPED between two messages: the rest is left to Upload (null), the judge finishing",
+          () => !threw && msgs.length === 1 && hops6b.slice(0, 4).every((r) => r.upload === true)
+                && hops6b.slice(4).every((r) => r.upload === null),
+          () => JSON.stringify({threw: threw && String(threw), msgs: msgs.length, up: hops6b.map((r) => String(r.upload))}));
+    // 16k (the re-review). surveyLegKos' own record of each cut and of the chart, end to end into the words: S6 cut at
+    // +1.30 m with the water now at +0.50 m (the chart built at +1.00 m) is judged at the water now, and the banner says so;
+    // and the model at a level is the floor's too - loadMission writes the operator's minimum depth without a rebuild
+    S.sea.waterOffset = 0.5;
+    w.HOOK.surveys = {S6: {water_m: 1.3}};
+    const k6 = w.surveyLegKos([{sv: "S6"}, {sv: "S6"}]);
+    const say6 = k6 && w.planLegLevelsSay({unroutable: [[hops6[0].a, hops6[0].b]], unroutableSv: ["S6"]}, k6);
+    w.HOOK.surveys = null;
+    S.sea.waterOffset = 1.0;
+    const operWas = S.V.OPER_MIN_DEPTH_M, atLow = w.koAtLevel(-0.3, true);
+    S.V.OPER_MIN_DEPTH_M = Math.max(S.V.NOGO_MIN_DEPTH_M || 0, (typeof operWas === "number" ? operWas : 0)) + 1;
+    const atDeeper = w.koAtLevel(-0.3, true);
+    S.V.OPER_MIN_DEPTH_M = operWas;
+    const atBack = w.koAtLevel(-0.3, true);
+    check("16k. surveyLegKos records each survey's cut and the chart it built from: a survey cut at +1.30 m with the water "
+          + "now at +0.50 m is judged at +0.50 m and the banner says it is the water now, under its cut; and a raised "
+          + "minimum depth (no rebuild) is a model of its own at the same level",
+          () => !!k6 && k6.levels.S6 === 0.5 && k6.cuts.S6 === 1.3 && k6.base === chartB && !!k6.svKo.S6 && k6.svKo.S6 !== chartB
+                // (this world's surveyLabel is '' - the name itself is pause_resume 1z7's)
+                && /^ [^,]*'s legs are judged at \+0\.50 m, the water now, under the \+1\.30 m it was cut for\.$/.test(say6 || "")
+                && atDeeper !== atLow && atBack === atLow,
+          () => JSON.stringify({k6: k6 && {levels: k6.levels, cuts: k6.cuts, base: k6.base === chartB}, say6,
+                                floorOwn: atDeeper !== atLow, back: atBack === atLow}));
+    S.sea.waterOffset = 0; S.nogo.builtOffset = 0;
   }
 
   // ── 17-20. THE STOP RULES ──────────────────────────────────────────────────────────────────────────────────────────

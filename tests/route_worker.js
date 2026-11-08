@@ -361,6 +361,81 @@ const goto = (from, to, o) => ({ op: "nogo", args: { from, to, opts: o } });
               + JSON.stringify(posts.map((m) => m.models.map((x) => [x.packed, x.bytes, x.xy && x.xy.byteLength]))))
               + "; round trips: " + rt.map((x) => x.name + " " + (x.d || "same")).join(", "));
 
+  // 7d. AN UPLOAD WITH ITS SURVEYS AT THEIR OWN WATER (2026-11-08: doUpload's `ropts.svKo` - surveyLegKos - a survey's own
+  // legs on the chart at the level it was cut for). The water now is +2.5 m (the 1.0 m shoal open, KO2); both surveys were
+  // cut at datum (KO, the shoal shut). The approach and the leg into S2 cross the shoal and are transits: on the chart now,
+  // as they were (and not as at datum, where they go wide of it). S1's own hop crosses it too, and goes ROUND, on S1's
+  // chart. And the worker's plan is the page's own.
+  chart(KO2);
+  const s7 = [LL(-200, -1600), LL(-500, -1600), LL(-500, -800), LL(-300, -1600), LL(-300, -1900)]
+    .map((q, i) => ({ ...q, sv: i < 3 ? "S1" : "S2" }));
+  const start7 = LL(-200, -800), at7 = new Set([3]), ro7 = { svKo: { S1: KO, S2: KO } };
+  const n7 = page.rec.posted.length;
+  const sv7 = await ask({ op: "route", args: { start: start7, wps: s7, keepRightAll: false, standoffM: 12, transitAt: at7, ropts: ro7 } },
+                        () => P.routePlan(start7, s7, false, 12, at7, ro7));
+  const sent7d = page.rec.posted[n7].models.map((m) => m.n), held7d = [...page.routeLanes.cmd.held];
+  const flat7 = P.routePlan(start7, s7, false, 12, at7);           // every leg on the chart now (as before 2026-11-08)
+  const allLow7 = (() => { const keep = nogo.ko; nogo.ko = KO; try { return P.routePlan(start7, s7, false, 12, at7); } finally { nogo.ko = keep; } })();
+  chart(KO);
+  // the route's points between two waypoints (routePlan ends each leg on its waypoint)
+  const legOf = (r, i) => { const ix = (w) => r.route.findIndex((q) => q.lat === w.lat && q.lon === w.lon);
+                            return r.route.slice(i ? ix(s7[i - 1]) + 1 : 0, ix(s7[i]) + 1); };
+  const lens = (r) => s7.map((_, i) => legOf(r, i).length);
+  check("7d. AN UPLOAD WITH ITS SURVEYS AT THEIR OWN WATER (`ropts.svKo`, each survey's chart at its cut): S1's hop over the "
+        + "shoal goes ROUND it on S1's chart at datum, where on the chart now (+2.5 m) it went straight; the approach and the "
+        + "leg into S2 - transits - stay on the chart now, as they were; the worker's plan is the page's own, the survey's model "
+        + "sent for the search and not kept; and a plan routed without `svKo` is as it was (no `unroutableSv`)",
+        () => !sv7.fb && !diff(sv7.w, sv7.d) && Array.isArray(sv7.d.unroutableSv) && sv7.d.unroutableSv.length === 0
+              && sv7.d.unroutable.length === 0 && !("unroutableSv" in flat7)
+              && lens(flat7)[2] === 1 && lens(sv7.d)[2] > 1 && !diff(legOf(sv7.d, 2), legOf(allLow7, 2))
+              && !diff(legOf(sv7.d, 0), legOf(flat7, 0)) && !diff(legOf(sv7.d, 3), legOf(flat7, 3))
+              && !!diff(legOf(sv7.d, 0), legOf(allLow7, 0)) && !!diff(legOf(sv7.d, 3), legOf(allLow7, 3))
+              && sent7d.includes(koCount(KO)) && held7d.length === 1 && held7d[0] === page.rec.posted[n7].keep[0]
+              && page.rec.posted[n7].keep[0] === page.rec.posted[n7].ko.id,
+        () => (diff(sv7.w, sv7.d) || "identical") + "; points a leg - with svKo " + JSON.stringify(lens(sv7.d)) + ", all now "
+              + JSON.stringify(lens(flat7)) + ", all at datum " + JSON.stringify(lens(allLow7)) + "; sent " + JSON.stringify(sent7d)
+              + ", held after " + JSON.stringify(held7d));
+
+  // 7e. ... AND WHAT IT REFUSES IT SAYS WHOSE CHART REFUSED IT (`unroutableSv`, beside `unroutable`, in its order): S1's
+  // hop into the shoal's middle - open at +2.5 m, shut at S1's datum - refused on S1's chart; the leg into S2, a
+  // transit, to a point in the land - refused on the chart now (null, not S2). The page finds each reason on that chart
+  // (planLegReasons), so a transit put down to the survey would be looked for on the wrong one.
+  chart(KO2);
+  const s7e = [{ ...LL(-500, -1600), sv: "S1" }, { ...LL(-150, -1200), sv: "S1" }, { ...LL(-2000, 1500), sv: "S2" }];
+  const at7e = new Set([2]), ro7e = { svKo: { S1: KO, S2: KO } }, start7e = LL(-200, -1800);
+  const e7 = await ask({ op: "route", args: { start: start7e, wps: s7e, keepRightAll: false, standoffM: 12, transitAt: at7e, ropts: ro7e } },
+                       () => P.routePlan(start7e, s7e, false, 12, at7e, ro7e));
+  const flat7e = P.routePlan(start7e, s7e, false, 12, at7e);
+  chart(KO);
+  const ends7e = (r) => r.unroutable.map(([a, b]) => s7e.findIndex((w) => w.lat === b.lat && w.lon === b.lon));
+  check("7e. ... and what it REFUSES it says whose chart refused it (`unroutableSv`, in `unroutable`'s order): S1's hop into "
+        + "the shoal, open now and shut at S1's datum, on S1's chart; the leg into S2 - a transit - into the land, on the "
+        + "chart now (null); the worker's answer the page's own; on the chart now alone only the leg into the land is refused",
+        () => !e7.fb && !diff(e7.w, e7.d) && JSON.stringify(ends7e(e7.d)) === "[1,2]"
+              && JSON.stringify(e7.d.unroutableSv) === '["S1",null]' && JSON.stringify(ends7e(flat7e)) === "[2]",
+        () => (diff(e7.w, e7.d) || "identical") + "; refused legs into " + JSON.stringify(ends7e(e7.d)) + " by "
+              + JSON.stringify(e7.d.unroutableSv) + "; on the chart now alone " + JSON.stringify(ends7e(flat7e)));
+
+  // 7f. A SEARCH ON A MODEL OF ITS OWN LEAVES THE CHART UNSENT, AND NOT COUNTED AS HELD (the review, 2026-11-08). The
+  // punch's red hops go on the chart at the survey's level (`job.ko`), and every punch rebuilds the chart first: the lane
+  // used to set `held` to `keep` - the chart - after such a search, though the worker had never been sent it, and the next
+  // search on the chart sent nothing, was refused, and ran here (the dry run, the ETA rows) or not at all (the automatic
+  // way round a contact). Now: the rebuilt chart, a search on another model, then one on the chart - answered there.
+  const KO4 = build(0), KOL = build(2.5);                  // the chart rebuilt, and a level's model built from it
+  chart(KO4);
+  const n7f = page.rec.posted.length;
+  await page.planOffThread({ op: "route", ko: KOL, args: { start: from, wps: [LL(0, -500)], keepRightAll: true, standoffM: 12 } },
+                           () => { throw new Error("the fallback ran"); });
+  const f7 = await ask(goto(from, up, o1), () => P.planNogoRoute(from, up, o1));
+  const sent7f = page.rec.posted.slice(n7f).map((m) => m.models.map((x) => x.n));
+  const fell7f = page.rec.logs.filter((l) => l.kind === "route_worker" && !l.data.ok).length;
+  chart(KO);
+  check("7f. a search on a model of its OWN (a level's, a section's) does not leave the chart counted as held: the next "
+        + "search on the chart sends it, and the worker - not the page - answers",
+        () => !f7.fb && !diff(f7.w, f7.d) && sent7f.length === 2 && sent7f[0].length === 1 && sent7f[0][0] === koCount(KOL)
+              && sent7f[1].length === 1 && sent7f[1][0] === koCount(KO4),
+        () => "sent per search " + JSON.stringify(sent7f) + "; fell back " + f7.fb + " (" + fell7f + " worker refusals logged)");
+
   // 8. THE PAGE'S THREAD IS FREE while the worker searches - and is not while it searches here (the control).
   const ticks = async (run) => { let n = 0; const iv = setInterval(() => n++, 5); const t0 = Date.now();
     await run(); const ms = Date.now() - t0; clearInterval(iv); return { n, ms }; };
@@ -501,6 +576,37 @@ const goto = (from, to, o) => ({ op: "nogo", args: { from, to, opts: o } });
               && /await supervisorBusy\(\);\s*\n\s*try\{ return here\(\); \}\s*\n\s*finally\{ supPlanEnd = Date\.now\(\); \}/.test(PH),
         () => wiring.filter((w) => !(w.through && w.checks)).map((w) => w.fn + (w.through ? "" : " not through planOffThread")
               + (w.checks ? "" : " not checking withdrawn")).join("; ") || "all eight callers wired");
+  // 13b (2026-11-08). Each survey's own legs at the water it was cut for: Upload asks for them INSIDE its planning (a
+  // wider read is a new chart, and they are built again from it), hands them to the worker AND to the search here, and
+  // finds a refused leg's reason on the chart that refused it; the clearing's dry run routes as Upload does, with the card's
+  // survey at its punch's cut; the red hops are put to the worker on the chart at that cut; and planOffThread sends each.
+  // (the review, 2026-11-08: the search HERE asks for them again - `legsAt()` - since it runs later, on the chart as it is
+  // then; and a survey's chart is the guard's only where that was built at or below its level - koAtLevel's `atMost`)
+  const upS = grab("doUpload"), dryS = grab("uploadDryRun"), jrS = grab("judgeRedHops"), potS = grab("planOffThread");
+  const upPlan = upS.slice(upS.indexOf("await planInsideChart("), upS.indexOf('}, "Upload");'));
+  const wire13b = {
+    uploadInside: /const legsAt = \(\) => \{ lk = surveyLegKos\(wps\); return lk \? \{svKo: lk\.svKo\} : undefined; \};/.test(upS)
+                  && /const ropts = legsAt\(\);/.test(upPlan),
+    uploadBoth: /planOffThread\(\{op: "route", args: \{[^}]*transitAt: at, ropts\}\}/.test(upPlan) && /\(\) => routePlan\(start, wps, false, std, at, legsAt\(\)\)\)/.test(upPlan),
+    uploadReasons: /const reasons=planLegReasons\(plan, lk\);/.test(upS) && /\+ planLegLevelsSay\(plan, lk\)\);/.test(upS) && !/legReasons\(plan\.unroutable\)/.test(upS),
+    dryCard: /const legsAt = \(\) => \{ const lk = surveyLegKos\(wps, \{sv, m: patFunnel && patFunnel\.cut \? patFunnel\.cut\.waterM : null\}\);/.test(dryS)
+             && /const ropts = legsAt\(\);/.test(dryS),
+    dryBoth: /transitAt: at, ropts\}\}/.test(dryS) && /\(\) => routePlan\(start, wps, false, std, at, legsAt\(\)\)/.test(dryS),
+    hopsAtCut: /surveyRouteLevel\(patFunnel && patFunnel\.cut \? patFunnel\.cut\.waterM : null\)/.test(jrS)
+               && /koAtLevel\(lv, true\)/.test(jrS) && /planOffThread\(\{op: "hops", ko: onKo, args: \{pairs\}\}/.test(jrS)
+               && /koAtLevel\(m, true\)/.test(grab("surveyLegKos")),
+    // (the re-review, 2026-11-08: each message asks on the chart as it is when it goes - the frame goes as it is then)
+    hopsEachMessage: /if\(nogo\.ko !== base\)\{[\s\S]{0,200}?onChart\(\);\s*\}\s*const onBase = base, onKo = ko, onMid = mid;/.test(jrS),
+    // the lane counts as held only what the worker held already or was sent (7f)
+    heldTrue: /lane\.held = new Set\(keep\.filter\(\(k\) => lane\.held\.has\(k\) \|\| models\.some\(\(x\) => x\.id === k\)\)\);/.test(potS),
+    sent: /for\(const \[sv, k\] of Object\.entries\(args\.ropts\.svKo\)\) svKo\[sv\] = ref\(k\);/.test(potS),
+  };
+  check("13b. THE WIRING OF EACH SURVEY'S OWN WATER: Upload builds its surveys' charts inside its planning and hands them to "
+        + "the worker and to the search here alike, and finds a refused leg's reason on the chart that refused it, its banner "
+        + "naming the level; the clearing's dry run routes as Upload does, the card's survey at its punch's cut; the red hops "
+        + "go to the worker on the chart at that cut; planOffThread sends each survey's model by reference",
+        () => Object.values(wire13b).every(Boolean),
+        () => Object.entries(wire13b).filter(([, v]) => !v).map(([k]) => k).join(", ") || "all wired");
 
   page.close();
   console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");

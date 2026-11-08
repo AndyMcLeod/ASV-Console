@@ -11633,14 +11633,25 @@ function flushRepunch(){
  * and "pending" while it is asked, which punchRefusal says. A hop never asked (a punch run outside punchNow) stays
  * undefined and is left to Upload too. Before this a red hop passed Add to plan and blocked Upload: on his S1, 5 red
  * hops went into the plan and Upload refused 2 of them - the two legs either side of line 173.
+ * ⚠ ON THE CHART AT THE WATER THE PUNCH WAS CUT FOR (2026-11-08): Upload routes a survey's own legs there (surveyLegKos),
+ * so this asks it there - surveyRouteLevel of the punch's cut, koAtLevel's model, `job.ko` to the worker. Asked on the
+ * chart at the water now, near high water a hop red at the low the survey is flown in read "Upload routes it", amber
+ * and no blocker, and Upload then routed it over the shoal.
  */
 async function judgeRedHops(){
   if(!patClip || !patJoined || !nogo.ready || !nogo.ko) return;
   const hops = patRed.filter(r => !r.turn && r.a && r.b);
   if(!hops.length) return;
-  const ko = nogo.ko, mid = routeKoId(ko), buf = +nogo.buffer || 0;
+  const lv = surveyRouteLevel(patFunnel && patFunnel.cut ? patFunnel.cut.waterM : null), buf = +nogo.buffer || 0;
+  // ⚠ THE MODEL ASKED ON IS THE CHART AS IT IS AT EACH MESSAGE (re-review 2026-11-08). planOffThread sends the frame as it
+  // is when each message goes, and the frame moves with the chart (the centroid of the features read): a chart rebuilt
+  // between messages - an extract read on the way, a wider read - and the old chart's model asked in the new frame is a
+  // chart displaced. So `base`, `ko` and `mid` are taken again whenever the chart has been replaced.
+  let base, ko, mid;
+  const onChart = () => { base = nogo.ko; ko = lv == null ? base : koAtLevel(lv, true); mid = routeKoId(ko); };
+  onChart();
   const pt = p => p.lat.toFixed(7) + "," + p.lon.toFixed(7);
-  const key = r => mid + "|" + buf + "|" + pt(r.a) + ";" + pt(r.b);
+  const key = (r, m = mid) => m + "|" + buf + "|" + pt(r.a) + ";" + pt(r.b);
   const ask = [];
   for(const r of hops){
     const v = hopVerdicts.get(key(r));
@@ -11657,17 +11668,25 @@ async function judgeRedHops(){
     // verdict (null) - the hop is left to Upload, as every red hop was before this.
     for(let s = 0; s < ask.length; s += HOP_ASK_CHUNK){
       const part = ask.slice(s, s + HOP_ASK_CHUNK);
+      if(nogo.ko !== base){
+        // (no chart to ask on now: what is left is left to Upload, as with no worker)
+        if(!nogo.ready || !nogo.ko){ ask.slice(s).forEach(r => { r.upload = null; }); break; }
+        onChart();
+      }
+      const onBase = base, onKo = ko, onMid = mid;
       let res = null;
       try{
         const pairs = part.map(r => [{lat: r.a.lat, lon: r.a.lon}, {lat: r.b.lat, lon: r.b.lon}]);
-        res = await planOffThread({op: "hops", args: {pairs}}, () => null, undefined, "est");
+        res = await planOffThread({op: "hops", ko: onKo, args: {pairs}}, () => null, undefined, "est");
       }catch(e){ res = null; }
       if(patRed !== red) return;               // a newer punch rebuilt the joins while the router answered: it asks again
-      const fresh = nogo.ko === ko;            // an answer about a model since replaced is used once, never cached
+      // an answer about a model since replaced is used once, never cached. The chart is what is replaced: a level's model
+      // is built from it, and its verdicts are keyed by that model's own id (`onMid`)
+      const fresh = nogo.ko === onBase;
       part.forEach((r, i) => {
         const v = Array.isArray(res) && typeof res[i] === "boolean" ? res[i] : null;
         r.upload = v;
-        if(v !== null && fresh){ if(hopVerdicts.size > 4000) hopVerdicts.clear(); hopVerdicts.set(key(r), v); }
+        if(v !== null && fresh){ if(hopVerdicts.size > 4000) hopVerdicts.clear(); hopVerdicts.set(key(r, onMid), v); }
       });
     }
   }
@@ -11789,12 +11808,18 @@ async function uploadDryRun(){
   else m.waypoints = [...m.waypoints, ...tagged];
   const wps = m.waypoints, first = wps.indexOf(tagged[0]);
   const start = {lat: asv.lat, lon: asv.lon}, std = transitStandoffM(), at = surveyEntries(wps);
+  // each survey's own legs on the chart at its own water, as Upload routes them - this one's at its punch's cut
+  // (surveyLegKos: the card's survey is not stamped yet, or stamped with an older cut) - asked again by the search here,
+  // which runs later, on the chart as it is then (doUpload's legsAt)
+  const legsAt = () => { const lk = surveyLegKos(wps, {sv, m: patFunnel && patFunnel.cut ? patFunnel.cut.waterM : null});
+                         return lk ? {svKo: lk.svKo} : undefined; };
+  const ropts = legsAt();
   let plan;
   try{
     // On the BACKGROUND lane (review 2026-11-06): a whole plan's route on the command lane stood in front of any Go-To
     // or RTH pressed while it ran. With no worker it is routed here, as Upload itself would be.
-    plan = await planOffThread({op: "route", args: {start, wps, keepRightAll: false, standoffM: std, transitAt: at}},
-                               () => routePlan(start, wps, false, std, at), undefined, "est");
+    plan = await planOffThread({op: "route", args: {start, wps, keepRightAll: false, standoffM: std, transitAt: at, ropts}},
+                               () => routePlan(start, wps, false, std, at, legsAt()), undefined, "est");
   }catch(e){ return none("the route search failed: " + ((e && e.message) || e)); }
   if(!plan) return none("the route search gave no answer");
   if(plan.uncharted) return none("the route runs past the chart read, which Upload reads over and routes again");
@@ -16200,10 +16225,107 @@ function atWaterLevel(m, fn, ko = koAtLevel(m)){
   finally{ nogo.ko = keep; }
 }
 /** The guard's chart at the level `m` as atWaterLevel plans on it: the chart itself within TIDE_REBUILD_M of the level it
- *  was built at, else one built at `m` - which the route worker is handed in place of the chart (sailSend). */
-function koAtLevel(m){
-  if(!nogo.ready || !nogo.frame || nogo.builtOffset == null || Math.abs(m - nogo.builtOffset) < TIDE_REBUILD_M - 1e-9) return nogo.ko;
-  return nogoModelAt(m);
+ *  was built at, else one built at `m` - which the route worker is handed in place of the chart (sailSend; and Upload's
+ *  survey legs and the punch's red hops, at the water each survey was cut for - surveyLegKos, judgeRedHops).
+ *  `atMost` (a survey's, 2026-11-08 review): the chart itself only where it was built at or BELOW `m` - never one with
+ *  more water than the level asked. A punch cuts its lines and turns at exactly its level, and within TIDE_REBUILD_M
+ *  above it the chart gave its hops up to 0.1 m more water than its lines. (A passage's section keeps the old rule: within
+ *  TIDE_REBUILD_M either way, the chart itself - tests/passage_sail.js 14c.)
+ *  ⚠ KEPT WHILE THE CHART IS THE SAME (2026-11-08): a model built at a level is kept, KO_LEVEL_KEEP levels at most, beside
+ *  the chart it was built from (a WeakMap: gone with that chart). Every change to what the two are built from - the
+ *  features, a control, the structures read off the chart image, a lock's gates - rebuilds the chart (rebuildNogo), and
+ *  a new chart starts afresh: the same rule the route worker's own model cache stands on. So within one chart the
+ *  punch's red hops, the clearing's dry run and Upload's surveys at one level share one model, built once. ⚠ NOT ACROSS
+ *  PUNCHES: every punch begins with applyNogoControls, which rebuilds the chart, so each punch builds its level's model
+ *  afresh and asks its red hops afresh (hopVerdicts keyed by the model), as each punch asked them on the chart before. */
+const KO_LEVEL_KEEP = 3;
+const koLevelKept = new WeakMap();                // the chart -> Map(level -> the model built at it)
+function koAtLevel(m, atMost){
+  if(!nogo.ready || !nogo.frame || !nogo.ko || nogo.builtOffset == null) return nogo.ko;
+  const d = m - nogo.builtOffset;
+  if(Math.abs(d) < TIDE_REBUILD_M - 1e-9 && !(atMost && d < -1e-9)) return nogo.ko;
+  let at = koLevelKept.get(nogo.ko);
+  if(!at){ at = new Map(); koLevelKept.set(nogo.ko, at); }
+  // (and the depth floor: loadMission - a Take over among its callers - writes the operator's minimum depth, which the
+  // model is built at, without rebuilding the chart; a model kept from before would be served at the old floor)
+  const key = (+m).toFixed(3) + "|" + nogoDR().min;
+  let ko = at.get(key);
+  if(!ko){
+    ko = nogoModelAt(m);
+    if(at.size >= KO_LEVEL_KEEP) at.delete(at.keys().next().value);
+    at.set(key, ko);
+  }
+  return ko;
+}
+/**
+ * THE WATER A SURVEY'S OWN LEGS ARE ROUTED AT (2026-11-08): the level it was cut at (`cutM` - its `water_m`, or the
+ * punch's on the card), or the water now where that is lower; null with no level on record (the chart's own, as before).
+ * A survey is cut at the lowest water predicted over its flight (readPunchLevel), its lines and turns clear at that
+ * level - and the hops between them were still judged (judgeRedHops) and routed (routePlan) on the chart at the water
+ * NOW: near high water, a hop the punch found red was "routed by Upload" over water that is shoal by the time she flies
+ * it. The water now wins where it is lower: a survey uploaded after the water fell under its cut (uploadTideRisk asks of
+ * that) is routed at the lower.
+ */
+function surveyRouteLevel(cutM){
+  if(cutM == null || cutM === "" || !Number.isFinite(+cutM)) return null;
+  return Math.min(+cutM, sea.waterOffset || 0);
+}
+/** A survey's cut level on record (`water_m`), or null - one stamped with none, or none at all. */
+function surveyCutM(s){
+  return s && s.water_m != null && s.water_m !== "" && Number.isFinite(+s.water_m) ? +s.water_m : null;
+}
+/**
+ * The chart each survey in the plan `wps` has its own legs routed on (routePlan's `ropts.svKo`): {svKo: {id: model},
+ * levels: {id: m}} for each survey whose level (surveyRouteLevel) is not the chart's own - koAtLevel(m, atMost)
+ * answers the chart itself where it was built at that level or up to TIDE_REBUILD_M below it - or null, with nothing to
+ * route anywhere but on the chart. `card` {sv, m}: the survey on the card, at the level its punch was cut at (the
+ * clearing's dry run: not yet stamped, or stamped with an older cut). Asked where the search runs, page or worker
+ * fallback alike (doUpload, uploadDryRun), so the survey's charts are built from the chart that search reads.
+ */
+function surveyLegKos(wps, card){
+  const svKo = {}, levels = {}, cuts = {}, seen = new Set();
+  for(const w of wps || []){
+    const id = w && w.sv;
+    if(id == null || seen.has(id)) continue;
+    seen.add(id);
+    const c = card && id === card.sv ? card.m : surveyCutM(surveyById(id)), m = surveyRouteLevel(c);
+    if(m == null) continue;
+    const ko = koAtLevel(m, true);
+    if(ko && ko !== nogo.ko){ svKo[id] = ko; levels[id] = m; cuts[id] = +c; }
+  }
+  // `cuts`: the level each was cut at (the banner says when the water now is under it); `base`: the chart they were
+  // built from (planLegReasons asks afresh when it has been replaced since)
+  return Object.keys(svKo).length ? {svKo, levels, cuts, base: nogo.ko} : null;
+}
+/** What blocks each leg routePlan could not route, found on the chart that REFUSED it: a survey's own leg on its
+ *  survey's (`plan.unroutableSv`, surveyLegKos' `lk`), every other leg on the chart's own (legReason). A reason looked
+ *  for on the chart at the water now would find nothing on a hop clear at the water now and shoal at the survey's. */
+function planLegReasons(plan, lk){
+  const svs = (plan && plan.unroutableSv) || [];
+  return ((plan && plan.unroutable) || []).map(([a, b], i) => {
+    const sv = svs[i], ko = sv != null && lk ? lk.svKo[sv] : null;
+    if(!ko) return legReason(a, b);
+    // ⚠ THE CHART REPLACED WHILE THE SEARCH RAN (re-review 2026-11-08: a read landing on the way): legReason reads the
+    // frame as it is now, and the survey's model was built in the old one - so the level's model of the chart now
+    const on = lk.base === nogo.ko ? ko : koAtLevel(lk.levels[sv], true);
+    return atWaterLevel(lk.levels[sv], () => legReason(a, b), on);
+  }).filter(Boolean);
+}
+/** The banner's words for the surveys whose refused legs were judged at their own water, or "" with none: at the level
+ *  each was cut for - or, where the water now is under it (surveyRouteLevel), at the water now, which the words say
+ *  (re-review 2026-11-08: they said "the water it was cut for" of the water now). */
+function planLegLevelsSay(plan, lk){
+  const ids = [...new Set(((plan && plan.unroutableSv) || []).filter(sv => sv != null && lk && lk.levels[sv] != null))];
+  if(!ids.length) return "";
+  const live = sea.waterOffset || 0;
+  const name = id => { const s = surveyById(id); return s ? surveyLabel(s) : id; };
+  const under = id => lk.cuts && Number.isFinite(lk.cuts[id]) && lk.levels[id] < lk.cuts[id] - 1e-9;
+  const atCut = ids.filter(id => !under(id)), atNow = ids.filter(under), say = [];
+  if(atCut.length) say.push(atCut.map(id => name(id) + "'s legs are judged at " + fmtLevel(lk.levels[id])).join(", ")
+                            + ", the water " + (atCut.length > 1 ? "each was" : "it was") + " cut for (" + fmtLevel(live) + " now)");
+  if(atNow.length) say.push(atNow.map(id => name(id) + "'s legs are judged at " + fmtLevel(lk.levels[id])
+                                       + ", the water now, under the " + fmtLevel(lk.cuts[id]) + " it was cut for").join(", "));
+  return " " + say.join("; ") + ".";
 }
 async function doTransit(){
   if(transit.length<1){ flashNote("Draw a transit line first (click the chart)."); return; }
@@ -18001,6 +18123,12 @@ async function planOffThread(job, here, adopt = (out) => out, L = "cmd"){
   };
   const args = {...(job.args || {})};
   if(args.opts && args.opts.ko) args.opts = {...args.opts, ko: ref(args.opts.ko)};
+  // ... and each survey's own model (routePlan's `ropts.svKo`, 2026-11-08: its legs on the water it was cut for)
+  if(args.ropts && args.ropts.svKo){
+    const svKo = {};
+    for(const [sv, k] of Object.entries(args.ropts.svKo)) svKo[sv] = ref(k);
+    args.ropts = {...args.ropts, svKo};
+  }
   const keep = nogo.ko ? [routeKoId(nogo.ko)] : [];          // the chart's own model, and nothing a search brought
   const frameOf = Wd ? Wd.frame : nogo.frame;
   const msg = {id, op: job.op, args, ko: ref(ko), models, keep,
@@ -18018,7 +18146,12 @@ async function planOffThread(job, here, adopt = (out) => out, L = "cmd"){
       // handed over, not copied - 17 ms to pack the Piscataqua chart's against 227-684 ms to clone it (route_job.js packKo)
       msg.models = models.map((x) => ({id: x.id, packed: routePackKo(x.ko)}));
       w.postMessage(msg, msg.models.map((x) => x.packed.xy.buffer));
-      lane.held = new Set(keep);                             // as the worker will hold it once this search is done
+      // AS THE WORKER WILL HOLD IT once this search is done: what it is told to keep that it held already or was sent now.
+      // ⚠ NOT `keep` ITSELF (review 2026-11-08): a search on a model of its own (a level's - the punch's red hops - a
+      // section's, a world's) sends no chart, and a chart rebuilt since the lane's last search was then counted as held -
+      // the next search on it sent nothing, was refused, and ran on this thread (the clearing's dry run, the ETA rows) or
+      // not at all (the automatic way round a contact under way, worker-only).
+      lane.held = new Set(keep.filter((k) => lane.held.has(k) || models.some((x) => x.id === k)));
     }catch(e){ lane.jobs.get(id).done({ok: false, error: "the search could not be sent: " + ((e && e.message) || e)}); }
   });
   if(d.ok !== true){                                         // (the worker's answer, not a command's: took() is for those)
@@ -22218,10 +22351,17 @@ async function doUpload(opts){
   // ASV never crosses land / a nogo zone on a transit.
   // INSIDE THE WATER THE CHART WAS READ OVER (planInsideChart, 2026-10-03): a route that runs past it is read over and
   // planned again, and the plan's own water - each survey's included ({plan: true}) - is read again after a wider extract.
+  // ... AND EACH SURVEY'S OWN LEGS ON THE CHART AT THE WATER IT WAS CUT FOR (2026-11-08, surveyLegKos): asked inside the
+  // planning, so a wider read (a new chart) builds them again from it, and `lk` is the one the plan was routed on. The
+  // search here, if the worker cannot answer, asks again (review 2026-11-08): it runs later, on the chart as it is then,
+  // and survey charts built from the chart at the post would be mixed with it.
+  let lk = null;
+  const legsAt = () => { lk = surveyLegKos(wps); return lk ? {svKo: lk.svKo} : undefined; };
   const plan = await planInsideChart([{lat:asv.lat, lon:asv.lon}, ...wps], {plan: true}, () => {
     const start = {lat:asv.lat, lon:asv.lon}, std = transitStandoffM(), at = surveyEntries(wps);
-    return planOffThread({op: "route", args: {start, wps, keepRightAll: false, standoffM: std, transitAt: at}},   // the route worker
-                         () => routePlan(start, wps, false, std, at));
+    const ropts = legsAt();
+    return planOffThread({op: "route", args: {start, wps, keepRightAll: false, standoffM: std, transitAt: at, ropts}},   // the route worker
+                         () => routePlan(start, wps, false, std, at, legsAt()));
   }, "Upload");
   if(plan.withdrawn) return;          // a Stop pressed while it planned (planInsideChart says so); the finally puts the button back
   // ⚠ AND THE LEG INTO EACH LATER SURVEY IS A TRANSIT (sequenced surveys phase 2, 2026-10-02): routed as the approach
@@ -22266,14 +22406,16 @@ async function doUpload(opts){
     // onward Start is LIVE and runs the OLD plan while this branch draws the new blocked one.
     // That is a real, unfixed cost of drawing here, written down rather than explained away.
     runRoute = plan.route; runUnsafe = unsafe; setPlanIntent("survey", plan, plan.route);
-    const reasons=legReasons(unsafe); setViolations(reasons); render();
+    // (each refused leg's reason found on the chart that refused it: a survey's own at its own water - planLegReasons)
+    const reasons=planLegReasons(plan, lk); setViolations(reasons); render();
     // ... AND WHERE THE REFUSED LEGS ARE A SURVEY'S, ITS ROW OFFERS "Unblock" (2026-11-06): ✎, Punch Out and the clearing.
     const svB = [...surveysUploadBlocked()].map(id => surveyById(id)).filter(Boolean);
     showBanner(unsafe.length+" transit(s) blocked by "+kindsSummary(reasons)+" with NO clear detour (highlighted) — UPLOAD BLOCKED. Reposition the boat or edit the plan, then Upload again."
                + (svB.length ? " " + svB.map(s => surveyLabel(s)).join(", ") + (svB.length > 1 ? " hold" : " holds") + " blocked legs between "
                   + (svB.length > 1 ? "their" : "its") + " own lines: Unblock on " + (svB.length > 1 ? "their rows" : "its row")
                   + " strikes the lines beside them off one at a time and checks Upload's route, then press Update and Upload."
-                  : ""));
+                  : "")
+               + planLegLevelsSay(plan, lk));
     renderSurveyTable();
     flashNote("Upload blocked: "+unsafe.length+" transit(s) — "+kindsSummary(reasons)+".");
     return;

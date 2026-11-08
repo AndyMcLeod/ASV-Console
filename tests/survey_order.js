@@ -259,11 +259,15 @@ check("8. Upload routes mission.waypoints IN ORDER from the fix, laning only leg
             // was read over, read again and re-planned when the route runs past it (planInsideChart, 2026-10-03)
             // (in the route worker since 2026-10-12, and on the page beside it if it cannot answer: tests/route_worker.js 2)
             && /const plan = await planInsideChart\(\[\{lat:asv\.lat, lon:asv\.lon\}, \.\.\.wps\], \{plan: true\}, \(\) => \{\s*\n\s*const start = \{lat:asv\.lat, lon:asv\.lon\}, std = transitStandoffM\(\), at = surveyEntries\(wps\);/.test(upload)
-            && /planOffThread\(\{op: "route", args: \{start, wps, keepRightAll: false, standoffM: std, transitAt: at\}\},[^\n]*\n\s*\(\) => routePlan\(start, wps, false, std, at\)\);/.test(upload)
+            // (2026-11-08: with each survey's own legs on the chart at the water it was cut for - `ropts`, surveyLegKos -
+            // to the worker and to the search here alike, the search here asking again: tests/route_worker.js 7d, 13b)
+            && /planOffThread\(\{op: "route", args: \{start, wps, keepRightAll: false, standoffM: std, transitAt: at, ropts\}\},[^\n]*\n\s*\(\) => routePlan\(start, wps, false, std, at, legsAt\(\)\)\);/.test(upload)
             && /cmd\("\/api\/cmd\/upload", \{route: plan\.route,/.test(upload)
             // (2026-10-07: a transit leg in passageKo's model - the vessels not under way in it - a pattern's own legs in
             // the chart's alone, `ko`)
-            && /wps\.forEach\(\(wp, i\)=>\{/.test(routePlan) && /const kL = transit \? koT : ko;/.test(routePlan)
+            // (2026-11-08: a survey's own leg on its survey's chart where one is handed in - `kSv`, null for a transit)
+            && /wps\.forEach\(\(wp, i\)=>\{/.test(routePlan) && /const kSv = transit \? null : surveyLegKo\(ropts, wp\);/.test(routePlan)
+            && /const kL = transit \? koT : \(kSv \|\| ko\);/.test(routePlan)
             && /legPath\(prev, wp, ref, kL, transit \? want : buf\)/.test(routePlan)
             && /const transit = keepRightAll \|\| i===0 \|\| !!\(transitAt && transitAt\.has\(i\)\);/.test(routePlan)
             && /if\(transit\)\{/.test(routePlan)

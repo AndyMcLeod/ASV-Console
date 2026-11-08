@@ -2044,7 +2044,9 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    **Upload's own router** as soon as the punch finishes (since 2026-11-06; until then it
    was left for Upload to find). If that router finds a way round, the hop is redrawn
    **amber** and passes. If it cannot, Add to plan is refused for that hop as well,
-   because Upload would refuse the plan.
+   because Upload would refuse the plan. Since 2026-11-08 the router is asked on the chart
+   at the water the punch was cut for, which is the chart Upload routes the survey's own legs
+   on.
 
    ⚠ Until 2026-09-16 **nothing stopped a red reversal being added and uploaded**: the red
    was not carried into the plan, and at Upload the straight leg left between the two
@@ -2364,10 +2366,30 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    water* names each one, its cut level and that low. Only points with a station near them
    count. With nothing that could be read, it is judged against the water now and says so.
    Cancel sends nothing, and the note says which surveys to punch again. A survey cut before
-   this change is judged the same way. *Not yet:* the red hops Upload's router judges, and the
-   hops Punch Out checks against it, are still judged at the water now. And chart datum stands
-   in when no station answers, as it does for a passage's sections, so a tide predicted below
-   chart datum is not allowed for then.
+   this change is judged the same way. *Not yet:* chart datum stands in when no station
+   answers, as it does for a passage's sections, so a tide predicted below chart datum is not
+   allowed for then.
+
+   *A survey's own legs at the water it was cut for (2026-11-08).* Punch Out cut the lines and
+   turns at the survey's low, but Upload still routed the hops between them, and Punch Out
+   still asked Upload's router about its red hops, on the chart at the water now. Near high
+   water a hop that was clear now and shoal at the low read "Upload routes it" (amber, no
+   blocker), and Upload then routed it over the shoal. Now Upload routes each survey's own
+   legs on the chart at the level that survey was cut at (its recorded `water_m`, or the water
+   now if that is lower), and Punch Out asks about its red hops on the same chart. The clearing's
+   dry run of Upload does the same for the survey on the card. A survey is routed on the
+   guard's own chart only when that chart was drawn at or below the survey's level, never on
+   one drawn at higher water. The chart at a level is built once for each chart the guard
+   draws (three levels at most) and shared by Punch Out's question, the dry run and an Upload
+   pressed before the chart changes. Every punch redraws the guard's chart, so each punch,
+   and each strike of a clearing, builds its level again and asks its red hops again. A leg
+   refused at a survey's level is highlighted where it is blocked at that level, and the
+   banner says which level that was, or that it was the water now when that has fallen under
+   the survey's cut.
+   *Not yet:* the approach and the leg into each later survey are transits, routed at the water
+   now, not at the water she will be in when she flies them; so is a leg into a waypoint that
+   belongs to no survey. A survey that Upload asked about (its low under its cut) and that you
+   upload as it is goes at its cut or the water now, not at the low that question found.
 
    *Punch Out no longer freezes the page.* Joining the runs (a turn ladder for each
    reversal, a route round each hop) used to hold the page for the whole punch, 10–20 s

@@ -95,10 +95,18 @@ function modelOf(ref){
 function withKo(opts){
   return opts && opts.ko && opts.ko.id != null ? {...opts, ko: modelOf(opts.ko)} : opts;
 }
+// ... and each survey's own model (routePlan's `ropts.svKo`: a survey's legs on the chart at the water it was cut for,
+// 2026-11-08), the same way: a reference to one sent beside the chart's.
+function withSvKo(ropts){
+  if(!ropts || !ropts.svKo) return ropts;
+  const svKo = {};
+  for(const [sv, r] of Object.entries(ropts.svKo)) svKo[sv] = r && r.id != null ? modelOf(r) : r;
+  return {...ropts, svKo};
+}
 
 function run(op, a){
   if(op === "nogo") return planNogoRoute(a.from, a.to, withKo(a.opts));
-  if(op === "route") return routePlan(a.start, a.wps, a.keepRightAll, a.standoffM, a.transitAt, a.ropts);
+  if(op === "route") return routePlan(a.start, a.wps, a.keepRightAll, a.standoffM, a.transitAt, withSvKo(a.ropts));
   // A drawn transit and a passage's section: where she will hold (holdTarget), then the route to it - one search,
   // as the page's own closure runs them, and the hold point back with the plan.
   if(op === "holdRoute"){

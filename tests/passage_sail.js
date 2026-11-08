@@ -1013,6 +1013,8 @@ console.log("The passage, sailed:");
       "const foldChartInk = (ko) => { w.inked++; ko.inked = true; };",
       // nogoModelAt builds from modelFeatures since 2026-10-18 (less a waived lock's gates): the real one, none waived
       "let lockWaiver = null; const lockFeatureKey = (f) => String(f);", grab("modelFeatures"),
+      // (a level's model is kept while the chart is the same, 2026-11-08: koAtLevel's own cache)
+      decl("KO_LEVEL_KEEP"), /^const koLevelKept = [^;]*;/m.exec(H)[0],
       grab("nogoModelAt"), grab("koAtLevel"), grab("atWaterLevel"), "return atWaterLevel;"].join("\n");
     return { w, at: new Function("w", src)(w) };
   };

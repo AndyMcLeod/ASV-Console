@@ -688,7 +688,8 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
       if(reply === "race"){ runRoute = [{lat: 9, lon: 9}]; setPlanIntent("escape"); }
       return Promise.resolve({ ok: true, state: {} }); };
     const flashNote = (m) => unotes.push(m), showBanner = (m) => banners.push(m);
-    const render = () => {}, setViolations = () => {}, clearViolation = () => {};
+    const violatedAll = [];                    // what Upload's refusal highlights (1z7)
+    const render = () => {}, setViolations = (r) => { violatedAll.push(r); }, clearViolation = () => {};
     // doUpload measures where the HULL goes at every corner of the routed plan since
     // 2026-09-19 (tests/corner_slow.js), so the function's new dependencies have to exist
     // in this scope like the rest of its world. The REAL cornerSlowPlan is used rather
@@ -736,9 +737,14 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     // 1y: a route that runs past the water the chart was read over (`uncharted`, as routePlan returns one)
     let pastNext = null, violated = null;
     const setViolation = (r) => { violated = r || null; };
-    const routePlan = (start, wps) => (routedAfterCover = covered !== null, { route: wps.map((p) => ({ lat: p.lat, lon: p.lon }))
-                                                   .concat(detour ? [{ lat: 43.085, lon: -70.70 }] : []),
-                                          unroutable: [], degraded: !nogo.ready, uncharted: pastNext ? pastNext() : null });
+    // (1z7: handed a survey's chart - `ropts.svKo` - it refuses that survey's first leg on it, as routePlan does: in
+    // `unroutable`, and its survey in `unroutableSv`; with none, it refuses nothing, as before)
+    let routedOpts = null;
+    const routePlan = (start, wps, kr, std, at, ropts) => (routedAfterCover = covered !== null, routedOpts = ropts || null, {
+      route: wps.map((p) => ({ lat: p.lat, lon: p.lon })).concat(detour ? [{ lat: 43.085, lon: -70.70 }] : []),
+      unroutable: ropts && ropts.svKo ? [[wps[0], wps[1]]] : [],
+      ...(ropts && ropts.svKo ? { unroutableSv: [wps[1].sv] } : {}),
+      degraded: !nogo.ready, uncharted: pastNext ? pastNext() : null });
     const guiConfirm = (title, msg, opts) => { asked = { title, msg, opts }; return Promise.resolve(answer); };
     // ⚠ RECORDS, DOES NOT SWALLOW (2026-09-22). doUpload now covers the water the plan will
     // use before it routes, the way every other commanded motion does. A stub that just
@@ -800,6 +806,25 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     const snotes = [], showNote = (m) => snotes.push(m);    // "reading the water..." while uploadTideRisk reads (2026-11-07)
     // eslint-disable-next-line no-eval
     const fmtLevel = eval("(" + grab("fmtLevel") + ")");
+    // EACH SURVEY'S OWN LEGS AT THE WATER IT WAS CUT FOR (2026-11-08): the page's own surveyLegKos and the refusal's
+    // reasons, on this world's chart - it has no frame, so every survey's chart is the chart itself (koAtLevel) and the
+    // plan is routed as before. The routing at a survey's own water is driven in tests/route_worker.js 7d and
+    // tests/auto_clear.js 16b-16g.
+    // (1z7 puts its own answer in for surveyLegKos - `svLegs` - and for legReason - `reasonHook` - on a chart of its own)
+    let svLegs = null, reasonHook = null;
+    const sea = { waterOffset: 0 }, legReason = (a, b) => reasonHook ? reasonHook(a, b) : null;
+    // eslint-disable-next-line no-eval
+    const [surveyCutM, surveyRouteLevel, koAtLevel, surveyLegKosPage, atWaterLevel, planLegReasons, planLegLevelsSay] =
+      ["surveyCutM", "surveyRouteLevel", "koAtLevel", "surveyLegKos", "atWaterLevel", "planLegReasons", "planLegLevelsSay"]
+        .map((f) => eval("(" + grab(f) + ")"));
+    const surveyLegKos = (wps, card) => svLegs ? svLegs(wps, card) : surveyLegKosPage(wps, card);
+    // Upload's refusal offers Unblock for a survey's own blocked legs (the page's own), and redraws the survey table
+    let unblockDone = { of: null, sv: null }; const renderSurveyTable = () => {};
+    // eslint-disable-next-line no-eval
+    const _eqLL = eval("(" + /^const _eqLL=([^;]*);/m.exec(H)[1] + ")");
+    // eslint-disable-next-line no-eval
+    const surveysUploadBlocked = eval("(" + grab("surveysUploadBlocked") + ")");
+    // eslint-disable-next-line no-eval
     const doUpload = eval("(" + grab("doUpload") + ")");
     const up = async (setup) => { calls.length = 0; unotes.length = 0; banners.length = 0; asked = null;
                                   runRoute = null;
@@ -983,6 +1008,31 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
           () => asked === null && calls.length === 1 && clientLog.length === 0,
           () => "asked " + JSON.stringify(asked) + "; sent " + calls.length + "; log " + JSON.stringify(clientLog));
     tideRisk = null;
+    // 1z7. A SURVEY'S OWN LEG REFUSED AT THE WATER IT WAS CUT FOR (2026-11-08; the review: this branch was pinned by its
+    // text alone). This world's chart has no frame, so the page's surveyLegKos answers no survey chart: one is put in -
+    // S1's at -0.30 m. Upload hands it to routePlan (`ropts.svKo`), which refuses S1's leg on it; the reason is looked for
+    // on S1's chart - the hook answers one only there, as a hop clear at the water now would - the banner names the level
+    // and offers Unblock, and nothing is sent.
+    {
+      const LOWKO = { lowChart: true }, keptM = mission;
+      svLegs = () => ({ svKo: { S1: LOWKO }, levels: { S1: -0.3 }, cuts: { S1: -0.3 }, base: nogo.ko });
+      reasonHook = () => nogo.ko === LOWKO ? { mode: "leg", info: { kind: "Depth area 0.5 m" }, at: { lat: 43.0805, lon: -70.71 } } : null;
+      mission = { ...mission, surveys: [{ id: "S1", no: 1, name: "Ledge", water_m: -0.3 }],
+                  waypoints: [{ lat: 43.08, lon: -70.71, sv: "S1" }, { lat: 43.081, lon: -70.71, sv: "S1" }] };
+      violatedAll.length = 0;
+      await up(() => { nogo = { ready: true, busy: false, band: "enc_harbour" }; tideRisk = null; answer = false; });
+      const said = banners.join(" | "), hl = violatedAll.slice(), handed = routedOpts;
+      svLegs = null; reasonHook = null; mission = keptM;
+      check("1z7. a survey's own leg refused on the chart at the water it was CUT for is BLOCKED: routePlan is handed that "
+            + "survey's chart, the reason is the one found ON it (on the chart now there is none), the banner names the "
+            + "level it was judged at and offers Unblock, and nothing is sent",
+            () => calls.length === 0 && !!handed && !!handed.svKo && handed.svKo.S1 === LOWKO
+                  && hl.length === 1 && hl[0].length === 1 && hl[0][0].info.kind === "Depth area 0.5 m"
+                  && /UPLOAD BLOCKED/.test(said) && /S1 Ledge holds blocked legs between its own lines: Unblock on its row/.test(said)
+                  && / S1 Ledge's legs are judged at -0\.30 m, the water it was cut for \(\+0\.00 m now\)\.$/.test(said),
+            () => "sent " + calls.length + "; handed " + JSON.stringify(handed && Object.keys(handed.svKo || {}))
+                  + "; highlighted " + JSON.stringify(hl) + "; banner: " + said);
+    }
   // ── 1z3-1z6. uploadTideRisk ITSELF (2026-11-07): the page's own body, its read stubbed ─────────────────────────────
   {
     const reads = [];
