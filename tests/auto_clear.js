@@ -163,7 +163,15 @@ const PAGE_FUNCS = ["punchOut", "currentPattern", "surveyPattern", "patSourceLin
   "renderClearRow", "punchOutPressed", "routeKoId",
   // the review's repairs (2026-11-06)
   "heldCutAfterRead", "releasePunchHold", "strikeKeyChange", "forgetClearingStrikes", "unblockSurvey",
-  "surveysUploadBlocked", "noteSurveyUpdated"];
+  "surveysUploadBlocked", "noteSurveyUpdated",
+  // THE WATER A SURVEY IS PUNCHED AT (2026-11-07): the survey's predicted low, read by the real read (a fetch stub)
+  "liveCut", "punchWaterM", "punchLevelSay", "fmtLevel", "refreshPunchLevel", "readPunchLevel", "punchLevelKey",
+  "punchFlightM", "flightWindow", "punchPreM", "waterAlongRead", "samplePts", "sectionLevel",
+  "punchLevelFor", "settlePunchLevel",
+  // ... over the route the punch made, and the held cut's words (the third review, 2026-11-07)
+  "turnTimeFactor", "flightOwnM", "punchFlownM", "punchFlightOutgrewRead",
+  // ... and Upload's read of the same survey, which must agree with it (5p)
+  "uploadTideRisk", "lineOfLeg", "onLineM"];
 const PAGE_DECLS = [/^const NO_LEAD = [^;]*;/m, /^const LEAD_GIVE = [^;]*;/m, /^const MAX_SURVEY_LINES = [^;]*;/m,
   /^const LEAD_MAX_M = [^;]*;/m, /^const REPUNCH_DELAY_MS = [^;]*;/m, /^const TIDE_REBUILD_M = [^;]*;/m,
   /^const TRIM_MAX_M = [^;]*;/m, /^const JUDGE_RUN_M = [^;]*;/m, /^const SPEED_ROLES = [^;]*;/m,
@@ -172,7 +180,10 @@ const PAGE_DECLS = [/^const NO_LEAD = [^;]*;/m, /^const LEAD_GIVE = [^;]*;/m, /^
   /^let punchMarginSeen = [^;]*;/m, /^const hopVerdicts = [^;]*;/m, /^let clr = [^;]*;/m,
   /^const CLEAR_CAP_STRIKES = [^;]*;/m, /^const CLEAR_CAP_FRAC = [^;]*;/m, /^const CLEAR_STALE_MAX = [^;]*;/m,
   /^const CLEAR_FLASH_MS = [^;]*;/m, /^const clearPause = [^;]*;/m, /^const HOP_ASK_CHUNK = [^;]*;/m,
-  /^let runUnsafe = [^;]*;/m, /^let unblockDone = [^;]*;/m, /^const PUNCH_SLICE = [^;]*;/m];
+  /^let runUnsafe = [^;]*;/m, /^let unblockDone = [^;]*;/m, /^const PUNCH_SLICE = [^;]*;/m,
+  /^let punchLevel = [^;]*;/m, /^let punchFlown = [^;]*;/m, /^const PUNCH_FLIGHT_SLACK = [^;]*;/m, /^const PUNCH_FLIGHT_REREAD = [^;]*;/m, /^const PUNCH_LEVEL_TTL_MS = [^;]*;/m, /^const PUNCH_LEVEL_SETTLE = [^;]*;/m, /^const PUNCH_LEVEL_RETRY_MS = [^;]*;/m, /^const WATER_WINDOW_MAX_H = [^;]*;/m,
+  /^const WATER_SAMPLE_M = [^;]*;/m, /^const WATER_ALONG_MAX_PTS = [^;]*;/m, /^const WATER_ETA_SLACK = [^;]*;/m,
+  /^const WATER_WINDOW_PAD_S = [^;]*;/m, /^const WATER_ALONG_TIMEOUT_MS = [^;]*;/m, /^const LINE_MATCH_M = [^;]*;/m];
 
 function makeWorld(opts) {
   const o = opts || {};
@@ -239,6 +250,15 @@ function makeWorld(opts) {
     + " : Promise.resolve(job.op === 'hops' ? workerHops(job.args.pairs) : here()); };\n"
     + "const legPath = (...a) => { HOOK.asked++; return HOOK.legPath ? HOOK.legPath(...a) : PS.legPath(...a); };\n"
     + "const transitStandoffM = () => nogo.buffer;\n"
+    // /api/water/along, as the server answers it: a check puts its own predicted low in (HOOK.low_m); by default a
+    // level far over any this suite sets, so every punch here is cut at the water now, as it always was
+    + "const WATER_REMOTE_KM = 75, water = {};\n"
+    // (HOOK.lowFor(u): a level that depends on the window asked - a falling tide, 5p)
+    + "const fetch = async (u) => { (HOOK.reads = HOOK.reads || []).push(u);"
+    + " const low = HOOK.lowFor ? HOOK.lowFor(u) : HOOK.low_m != null ? HOOK.low_m : 99;"
+    // (HOOK.onRead: something that happens WHILE the read is out - it answers the level it was asked for, as NOAA would)
+    + " if(HOOK.onRead) HOOK.onRead(u);"
+    + " return {ok: true, json: async () => ({points: [{low_m: low, km: 3, kind: 'predicted', name: 'Stn', stations: ['s']}]})}; };\n"
     + PAGE_FUNCS.map(grab).join("\n")
     + "\nfunction model(){ const dr = depthRange();"
     + " return buildKeepouts(nogo.frame, nogo.enf, {min: Math.max(V.NOGO_MIN_DEPTH_M, dr.min), max: 0}, nogo.features); }"
@@ -248,6 +268,8 @@ function makeWorld(opts) {
     + " endClearing, clearingTick, uploadDryRun, patternWaypoints, renderClearRow, punchOutPressed, patStrikeKey, patClipKey,"
     + " patCoverLenM, patCoverTotalM, activeStruck, stopClearingFor,"
     + " strikeKeyChange, forgetClearingStrikes, unblockSurvey, surveysUploadBlocked, noteSurveyUpdated, releasePunchHold,"
+    + " liveCut, punchWaterM, refreshPunchLevel, punchLevelFor, punchLevelSay, punchLevelKey, settlePunchLevel, get punchLevel(){ return punchLevel; }, set punchLevel(v){ punchLevel = v; },"
+    + " uploadTideRisk, punchFlightM, punchFlownM, patSourceLines,"
     + " set runUnsafe(v){ runUnsafe = v; }, get editingSv(){ return editingSv; }, setSel: (s) => { patSel = s; },"
     + " get: () => ({pat, patClip, patRed, patJoined, patDropped, patTransits, patUnsafe, patRepunchT, patLead, patTrim,"
     + "               patStruck, patFunnel, punchHold, clr, punchMarginSeen}),"
@@ -340,17 +362,326 @@ const kinds = (w) => w.log.client.map((x) => x.k);
     w.SRV.status.env_set_kn = 0.3;
     const why3 = w.refreshPunchHold(), b3 = w.punchHold.bufM;
     S.sea.waterOffset = 0.27 + 0.1;
-    const why4 = w.refreshPunchHold();
-    check("5. refreshed before every punch, the hold is NEVER lowered by a weaker set and never moved by water under "
-          + "TIDE_REBUILD_M; a stronger set raises it, a 0.1 m move moves it - and each says what moved",
-          () => why1 === null && b1 === hb && why2 === null && Math.abs(w.punchHold.waterM - 0.37) < 1e-9
+    const why4 = w.refreshPunchHold(), up4 = w.punchHold.waterM;
+    S.sea.waterOffset = 0.27 - 0.1;
+    const why5 = w.refreshPunchHold(), dn5 = w.punchHold.waterM;
+    // (2026-11-07) the level the hold is cut at is the survey's predicted low: a lower prediction lowers it too
+    w.HOOK.low_m = 0.05; await w.refreshPunchLevel();     // (read for THESE lines: a read for others is chart datum, 5h)
+    w.HOOK.low_m = null;
+    const why6 = w.refreshPunchHold(), dn6 = w.punchHold.waterM;
+    w.punchLevel = null;
+    check("5. refreshed before every punch, the hold is NEVER lowered by a weaker set and its level is NEVER RAISED - not "
+          + "by a move under TIDE_REBUILD_M, not by a rising tide (2026-11-07); a stronger set raises the margin, a fall of "
+          + "0.1 m - or a lower predicted low - lowers the level, and each says what moved",
+          () => why1 === null && b1 === hb && why2 === null && why4 === null && Math.abs(up4 - 0.27) < 1e-9
                 && /the current's standoff rose to 4\.6 m \(held now at 4\.6 m\)/.test(why3) && Math.abs(b3 - 4.6) < 1e-9
-                && b3 >= live() && /the water level moved from \+0\.27 m to \+0\.37 m/.test(why4),
-          () => [why1, why2, why3, why4].map(String).join(" | ") + " | held " + b3);
+                && b3 >= live() && /the water level it is cut at fell from \+0\.27 m to \+0\.17 m/.test(why5)
+                && Math.abs(dn5 - 0.17) < 1e-9 && /fell from \+0\.17 m to \+0\.05 m/.test(why6) && Math.abs(dn6 - 0.05) < 1e-9,
+          () => [why1, why2, why3, why4, why5, why6].map(String).join(" | ") + " | held " + b3 + ", level " + [up4, dn5, dn6].join(" "));
     S.sea.waterOffset = 0;
   }
 
-  // ── 6. THE KEYS ───────────────────────────────────────────────────────────────────────────────────────────────────
+  // ── 5b-5f. THE WATER A SURVEY IS PUNCHED AT (2026-11-07) ────────────────────────────────────────────────────────────
+  {
+    const w = makeWorld();
+    S.sea.waterOffset = 3.43;
+    const noRead = w.punchWaterM();
+    w.HOOK.low_m = -0.31; w.HOOK.reads = [];
+    const lv = await w.refreshPunchLevel();
+    const atLow = w.punchWaterM(), cut = w.liveCut();
+    const q = new URL("http://x" + w.HOOK.reads[0]).searchParams;
+    const hours = (+q.get("t1") - +q.get("t0")) / 3600;
+    check("5b. THE PUNCH IS CUT AT THE SURVEY'S PREDICTED LOW: refreshPunchLevel reads /api/water/along at the pattern's "
+          + "own points from now over its flight at the survey speed (x1.5, +1 h), and the live cut's level is that low - "
+          + "never above the water now; with no read it is the water now, as before",
+          () => noRead === 3.43 && lv.m === -0.31 && lv.read === true && atLow === -0.31 && cut.waterM === -0.31
+                && cut.held === false && cut.bufM >= 3 && w.HOOK.reads.length === 1
+                && /^\/api\/water\/along\?pts=/.test(w.HOOK.reads[0]) && hours > 1 && Math.abs(+q.get("t0") - Date.now() / 1000) < 5,
+          () => JSON.stringify({ noRead, lv: lv && [lv.m, lv.read, lv.say], atLow, cut, n: w.HOOK.reads.length, hours: hours.toFixed(2) }));
+    S.sea.waterOffset = -0.5;
+    const under = w.punchWaterM();
+    S.sea.waterOffset = 3.43;
+    w.HOOK.low_m = 1.0;
+    await w.refreshPunchLevel();
+    const cached = w.HOOK.reads.length, stillLow = w.punchWaterM();
+    w.setPat(at(0, 0), at(45, 260), at(10, 0));                  // a different drawing reads again
+    await w.refreshPunchLevel();
+    const reread = w.HOOK.reads.length, newLow = w.punchWaterM();
+    check("5c. ... the water now wins where it is lower; and the read is ONCE A PATTERN - the same lines within "
+          + "PUNCH_LEVEL_TTL_MS are cut at the same level (a clearing's strikes are judged on one water), a new drawing reads again",
+          () => under === -0.5 && cached === 1 && stillLow === -0.31 && reread === 2 && newLow === 1.0,
+          () => JSON.stringify({ under, cached, stillLow, reread, newLow }));
+    // a read that fails is chart datum, said - never the water now
+    w.HOOK.low_m = null;
+    const fw = makeWorld();
+    S.sea.waterOffset = 2.0;
+    fw.HOOK.low_m = NaN;                                         // the server: no station gave a level
+    await fw.refreshPunchLevel();
+    check("5d. a read no station could answer cuts at CHART DATUM, said so, and reads as no read (Upload asks nothing on it)",
+          () => fw.punchWaterM() === 0 && fw.punchLevel.read === false && /^chart datum/.test(fw.punchLevel.say),
+          () => JSON.stringify(fw.punchLevel));
+    S.sea.waterOffset = 0;
+  }
+  {
+    // the punch on the card is kept while the water stays over the level it was cut at, and goes when it falls under it
+    // or the guard's chart rebuilds - not at every few centimeters as it did when every punch was cut at the water now
+    const w = makeWorld({ ready: true });
+    S.sea.waterOffset = 0; S.nogo.builtOffset = 0;
+    w.HOOK.low_m = -0.3;                                         // the survey's predicted low, read by punchNow itself
+    await w.punchNow();
+    const cutAt = w.get().patFunnel && w.get().patFunnel.cut, had = !!w.get().patClip;
+    w.water(0.06);
+    const kept = !!w.get().patClip;
+    w.water(-0.02);
+    const kept2 = !!w.get().patClip;
+    w.water(-0.45);
+    const gone = !w.get().patClip, why = w.get().patDropped;
+    check("5e. A PUNCH CUT AT THE PREDICTED LOW is kept through a station's few centimeters either way above that level, "
+          + "and dropped - said - when the water falls TIDE_REBUILD_M under it",
+          () => had && cutAt && cutAt.waterM === -0.3 && /^cut at -0\.30 m, the lowest predicted/.test(cutAt.say) && !/-0\.30 m, -0\.30 m/.test(cutAt.say)
+                // the card says what the water NOW leaves out; the survey's record (its tip, hours later) does not
+                && / - \+0\.00 m now, so water deep enough only nearer high water is left out$/.test(cutAt.say)
+                && typeof cutAt.stamp === "string" && /^cut at -0\.30 m, the lowest predicted/.test(cutAt.stamp) && !/ now, so /.test(cutAt.stamp)
+                && kept && kept2 && gone && /the water fell to -0\.45 m, under the -0\.30 m it was cut at/.test(why),
+          () => JSON.stringify({ had, cut: cutAt && [cutAt.waterM, cutAt.say, cutAt.stamp], kept, kept2, gone, why }));
+    S.nogo.builtOffset = 0; S.sea.waterOffset = 0; w.punchLevel = { ...w.punchLevel, at: Date.now() };
+    await w.punchNow();
+    const had2 = !!w.get().patClip;
+    w.water(0.12);                                               // 0.12 m off the level the chart was built at: it rebuilds
+    const gone2 = !w.get().patClip, why2 = w.get().patDropped;
+    check("5f. ... and dropped when the guard's chart is rebuilt (its red hops were judged on the chart that is gone)",
+          () => had2 && gone2 && /the water level moved \(\+0\.00 m to \+0\.12 m\) and the guard's chart was rebuilt at it/.test(why2),
+          () => JSON.stringify({ had2, gone2, why2 }));
+    S.sea.waterOffset = 0; S.nogo.builtOffset = 0;
+  }
+  // ── 5g-5k. THE REVIEW'S REPAIRS TO THE LEVEL (2026-11-07) ─────────────────────────────────────────────────────────
+  {
+    // 5g. the survey SPEED is in the key: a speed changed inside the TTL is read again, and until then is no read
+    const w = makeWorld();
+    S.sea.waterOffset = 3.43;
+    w.HOOK.low_m = -0.31; w.HOOK.reads = [];
+    await w.refreshPunchLevel();
+    const n0 = w.HOOK.reads.length, k0 = w.punchLevel.key;
+    S.V.SPEED_KN.survey = 1.5;                                   // half the speed: a flight twice as long
+    w.HOOK.low_m = -0.6;
+    const before = w.punchWaterM(), saidB = w.punchLevelSay(before);
+    await w.refreshPunchLevel();
+    const n1 = w.HOOK.reads.length, after = w.punchWaterM(), k1 = w.punchLevel.key;
+    S.V.SPEED_KN.survey = 3.0;
+    check("5g. the level is keyed by the survey SPEED as well as the lines: a speed changed inside the TTL is read again, "
+          + "and until it is the punch stands CHART DATUM in - said - never the old flight's low",
+          () => n0 === 1 && n1 === 2 && k0 !== k1 && before === 0 && after === -0.6
+                && /^cut at \+0\.00 m, chart datum \(the pattern or the survey speed changed while the water over its flight was read/.test(saidB),
+          () => JSON.stringify({ n0, n1, before, saidB, after }));
+    S.sea.waterOffset = 0;
+  }
+  {
+    // 5h. the drawing moved WHILE its level was read: one read answers the old drawing; settled, it is read again
+    const one = makeWorld();
+    S.sea.waterOffset = 3.43;
+    one.HOOK.low_m = 1.0; one.HOOK.reads = [];
+    one.HOOK.onRead = () => { one.HOOK.onRead = null; one.setPat(at(0, 0), at(45, 260), at(10, 0)); one.HOOK.low_m = -0.4; };
+    await one.refreshPunchLevel();
+    const oneM = one.punchWaterM(), oneFor = one.punchLevelFor();
+    const two = makeWorld();
+    two.HOOK.low_m = 1.0; two.HOOK.reads = [];
+    two.HOOK.onRead = () => { two.HOOK.onRead = null; two.setPat(at(0, 0), at(45, 260), at(10, 0)); two.HOOK.low_m = -0.4; };
+    await two.settlePunchLevel();
+    const twoM = two.punchWaterM(), twoN = two.HOOK.reads.length, twoFor = !!two.punchLevelFor();
+    check("5h. A READ FOR OTHER LINES IS NO READ FOR THESE: the drawing moved while its level was read - the read answers "
+          + "the old drawing's +1.00 m - and the punch is cut at chart datum, not there; settled (punchNow, Punch Out), the "
+          + "new drawing is read again and cut at its own -0.40 m",
+          () => oneM === 0 && oneFor === null && twoM === -0.4 && twoN === 2 && twoFor,
+          () => JSON.stringify({ oneM, oneFor: !!oneFor, twoM, twoN, twoFor }));
+    S.sea.waterOffset = 0;
+  }
+  {
+    // 5i. Punch Out takes its hold AFTER the read: the water now 0.05 m over the predicted low is under TIDE_REBUILD_M,
+    // so a hold taken first was never lowered to the low, and the punch was cut 0.05 m high
+    const w = makeWorld();
+    S.sea.waterOffset = 0.05; S.nogo.builtOffset = 0.05;
+    w.HOOK.low_m = 0.0;
+    const r = await safely(() => w.punchOutPressed());
+    const g = w.get();
+    check("5i. PUNCH OUT TAKES ITS HOLD AFTER THE WATER OVER THE FLIGHT IS READ: the hold and the cut are at the "
+          + "predicted low (+0.00 m), not the water now (+0.05 m), and the hold says nothing moved",
+          () => !r.err && g.punchHold && Math.abs(g.punchHold.waterM) < 1e-9 && g.patFunnel && g.patFunnel.cut
+                && Math.abs(g.patFunnel.cut.waterM) < 1e-9 && g.patFunnel.cut.held === true && g.punchHold.why === null,
+          () => (r.err ? "threw " + r.err.message + "; " : "") + JSON.stringify({ hold: g.punchHold, cut: g.patFunnel && g.patFunnel.cut }));
+    w.endClearing(null);
+    S.sea.waterOffset = 0; S.nogo.builtOffset = 0;
+  }
+  {
+    // 5j. a FINISHED clearing on a punch cut at the predicted low, the water standing 0.30 m over it: the frame leaves it
+    const w = makeWorld();
+    S.sea.waterOffset = 0; S.nogo.builtOffset = 0;
+    w.HOOK.low_m = -0.3;
+    await safely(() => w.punchOutPressed());
+    await until(() => w.clr.phase === "ready" || w.clr.phase === "stopped", 15000);
+    const ph = w.clr.phase, n0 = kinds(w).filter((k) => k === "clear_start").length, hw = w.punchHold && w.punchHold.waterM;
+    for (let i = 0; i < 4; i++) { w.clearingTick(); await sleep(60); }
+    const n1 = kinds(w).filter((k) => k === "clear_start").length;
+    check("5j. A FINISHED CLEARING STAYS FINISHED with the water above its hold: held at the predicted low -0.30 m, the "
+          + "water now +0.00 m, four frames start nothing (the old |live - hold| test cleared again on every one)",
+          () => ph === "ready" && Math.abs(hw + 0.3) < 1e-9 && n1 === n0 && w.clr.phase === "ready",
+          () => JSON.stringify({ ph, hw, starts: [n0, n1], now: w.clr.phase }));
+    w.endClearing(null);
+  }
+  {
+    // 5o. THE CLIP ITSELF IS CUT AT THAT LEVEL, not only its label: a shoal charted 0.5 m, under lines 3 and 4's far ends
+    // - 1.5 m of water at the live +1.00 m, 0.2 m at the predicted low -0.30 m
+    const SHOAL = () => ({ role: "depth_area", cls: "Depth_Area", props: { DRVAL1: 0.5, DRVAL2: 1 }, geometry: { type: "Polygon",
+      coordinates: [[[25, 140], [45, 140], [45, 260], [25, 260], [25, 140]].map(([x, y]) => { const p = at(x, y); return [p.lon, p.lat]; })] } });
+    const cover = async (low) => {
+      const w = makeWorld({ features: [LAND(), SHOAL()], ready: true });
+      w.setPat(at(0, 0), at(75, 200), at(10, 0));
+      S.sea.waterOffset = 1.0; S.nogo.builtOffset = 1.0;
+      w.HOOK.low_m = low;
+      await w.punchNow();
+      const cut = w.get().patFunnel && w.get().patFunnel.cut;
+      return { m: w.patCoverTotalM(), at: cut && cut.waterM };
+    };
+    const hi = await cover(5), lo = await cover(-0.3);
+    S.sea.waterOffset = 0; S.nogo.builtOffset = 0;
+    check("5o. THE RUNS ARE CLIPPED AT THE LEVEL THE PUNCH IS CUT AT: a 0.5 m shoal under two lines' ends is water at "
+          + "the live +1.00 m and is cut out of them at the predicted low -0.30 m - coverage lost, not only the words",
+          () => hi.at === 1.0 && lo.at === -0.3 && hi.m > 0 && lo.m < hi.m - 50,
+          () => JSON.stringify({ hi, lo }));
+  }
+  {
+    // 5n. what Add to plan records is the level's words WITHOUT the water now: the row's tip shows it hours later
+    const w = makeWorld({ features: [LAND()], ready: true });
+    w.setPat(at(0, 0), at(75, 200), at(10, 0));                  // eight lines in open water: nothing red
+    S.sea.waterOffset = 0; S.nogo.builtOffset = 0;
+    w.HOOK.low_m = -0.3;
+    await w.punchNow();
+    const say = w.get().patFunnel && w.get().patFunnel.cut && w.get().patFunnel.cut.say;
+    const c = await safely(() => w.commitPattern());
+    const sv = w.mission.surveys && w.mission.surveys[0];
+    check("5n. ADD TO PLAN RECORDS THE LEVEL'S WORDS WITHOUT THE WATER NOW (review 2026-11-07): the card says what the "
+          + "+0.00 m now leaves out; the survey's record - its row's tip, read hours later - says only where -0.30 m came from",
+          () => !c.err && / now, so water deep enough only nearer high water is left out$/.test(say || "") && sv
+                && sv.water_m === -0.3 && /^cut at -0\.30 m, the lowest predicted/.test(sv.water) && !/ now, so /.test(sv.water),
+          () => (c.err ? "threw " + c.err.message + "; " : "") + JSON.stringify({ say, water: sv && sv.water, water_m: sv && sv.water_m }));
+  }
+  {
+    // 5k. THE WINDOW IS WHERE THE SURVEY LIES IN THE PLAN - flightWindow, Upload's own (pause_resume 1z3)
+    const w = makeWorld();
+    w.asv = at(0, -3000);                                        // the boat 3 km south of the pattern
+    w.HOOK.low_m = 0.2; w.HOOK.reads = [];
+    const fromNow = () => { const q = new URL("http://x" + w.HOOK.reads[w.HOOK.reads.length - 1]).searchParams;
+                            return +q.get("t0") - Date.now() / 1000; };
+    await w.refreshPunchLevel(true);
+    const fA = fromNow();
+    w.mission.waypoints = [Object.assign(at(500, -3000), { sv: "S7" }), Object.assign(at(500, -9000), { sv: "S7" })];
+    await w.refreshPunchLevel(true);
+    const fB = fromNow(), sayB = w.punchLevel.say;
+    w.editingSv = "S7";                                          // ✎: the card holds S7, flown where S7 lies
+    await w.refreshPunchLevel(true);
+    const fC = fromNow();
+    w.editingSv = null; w.mission.waypoints = []; w.asv = null;
+    check("5k. THE PUNCH READS THE WINDOW SHE FLIES IT IN, where it lies in the plan: from her earliest arrival - 3 km "
+          + "from the boat; after the plan's 6 km survey and the way back, for a new drawing (said: 'over its flight, "
+          + "... h from now'); at S7's own place for S7 on the card (✎)",
+          () => fA > 600 && fA < 2100 && fB > fA * 3 && fC > 0 && fC < fA
+                && /the lowest predicted along it over its flight, \d+\.\d h from now to \d+\.\d h \(Stn/.test(sayB),
+          () => JSON.stringify({ fA: Math.round(fA), fB: Math.round(fB), fC: Math.round(fC), sayB }));
+  }
+  {
+    // 5l. a read that FAILED is tried again after a minute, not kept the ten-minute TTL; a good one is kept
+    const w = makeWorld();
+    w.HOOK.low_m = NaN; w.HOOK.reads = [];
+    await w.refreshPunchLevel();
+    const f1 = w.punchLevel.failed;
+    await w.refreshPunchLevel();
+    const n1 = w.HOOK.reads.length;
+    w.punchLevel = { ...w.punchLevel, at: Date.now() - 61000 };
+    w.HOOK.low_m = 0.4;
+    await w.refreshPunchLevel();
+    const n2 = w.HOOK.reads.length, f2 = w.punchLevel.failed;
+    w.punchLevel = { ...w.punchLevel, at: Date.now() - 61000 };
+    await w.refreshPunchLevel();
+    const n3 = w.HOOK.reads.length;
+    check("5l. A FAILED READ IS TRIED AGAIN AFTER PUNCH_LEVEL_RETRY_MS, not kept PUNCH_LEVEL_TTL_MS (one NOAA hiccup was "
+          + "ten minutes of punches at chart datum); a read that answered is kept",
+          () => f1 === true && n1 === 1 && n2 === 2 && f2 === false && n3 === 2 && w.punchLevel.m === 0.4,
+          () => JSON.stringify({ f1, n1, n2, f2, n3, m: w.punchLevel.m }));
+  }
+  {
+    // 5m. a press of Punch Out reads afresh, inside the TTL - the answer to Upload's tide question is to punch again
+    const w = makeWorld();
+    S.sea.waterOffset = 0.5; S.nogo.builtOffset = 0.5;
+    w.HOOK.low_m = 0.4; w.HOOK.reads = [];
+    await w.refreshPunchLevel();
+    w.HOOK.low_m = 0.1;
+    const n0 = w.HOOK.reads.length;
+    const r = await safely(() => w.punchOutPressed());
+    const n1 = w.HOOK.reads.length, cut = w.get().patFunnel && w.get().patFunnel.cut;
+    check("5m. PUNCH OUT PRESSED READS AFRESH inside the TTL - the window moved with the plan and the clock, and punching "
+          + "again is what Upload's tide question asks for: cut at the new +0.10 m, not the kept +0.40 m",
+          () => !r.err && n0 === 1 && n1 === 2 && cut && Math.abs(cut.waterM - 0.1) < 1e-9,
+          () => (r.err ? "threw " + r.err.message + "; " : "") + JSON.stringify({ n0, n1, cut }));
+    w.endClearing(null);
+    S.sea.waterOffset = 0; S.nogo.builtOffset = 0;
+  }
+  {
+    // 5p. THE FLIGHT THE PUNCH MADE (the third review, 2026-11-07): the read before a punch can only guess the flight from
+    // the drawing - its lines and straight hops. The punch then lays turns, and at a slow turn rate the boat flies them at
+    // the turn speed; Upload reads the survey along the waypoints it sends, so it read a LATER end, a falling tide a lower
+    // low, and asked of a survey punched seconds before. Eight 200 m lines 10 m apart, MAX_TURN_RATE 6 deg/s; the tide
+    // falls 0.5 m an hour from +2.00 m, so the low over a window is the level at its end.
+    const w = makeWorld({ features: [LAND()], ready: true });
+    S.V.MAX_TURN_RATE_DEG_S = 6;
+    w.mission.speeds = { turn: "low" };                            // turns at 1.5 kn, the lines at 3.0 kn: twice the time
+    w.setPat(at(0, 0), at(75, 200), at(10, 0));
+    S.sea.waterOffset = 2.0; S.nogo.builtOffset = 2.0;
+    w.asv = at(0, -20);
+    const t00 = Date.now() / 1000;
+    const lowAt = (u) => { const t1 = +new URL("http://x" + u).searchParams.get("t1");
+                           return Math.round((2.0 - 0.5 * (t1 - t00) / 3600) * 1000) / 1000; };
+    w.HOOK.lowFor = lowAt; w.HOOK.reads = [];
+    const drawn = w.punchFlightM(w.patSourceLines());              // the drawing's guess, before any punch
+    const r = await safely(() => w.punchOutPressed());
+    const nPunch = w.HOOK.reads.length, cut = w.get().patFunnel && w.get().patFunnel.cut;
+    const flown = w.punchFlownM();
+    const pw = w.patternWaypoints();
+    let plain = 0; for (let i = 1; i < pw.wps.length; i++) plain += G.distTo(pw.wps[i - 1], pw.wps[i]);
+    w.endClearing(null);
+    const c = await safely(() => w.commitPattern());
+    const risk = await w.uploadTideRisk(w.mission.waypoints);
+    const upLow = w.HOOK.reads.length > nPunch ? lowAt(w.HOOK.reads[w.HOOK.reads.length - 1]) : null;
+    S.V.MAX_TURN_RATE_DEG_S = 60; S.sea.waterOffset = 0; S.nogo.builtOffset = 0; w.HOOK.lowFor = null; w.asv = null;
+    check("5p. THE PUNCH IS READ OVER THE ROUTE IT MADE, its turns at the turn speed (the third review, 2026-11-07): the "
+          + "punched route flies longer than the drawing's guess, so the water is read again and the punch cut again at "
+          + "that low - the low Upload reads along the waypoints it sends, so Upload asks nothing of a survey just punched; "
+          + "and the turns count at the turn speed (half the survey speed here: the flight longer than the route's length)",
+          () => !r.err && !c.err && cut && nPunch >= 2 && flown > drawn && flown > plain * 1.2 && upLow != null
+                && Math.abs(cut.waterM - upLow) < 0.02 && risk === null,
+          () => (r.err ? "threw " + r.err.message + "; " : "") + (c.err ? "commit threw " + c.err.message + "; " : "")
+                + JSON.stringify({ reads: nPunch, drawnM: Math.round(drawn), flownM: Math.round(flown), routeM: Math.round(plain), cutAt: cut && cut.waterM,
+                                   upload: upLow, asks: risk && risk.over.map((o) => [o.s.water_m, o.low]) }));
+  }
+  {
+    // 5q. A HELD CUT IS SAID AS HELD (the third review, 2026-11-07): a clearing held at -0.30 m from an earlier read, the
+    // read now -0.25 m and the water now +1.00 m. The punch cut at -0.30 m said it was "the water now" - +1.00 m was.
+    const w = makeWorld({ features: [LAND()], ready: true });
+    w.setPat(at(0, 0), at(75, 200), at(10, 0));
+    S.sea.waterOffset = 1.0; S.nogo.builtOffset = 1.0;
+    w.HOOK.low_m = -0.25;
+    w.punchHold = { bufM: 3, waterM: -0.30, setKn: 0, at: Date.now(), why: null };
+    const r = await safely(() => w.punchNow());
+    const cut = w.get().patFunnel && w.get().patFunnel.cut;
+    w.punchHold = null; S.sea.waterOffset = 0; S.nogo.builtOffset = 0;
+    check("5q. A CUT AT THE CLEARING'S HELD LEVEL IS SAID AS HELD, not as the water now: held at -0.30 m, the read -0.25 m, "
+          + "the water now +1.00 m - the summary and the stamp Add to plan records name the hold, and neither calls it the water now",
+          () => !r.err && cut && Math.abs(cut.waterM + 0.3) < 1e-9
+                && /^cut at -0\.30 m, the level this clearing is held at \(under the prediction now: -0\.25 m/.test(cut.say || "")
+                && /^cut at -0\.30 m, the level this clearing is held at /.test(cut.stamp || "")
+                && !/the water now/.test(cut.say) && !/the water now| now, so /.test(cut.stamp),
+          () => (r.err ? "threw " + r.err.message + "; " : "") + JSON.stringify({ cutAt: cut && cut.waterM, say: cut && cut.say, stamp: cut && cut.stamp }));
+  }
+
+  // ── 6. THE KEYS───────────────────────────────────────────────────────────────────────────────────────────────────
   {
     const w = makeWorld();
     const k0 = w.patStrikeKey();
@@ -403,31 +734,33 @@ const kinds = (w) => w.log.client.map((x) => x.k);
           () => /^✓ Cleared: 1 line\(s\) struck .* Held: standoff 3\.0 m, water \+0\.00 m\.$/.test(rowTxt(w)),
           () => rowTxt(w));
     const clip0 = w.get().patClip;
-    w.water(0.05);
+    // (2026-11-07) a FALL, since the level a punch is cut at only ever goes DOWN now (a rise is check 5's and 5f's)
+    w.water(-0.05);
     const kept = w.get().patClip === clip0 && !w.get().patDropped;
     w.clearingTick();
     const quiet = w.get().clr.phase === "ready";
-    w.water(0.15);
-    const dropped = w.get().patClip === null && /the water level moved/.test(w.get().patDropped || "")
+    w.water(-0.15);
+    const dropped = w.get().patClip === null && /the water fell to -0\.15 m, under the \+0\.00 m it was cut at/.test(w.get().patDropped || "")
                     && w.get().patStruck.length === 1;
     w.clearingTick();                                   // the frame: past the hold, so it clears again
     await until(() => w.get().clr.phase === "ready" || w.get().clr.phase === "stopped", 15000);
     const g11 = w.get();
-    check("11. THE WATER: a move inside TIDE_REBUILD_M keeps the held punch (and the frame leaves it alone); a move past "
+    check("11. THE WATER: a move inside TIDE_REBUILD_M keeps the held punch (and the frame leaves it alone); a fall past "
           + "it throws the punch away but NOT the strike, and the next frame re-cuts at the new level and judges it again",
           () => kept && quiet && dropped && g11.clr.phase === "ready" && g11.patClip && g11.patClip.length === 4
-                && Math.abs(g11.patFunnel.cut.waterM - 0.15) < 1e-9 && g11.patFunnel.cut.held
-                && Math.abs(g11.punchHold.waterM - 0.15) < 1e-9 && w.punchRefusal() === null
+                && Math.abs(g11.patFunnel.cut.waterM + 0.15) < 1e-9 && g11.patFunnel.cut.held
+                && Math.abs(g11.punchHold.waterM + 0.15) < 1e-9 && w.punchRefusal() === null
                 && w.activeStruck().length === 1 && kinds(w).filter((k) => k === "clear_strike").length === 1,
           () => "kept " + kept + ", quiet " + quiet + ", dropped " + dropped + "; then " + g11.clr.phase + ", "
                 + (g11.patClip || []).length + " runs cut at " + JSON.stringify(g11.patFunnel && g11.patFunnel.cut)
                 + ", " + w.activeStruck().length + " struck, log " + kinds(w).join(","));
-    w.water(0.2);                                       // live 0.20, the punch cut at 0.15: inside the hold
+    w.water(-0.10);                                     // live -0.10, the punch cut at -0.15: inside the hold
     const c12 = await safely(() => w.commitPattern());
     const sv = w.mission.surveys && w.mission.surveys[0];
     check("12. Add to plan after the clearing commits the four runs and records the level the runs were CUT at, not the "
-          + "live one it was kept through",
-          () => !c12.err && w.mission.lines.length === 4 && sv && sv.water_m === 0.15,
+          + "live one it was kept through - and where that level came from (2026-11-07)",
+          () => !c12.err && w.mission.lines.length === 4 && sv && sv.water_m === -0.15
+                && typeof sv.water === "string" && /^cut at -0\.15 m/.test(sv.water),
           () => (c12.err ? "threw " + c12.err.message + "; " : "") + w.mission.lines.length + " lines, water_m "
                 + (sv && sv.water_m));
     S.sea.waterOffset = 0;
@@ -823,15 +1156,22 @@ const kinds = (w) => w.log.client.map((x) => x.k);
     const g35 = w9.get();
     const held35 = !!g35.punchHold, cutHeld35 = !!(g35.patFunnel && g35.patFunnel.cut && g35.patFunnel.cut.held);
     const next35 = w9.punchCutNow();
-    w9.water(0.05);                                       // under TIDE_REBUILD_M: an ordinary punch is still dropped
-    const dropped35 = w9.get().patClip === null && !!w9.get().patDropped;
+    // (2026-11-07) a rise leaves the water over the level it was cut at: kept, held or not; a fall of TIDE_REBUILD_M under
+    // that level drops it (the old rule dropped it at ANY move, which a station update makes every few minutes)
+    const clip35 = w9.get().patClip;
+    w9.water(0.05);
+    const keptRise35 = w9.get().patClip === clip35 && !w9.get().patDropped;
+    w9.water(-0.1);
+    const dropped35 = w9.get().patClip === null
+                      && /the water fell to -0\.10 m, under the \+0\.00 m it was cut at/.test(w9.get().patDropped || "");
     S.sea.waterOffset = 0;
     check("35. Punch Out with NOTHING blocking releases the hold at once: no clearing, no hold, the next punch cut at the "
-          + "live inputs, and a water move drops it as it always did",
+          + "live inputs; a rise keeps it, a fall of TIDE_REBUILD_M under the level it was cut at drops it",
           () => !p35.err && !kinds(w9).includes("clear_start") && g35.patClip && !held35 && !cutHeld35 && next35 === null
-                && dropped35,
+                && keptRise35 && dropped35,
           () => (p35.err ? "threw " + p35.err.message + "; " : "") + "hold " + held35 + ", cut held " + cutHeld35
-                + ", next cut " + JSON.stringify(next35) + ", dropped " + dropped35 + "; log " + kinds(w9).join(","));
+                + ", next cut " + JSON.stringify(next35) + ", kept at a rise " + keptRise35 + ", dropped " + dropped35
+                + " (" + w9.get().patDropped + "); log " + kinds(w9).join(","));
   }
 
   // ── 36-48. WHAT THE REVIEW FOUND (2026-11-06) ─────────────────────────────────────────────────────────────────────
@@ -1044,18 +1384,35 @@ const kinds = (w) => w.log.client.map((x) => x.k);
     S.sea.waterOffset = 0; S.nogo.builtOffset = 0;
     check("45. a water update that REBUILDS the guard's model drops a held punch even inside the hold's step: its hops and "
           + "Upload's route were judged on the model now gone",
-          () => clip0 && rebuilt && g.patClip === null && /the water level moved/.test(g.patDropped || ""),
+          () => clip0 && rebuilt && g.patClip === null
+                && /the water level moved \(\+0\.00 m to \+0\.06 m\) and the guard's chart was rebuilt at it/.test(g.patDropped || ""),
           () => "rebuilt " + rebuilt + ", clip " + (g.patClip ? "kept" : "dropped") + ": " + g.patDropped);
-    // 45b. the other way round: a move past the HOLD's step that does not rebuild the model still drops it
+    // 45b. the other way round: a FALL past the HOLD's step that does not rebuild the model still drops it (2026-11-07: a
+    // fall - the water under the level the punch was cut at; a rise is 45c)
     const w2 = makeWorld();
     await safely(() => w2.punchOutPressed());
-    S.nogo.builtOffset = 0.08;                           // the model built nearer the new level than the hold is
-    w2.water(0.12);                                      // 0.12 m from the hold, 0.04 m from the model: no rebuild
-    const g2 = w2.get(), noRebuild = Math.abs(S.nogo.builtOffset - 0.08) < 1e-9;
+    S.nogo.builtOffset = -0.08;                          // the model built nearer the new level than the hold is
+    w2.water(-0.12);                                     // 0.12 m under the hold, 0.04 m from the model: no rebuild
+    const g2 = w2.get(), noRebuild = Math.abs(S.nogo.builtOffset + 0.08) < 1e-9;
     S.sea.waterOffset = 0; S.nogo.builtOffset = 0;
-    check("45b. ... and a move of TIDE_REBUILD_M from the HOLD's level drops it even when the model does not rebuild",
-          () => noRebuild && g2.patClip === null && /the water level moved/.test(g2.patDropped || ""),
+    check("45b. ... and a fall of TIDE_REBUILD_M under the HOLD's level drops it even when the model does not rebuild",
+          () => noRebuild && g2.patClip === null
+                && /the water fell to -0\.12 m, under the \+0\.00 m it was cut at/.test(g2.patDropped || ""),
           () => "no rebuild " + noRebuild + ", clip " + (g2.patClip ? "kept" : "dropped") + ": " + g2.patDropped);
+    // 45c. (2026-11-07) ... and a RISE of the same size, the model not rebuilt, keeps it: the water is over the level it was
+    // cut at, so nothing the clip depends on has moved (the old rule dropped it; a station update a few cm at a time
+    // threw the punch away all the way up a flood tide)
+    const w3 = makeWorld();
+    await safely(() => w3.punchOutPressed());
+    const clip3 = w3.get().patClip;
+    S.nogo.builtOffset = 0.08;
+    w3.water(0.12);
+    const g3 = w3.get(), noRebuild3 = Math.abs(S.nogo.builtOffset - 0.08) < 1e-9;
+    S.sea.waterOffset = 0; S.nogo.builtOffset = 0;
+    check("45c. ... and a RISE of TIDE_REBUILD_M over it, the model not rebuilt, KEEPS it: the water is over the level it "
+          + "was cut at",
+          () => clip3 && noRebuild3 && g3.patClip === clip3 && !g3.patDropped,
+          () => "no rebuild " + noRebuild3 + ", clip " + (g3.patClip === clip3 ? "kept" : "dropped") + ": " + g3.patDropped);
   }
   {
     // 46. Upload refusing a leg ALONG this survey's own lines: said, and what to do

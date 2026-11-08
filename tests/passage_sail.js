@@ -982,7 +982,7 @@ console.log("The passage, sailed:");
       "const fetch = async (u) => { w.urls.push(u); return {ok: true, json: async () => w.reply}; };",
       decl("WATER_SAMPLE_M"), decl("WATER_ALONG_MAX_PTS"), decl("WATER_ETA_SLACK"), decl("WATER_WINDOW_PAD_S"), decl("WATER_ALONG_TIMEOUT_MS"),
       "const fmtDist = (m, dp) => m < 1000 ? Math.round(m) + ' m' : (m / 1000).toFixed(dp == null ? 2 : dp) + ' km';",
-      grab("samplePts"), grab("sectionLevel"), grab("sectionWater"), "return sectionWater;"].join("\n");
+      grab("samplePts"), grab("sectionLevel"), grab("waterAlongRead"), grab("sectionWater"), "return sectionWater;"].join("\n");
     w.distTo = distTo; w.left = left;
     const t = Date.now() / 1000;
     const r = await new Function("w", src)(w)({ kn: 7 }, from, pts, append);
@@ -1061,7 +1061,8 @@ console.log("The passage, sailed:");
     // its chart read along it as a ROUTE, where the read can find something - and any wider read the planning makes
     routeInk: /await ensureNogoCovers\(\[from, \.\.\.pts\], null, \{route: true\}\);/.test(grab("sailSend")),
     oneWriter: (H.match(/sea\.waterOffset\s*=(?!=)/g) || []).length === 1,
-    endpoint: /"\/api\/water\/along\?pts="/.test(grab("sectionWater")),
+    // (the read is waterAlongRead since 2026-11-07 - one read for a section and a survey's punch, sectionWater asks it)
+    endpoint: /"\/api\/water\/along\?pts="/.test(grab("waterAlongRead")) && /await waterAlongRead\(line, t0, t1\)/.test(grab("sectionWater")),
   };
   check("14e. THE WIRING: each section's water read before it is planned, the holdTarget and the route both planned "
         + "inside atWaterLevel at it, the level kept on the section and said on the passage's line; the live level keeps "

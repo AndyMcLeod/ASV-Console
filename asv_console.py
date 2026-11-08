@@ -1932,6 +1932,9 @@ def _check_surveys(m):
             if wm is not None and (isinstance(wm, bool) or not isinstance(wm, (int, float)) or not math.isfinite(wm)):
                 raise PlanRefused("survey %s's water level must be a finite number of meters (got %r) - nothing was saved"
                                   % (sid, wm))
+            wsay = s.get("water")              # ... and where that level came from (2026-11-07, the predicted low)
+            if wsay is not None and not (isinstance(wsay, str) and len(wsay) <= 400):
+                raise PlanRefused("survey %s's water must be text of at most 400 characters - nothing was saved" % sid)
             if s.get("hold") is not None and not isinstance(s.get("hold"), bool):   # the hold before it (3b)
                 raise PlanRefused("survey %s's hold flag must be true or false - nothing was saved" % sid)
             pa = s.get("punched_at")

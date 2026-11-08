@@ -159,7 +159,9 @@ check("4. ... and a line INSIDE it is - so the number is the boundary, not a saf
 check("5. punchOut clips the coverage at the standoff, not at the bare buffer",
       () => /clipLine\(l\[0\],l\[1\],ref,koClip,clipBuf\)/.test(H)
             && /const held = typeof cut === "function" \? cut\(\) : cut;/.test(H)
-            && /const cutAt = held \|\| \{bufM: patClipBufM\(\), waterM: sea\.waterOffset \|\| 0, setKn: null, held: false\};/.test(H)
+            // (the live cut is written ONCE, in liveCut, since 2026-11-07 - its level the survey's predicted low)
+            && /const cutAt = held \|\| liveCut\(\);/.test(H)
+            && /function liveCut\(\)\{ return \{bufM: patClipBufM\(\), waterM: punchWaterM\(\), setKn: null, held: false\}; \}/.test(H)
             && /const clipBuf = cutAt\.bufM;/.test(H)
             && /const d = groundVel\(st\.env_set_deg, st\.env_set_kn\);\s*\n\s*punchMarginSeen\.push\(\{t: now, dMs: d \? Math\.hypot\(d\.e, d\.n\) : 0, setKn\}\)/.test(H)
             && /return best && \{bufM: guardStandoffM\(nogo\.buffer \|\| 0, best\.dMs\), setKn: best\.setKn\};/.test(H)

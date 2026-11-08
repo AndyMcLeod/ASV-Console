@@ -1274,7 +1274,7 @@ import { zoneDecision, zoneLeadM, zoneRuleTxt, zoneId, zoneApplies, noaaZones, i
 import { HAZ_UNKNOWN_EXTENT, MARK_TAIL, WATER_FAR_KM, WATER_REMOTE_KM, WATER_STALE_S,
          WRECK_CLEAR_MARGIN_M, airNeedM, blocked, blockedInfo, bufferFloor, buildKeepouts, buildMargin, clearanceM,
          channelPolys, depthExcluded, effectiveWaterOffset, firstBlockAlong, hazExtent, overheadBlocks,
-         legClear, legReason, legReasons, markId, markSystems, nogoDR, nogoKind,
+         legClear, legCrossesEN, legReason, legReasons, markId, markSystems, nogoDR, nogoKind,
          nogoKindCounts, pairGates, qualityAt, snapClearLL, systemCenterline, waterTrust } from "/static/js/chart.js";
 // THE SURVEYS IN THE PLAN (sequenced surveys, phase 1, 2026-10-02): which survey each line and waypoint belongs to,
 // the surveys in run order, and the survey's number staying with it. See the module header.
@@ -2828,9 +2828,8 @@ function renderHeldBar(bar, g){
       + (charted ? " — charted water does not pass, so there is no automatic return"
                  : onLine ? " — resumes on its own once she is clear of the line (" + AIS_RETURN_BACK_M + " m back down it)"
                  : " - stopped OFF the coverage lines (on a turn or a transit): resumes on its own from the plan's next waypoint once she is clear")
-      + "; right-click the line BEYOND " + it + " to resume there (routed round " + it + "), or the console "
-      + "routes round " + it + " itself "
-      + ((S && S.run === "paused") ? "once you resume the hold" : "now");
+      + "; right-click the line BEYOND " + it + " to resume there (routed round " + it + "), or "
+      + aroundBarSay(aisAvoid, it);
   }
   // ROUTE ROUND HER NOW (2026-09-27): a try on demand - while she is held for a contact still on the line. Since
   // 2026-11-01 nothing is waited out and since 2026-11-02 there is no spacing left either, so what the press buys
@@ -2845,6 +2844,59 @@ function renderHeldBar(bar, g){
   // shared button that keeps another state's words is a control that lies about what it does.
   $("#gb_drop").textContent      = "LEAVE IT HOLDING";
   $("#gb_drop").style.display    = "";
+}
+/**
+ * WHAT THE CONSOLE'S OWN WAY ROUND IS DOING, for both held bars - the ONE place it is said (2026-11-07, Andy's S1 at
+ * Castine). Both bars ended "the console routes round it itself now" whatever the way round had answered, and on his
+ * charted hold it had REFUSED (aisAroundGo's no-op gate) - said once in a banner that scrolled away, while the bar went
+ * on promising for 14.5 minutes a maneuver the try gate would not attempt again until the model moved. A refusal is
+ * kept on the episode (aroundRefused, by noteAroundRefused) and the bar says it, and when the console tries again.
+ */
+function aroundBarSay(ep, it){
+  const r = ep && ep.aroundRefused;
+  const paused = !!(S && S.run === "paused");
+  if(r){
+    // the REASON, not the banner's headline: "⚠ NO WAY ROUND a dock / pier — <why>", "⚠ CANNOT RESUME FROM HERE -
+    // <why>. The boat is...", "⚠ THE WAY ROUND IS NOT RUNNING — <why>. She is..." - to the end of its first sentence
+    let why = String(r.why || "no way round").replace(/^⚠\s*/, "");
+    const em = why.indexOf(" — ");
+    if(em >= 0 && em < 90) why = why.slice(em + 3);
+    else why = why.replace(/^[A-Z][A-Z0-9 '’]+ - /, "");
+    const cut = why.search(/\. /);
+    if(cut > 0) why = why.slice(0, cut);
+    why = why.replace(/\.$/, "");
+    if(why.length > 160) why = why.slice(0, 157) + "...";
+    // WHEN IT TRIES AGAIN, by aroundTrySig's own rule: a CONTACT's try is keyed on the poll clock (her ring moves with
+    // every report), a CHARTED one on what can change its answer - and a paused hold tries nothing until it resumes
+    // (review 2026-11-07: the list is aroundTrySig's - the plan and the standoff are in it too - and a paused hold
+    // tries nothing at all, which "once you resume the hold, and then only when..." did not say)
+    const again = ep.chart ? "only when something its answer depends on changes (the chart, the water, the traffic, her "
+                             + "position, the plan or the standoff)"
+                           : "at the next AIS poll";
+    return "the console's way round " + it + (r.stage === "not_running" ? " did NOT RUN ("
+                                             : r.stage === "failed" ? " FAILED (" : " was REFUSED (") + why
+         + ") - " + (paused ? "it tries nothing while she is paused; once you resume the hold it tries again " + again
+                            : "it tries again by itself " + again);
+  }
+  return "the console routes round " + it + " itself " + (paused ? "once you resume the hold" : "now");
+}
+/**
+ * A WAY ROUND REFUSED, KEPT ON ITS EPISODE AND LOGGED (2026-11-07): aroundBarSay reads it, so the bar stops promising a
+ * maneuver that was refused, and `ais_around_refused` puts it in the session log, where the 2026-11-07 refusal was not
+ * at all - only its once-only banner. A refusal the operator ASKED for is logged every time; the console's own, once per
+ * reason per episode, as its banner is. Not `ais_around_failed`: playback closes an episode on that one (a way round
+ * that failed in flight ends it), and a refused way round leaves her held, the episode still open.
+ */
+function noteAroundRefused(ep, why, manual, stage){
+  if(!ep) return;
+  ep.aroundRefused = {why: String(why || ""), stage, at: Date.now()};
+  // once per REASON, its numbers aside (review 2026-11-07): a refusal that names a distance or a time said it afresh,
+  // and logged it again, at every try the model moved by a meter
+  const key = stage + "|" + ep.aroundRefused.why.replace(/[+-]?\d+(?:\.\d+)?/g, "#");
+  if(!manual && ep.refusedLogged === key) return;
+  if(!manual) ep.refusedLogged = key;
+  logClient("ais_around_refused", {stage, why: ep.aroundRefused.why.slice(0, 400), kind: ep.kind, charted: !!ep.chart,
+            line: ep.line != null ? lineNo(ep.line) : null, manual: !!manual});
 }
 /**
  * THE BAR AFTER A GO-TO, A RETURN-TO-HOME OR A TRANSIT WAS STOPPED FOR A CONTACT (2026-09-29) - renderHeldBar's box
@@ -2876,8 +2928,7 @@ function renderHeldLegBar(bar, g){
     why += " · holding for " + aisAvoid.kind
       + (aisAvoid.chart ? " — charted water does not pass, so there is no automatic return"
                         : " — carries on by itself once she is clear of the way")
-      + "; the console routes round " + it + " itself "
-      + ((S && S.run === "paused") ? "once you resume the hold" : "now");
+      + "; " + aroundBarSay(aisAvoid, it);
   }
   $("#gb_why").textContent = why;
   { const ga = $("#gb_around"); if(ga) ga.style.display = (aisAvoid && !aisAvoid.clearSince) ? "" : "none"; }
@@ -3992,8 +4043,11 @@ function aisAroundLegPlan(g, aisKo, std, herMmsi, herChart){
  * the measurement. A contact episode passes the same list twice, so its answer is unchanged.
  * {p, k, s, total, cum}: `k` the index in pts of the vertex that ends p's segment, `s` how far along, `total` the
  * length walked to, `cum` the distance along at each vertex - or null when no point to `endS` is clear.
+ * `opt` (2026-11-07, the charted walk past a line's end): `fromS` - the first point tried; `behindTo(s, k)` - how far
+ * along "she is behind" runs for a point `s` on the segment ending at vertex k (to `endS` without it).
  */
-function aisWalkPast(pts, endS, herOnly, others, std, runOutM){
+function aisWalkPast(pts, endS, herOnly, others, std, runOutM, opt){
+  const o = opt || {};
   const cum = [0];
   for(let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + distTo(pts[i - 1], pts[i]));
   const all = cum[cum.length - 1], total = Math.min(endS, all);
@@ -4011,14 +4065,14 @@ function aisWalkPast(pts, endS, herOnly, others, std, runOutM){
     for(let i = 1; i < way.length; i++) if(!legClear(way[i - 1], way[i], nogo.frame, model, bufM)) return false;
     return true;
   };
-  for(let s = 0; ; s += AIS_AROUND_STEP_M){
+  for(let s = Math.max(0, o.fromS || 0); ; s += AIS_AROUND_STEP_M){
     const last = s >= total, s0 = last ? total : s;
     const {p, k} = at(s0), pe = nogo.frame.toEN(p);
     const buf = nogo.buffer || 0;
     const ok = clearanceM(pe, herOnly, std + 1) >= std              // outside her maneuver ring
             && clearanceM(pe, others.std, std + 1) >= std           // not at another CONTACT's hull: the standoff
             && clearanceM(pe, others.all, buf + 1) >= buf           // and as clear of the chart as the ladder asks
-            && clearFrom(s0, total, herOnly, std)                   // she is behind: the rest of the way misses her ring
+            && clearFrom(s0, o.behindTo ? Math.min(total, o.behindTo(s0, k)) : total, herOnly, std)   // she is behind
             && clearFrom(s0, s0 + runOutM, others.all, buf);        // and nothing else right after
     if(ok) return {p, k, s: s0, total, cum};
     if(last) break;
@@ -4646,6 +4700,95 @@ function aisAroundPlan(g, aisKo, std, herMmsi, herChart){
   // THE HOLD HORIZON AHEAD OF THE REJOIN, at the speed the line is flown: another hull on the line inside it and the
   // guard holds her again the moment she is back - so the way round goes past that one too.
   const runOutM = GUARD_HOLD_S * roleSpeedMS("survey");
+  // ⚠⚠ A CHARTED FEATURE PAST THE LINE'S END IS WALKED PAST TOO (2026-11-07, Andy's S1 at Castine). The guard's look-ahead
+  // follows the ROUTE (projectRoute), so what it holds her for can lie beyond the line's end - in the turn, the hop or
+  // the next line - and this walk asked only the rest of the held line: line 9's west-end turn held her for a shoal the
+  // falling tide had raised into it, the rest of line 9 read clear of that shoal, the first point it offered was where
+  // she already was (skipM 0), and aisAroundGo's no-op gate refused that, correctly, for 14.5 minutes on end. So a
+  // charted feature is walked along the ROUTE - the rest of this line, its end, the turn, the hop and the next line to
+  // its end - and the plan is picked up past it, the way in routed round it (resumeHeldRun). The rest of the held line
+  // to its end is left: the turn out of it is what ran into the feature, and a pick-up behind the feature would drive
+  // her back into it (aisWalkPast's own "she is behind" test). A CONTACT keeps the line walk below: she moves, and his
+  // 2026-09-28 tuning of that maneuver is not re-opened here.
+  if(herChart){
+    const pts = [at(s0), ...g.route.slice(leg.j)];
+    const what = her.kind || "it";
+    // ⚠⚠ CONFINED TO THE HELD SURVEY (review 2026-11-07). The way on is walked to the end of the NEXT LINE OF HER OWN
+    // SURVEY at most - the turn or the hop to it are that survey's, planned at the coverage standoff this walk uses. Past
+    // the survey's last line the plan runs a TRANSIT, to the next survey or home, planned at transitStandoffM: the
+    // walk once ran on into it (to the end of the plan, with no next line) and certified a pick-up there at the
+    // coverage standoff - 3 m where the plan had kept 20.6 m.
+    const heldSv = (mission.lines[g.mark.line] || {}).sv;
+    let lineK = 0, lineHit = null;
+    for(let i = 2; i < pts.length && !lineHit; i++){
+      const m = lineOfLeg(pts[i - 1], pts[i]);
+      if(!m || m.line === g.mark.line) continue;
+      if((mission.lines[m.line] || {}).sv !== heldSv) break;      // another survey's line: hers was its survey's last
+      lineK = i; lineHit = m;
+    }
+    const cumP = [0];
+    for(let i = 1; i < pts.length; i++) cumP.push(cumP[i - 1] + distTo(pts[i - 1], pts[i]));
+    const endS = cumP[lineK || 1];
+    // ⚠⚠ FROM WHERE THE WAY ON FIRST COMES WITHIN THE STANDOFF OF IT, AND "SHE IS BEHIND" TO THE END OF THE CANDIDATE'S
+    // OWN LINE (review 2026-11-07). "Behind" ran to the end of the NEXT line for every candidate, so a pick-up on the
+    // held line just past a rock was refused whenever the next line passed the rock too - stricter than the line walk
+    // this branch replaced, and a feature touching the next line's far end refused the way round outright. Now a point
+    // on the held line must have the rest of the held line clear of it (the line walk's own test), and one in the turn
+    // or the hop, or on the next line, its run-out clear of it - the test the rest of the chart has (`others`).
+    // ⚠ NOT TO THE NEXT LINE'S END (the third review, 2026-11-07, probed): one shoreline depth band reaching into the
+    // turn AND over the next line's last 10 m refused the way round outright - "it lies across it" - while the SAME water
+    // drawn as two rings was routed, the second ring being `others`. Refusing leaves her held where the guard stopped
+    // her, which is the 14.5 minutes this branch exists to end; a pick-up whose run-out is clear moves her on, and if
+    // the next line's end then runs into it, the guard holds her THERE and the way round walks on from there. The first
+    // contact is found leg by leg at half the standoff (firstBlockAlong), so a thin feature between two of the walk's
+    // steps is not stepped over.
+    let sHit = null, hitK = 0;
+    for(let i = 1; i < pts.length && sHit === null && cumP[i - 1] <= endS; i++){
+      const fb = firstBlockAlong(pts[i - 1], pts[i], nogo.frame, herOnly, std);
+      if(fb && cumP[i - 1] + fb.distance <= endS + 1e-6){ sHit = cumP[i - 1] + fb.distance; hitK = i; }
+    }
+    // ... AND WHERE THE WAY WALKED NEVER COMES WITHIN THE STANDOFF OF IT, THE PLAN IS ASKED ONE HOLD HORIZON FURTHER: a
+    // feature there - in the transit past the survey's last line, or past the next line's end - is said as lying
+    // there, beyond what is walked. With none there either she was held for her own heading or the drift, which no
+    // walk along the plan changes: the line walk below answers that as it always has (where she is - which
+    // aisAroundGo's no-op gate refuses, in its own words).
+    if(sHit === null){
+      const far = endS + GUARD_HOLD_S * roleSpeedMS("transit");
+      let beyond = false;
+      for(let i = 1; i < pts.length && !beyond && cumP[i - 1] < far; i++){
+        if(cumP[i] <= endS) continue;
+        const fb = firstBlockAlong(pts[i - 1], pts[i], nogo.frame, herOnly, std);
+        beyond = !!fb && cumP[i - 1] + fb.distance >= endS - 1e-6 && cumP[i - 1] + fb.distance <= far;
+      }
+      if(beyond) return {error: !lineHit
+        ? what + " lies beyond the end of line " + lineNo(g.mark.line) + ", the last line of its survey - the way round "
+          + "walks no further, since the plan beyond is a transit, planned wider than a survey line's standoff"
+        : what + " lies beyond the end of line " + lineNo(lineHit.line) + " - further on than the way round walks (the "
+          + "rest of line " + lineNo(g.mark.line) + ", the turn and line " + lineNo(lineHit.line) + ")"};
+    } else {
+      const w = aisWalkPast(pts, endS, herOnly, others, std, runOutM,
+                            {fromS: sHit, behindTo: (s, k) => k === 1 ? cumP[1] : s + runOutM});
+      if(!w) return {error: "nothing on the way on to the end of line " + lineNo(lineHit ? lineHit.line : g.mark.line)
+                            + (lineHit ? "" : ", the last line of its survey,") + " is clear of " + what + " - it lies across it"};
+      if(w.k === 1){
+        // ON THE HELD LINE, past the feature: the line walk's own answer, in its own shape
+        const sOn = s0 + dir * w.s;
+        return {to: w.p, j: leg.j, line: g.mark.line, fromStart: leg.fwd > 0 ? sOn : len - sOn,
+                skipM: w.s, atEnd: distTo(w.p, leg.end) <= LINE_MATCH_M,
+                her, roundM: ring ? ring.roundM : null, stdM: std};
+      }
+      const onWp = distTo(w.p, pts[w.k]) < 0.5;
+      const lineStartS = lineK ? w.cum[lineK - 1] : Infinity;
+      return {to: onWp ? null : w.p, j: leg.j + w.k - 1, line: null, fromStart: null, skipM: w.s, fromTurn: true,
+              pastEnd: g.mark.line, leftM: w.cum[1],
+              // where the way on first ran into it, for the words (resumeHeldRun): the held line to its end, the turn
+              // or hop out of it, or the next line
+              hitOn: hitK === 1 ? "line" : hitK === lineK ? "next" : "turn",
+              onLine: lineHit && w.k === lineK ? lineHit.line : null,
+              coverM: lineHit && w.k === lineK ? Math.max(0, w.s - lineStartS) : 0,
+              her, roundM: ring ? ring.roundM : null, stdM: std};
+    }
+  }
   for(let s = s0; dir > 0 ? s <= len : s >= 0; s += dir * AIS_AROUND_STEP_M){
     const p = at(s), pe = nogo.frame.toEN(p);
     if(clearanceM(pe, herOnly, std + 1) < std) continue;                 // inside her maneuver ring
@@ -4851,6 +4994,7 @@ function aisAroundGo(g, polys, ep, manual){
           + "): it is about where she is being carried, or a chart read that has moved since the plan was built"};
   }
   if(plan.error){
+    noteAroundRefused(ep, plan.error, manual, "plan");      // the bar says it, and the session log has it (2026-11-07)
     if(manual || !ep.aroundSaid){ ep.aroundSaid = true;
       showBanner('⚠ NO WAY ROUND ' + ep.kind + ' — ' + plan.error + (g.leg
         ? ". She keeps holding; resume the " + legName(g.leg) + " from the bar, or re-command her."
@@ -4863,8 +5007,8 @@ function aisAroundGo(g, polys, ep, manual){
   // the Intent card and the session log - because a certification nobody can check is worse than none.
   if(ep.chart && aisKoBlind) plan.blindTraffic = true;
   resumeHeldSurvey({at: plan, ko: koRoundHer(polys, plan.her, std), auto: ep, around: true, manual: !!manual})
-    .catch(e => showBanner('⚠ THE WAY ROUND FAILED — ' + (e && e.message)
-                           + ". The remainder is still held; resume it from the guard bar."));
+    .catch(e => { const txt = '⚠ THE WAY ROUND FAILED — ' + (e && e.message) + ". The remainder is still held; resume it from the guard bar.";
+                  noteAroundRefused(ep, txt, manual, "failed"); showBanner(txt); });   // the bar and the log too (review 2026-11-07)
   return true;
 }
 /** ROUTE ROUND HER NOW: a try on demand - the held bar's button, and the chart-menu row over a contact
@@ -10892,6 +11036,252 @@ function patStrikeKey(){
  */
 function patClipKey(cut){ const k = patStrikeKey(); return k && k + "|" + cut.bufM.toFixed(2) + "|" + cut.waterM.toFixed(3); }
 
+// ── THE WATER A SURVEY IS PUNCHED AT (2026-11-07) ───────────────────────────────────────────────────────────────────
+/**
+ * THE LOWEST WATER PREDICTED OVER THE SURVEY'S OWN FLIGHT, NOT THE WATER AT THE MINUTE PUNCH OUT WAS PRESSED (Andy's S1
+ * at Castine, 2026-11-07: punched at +3.43 m near high water, 78 lines of about 30 min each. The water fell through
+ * +3.15 m - the DriX's 2.25 m draft plus its 0.9 m under-keel clearance - at about 11:00, and from then on 37 stretches
+ * of what was left, the line ends and turns at both shores, lay inside the guard's 5 m buffer. ENC depth bands switch
+ * whole, so it was a cliff and not a slope: +3.20 m clean, +3.10 m 37. The guard held her at the first one and nothing
+ * routed her on). A passage's section has been planned at the lowest level predicted along it over the hours she sails
+ * it since 2026-10-12 (sectionWater); a survey is flown over hours too, often over a whole tide, and never was.
+ *
+ * So punchNow reads, before each punch, the lowest water predicted at the survey's own points from now over its flight
+ * at the survey speed - stretched by WATER_ETA_SLACK, and WATER_WINDOW_PAD_S after, as a section's is; the server reads
+ * WATER_WINDOW_MAX_H ahead at most - by the same read (waterAlongRead) and the same rule (sectionLevel: a point counts at
+ * its lowest only with a station within WATER_REMOTE_KM, else at chart datum; chart datum when nothing could be read; a
+ * LOWER manual level wins, a higher one does not). And never above the water she is in now (punchWaterM): a live level
+ * already under the prediction is the one the guard flies by.
+ * ⚠ THE COST IS COVERAGE, AND IT IS SAID: water deep enough only near high water is clipped out of the lines, and the
+ * punch summary names the level it cut at and why. Measured on Andy's S1 at chart datum: 196 of its 204 km kept.
+ * ⚠ READ ONCE A PATTERN AND KEPT PUNCH_LEVEL_TTL_MS. A clearing punches once per strike, and a level that moved between
+ * two of its punches re-cuts every run under the strike being judged (the moving target - punchHold). Keyed by the
+ * pattern's lines, so a new drawing, or a boundary that cuts them differently, reads again.
+ */
+const PUNCH_LEVEL_TTL_MS = 10 * 60 * 1000;
+const WATER_WINDOW_MAX_H = 24;              // asv_console.py WATER_WINDOW_MAX_S: the server reads no further ahead
+let punchLevel = null;                      // {m, say, read, hours, flightM, key, at} - the last read, for the lines `key` names
+let punchFlown = null;                      // {key, m} - the flight of the route the last punch of those lines made (punchFlightM)
+/** The pattern's lines, as the level is keyed by them (to ~10 m) - and the survey speed, which sets the flight's window
+ *  (review 2026-11-07: a speed halved within the TTL kept the low of a flight half as long). */
+function punchLevelKey(lines){
+  return (lines || []).map(l => [l[0].lat, l[0].lon, l[1].lat, l[1].lon].map(v => v.toFixed(4)).join(",")).join(";")
+       + "|" + roleSpeedMS("survey").toFixed(2);
+}
+/** The read that belongs to the pattern on the card NOW - its lines and the survey speed - or null. */
+function punchLevelFor(){
+  const lines = patSourceLines();
+  return punchLevel && lines.length && punchLevel.key === punchLevelKey(lines) ? punchLevel : null;
+}
+/** How much longer a meter of turn takes than a meter of line: the turns are flown at the TURN speed (never counted
+ *  quicker than the line, so the window's end stays her latest finish). */
+function turnTimeFactor(){
+  const vs = roleSpeedMS("survey"), vt = roleSpeedMS("turn");
+  return Number.isFinite(vs) && Number.isFinite(vt) && vt > 0.05 ? Math.max(1, vs / vt) : 1;
+}
+/** A survey's own flight as SURVEY-SPEED meters, along waypoints `pts`: a coverage-line leg (`isLine(a, b)`) as it is,
+ *  every other leg - a turn, a join, a detour - weighted by turnTimeFactor. flightWindow's `ownM`. */
+function flightOwnM(pts, isLine){
+  const f = turnTimeFactor();
+  let L = 0;
+  for(let i = 1; i < pts.length; i++){
+    const d = distTo(pts[i - 1], pts[i]);
+    L += isLine(pts[i - 1], pts[i]) ? d : d * f;
+  }
+  return L;
+}
+/**
+ * The survey's own flight, m (survey-speed meters): its lines and the hops between them as drawn - or the flight of the
+ * route the last punch of THESE lines made, when that was longer (punchFlown).
+ * ⚠ THE DRAWING IS NOT THE FLIGHT (review 2026-11-07): the turns are ladders and teardrops far longer than the hop
+ * between two lines' ends, and flown slower - 8 lines 200 m long 10 m apart drew 1670 m and committed 2493 m. A window
+ * read over the drawing ended before she does, so on a falling tide the punch cut above the low of its own flight and
+ * Upload asked straight after it. The drawing answers the FIRST read (the route does not exist until the punch makes
+ * it); punchNow then measures the route it made and reads again when it is longer.
+ */
+function punchFlightM(lines){
+  const f = turnTimeFactor();
+  let L = 0;
+  for(let k = 0; k < lines.length; k++){
+    L += distTo(lines[k][0], lines[k][1]);
+    if(k + 1 < lines.length) L += distTo(lines[k][1], lines[k + 1][0]) * f;
+  }
+  return punchFlown && punchFlown.key === punchLevelKey(lines) ? Math.max(L, punchFlown.m) : L;
+}
+/** The flight of the route the punch on the card made (patternWaypoints), as flightOwnM counts it - its lines as they
+ *  are, its turns and joins at the turn speed. */
+function punchFlownM(){
+  const pw = patternWaypoints();
+  const ends = new Set(pw.lines.map(l => l.a.lat + "," + l.a.lon + ">" + l.b.lat + "," + l.b.lon));
+  return flightOwnM(pw.wps, (a, b) => ends.has(a.lat + "," + a.lon + ">" + b.lat + "," + b.lon));
+}
+/** Read the water again when the route the punch made flies longer than the read assumed (PUNCH_FLIGHT_SLACK more), and
+ *  answer whether the new low is under the level that punch was cut at - punchNow then punches again, at it. A HELD cut
+ *  (Punch Out takes the clearing's hold before its first punch) is lowered to it: the hold's level is only ever lowered
+ *  (refreshPunchHold), and this is the same low over the flight it is held for, read over that flight. A read that found
+ *  nothing is not improved by a longer window. */
+const PUNCH_FLIGHT_SLACK = 0.02;
+const PUNCH_FLIGHT_REREAD = 2;
+async function punchFlightOutgrewRead(){
+  const cut = patFunnel && patFunnel.cut, lv = punchLevelFor();
+  if(!patClip || !cut || !lv || lv.failed || !lv.read || !Number.isFinite(lv.flightM)) return false;
+  const flown = punchFlownM();
+  if(!(flown > lv.flightM * (1 + PUNCH_FLIGHT_SLACK))) return false;
+  punchFlown = {key: lv.key, m: flown};
+  await refreshPunchLevel(true);
+  const w = punchWaterM();
+  if(!(w < cut.waterM - 0.005)) return false;
+  if(cut.held && punchHold && w < punchHold.waterM) punchHold.waterM = w;
+  return true;
+}
+/**
+ * THE WINDOW A SURVEY'S WATER IS READ OVER - the punch's and Upload's, ONE function (review 2026-11-07: the punch read
+ * from now over its own flight and Upload from now to her finishing it after all the plan before it, so a survey second
+ * in a plan was asked about at every Upload however often it was punched again). `preM` of the plan before its first
+ * point, from the boat, and `ownM` of its own: from her EARLIEST arrival at it (the faster of the transit and survey
+ * speeds, unstretched) to her LATEST finish (the survey speed throughout, stretched by WATER_ETA_SLACK, and
+ * WATER_WINDOW_PAD_S after). {t0, t1, hours, when}: `when` the window in sectionLevel's words, null for one that starts
+ * now - and it says when the server's WATER_WINDOW_MAX_H cuts it short.
+ */
+function flightWindow(preM, ownM){
+  const now = Date.now() / 1000, vs = Math.max(0.1, roleSpeedMS("survey")), vf = Math.max(vs, roleSpeedMS("transit"));
+  const t0 = now + preM / vf, t1 = now + (preM + ownM) / vs * WATER_ETA_SLACK + WATER_WINDOW_PAD_S;
+  const h0 = (t0 - now) / 3600, span = (t1 - t0) / 3600, capped = span > WATER_WINDOW_MAX_H;
+  const hours = Math.min(span, WATER_WINDOW_MAX_H);
+  const when = h0 < 0.1 && !capped ? null
+    : "over its flight, " + (h0 < 0.1 ? "from now" : h0.toFixed(1) + " h from now") + " to " + (h0 + hours).toFixed(1) + " h"
+      + (capped ? " (its first " + WATER_WINDOW_MAX_H + " h: the predictions are read no further ahead)" : "");
+  return {t0, t1, hours, when};
+}
+/** The plan the pattern on the card is flown after, m, from the boat: up to its own first waypoint when the card holds
+ *  a survey already in the plan (✎), else the whole plan and on to the pattern's first line. */
+function punchPreM(lines){
+  const wps = mission.waypoints || [];
+  const i = editingSv ? wps.findIndex(w => w && w.sv === editingSv) : -1;
+  const path = [...(asv ? [{lat: asv.lat, lon: asv.lon}] : []), ...(i >= 0 ? wps.slice(0, i + 1) : [...wps, lines[0][0]])];
+  let L = 0;
+  for(let k = 1; k < path.length; k++) L += distTo(path[k - 1], path[k]);
+  return L;
+}
+/** The level `lines` are flown at: {m, say, read, hours, failed} - sectionLevel's, over the flight's window. */
+async function readPunchLevel(lines){
+  const path = [];
+  for(const l of lines) path.push(l[0], l[1]);
+  const ownM = punchFlightM(lines);
+  const win = flightWindow(punchPreM(lines), ownM);
+  const r = await waterAlongRead(path, win.t0, win.t1);
+  return {...sectionLevel(r, water, win.hours, win.when), hours: win.hours, flightM: ownM,
+          failed: !(r && Array.isArray(r.points) && r.points.some(p => Number.isFinite(p.low_m)))};
+}
+/** A read that FAILED - no level at any of its points: NOAA or the server did not answer - is tried again after this,
+ *  not kept PUNCH_LEVEL_TTL_MS, which made one NOAA hiccup chart datum for ten minutes of punches (review 2026-11-07).
+ *  (Levels read only at stations too far off to trust are an answer, and are kept.) */
+const PUNCH_LEVEL_RETRY_MS = 60 * 1000;
+/** punchNow's read before a punch: the pattern on the card read again only when it is not the one last read, or that
+ *  read is older than PUNCH_LEVEL_TTL_MS (PUNCH_LEVEL_RETRY_MS when it failed) - or `fresh`, a press of Punch Out.
+ *  Never throws - a failed read is chart datum, said (sectionLevel). */
+async function refreshPunchLevel(fresh){
+  const lines = patSourceLines();
+  if(!lines.length) return punchLevel;
+  const key = punchLevelKey(lines), now = Date.now();
+  if(!fresh && punchLevel && punchLevel.key === key
+     && now - punchLevel.at < (punchLevel.failed ? PUNCH_LEVEL_RETRY_MS : PUNCH_LEVEL_TTL_MS)) return punchLevel;
+  try{ punchLevel = {...await readPunchLevel(lines), key, at: Date.now()}; }
+  catch(e){ punchLevel = {m: 0, say: "chart datum - the level could not be read (" + ((e && e.message) || e) + ")",
+                          read: false, failed: true, hours: 0, key, at: Date.now()}; }
+  return punchLevel;
+}
+/** refreshPunchLevel until the read is the one for the pattern on the card NOW: a drawing or a speed changed while NOAA
+ *  was read is read again, PUNCH_LEVEL_SETTLE times at most - after that punchWaterM stands chart datum in. `fresh` (a
+ *  press of Punch Out, or Unblock): the first read is a new one - the window moves with the plan and the boat, and the
+ *  operator answering Upload's tide question by punching again must be cut at the window Upload reads NOW. */
+const PUNCH_LEVEL_SETTLE = 3;
+async function settlePunchLevel(fresh){
+  for(let i = 0; i < PUNCH_LEVEL_SETTLE; i++){
+    await refreshPunchLevel(fresh && i === 0);
+    if(punchLevelFor() || !patSourceLines().length) return;
+  }
+}
+/**
+ * THE LEVEL A PUNCH IS CUT AT: the survey's predicted low (punchLevelFor), and never above the water now.
+ * ⚠ A READ FOR OTHER LINES IS NO READ FOR THESE (review 2026-11-07): the level was taken whatever lines it was read for,
+ * so a drawing moved during the read's 20 s - or a survey speed changed inside the TTL - was cut at the old one's low.
+ * Now a read that is not the card's own stands CHART DATUM in (the lowest any prediction here is said against), said by
+ * punchLevelSay. With no read at all (only a suite's world: every punch reads first, in punchNow) the water now.
+ */
+function punchWaterM(){
+  const live = sea.waterOffset || 0;
+  if(!punchLevel) return live;
+  const lv = punchLevelFor();
+  return Math.min(lv && Number.isFinite(lv.m) ? lv.m : 0, live);
+}
+/** The live cut - the one place it is written; punchOut reads it when no clearing holds the inputs. */
+function liveCut(){ return {bufM: patClipBufM(), waterM: punchWaterM(), setKn: null, held: false}; }
+/** A water level as the console writes one: signed, to the centimeter. */
+function fmtLevel(v){ return (v >= 0 ? "+" : "") + v.toFixed(2) + " m"; }
+/** The level in the operator's words, for the punch summary: where it came from, and what it costs. `stamp`: for the
+ *  survey's record (its row's tip, the mission file), without what the water NOW is - a level a tip shows hours later is
+ *  not the water then (review 2026-11-07). `held`: the cut is the clearing's held level (punchHold), which can stand
+ *  under the card's own read - a hold is only ever lowered - and is not the water now (review 2026-11-07). */
+function punchLevelSay(m, stamp, held){
+  const live = sea.waterOffset || 0;
+  if(!punchLevel) return "cut at the water now, " + fmtLevel(m);
+  const lv = punchLevelFor();
+  if(!lv) return "cut at " + fmtLevel(m) + (m < -1e-9 ? ", the water now, under chart datum" : ", chart datum")
+               + " (the pattern or the survey speed changed while the water over its flight was read; Punch Out again to read it)";
+  // (from here punchLevel IS the card's own read: punchLevelFor answered it)
+  // a read's words start with the level itself (sectionLevel), so it is said once - "cut at -0.12 m, -0.12 m, the lowest
+  // predicted..." was the lab's summary (2026-11-07); chart datum standing in for a read says the level first
+  return "cut at " + (m < punchLevel.m - 1e-9 ? fmtLevel(m) + (held ? ", the level this clearing is held at (under the prediction now: "
+                                                                     : ", the water now (under the prediction: ") + punchLevel.say + ")"
+                    : punchLevel.read ? punchLevel.say : fmtLevel(m) + ", " + punchLevel.say)
+       + (!stamp && live > m + 0.05 ? " - " + fmtLevel(live) + " now, so water deep enough only nearer high water is left out" : "");
+}
+/**
+ * UPLOAD'S TIDE CHECK (2026-11-07): the surveys `wps` carries that were cut for deeper water than they will be flown in.
+ * A survey is cut at the lowest water predicted over its flight from the minute it is punched (punchLevel) - and flown
+ * whenever it is uploaded: the next day, after a long approach, or after other surveys. So each survey sent is read
+ * again along its own waypoints over the window she flies it in, from where it lies in what is sent (flightWindow - the
+ * punch's own, so a survey punched again just before is cut at the very low asked about here), and one whose cut level
+ * stands TIDE_REBUILD_M or more above that low - or above the water now - is named. A survey stamped before 2026-11-07
+ * was cut at the water of the minute it was punched, and is judged the same way. [{s, low, say}] in `over` - `say` the
+ * low in words, its level first - or null: nothing to ask. Never throws.
+ * ⚠ THE TRUSTED POINTS ONLY, AND THE WATER NOW WITH NONE (review 2026-11-07). sectionLevel stands chart datum in for a
+ * point no station within WATER_REMOTE_KM reaches, so ONE such point made the low chart datum - no evidence - and the
+ * survey went unjudged however low its read points were; and a read that failed whole dropped the water-now half too, so
+ * a survey cut at +3.43 m went out unasked with the water at +0.12 m. Now the low is the read points' alone, and with
+ * none the water now is judged by itself, said so.
+ */
+async function uploadTideRisk(wps){
+  try{
+    const svs = (mission.surveys || []).filter(s => s && s.water_m != null && isFinite(+s.water_m));
+    if(!svs.length || !asv) return null;
+    const line = [{lat: asv.lat, lon: asv.lon}, ...wps];
+    const cum = [0];
+    for(let i = 1; i < line.length; i++) cum.push(cum[i - 1] + distTo(line[i - 1], line[i]));
+    const live = sea.waterOffset || 0;
+    const trusted = (p) => Number.isFinite(p.low_m) && Number.isFinite(p.km) && p.km <= WATER_REMOTE_KM;
+    const asks = svs.map(s => {
+      let i0 = -1, i1 = -1;
+      for(let i = 0; i < wps.length; i++) if(wps[i] && wps[i].sv === s.id){ if(i0 < 0) i0 = i; i1 = i; }
+      // not in what this Upload sends - or one waypoint of it (a remainder cut at its last point): nothing left to fly
+      if(i0 < 0 || i1 <= i0) return null;
+      // its own flight as the punch counts it (flightOwnM): its turns at the turn speed, so a survey punched just now is
+      // read over the same window it was cut for (review 2026-11-07)
+      const win = flightWindow(cum[i0 + 1], flightOwnM(wps.slice(i0, i1 + 1), (a, b) => !!lineOfLeg(a, b)));
+      return waterAlongRead(wps.slice(i0, i1 + 1), win.t0, win.t1).then(r => {
+        const pts = r && Array.isArray(r.points) ? r.points.filter(trusted) : [];
+        const lv = sectionLevel({...(r || {}), points: pts}, water, win.hours, win.when);
+        return lv.read && lv.m <= live ? {s, low: lv.m, say: lv.say}
+             : {s, low: live, say: fmtLevel(live) + ", the water now" + (lv.read ? "" : " (no prediction along it could be read)")};
+      });
+    }).filter(Boolean);
+    const got = await Promise.all(asks);
+    const over = got.filter(g => +g.s.water_m - g.low >= TIDE_REBUILD_M - 1e-9);
+    return over.length ? {over} : null;
+  }catch(e){ return null; }
+}
+
 /** The inputs the next punch is cut at WHILE A CLEARING HOLDS THEM, else null - and punchOut then reads the live ones
  *  itself, in one place, so "held" and "live" are each written exactly once. See punchHold. */
 function punchCutNow(){
@@ -10929,17 +11319,19 @@ function releasePunchHold(){
 }
 /** Rounded UP to the hold's step - a held margin is never less than the one it was taken from. */
 function holdStepUp(m){ return Math.ceil(m / PUNCH_HOLD_STEP_M - 1e-9) * PUNCH_HOLD_STEP_M; }
-/** Take the hold: the highest margin over the window, rounded up, and the level now. */
+/** Take the hold: the highest margin over the window, rounded up, and the level a punch is cut at (punchWaterM). */
 function takePunchHold(){
   const m = punchMarginMax();
-  punchHold = {bufM: holdStepUp(m.bufM), waterM: sea.waterOffset || 0, setKn: m.setKn, at: Date.now(), why: null};
+  punchHold = {bufM: holdStepUp(m.bufM), waterM: punchWaterM(), setKn: m.setKn, at: Date.now(), why: null};
   return punchHold;
 }
 /**
  * Move the hold where the water or the current has gone past it: the margin RAISED when the live one (highest over the
- * window) reads above the held, the level moved when the live one is TIDE_REBUILD_M off it. Returns what moved, in
- * words, or null - and leaves it on the hold (`why`) for the clearing's row. Never LOWERS the margin: slack water does
- * not hand back coverage mid-clearing, which would re-cut every run for less margin than the start had.
+ * window) reads above the held, the level LOWERED when the punch's own (punchWaterM) reads TIDE_REBUILD_M under it.
+ * Returns what moved, in words, or null - and leaves it on the hold (`why`) for the clearing's row. Never LOWERS the
+ * margin and never RAISES the level: slack water or a rising tide does not hand back coverage mid-clearing, which would
+ * re-cut every run for less than the start had. (The level moved both ways until 2026-11-07, when it was the live one;
+ * it is the survey's predicted low now, and a rising tide does not raise the low it will be flown through.)
  */
 function refreshPunchHold(){
   if(!punchHold) return null;
@@ -10949,10 +11341,10 @@ function refreshPunchHold(){
     punchHold.bufM = holdStepUp(m.bufM); punchHold.setKn = m.setKn;
     why.push("the current's standoff rose to " + m.bufM.toFixed(1) + " m (held now at " + punchHold.bufM.toFixed(1) + " m)");
   }
-  const w = sea.waterOffset || 0;
-  if(Math.abs(w - punchHold.waterM) >= TIDE_REBUILD_M - 1e-9){
+  const w = punchWaterM();
+  if(punchHold.waterM - w >= TIDE_REBUILD_M - 1e-9){
     const lvl = v => (v >= 0 ? "+" : "") + v.toFixed(2) + " m";
-    why.push("the water level moved from " + lvl(punchHold.waterM) + " to " + lvl(w));
+    why.push("the water level it is cut at fell from " + lvl(punchHold.waterM) + " to " + lvl(w));
     punchHold.waterM = w;
   }
   punchHold.why = why.length ? why.join(" and ") : null;
@@ -11178,10 +11570,21 @@ function punchNow(){
     // strike, so a clearing was minutes of that. Now the join loop pauses every PUNCH_SLICE.sliceMs; a punch whose inputs
     // moved while it paused stops there (punchOut says how) and, when the CHART or the WATER moved it rather than the
     // operator, is run again here - so whatever awaits this promise still gets a finished punch, or a part-way one said.
-    let res;
+    // ⚠⚠ THE WATER IT WILL BE FLOWN IN, READ FIRST (2026-11-07): the lowest predicted over the survey's flight - see
+    // punchLevel. Before the punch and not inside it, so a read that waits on NOAA holds no chart read and no join.
+    // ⚠ SETTLED, AND AGAIN BEFORE EACH RE-RUN (review 2026-11-07): a pattern moved during the read reads again, so the
+    // punch is cut at its own lines' low (punchLevelFor) - and a re-run after a pause reads for the lines it re-cuts.
+    // ⚠ AND OVER THE ROUTE IT MADE (review 2026-11-07): the first read can only know the drawing - its turns are not
+    // made yet - so a finished punch whose route flies longer than that is read again over it, and punched again when the
+    // low came back under its cut (punchFlightOutgrewRead), PUNCH_FLIGHT_REREAD times at most, its own count.
+    $("#sp_hint").textContent = "Reading the water predicted over the survey's flight…";
+    let res, grew = 0;
     for(let i = 0; i < PUNCH_SLICE.again; i++){
+      await settlePunchLevel();
       res = await punchOut(heldCutAfterRead, PUNCH_SLICE);
-      if(res !== "again") break;
+      if(res === "again") continue;
+      if(res !== "stopped" && grew < PUNCH_FLIGHT_REREAD && await punchFlightOutgrewRead()){ grew++; i--; continue; }
+      break;
     }
     // A punch that stopped part-way: the card's words read NOW, with punchBusy down - a pause may have drawn "still
     // joining" (review 2026-11-06) - and then why, unless a strike's re-punch is already on its way.
@@ -11651,7 +12054,11 @@ function clearingTick(){
   if(!currentPattern() || (clr.key && patStrikeKey() !== clr.key)){ releasePunchHold(); if(clr.phase !== "idle") endClearing(null); return; }
   if(clr.phase !== "ready" || punchBusy || patRepunchT) return;
   const m = punchMarginMax();
-  if(patDropped || (m && m.bufM > punchHold.bufM + 1e-9) || Math.abs((sea.waterOffset || 0) - punchHold.waterM) >= TIDE_REBUILD_M - 1e-9)
+  // ⚠ THE WATER BY refreshPunchHold'S OWN RULE (review 2026-11-07): the hold is only ever LOWERED, by a fall of
+  // TIDE_REBUILD_M in the level a punch is cut at (punchWaterM) - since every punch is cut at the predicted low the water
+  // stands above the hold nearly always, and the old |live - hold| test restarted a finished clearing on every frame
+  // (an Upload dry run, a "Cleared" banner and two log records each time; review probe: 3 ticks, 3 restarts)
+  if(patDropped || (m && m.bufM > punchHold.bufM + 1e-9) || punchHold.waterM - punchWaterM() >= TIDE_REBUILD_M - 1e-9)
     startClearing("the water or the current moved past the hold", {resume: true, recheck: true});
 }
 /** THE CLEARING'S ROW on the Survey card (#sp_clear), under the refusal it answers. */
@@ -11703,7 +12110,7 @@ function renderClearRow(){
 }
 /**
  * PUNCH OUT, PRESSED. A fresh start: any clearing ends and its hold goes. The punch is taken at a NEW hold - the
- * highest margin of the window, rounded up, and the level now - so that if anything blocks, the clearing starts on the
+ * highest margin of the window, rounded up, and the level the punch is cut at (punchWaterM, read first) - so that if anything blocks, the clearing starts on the
  * very punch the operator is looking at instead of re-cutting it first; with nothing blocking the hold is released at
  * once and the card is the punch it always was (cut at a margin never less than the live one). `opts.dry` (Unblock):
  * clear even with nothing red - the refusal Unblock answers is Upload's, which only the check of its route finds.
@@ -11711,14 +12118,21 @@ function renderClearRow(){
 async function punchOutPressed(opts){
   const o = opts || {};
   endClearing(null); releasePunchHold();
-  if(currentPattern()) takePunchHold();
   // ⚠ "punching" WHILE ITS OWN PUNCH RUNS (review 2026-11-06): the row hides, so the old punch's "Clear blocked lines"
   // cannot be pressed under it, and startClearing refuses; anything that ends or starts a clearing meanwhile moves
   // `gen`, and then what follows here is not ours to do - its tail once released the hold under a clearing begun so.
   clr.phase = "punching";
   const gen = clr.gen;
   renderClearRow();
-  try { await punchNow(); }
+  try {
+    // ⚠ THE HOLD IS TAKEN AFTER THE WATER OVER THE FLIGHT IS READ (review 2026-11-07): taken first, it held the level of
+    // whatever was read last - the water now, before any read - and the punch was cut there, high water and all
+    $("#sp_hint").textContent = "Reading the water predicted over the survey's flight…";
+    await settlePunchLevel(true);
+    if(clr.gen !== gen) return;
+    if(currentPattern()) takePunchHold();
+    await punchNow();
+  }
   finally { if(clr.gen === gen && clr.phase === "punching") clr.phase = "idle"; }
   if(clr.gen !== gen) return;
   if(patClip && patJoined && (punchBlockers().length || o.dry)) return startClearing(o.why || "Punch Out", {recheck: !!o.dry});
@@ -12250,8 +12664,8 @@ function punchRefusal(){
   // No punch: an un-punched pattern is the operator's to add, as it always was - unless the page threw the punch away
   // under them (patDropped), in which case adding would commit something they never saw.
   if(!patClip) return !patDropped ? null : {short: "the punch was thrown away when the water level moved",
-    text: "ADD TO PLAN REFUSED — Punch Out's runs were thrown away when " + patDropped + ": they were cut against "
-        + "the chart at the old level. Adding now would commit the pattern UN-punched - its lines as drawn, through "
+    text: "ADD TO PLAN REFUSED — Punch Out's runs were thrown away when " + patDropped + ": they were cut for "
+        + "water, or against a chart, that is not there now. Adding now would commit the pattern UN-punched - its lines as drawn, through "
         + "anything in the way, with no turns between them. Punch Out again."};
   // A punch still JOINING (it hands the page back between joins - punchNow): not yet a part-way one, and not said as one.
   if(!patJoined && punchBusy) return {short: "Punch Out is still joining the runs",
@@ -12434,13 +12848,13 @@ function renderSurveyTable(){
     const state = (p.of && p.done === p.of) ? "✓" : p.any ? p.done + "/" + p.of + " " : "";
     const stateSay = (p.of && p.done === p.of) ? "DONE - every line run"
                    : p.any ? "PARTIAL - " + p.done + " of " + p.of + " line(s) run" : "not run yet";
-    // THE TIDE SINCE THE PUNCH (3a): its depth window was judged at the level it was punched at.
-    const tideSay = t == null ? "" : t < 0
-      ? " ⚠ The water has FALLEN " + Math.abs(t).toFixed(2) + " m since it was punched, so its lines were cut for deeper water than there is now - Punch all re-cuts them."
-      : " ⚠ The water has RISEN " + t.toFixed(2) + " m since it was punched, so its lines stop short of water now deep enough - Punch all re-cuts them.";
+    // THE TIDE SINCE THE PUNCH (3a): its depth window was judged at the level it was cut at - a fall only (surveyTideMoved).
+    const tideSay = t == null ? "" : " ⚠ The water has FALLEN " + Math.abs(t).toFixed(2) + " m under the level it was cut "
+      + "at, so its lines were cut for deeper water than there is now - Punch all re-cuts them.";
     const tip = rocEsc(surveyLabel(s) + ": " + f.lines + " line(s), " + fmtDist(f.m) + " of coverage"
       + (s.punched ? ", punched" : ", NOT punched")
-      + (s.water_m != null ? " at a water level of " + (s.water_m >= 0 ? "+" : "") + s.water_m.toFixed(2) + " m" : "")
+      + (s.water_m != null ? " at a water level of " + (s.water_m >= 0 ? "+" : "") + s.water_m.toFixed(2) + " m"
+                             + (s.water ? " (" + s.water + ")" : "") : "")
       + ((s.settings && s.settings.reverse) ? ", run BACKWARDS" : "") + ". " + stateSay + ". Run " + (i + 1) + " of " + n
       + "." + tideSay + " Click the row to show its figures on this card and its actions.");
     const on = s.id === pick;
@@ -12476,16 +12890,21 @@ function renderSurveyTable(){
       + acts + cont + unb + `</div>`;
   }).join("");
 }
-// THE TIDE SINCE A SURVEY WAS PUNCHED (3a): a quarter meter either way is flagged on its row. Smaller moves are inside
-// what a depth window is drawn to (and the model itself rebuilds at TIDE_REBUILD_M); a falling tide is the one that
-// matters for the boat - her lines were cut for deeper water than there is - and the row's tip says which way it went.
+// THE TIDE SINCE A SURVEY WAS PUNCHED (3a): a fall of a quarter meter under the level it was cut at is flagged on its
+// row. Smaller moves are inside what a depth window is drawn to (and the model itself rebuilds at TIDE_REBUILD_M); a
+// falling tide is the one that matters for the boat - her lines were cut for deeper water than there is.
+// ⚠ A FALL ONLY, SINCE 2026-11-07. A survey is cut at the LOWEST water predicted over its flight now (punchLevel), so the
+// water stands above that level for most of the run by design - a rise is no news, and flagged it would sit on every
+// row nearly all the time. (Until then it was cut at the water of the minute it was punched, so a rise meant lines that
+// stopped short of water then deep enough, and was flagged too.) A survey stamped before the change - at the water
+// then - is judged the same way: the fall is what can put her in a shoal.
 const SURVEY_TIDE_FLAG_M = 0.25;
-/** The water's move since survey `s` was punched, in meters (negative = fallen), or null when under the flag or
- *  when nothing was recorded (an un-punched survey, one from before 3a). */
+/** How far the water has fallen under the level survey `s` was cut at, in meters (negative), or null when it has not
+ *  fallen a flag's worth or when nothing was recorded (an un-punched survey, one from before 3a). */
 function surveyTideMoved(s){
   if(!s || s.water_m == null || !isFinite(+s.water_m)) return null;
   const d = (sea.waterOffset || 0) - (+s.water_m);
-  return Math.abs(d) >= SURVEY_TIDE_FLAG_M - 1e-9 ? d : null;
+  return d <= -(SURVEY_TIDE_FLAG_M - 1e-9) ? d : null;
 }
 /** The survey the card describes while nothing is being drawn: the one being edited, the row picked, else the last
  *  listed (the one most recently added, on a plan nobody has reordered). Null on a plan with no surveys. */
@@ -12605,13 +13024,14 @@ async function withCardKept(title, why, work){
   try { return await work(); }
   finally { punchAllBusy = false; resetPattern(); applySurveySettings(keep); surveysChanged(); }
 }
-/** Punch every survey again against the chart and the water NOW, each with its own settings, each in place. */
+/** Punch every survey again against the chart now, each at the water it will be flown in (punchLevel), with its own
+ *  settings, in place. */
 async function punchAll(){
   const list = (mission.surveys || []).map(x => x.id);
   if(!list.length) return;
   const res = await withCardKept("Punch all",
-    "Every survey with a recorded drawing is punched again, with its own settings, against the chart and the water "
-    + "level now, and replaced where it stands.", async () => {
+    "Every survey with a recorded drawing is punched again, with its own settings, against the chart now and at the "
+    + "lowest water predicted over its flight, and replaced where it stands.", async () => {
       const out = [];
       for(const id of list){ showBanner("Punch all - " + (out.length + 1) + " of " + list.length + "…"); out.push(await repunchSurvey(id)); }
       return out; });
@@ -12763,9 +13183,13 @@ async function commitPattern(){
     // THE WATER IT WAS CUT AT (phase 3a): the level its depth window was judged at, which the table flags a survey the
     // tide has since left behind against. ⚠ THE PUNCH'S OWN, not the live one (2026-11-06): a clearing's punch is cut at
     // its HELD level (patFunnel.cut), which is kept through a move under TIDE_REBUILD_M - the live level is then up to
-    // that far from the one the runs were cut at. Outside a hold a punch is still thrown away at any move, so the two agree.
+    // that far from the one the runs were cut at. And since 2026-11-07 every punch is cut at the survey's predicted low
+    // (punchWaterM), as a rule under the live level - the cut's own is the level recorded, always.
     water_m: patClip ? Math.round(((patFunnel && patFunnel.cut ? patFunnel.cut.waterM : sea.waterOffset) || 0) * 1000) / 1000
                      : null,
+    // ... AND WHERE THAT LEVEL CAME FROM (2026-11-07): the survey's predicted low over its flight, the water now, or
+    // chart datum where nothing could be read - in the punch's own words, for the row's tip and the mission file.
+    water: patClip && patFunnel && patFunnel.cut && typeof patFunnel.cut.say === "string" ? (patFunnel.cut.stamp || patFunnel.cut.say).slice(0, 400) : null,
     punched_at: patClip ? new Date().toISOString() : null};
   for(let i = firstLine; i < mission.lines.length; i++) mission.lines[i].sv = sv;
   for(let i = firstWp; i < mission.waypoints.length; i++) mission.waypoints[i].sv = sv;
@@ -13450,14 +13874,22 @@ function applyWaterOffset(wl){
   // sees +0.32 m as 0.05 m from the hold, and the model rebuilds all the same. The punch's red hops and Upload's route
   // were judged against the model that is now gone, so the punch goes and the clearing judges it again on the new one.
   // The 1e-9: 0.3 - 0.2 is 0.0999... in floating point, and a 0.1 m move must count as one.
+  // ⚠⚠ AND NOT AT A MOVE THAT LEAVES THE WATER OVER THE LEVEL IT WAS CUT AT (2026-11-07). Every punch is cut at the
+  // survey's predicted low now (liveCut / punchWaterM) - held or not - so a station update a few centimeters either way
+  // above that level changes nothing the clip depends on; the punch goes when the guard's model rebuilds (above), or when
+  // the water falls TIDE_REBUILD_M under the level it was cut at, which is the one move that makes the cut unsafe. A
+  // punch with no cut on record (none before the funnel) goes at any move, as every punch did before.
   const rebuilds = !!(nogo.features && nogo.features.length && nogo.builtOffset != null
                       && Math.abs(sea.waterOffset - nogo.builtOffset) >= TIDE_REBUILD_M - 1e-9);
-  const heldCut = patFunnel && patFunnel.cut && patFunnel.cut.held ? patFunnel.cut : null;
-  const keepHeld = !!heldCut && !rebuilds && Math.abs(sea.waterOffset - heldCut.waterM) < TIDE_REBUILD_M - 1e-9;
-  if(sea.waterOffset !== prev && patClip && !keepHeld){
+  const cutOn = patFunnel && patFunnel.cut && Number.isFinite(patFunnel.cut.waterM) ? patFunnel.cut : null;
+  const under = !!cutOn && sea.waterOffset < cutOn.waterM - (TIDE_REBUILD_M - 1e-9);
+  const keep = !!cutOn && !rebuilds && !under;
+  if(sea.waterOffset !== prev && patClip && !keep){
     patClip = null;
     const lvl = v => (v >= 0 ? "+" : "") + v.toFixed(2) + " m";
-    patDropped = "the water level moved (" + lvl(prev) + " to " + lvl(sea.waterOffset) + ")";
+    patDropped = under ? "the water fell to " + lvl(sea.waterOffset) + ", under the " + lvl(cutOn.waterM) + " it was cut at"
+                       : "the water level moved (" + lvl(prev) + " to " + lvl(sea.waterOffset) + ")"
+                         + (cutOn ? " and the guard's chart was rebuilt at it" : "");
     updatePatReadout();
   }
   if(rebuilds) rebuildNogo();
@@ -15690,9 +16122,11 @@ function samplePts(line, stepM, max){
   return out;
 }
 /** The level a section is planned at, from the server's read along it (`r`) and the boat's own (`wl`, for a manual
- *  level), over `hours`: {m, say}. A point counts at its lowest level only with a station within WATER_REMOTE_KM;
- *  otherwise at chart datum. */
-function sectionLevel(r, wl, hours){
+ *  level), over `hours`: {m, say, read}. A point counts at its lowest level only with a station within WATER_REMOTE_KM;
+ *  otherwise at chart datum. `read` (2026-11-07): a station - or the operator's manual level - set it, not chart datum
+ *  standing in for a read; Upload's tide check asks nothing on chart datum (uploadTideRisk). `when`: the window in
+ *  words, for one that does not start now (a survey's flight - flightWindow); else "over the next `hours` h". */
+function sectionLevel(r, wl, hours, when){
   const pts = r && Array.isArray(r.points) ? r.points : [];
   const lvl = (v) => (v >= 0 ? "+" : "") + v.toFixed(2) + " m";
   let m = null, at = null, far = 0, unread = 0;
@@ -15707,7 +16141,7 @@ function sectionLevel(r, wl, hours){
   let say;
   if(m === null){ m = 0; say = "chart datum - no level could be read along it" + (r && r.note ? " (" + r.note + ")" : ""); }
   else if(at) say = lvl(m) + ", the lowest " + (at.src === "stofs" ? "forecast" : at.kind === "observed" ? "observed" : "predicted")
-    + " along it over the next " + hours.toFixed(1) + " h (" + (at.name || (at.stations || [])[0] || "a station") + ", "
+    + " along it " + (when || "over the next " + hours.toFixed(1) + " h") + " (" + (at.name || (at.stations || [])[0] || "a station") + ", "
     + fmtDist(at.km * 1000, 0) + " off)"
     // (2026-10-13) NOAA's surge forecast set it: the water planned on is under the tide prediction by this much
     + (at.src === "stofs" && Number.isFinite(at.tide_low_m) && Number.isFinite(at.low_m)
@@ -15715,8 +16149,9 @@ function sectionLevel(r, wl, hours){
   else say = "chart datum - " + [far ? far + " of its " + n + " points have no station within " + fmtDist(WATER_REMOTE_KM * 1000, 0) : "",
                                  unread ? "no station gave a level at " + unread + " of its " + n + " points" : ""].filter(Boolean).join("; ");
   const man = wl && wl.source === "manual" && Number.isFinite(wl.offset_m) ? wl.offset_m : null;
-  if(man !== null && man < m){ say = lvl(man) + ", the manual water level (along it: " + say + ")"; m = man; }
-  return {m: Math.round(m * 100) / 100, say};
+  let read = !!at;                     // a station set it - not chart datum standing in for a read (Upload's tide check)
+  if(man !== null && man < m){ say = lvl(man) + ", the manual water level (along it: " + say + ")"; m = man; read = true; }
+  return {m: Math.round(m * 100) / 100, say, read};
 }
 /** The water a section is planned at, read along it over the hours she is expected in it: from now to her time to its
  *  end (what she has left first, when it is sent ahead of her) stretched by WATER_ETA_SLACK, and WATER_WINDOW_PAD_S
@@ -15727,6 +16162,12 @@ async function sectionWater(P, from, pts, append){
   for(let i = 1; i < line.length; i++) L += distTo(line[i - 1], line[i]);
   const ms = (P.kn || V.SPEED_KN[roleSpeed("transit")] || 5) * 1852 / 3600;
   const t0 = Date.now() / 1000, t1 = t0 + L / ms * WATER_ETA_SLACK + WATER_WINDOW_PAD_S;
+  return sectionLevel(await waterAlongRead(line, t0, t1), water, (t1 - t0) / 3600);
+}
+/** The server's read of the lowest water along `line` between epochs t0 and t1 (/api/water/along at samplePts of it):
+ *  its answer, or {note, points: []} in words when it could not be had. ONE read for a passage's section (sectionWater)
+ *  and a survey's punch (readPunchLevel), so the two cannot come to ask it differently. */
+async function waterAlongRead(line, t0, t1){
   const q = samplePts(line, WATER_SAMPLE_M, WATER_ALONG_MAX_PTS).map(p => p.lat.toFixed(5) + "," + p.lon.toFixed(5)).join(";");
   let r = null;
   const ac = typeof AbortController === "function" ? new AbortController() : null;
@@ -15737,7 +16178,7 @@ async function sectionWater(P, from, pts, append){
     if(!res.ok) r = {note: (r && r.error) || "HTTP " + res.status, points: []};
   }catch(e){ r = {note: "the read failed: " + ((e && e.message) || e), points: []}; }
   finally{ if(t) clearTimeout(t); }
-  return sectionLevel(r, water, (t1 - t0) / 3600);
+  return r;
 }
 /** The guard's chart built at another water level (chart.js buildKeepouts' `waterOffsetM`: the live level keeps its
  *  one writer), the structures read off the chart image folded in as rebuildNogo folds them, and Punch Out its own. */
@@ -17781,8 +18222,9 @@ async function punchOut(cut, slicer){
     // patClipKey, so the memo cannot serve a clip cut at other inputs. Measured: the live standoff swung 11.8-12.5 m in
     // seconds in a 1 kn set and three punches with no strikes gave 333, 332 and 331 runs. `cut` may be HOW to take it
     // (punchNow's heldCutAfterRead), asked here - after the chart read above, so whatever moved while it ran is in it.
+    // ⚠ THE LIVE CUT'S LEVEL IS THE SURVEY'S PREDICTED LOW (2026-11-07, liveCut / punchWaterM), not the water now.
     const held = typeof cut === "function" ? cut() : cut;
-    const cutAt = held || {bufM: patClipBufM(), waterM: sea.waterOffset || 0, setKn: null, held: false};
+    const cutAt = held || liveCut();
     const koCov=buildKeepouts(ref, enf, dr, nogo.features, cutAt.waterM);
     const ko=buildKeepouts(ref, enf, {min: dr.min, max: 0}, nogo.features, cutAt.waterM);
     // ⚠ AND THE STRUCTURES READ OFF THE CHART, which this model used to be blind to. It
@@ -17993,7 +18435,9 @@ async function punchOut(cut, slicer){
     // back WHOLE, so nothing else reaches it - and they are the chart's doing, not a stage of their own.
     patFunnel = {drawn: src.length, clipped: clipped.length, struck: nStruck,
                  slivers: ro.ordered.length - shortened.length, short: nShort, minLine, chans: chanExcl.length,
-                 cut: cutAt};
+                 // (the level said as it stood at THIS punch: Add to plan stamps it on the survey - 2026-11-07)
+                 cut: {...cutAt, say: punchLevelSay(cutAt.waterM, false, cutAt.held),
+                       stamp: punchLevelSay(cutAt.waterM, true, cutAt.held)}};
     // ── LEAD-IN / LEAD-OUT ────────────────────────────────────────────────────────────
     // Applied LAST, and every word of that is load-bearing:
     //
@@ -18438,6 +18882,9 @@ async function punchOut(cut, slicer){
     const depthLbl = dr.max>0 ? `${dr.min}-${dr.max} m` : `≥ ${dr.min} m`;
     $("#sp_hint").textContent=`Punched: ${src.length} lines → ${patClip.length} segments `+
       `(${depthLbl}, ${buffer} m buffer, −${turnMargin.toFixed(0)} m turn margin, nogo band ${bandWord(nogo.band)})`+
+      // THE WATER IT WAS CUT AT, AND WHERE THAT CAME FROM (2026-11-07): the survey's predicted low, which costs the
+      // coverage only high water reaches - said, as every other dropped meter on this line is.
+      ` · ${(patFunnel && patFunnel.cut && patFunnel.cut.say) || punchLevelSay(cutAt.waterM, false, cutAt.held)}`+
       // THE MOORED-CONTACT CLIP IS SAID WITH ITS COUNT, AND SO IS A FEED THAT COULD NOT BE ASKED (2026-11-04):
       // coverage clipped for a ship nobody can see on the summary reads as a chart fault, and an empty sea
       // claimed from a stale feed is worse - the standing claim-vs-evidence rule, at the punch's own surface.
@@ -21649,6 +22096,26 @@ async function doUpload(opts){
   }
   if(!asv){ flashNote("No position fix yet — Upload routes the approach from the boat, so it needs one."); return; }
   if(routeTooLong(wps.length)) return;                // the saved plan itself - and before the question below
+  // ⚠ A SURVEY CUT FOR DEEPER WATER THAN IT WILL BE FLOWN IN IS ASKED ABOUT (2026-11-07) - see uploadTideRisk. Fenced by
+  // `was` like every await below it.
+  // (a read of NOAA can take seconds: said, so a press that seems to do nothing is not pressed again - review 2026-11-07)
+  if((mission.surveys || []).some(s => s && s.water_m != null)) showNote("Upload: reading the water predicted along each survey first…");
+  const tide = await uploadTideRisk(wps);
+  if(tide){
+    const yes = await guiConfirm("Upload — survey cut for deeper water",
+        // (o.say starts with the level itself - sectionLevel's, or uploadTideRisk's own - so it is said once; lab 2026-11-07)
+        tide.over.map(o => surveyLabel(o.s) + " was cut at " + fmtLevel(+o.s.water_m) + "; the water along it before she "
+          + "finishes it goes as low as " + o.say).join(". ")
+        + ". Its line ends and turns can then run into water the guard will stop her for. Cancel, then ✎ the survey, "
+        + "Punch Out and Update it to cut it at the water it will be flown in - or Upload it as it is.", {always: true});
+    // logged WITH the answer (review 2026-11-07: it was written before it, so the log could not say what was done)
+    logClient("upload_tide", {surveys: tide.over.map(o => ({sv: o.s.id, water_m: +o.s.water_m, low_m: o.low})), asked: true,
+                              answer: yes ? "upload" : "cancel"});
+    if(!yes){
+      flashNote("Upload: nothing was sent - " + tide.over.map(o => surveyLabel(o.s)).join(", ") + " to be punched again.");
+      return;
+    }
+  }
   if(!nogo.ready){
     // ... AND A READ THAT FAILED IS NOT ASKED ABOUT: REFUSED (2026-10-18, A3). The question below is for a sea no chart
     // covers; a chart NOAA did not serve is charted water whose land a straight line may cross (the Canaveral lock).
@@ -23467,11 +23934,17 @@ async function resumeHeldLeg(opts){
   // would be told the same thing at poll rate. The `aroundSaid` latch covers aisAroundGo's own "no way round";
   // these refusals come from HERE and had none. ⚠ KEYED ON THE TEXT, so a DIFFERENT reason is still said - that
   // is aisStallSay's rule, and a new reason is news.
-  const sayRefusal = (txt) => {
+  // `stage` (2026-11-07): "resume" for a refusal before anything was commanded, "not_running" for notRunning's - the bar
+  // says which (aroundBarSay)
+  const sayRefusal = (txt, stage) => {
+    if(auto && around) noteAroundRefused(auto, txt, manual, stage || "resume");   // the bar and the log (2026-11-07)
     if(auto && !manual && auto.refusedSaid === txt) return;   // already told them this, this episode
     if(auto && !manual) auto.refusedSaid = txt;
     showBanner(txt);
   };
+  // ⚠ A WAY ROUND THAT FAILED IN FLIGHT IS KEPT AND LOGGED TOO (review 2026-11-07): COULD NOT RESUME went to a banner
+  // alone, so the bar went on saying the console routes round it itself now, and the session log had no word of it
+  const sayFailed = (txt) => { if(auto && around) noteAroundRefused(auto, txt, manual, "failed"); showBanner(txt); };
   const tail = aroundTail(g, at);          // ⚠ ONE expression, shared with the no-op gate - see aroundTail
   if(!tail.length){
     sayRefusal("⚠ CANNOT RESUME THE " + NAME + " — it has no waypoint left to fly. She is station-keeping; re-command her.");
@@ -23540,6 +24013,20 @@ async function resumeHeldLeg(opts){
   // every command: nothing has been sent, so the record, the episode and the operator's offer all stand.
   const noOp = aroundNoOpWhy(g, auto, around, tail, rejoinIdx, std);
   if(noOp){ sayRefusal(noOp); render(); return; }
+  // ⚠⚠ THE OPERATOR'S PRESS IS REFUSED WHERE THE WAY ON RUNS INTO THE CHART (2026-11-07) - resumeHeldRun's own test
+  // (resumeRunsInto). A leg has no coverage line, so the whole of it is asked, to RESUME_INTO_REACH_M. BELOW THE WAY IN,
+  // so it walks the route this press would upload - the way in's detour included, not the straight run in it replaces
+  // - and above every latch and every command.
+  if(!auto && !at){
+    const into = resumeRunsInto(from, tail, null);
+    if(into){
+      refuseResumeInto(into, "the " + name,
+        (aisAvoid && aisAvoid.chart ? "ROUTE ROUND HER NOW on this bar tries the way round it; or re-command"   // resumeHeldRun's words
+                                    : "Re-command")
+        + " the " + name + " - it is planned again at the water now.");
+      render(); return;
+    }
+  }
   // Named once, by the sentence that carries this: "Routed round <her> — the <leg> carries on, picked up ... off her".
   const pick = at ? (at.atEnd ? "straight on to its end point, " + aroundMarginSay(at)
                               : "picked up " + fmtDist(at.skipM) + " on from where she left it, " + aroundMarginSay(at))
@@ -23568,7 +24055,7 @@ async function resumeHeldLeg(opts){
       + (doing === "stopped" ? "." : ", and the " + name + " is still held" + (around
           ? ": ROUTE ROUND HER NOW on the bar tries again, and the console tries again itself as soon as anything that could change the answer has changed."
           : auto ? ": the console tries again once the way reads clear again, or resume it from the guard bar."
-          : "; resume it from the guard bar.")));
+          : "; resume it from the guard bar.")), "not_running");
     logClient("resume_not_running", {why, doing, around, auto: !!auto, manual, leg: beh,
               guard: guardMoved !== moved0 ? guardMovedHow : null, wpts: tail.length});
     updateMissionCard(); render();
@@ -23580,7 +24067,7 @@ async function resumeHeldLeg(opts){
   if(!took(slowed)){
     if(ov) guardOverride = null;
     resumeSlow = hadLow;
-    showBanner("⚠ COULD NOT RESUME THE " + NAME + " — the vessel did not take LOW (" + ((slowed && slowed.error) || "no answer")
+    sayFailed("⚠ COULD NOT RESUME THE " + NAME + " — the vessel did not take LOW (" + ((slowed && slowed.error) || "no answer")
       + "). She is still station-keeping and the " + name + " is still held; try again, or re-command her.");
     render(); return;
   }
@@ -23600,7 +24087,7 @@ async function resumeHeldLeg(opts){
     // as the survey's lost upload does. A REFUSAL left her holding already.
     if(!(r && r.refused)) await cmd("/api/cmd/hold", {hold_clear_m: holdClearAt(asv || g.at)});
     if(auto && !at && !aisAvoid && guardHeld) aisAvoid = {...auto, clearSince: 0, aroundAt: Date.now()};
-    showBanner("⚠ COULD NOT RESUME THE " + NAME + " — " + (r && r.refused ? "it was REFUSED (" + r.error + ")"
+    sayFailed("⚠ COULD NOT RESUME THE " + NAME + " — " + (r && r.refused ? "it was REFUSED (" + r.error + ")"
                                                                         : "there was no answer (" + ((r && r.error) || "no answer") + ")")
       + ". She is station-keeping and the " + name + " is still held; try again, or re-command her.");
     render(); return;
@@ -23635,11 +24122,14 @@ async function resumeHeldLeg(opts){
     // review). `rejoinIdx` is set beside that unshift and is 0 exactly when nothing went in front.
     avoidingRaise("routed round", who, rejoinIdx, tail[rejoinIdx]);
     flashNote("Routed round " + who + " — the " + name + " carries on, " + note + ".");
-    if(planIntent) planIntent.why.push({t:"warn", s:"ROUTED ROUND " + who + " after " + (heldS != null ? heldS : "?") + " s holding for her"
+    // one pronoun, chosen by the episode (renderHeldBar's rule): a charted feature is "it" (2026-11-07 - the lab's banner
+    // for line 9's shoal said "she was still in the way")
+    const itW = auto && auto.chart ? "it" : "her";
+    if(planIntent) planIntent.why.push({t:"warn", s:"ROUTED ROUND " + who + " after " + (heldS != null ? heldS : "?") + " s holding for " + itW
       + (manual ? " (at your word)" : " with no answer from the operator") + " — " + note + "; the console is still watching"});
     showBanner("ROUTED ROUND " + who + " — " + (manual
         ? "at your word: "
-        : "she was still in the way, so the " + name + " goes on beyond her: ")
+        : (itW === "it" ? "it" : "she") + " was still in the way, so the " + name + " goes on beyond " + itW + ": ")
       + note + ". " + left + " waypoint" + (left === 1 ? "" : "s") + " to its end point"
       + (hadLow ? ", still at LOW on your authority (RELEASE LOW on the bar for the plan's speed)" : "") + ". Recorded in the session log.");
     if(sk.n) bankStrike(sk);
@@ -23671,6 +24161,105 @@ async function resumeHeldLeg(opts){
   }
   updateMissionCard(); render();
 }
+/**
+ * DOES THE WAY ON RUN INTO THE CHART? - asked of the OPERATOR'S RESUME AT LOW SPEED before anything is commanded
+ * (2026-11-07, Andy's S1 at Castine). The press backs her up resumeBackM() and hands her the same remainder with the
+ * operator's override and LOW, which is right for a hold the operator has judged - a contact they can see is no
+ * threat, a buffer a few meters too wide. It is wrong when the remainder itself runs INTO a charted keep-out at the
+ * water now: on his 12:56-13:00 hold the tide had raised a shoal into line 9's west-end turn, and three presses drove
+ * her down the same 92 m into the same turn, the guard holding her at it again each time (the override lets the
+ * same hazard pass at LOW; it does not make a shoal deep). So the way on - from where she is, through the backtrack,
+ * to the end of the first coverage line after hers (the reach aisAroundPlan's charted walk asks), RESUME_INTO_REACH_M
+ * at most - is walked against the guard's own model at RESUME_INTO_M: inside a keep-out, or within a meter of one (a
+ * pier drawn as a line has no inside). {info, distM, at, beyond}: what it runs into, how far along the way on (from
+ * her, through the backtrack), where, and the first coverage line past it whose own run - the line, the turn out of it
+ * and the line after it, the reach this walk asks - meets nothing at RESUME_INTO_M (lineNo, or null): the line the
+ * refusal offers, since a right-click resume there is routed round it. Null when the way on is clear, or nothing can
+ * be asked.
+ */
+const RESUME_INTO_M = 1;
+const RESUME_INTO_REACH_M = 6000;
+const RESUME_ESCAPE_STEP_M = 2;      // firstBlockAlong's own step at RESUME_INTO_M
+// The walk from leg i0 (begun at a0, s0 meters along): the first keep-out met, to the end of the first coverage line
+// after `markLine` (any line, when off the lines), RESUME_INTO_REACH_M at most. `memo` keeps each whole leg's answer.
+function resumeIntoWalk(pts, i0, a0, s0, markLine, memo){
+  let s = s0;
+  for(let i = i0; i < pts.length && s < RESUME_INTO_REACH_M; i++){
+    const a = i === i0 ? a0 : pts[i - 1];
+    const whole = a === pts[i - 1];
+    const fb = whole && memo && memo.has(i) ? memo.get(i) : firstBlockAlong(a, pts[i], nogo.frame, nogo.ko, RESUME_INTO_M);
+    if(whole && memo) memo.set(i, fb);
+    if(fb) return {info: fb.info, distM: s + fb.distance, at: fb.at, k: i};
+    s += distTo(a, pts[i]);
+    const m = lineOfLeg(pts[i - 1], pts[i]);
+    if(m && m.line !== markLine) break;
+  }
+  return null;
+}
+// ⚠ A BOAT ALREADY IN ONE is not being driven into it - so the way on is walked from where it first LEAVES it: the way
+// out is not asked (getting her out is the way in's to answer, resumeHeldRun routes it), a way back IN after it is
+// (review 2026-11-07: "a boat inside one is not refused" excused the WHOLE way on, so a boat a meter inside a shoal's
+// edge, or beside a pier drawn as a line, was handed a remainder that ran straight into the next shoal). Null when she
+// does not get out of it within the walk's reach.
+// ⚠ AND THE WAY OUT DOES NOT GO THROUGH ONE (the third review, 2026-11-07, probed): stepped every 2 m, a boat half a
+// meter beside a pier drawn as a line "got out" on the far side of it - the step crossed the line - and the way on was
+// passed. Each step is asked geometrically (legCrossesEN: leaving the ring she lies in is allowed, crossing anything
+// else is not), and a crossing is the way on running INTO it: {hit} with what, how far and where, the walk's own answer.
+function resumeEscape(pts, markLine){
+  let s = 0;
+  for(let i = 1; i < pts.length && s < RESUME_INTO_REACH_M; i++){
+    const ae = nogo.frame.toEN(pts[i - 1]), be = nogo.frame.toEN(pts[i]);
+    const L = Math.hypot(be.e - ae.e, be.n - ae.n);
+    const n = Math.max(1, Math.ceil(L / RESUME_ESCAPE_STEP_M));
+    let prev = ae;
+    for(let j = 1; j <= n; j++){
+      const e = ae.e + (be.e - ae.e) * j / n, nn = ae.n + (be.n - ae.n) * j / n, q = {e, n: nn};
+      if(legCrossesEN(prev, q, nogo.ko))
+        return {hit: {info: blockedInfo(prev, nogo.ko, RESUME_INTO_M) || {kind: "a charted keep-out"},
+                      distM: s + L * (j - 1) / n, at: nogo.frame.fromEN(prev.e, prev.n), k: i}};
+      if(!blockedInfo(q, nogo.ko, RESUME_INTO_M)) return {i, a: nogo.frame.fromEN(e, nn), s: s + L * j / n};
+      prev = q;
+    }
+    s += L;
+    const m = lineOfLeg(pts[i - 1], pts[i]);
+    if(m && m.line !== markLine) return null;
+  }
+  return null;
+}
+function resumeRunsInto(from, tail, markLine){
+  if(!nogo.ready || !nogo.frame || !nogo.ko || !from || !tail || !tail.length) return null;
+  const pts = [from, ...tail], memo = new Map();
+  const start = blockedInfo(nogo.frame.toEN(from), nogo.ko, RESUME_INTO_M) ? resumeEscape(pts, markLine)
+                                                                            : {i: 1, a: from, s: 0};
+  if(!start) return null;
+  const hit = start.hit || resumeIntoWalk(pts, start.i, start.a, start.s, markLine, memo);
+  if(!hit) return null;
+  // the first coverage line after it whose OWN RUN meets nothing - the line, the turn out of it and the line after,
+  // the same walk - so the line offered is one this refusal would not refuse (review 2026-11-07: the line's own leg
+  // alone was asked, so a line whose turn out ran into the shoal was offered)
+  let beyond = null;
+  for(let i = hit.k + 1; i < pts.length && beyond == null; i++){
+    const m = lineOfLeg(pts[i - 1], pts[i]);
+    if(m && !resumeIntoWalk(pts, i, pts[i - 1], 0, m.line, memo)) beyond = lineNo(m.line);
+  }
+  const {k, ...found} = hit;
+  return {...found, beyond};
+}
+/** The operator's RESUME AT LOW SPEED refused because the way on runs into the chart: said, logged. `what` is "THE
+ *  SURVEY" or the leg's name; `beyondSay` the way on the operator has instead. */
+function refuseResumeInto(r, what, beyondSay){
+  const kind = (r.info && r.info.kind) || "a charted keep-out";
+  // HOW FAR FROM HER, and how far along (review 2026-11-07): the walk's distance runs from her through the backtrack,
+  // so a shoal a few meters ahead of her read as "190 m on" - she is backed up first, then driven down to it
+  const offM = asv && r.at ? distTo({lat: asv.lat, lon: asv.lon}, r.at) : null;
+  showBanner("⚠ NOT RESUMED AT LOW SPEED — " + what + " she would be handed back runs INTO " + kind + " "
+    + (offM != null ? fmtDist(offM) + " from her (" + fmtDist(r.distM) + " along the way on)" : fmtDist(r.distM) + " along the way on")
+    + ", at the water now (" + fmtLevel(sea.waterOffset || 0) + "): at LOW she would be driven into "
+    + "it, or held again at it. " + beyondSay + " She is still station-keeping and the remainder is still held.");
+  logClient("resume_low_refused", {kind, dist_m: Math.round(r.distM), off_m: offM != null ? Math.round(offM) : null,
+            water_m: sea.waterOffset || 0, at: r.at ? {lat: +r.at.lat.toFixed(6), lon: +r.at.lon.toFixed(6)} : null,
+            beyond: r.beyond});
+}
 async function resumeHeldRun(opts){
   const g = guardHeldOffer(); if(!g) return;
   // THE AIS RETURN (2026-09-25) COMES THROUGH HERE TOO, with its own backtrack and none of the
@@ -23680,12 +24269,17 @@ async function resumeHeldRun(opts){
   // ⚠ DECLARED HERE, ABOVE EVERY CALL SITE. A `const` is not hoisted for use: declared beside
   // `manual` further down, the two CANNOT RESUME FROM HERE sites above it threw a ReferenceError that the
   // caller's own .catch turned into a different banner, so the refusal was never said at all.
-  const sayRefusal = (txt) => {
+  // `stage` (2026-11-07): "resume" for a refusal before anything was commanded, "not_running" for notRunning's - the bar
+  // says which (aroundBarSay)
+  const sayRefusal = (txt, stage) => {
     const mine = auto && !(opts && opts.manual);
+    if(auto && opts && opts.around) noteAroundRefused(auto, txt, !!opts.manual, stage || "resume");   // the bar and the log (2026-11-07)
     if(mine && auto.refusedSaid === txt) return;   // already told them this, this episode
     if(mine) auto.refusedSaid = txt;
     showBanner(txt);
   };
+  // ⚠ A WAY ROUND THAT FAILED IN FLIGHT IS KEPT AND LOGGED TOO (review 2026-11-07) - resumeHeldLeg's sayFailed
+  const sayFailed = (txt) => { if(auto && opts && opts.around) noteAroundRefused(auto, txt, !!opts.manual, "failed"); showBanner(txt); };
   const back = (opts && opts.backM != null) ? opts.backM : resumeBackM();
   // A CHOSEN POINT (2026-09-27): the operator's Resume from here on a held survey, or the console's own
   // way round a contact (aisAroundTick). No backtrack - the remainder starts at that point (or at the
@@ -23729,7 +24323,17 @@ async function resumeHeldRun(opts){
     }
   } else if(at){
     const who = auto ? auto.kind : "the contact";
-    note = at.fromTurn
+    note = at.pastEnd != null
+      // (2026-11-07) the walk past the line's end - aisAroundPlan's charted branch
+      ? "the way on past the end of line " + lineNo(at.pastEnd) + " runs into " + who + ", so the plan is picked up "
+        + fmtDist(at.skipM) + " on, past it"
+        + (at.onLine != null && at.coverM ? ", " + fmtDist(at.coverM) + " of line " + lineNo(at.onLine) + " left under " + who : "")
+        + ", the way in routed round it"
+        + (at.leftM > 1 ? "; the last " + fmtDist(at.leftM) + " of line " + lineNo(at.pastEnd) + " are left, since "
+           + (at.hitOn === "line" ? who + " covers it to its end"
+              : at.hitOn === "next" ? "the next line runs into it straight after the turn"
+              : "the turn out of it is what ran into it") : "")
+      : at.fromTurn
       ? "she was stopped off the coverage lines (on a turn or a transit), so the plan is picked up "
         + (at.skipM ? fmtDist(at.skipM) + " on from where she stopped, past " + who : "at its next waypoint, clear of " + who)
         + (at.onLine != null && at.coverM ? ", " + fmtDist(at.coverM) + " of line " + lineNo(at.onLine) + " left under " + who : "")
@@ -23841,6 +24445,27 @@ async function resumeHeldRun(opts){
   // and the same reason (2026-11-03, the fourth review). Above the pause, the upload and both latches.
   const noOpR = aroundNoOpWhy(g, auto, !!(opts && opts.around), tail, rejoinIdx, stdIn);
   if(noOpR){ sayRefusal(noOpR); render(); return; }
+  // ⚠⚠ THE OPERATOR'S PRESS IS REFUSED WHERE THE WAY ON RUNS INTO THE CHART (2026-11-07) - see resumeRunsInto. BELOW THE
+  // WAY IN, so it walks the route this press would upload (the way in's detour, when one was routed, not the straight
+  // run in it replaces); above the pause and both latches, so a refusal commands nothing and records no override.
+  if(!auto && !at){
+    const into = resumeRunsInto(backFrom, tail, g.mark ? g.mark.line : null);
+    if(into){
+      // IN THE WORDS ON THE CONSOLE (review 2026-11-07): the menu row is "Resume from here" and the button ROUTE ROUND
+      // HER NOW - offered only for a CHARTED hold, whose way round walks past the chart; one held for a contact walks
+      // past the contact, which is not what the remainder runs into. And no line is offered that the walk did not find:
+      // with none clear, saying "right-click a line beyond it" sent him to look for one that is not there.
+      const chartEp = !!(aisAvoid && aisAvoid.chart);
+      refuseResumeInto(into, "the survey",
+        (into.beyond != null
+          ? "Right-click line " + into.beyond + ", beyond it, and Resume from here - the way in is routed round it"
+            + (chartEp ? "; or ROUTE ROUND HER NOW on this bar" : "")
+          : "No later line of the survey runs clear of the chart at the water now, so none is offered to resume beyond it"
+            + (chartEp ? "; ROUTE ROUND HER NOW on this bar tries the way round it" : ""))
+        + "; or Stop and punch the survey again at the water it will be flown in.");
+      render(); return;
+    }
+  }
   if(inNote) note = note ? note + "; " + inNote : inNote;
   // ⚠ AND THE TRAFFIC CHECK IS NOT CLAIMED WHERE IT COULD NOT BE MADE - resumeHeldLeg's own `blindSay`, for the
   // same reason: with the AIS model blind, `others` held no contacts and the pick-up was judged on an empty sea.
@@ -23885,7 +24510,7 @@ async function resumeHeldRun(opts){
       + (!held ? "." : ", and the survey remainder is still held" + (around
           ? ": ROUTE ROUND HER NOW on the bar tries again, and the console tries again itself as soon as anything that could change the answer has changed."
           : auto && !at ? ": the console tries again once the line reads clear again, or resume it from the guard bar."
-          : "; resume it from the guard bar.")));
+          : "; resume it from the guard bar.")), "not_running");
     logClient("resume_not_running", {why, doing, around, auto: !!auto, manual: !!(opts && opts.manual),
               guard: guardMoved !== moved0 ? guardMovedHow : null, wpts: tail.length});
     updateMissionCard(); render();
@@ -23899,7 +24524,7 @@ async function resumeHeldRun(opts){
   const paused = await cmd("/api/cmd/pause");
   if(!took(paused)){
     guardOverride = null; resumeSlow = false;
-    showBanner("⚠ COULD NOT RESUME THE SURVEY — the pause was "
+    sayFailed("⚠ COULD NOT RESUME THE SURVEY — the pause was "
       + (paused && paused.refused ? "refused (" + paused.error + ")"
                                   : "not acknowledged (" + ((paused && paused.error) || "no answer") + ")")
       + ". The boat is still holding and the remainder is still held; try again, or Stop and re-plan.");
@@ -23926,7 +24551,7 @@ async function resumeHeldRun(opts){
     if(guardMoved !== moved0)
       return notRunning("the guard " + guardMovedHow + " while the remainder was being uploaded", guardDoing());
     await cmd("/api/cmd/hold", {hold_clear_m: holdClearAt(asv || g.at)});
-    showBanner("⚠ COULD NOT RESUME THE SURVEY — " + up.error + ". The boat is station-keeping "
+    sayFailed("⚠ COULD NOT RESUME THE SURVEY — " + up.error + ". The boat is station-keeping "
       + "again and the remainder is still held; try again, or Stop and re-plan.");
     render(); return;
   }
@@ -23979,7 +24604,7 @@ async function resumeHeldRun(opts){
     const why = !lowOk ? "the vessel did not take LOW (" + ((slowed && slowed.error) || "no answer") + ")"
               : started && started.refused ? "Start was REFUSED (" + started.error + ")"
               : "there was no answer to Start (" + ((started && started.error) || "no answer") + ")";
-    showBanner("⚠ COULD NOT RESUME THE SURVEY — " + why + ". The boat is station-keeping again and the "
+    sayFailed("⚠ COULD NOT RESUME THE SURVEY — " + why + ". The boat is station-keeping again and the "
       + "remainder is still held; try again, or Stop and re-plan.");
     render(); return;
   }
@@ -24029,12 +24654,14 @@ async function resumeHeldRun(opts){
       // it. The upload restarts her index at 0 and `rejoinIdx` is where the pick-up sits in it.
       avoidingRaise("routed round", who, rejoinIdx, tail[rejoinIdx]);
       flashNote("Routed round " + who + " — " + (note || "carrying on") + ".");
+      // one pronoun, chosen by the episode (renderHeldBar's rule; 2026-11-07)
+      const itW = auto && auto.chart ? "it" : "her";
       if(planIntent) planIntent.why.push({t:"warn", s:"ROUTED ROUND " + who + " after " + (ep ? Math.round((Date.now() - ep.since)/1000) : "?")
-        + " s holding for her " + '—' + " " + (note || "carrying on") + "; " + left + " waypoint"
+        + " s holding for " + itW + " " + '—' + " " + (note || "carrying on") + "; " + left + " waypoint"
         + (left === 1 ? "" : "s") + " re-uploaded; the console is still watching"});
       showBanner("ROUTED ROUND " + who + " — " + ((opts && opts.manual)
           ? "at your word, " + aroundMarginSay(at) + ": "
-          : "she was still in the way, so the survey goes on beyond her without waiting: ")
+          : (itW === "it" ? "it" : "she") + " was still in the way, so the survey goes on beyond " + itW + " without waiting: ")
         + (note || "carrying on") + ". " + left + " waypoint" + (left === 1 ? "" : "s") + " to fly"
         + (hadLow ? ", still at LOW on your authority (RELEASE LOW on the bar for the plan's speed)" : "") + ". Recorded in the session log.");
       if(sk.n) bankStrike(sk);
@@ -24047,7 +24674,13 @@ async function resumeHeldRun(opts){
                 // whether the traffic check could be made at all - read back from the session log afterwards
                 blind_traffic: !!at.blindTraffic,
                 // ... and whether the way in had to be found at the bare buffer (insideStandoff) - the same
-                inside_standoff: inStd});
+                inside_standoff: inStd,
+                // the walk past the line's end (2026-11-07): NEW fields, null for every other way round - the line it
+                // walked past the end of, what of it was left, where the way on first ran into it, and the line picked
+                // up on with the coverage left under the feature there
+                past_end: at.pastEnd != null ? lineNo(at.pastEnd) : null, left_m: at.pastEnd != null ? Math.round(at.leftM || 0) : null,
+                hit_on: at.hitOn || null, on_line: at.onLine != null ? lineNo(at.onLine) : null,
+                cover_m: at.onLine != null ? Math.round(at.coverM || 0) : null});
     } else {
       flashNote("Survey resumed " + (note || "from the point you chose") + ". The transit is at the transit speed and the line at "
         + "the survey speed" + (resumeSlow ? " once your LOW hold is released" : "") + " — set a slower speed if you want it slow.");

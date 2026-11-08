@@ -790,6 +790,16 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     const PSG = fs.readFileSync(path.join(path.dirname(require.resolve("../static/js/passage.js")), "passage.js"), "utf8");
     const chartFailedRefusal = eval("(" + PSG.slice(PSG.indexOf("function chartFailedRefusal("), PSG.indexOf("\nexport function holdTarget(")) + ")");
     var lockTransit = null; const lockEnd = () => {};   // an Upload ends a lock transit before it plans (2026-10-18): none here
+    // UPLOAD'S TIDE CHECK (2026-11-07): what uploadTideRisk answers is this world's to choose (null: nothing to ask, as
+    // every upload here before it); the read itself is driven in isolation at 1z3. Recorded, not swallowed: 1z reads
+    // the waypoints it was handed and the log it left. It resolves on a LATER tick, as the stub above it does, so a
+    // dropped `await` leaves `tide` a Promise - truthy - and 1z1's null case asks a question it must not.
+    let tideRisk = null, tideAsked = null; const clientLog = [];
+    const uploadTideRisk = (w) => Promise.resolve().then(() => { tideAsked = w; return tideRisk; });
+    const logClient = (kind, o) => clientLog.push({ kind, o });
+    const snotes = [], showNote = (m) => snotes.push(m);    // "reading the water..." while uploadTideRisk reads (2026-11-07)
+    // eslint-disable-next-line no-eval
+    const fmtLevel = eval("(" + grab("fmtLevel") + ")");
     const doUpload = eval("(" + grab("doUpload") + ")");
     const up = async (setup) => { calls.length = 0; unotes.length = 0; banners.length = 0; asked = null;
                                   runRoute = null;
@@ -941,6 +951,128 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
                 && /UPLOAD BLOCKED: the route runs 429 m beyond the water the chart was read over - the chart could not be read over it \(no extract\) — the spot is highlighted on the chart\. Command it again once the chart can be read there\./.test(pastSaid),
           () => calls.length + " post(s); violation " + JSON.stringify(violated && { mode: violated.mode, near: violated.near })
                 + "; banners: " + pastSaid);
+    // 1z. UPLOAD'S TIDE CHECK (2026-11-07, Andy's S1: punched at +3.43 m near high water, flown down through +3.15 m,
+    // where its line ends ran into the guard's buffer). A survey uploadTideRisk names - cut for deeper water than she
+    // will fly it in - is ASKED about, in the simulator too ({always: true}); a no sends nothing, and says what to do; a
+    // yes sends as before; nothing named asks nothing (1f, and 1z2 here).
+    const S1T = { id: "S1", no: 1, name: "Ledge", water_m: 3.43 };
+    const overT = { over: [{ s: S1T, low: 0.12, say: "+0.12 m, the lowest predicted along it over the next 9.6 h (Stn, 3 km off)" }] };
+    clientLog.length = 0;
+    await up(() => { nogo = { ready: true, busy: false, band: "enc_harbour" }; tideRisk = overT; answer = false; });
+    const askT = asked, notesT = unotes.join(" | "), sentT = calls.length, logT = clientLog.slice(), handedT = tideAsked;
+    check("1z. a survey cut for deeper water than it will be flown in is ASKED about ({always: true}), naming the level "
+          + "it was cut at and the low it will meet; a no sends NOTHING, says what to do, and the log records it",
+          () => askT && askT.opts && askT.opts.always === true && askT.title === "Upload — survey cut for deeper water"
+                && /^S1 Ledge was cut at \+3\.43 m; the water along it before she finishes it goes as low as \+0\.12 m, the lowest predicted/.test(askT.msg)
+                && /Punch Out and Update it to cut it at the water it will be flown in/.test(askT.msg)
+                && sentT === 0 && /Upload: nothing was sent - S1 Ledge to be punched again\./.test(notesT)
+                && logT.length === 1 && logT[0].kind === "upload_tide" && logT[0].o.asked === true && logT[0].o.answer === "cancel"
+                && JSON.stringify(logT[0].o.surveys) === JSON.stringify([{ sv: "S1", water_m: 3.43, low_m: 0.12 }])
+                && Array.isArray(handedT) && handedT.length === mission.waypoints.length,
+          () => "asked " + JSON.stringify(askT && { t: askT.title, m: askT.msg.slice(0, 120), o: askT.opts }) + "; sent " + sentT
+                + "; notes " + notesT + "; log " + JSON.stringify(logT) + "; handed " + JSON.stringify(handedT));
+    clientLog.length = 0;
+    await up(() => { nogo = { ready: true, busy: false, band: "enc_harbour" }; tideRisk = overT; answer = true; });
+    check("1z1. ... and a YES uploads it as it is, routed as always - logged WITH the answer (review 2026-11-07)",
+          () => !!asked && calls.length === 1 && calls[0].p === "/api/cmd/upload" && Array.isArray(calls[0].b.route)
+                && clientLog.length === 1 && clientLog[0].kind === "upload_tide" && clientLog[0].o.answer === "upload",
+          () => "asked " + !!asked + "; sent " + JSON.stringify(calls.map((c) => c.p)) + "; log " + JSON.stringify(clientLog));
+    clientLog.length = 0;
+    await up(() => { nogo = { ready: true, busy: false, band: "enc_harbour" }; tideRisk = null; answer = false; });
+    check("1z2. ... and with nothing named it asks NOTHING and sends - the pair to 1z (an answer of false would refuse)",
+          () => asked === null && calls.length === 1 && clientLog.length === 0,
+          () => "asked " + JSON.stringify(asked) + "; sent " + calls.length + "; log " + JSON.stringify(clientLog));
+    tideRisk = null;
+  // ── 1z3-1z6. uploadTideRisk ITSELF (2026-11-07): the page's own body, its read stubbed ─────────────────────────────
+  {
+    const reads = [];
+    let lowFor = () => 0.1, km = 3;
+    const W = new Function("distTo", "reads", "lowFor", "kmNow", "\"use strict\";\n"
+      + "let mission = {surveys: []}, asv = {lat: 43.07, lon: -70.71}; const sea = {waterOffset: 1.0}; let water = null;\n"
+      + "const roleSpeedMS = (r) => r === 'transit' ? 3.0864 : 1.5432; const fmtDist = (m) => Math.round(m) + ' m';\n"
+      + ["WATER_ETA_SLACK", "WATER_WINDOW_PAD_S", "WATER_WINDOW_MAX_H", "TIDE_REBUILD_M"]
+          .map((n) => grabDecl(n)).join("\n") + "\n"
+      + "const WATER_REMOTE_KM = " + require("fs").readFileSync(path.join(__dirname, "..", "static", "js", "chart.js"), "utf8")
+          .match(/^export const WATER_REMOTE_KM = (\d+(?:\.\d+)?);/m)[1] + ";\n"   // chart.js's, which the page imports
+      + "const waterAlongRead = async (line, t0, t1) => { reads.push({line: line.map(p => p.lat), h: (t1 - t0) / 3600,"
+      + "  from: (t0 - Date.now() / 1000) / 3600});"
+      // (lowFor may answer the points themselves: a read some of whose points no station reaches - 1z5b)
+      + "  const v = lowFor(line); return v === null ? {note: 'no station', points: []} : Array.isArray(v) ? {points: v}"
+      + "  : {points: [{low_m: v, km: kmNow(), kind: 'predicted', name: 'Stn'}]}; };\n"
+      + grab("sectionLevel") + "\n" + grab("fmtLevel") + "\n" + grab("flightWindow") + "\n" + grab("uploadTideRisk") + "\n"
+      // its own flight, turns at the turn speed (the third review, 2026-11-07): no coverage lines in this world, and the
+      // turn speed is the survey speed here, so every leg counts as it is
+      + "const lineOfLeg = () => null;\n" + grab("turnTimeFactor") + "\n" + grab("flightOwnM") + "\n"
+      + "return { set mission(v){ mission = v; }, set asv(v){ asv = v; }, sea, uploadTideRisk, flightWindow };");
+    const w = W(distTo, reads, (l) => lowFor(l), () => km);
+    const wps = [{ lat: 43.08, lon: -70.71, sv: "S1" }, { lat: 43.081, lon: -70.71, sv: "S1" },
+                 { lat: 43.09, lon: -70.70, sv: "S2" }, { lat: 43.091, lon: -70.70, sv: "S2" }, { lat: 43.095, lon: -70.70 }];
+    w.mission = { surveys: [{ id: "S1", no: 1, water_m: 0.5 }, { id: "S2", no: 2, water_m: 0.15 }, { id: "S3", no: 3, water_m: 2 }] };
+    const r1 = await w.uploadTideRisk(wps);
+    check("1z3. uploadTideRisk reads each survey THIS Upload sends along its own waypoints (S3, not sent, is not read), "
+          + "over the window she flies it in (flightWindow: S2, after S1, from later on), and names the one cut "
+          + "TIDE_REBUILD_M or more above that low",
+          () => reads.length === 2 && JSON.stringify(reads[0].line) === "[43.08,43.081]"
+                && JSON.stringify(reads[1].line) === "[43.09,43.091]" && reads[1].from > reads[0].from + 0.05
+                && reads[0].from >= 0 && reads[0].h > 1
+                && r1 && r1.over.length === 1 && r1.over[0].s.id === "S1" && Math.abs(r1.over[0].low - 0.1) < 1e-9
+                && /^\+0\.10 m, the lowest predicted along it/.test(r1.over[0].say),
+          () => JSON.stringify(reads) + " -> " + JSON.stringify(r1 && r1.over.map((o) => [o.s.id, o.low, o.say])));
+    reads.length = 0; w.sea.waterOffset = 0.2; lowFor = () => 5;
+    const r2 = await w.uploadTideRisk(wps);
+    check("1z4. ... the water NOW counts where it is lower than the prediction: a survey cut 0.3 m over it is named, "
+          + "said as the water now",
+          () => r2 && r2.over.length === 1 && r2.over[0].s.id === "S1" && Math.abs(r2.over[0].low - 0.2) < 1e-9
+                && r2.over[0].say === "+0.20 m, the water now",
+          () => JSON.stringify(r2 && r2.over.map((o) => [o.s.id, o.low, o.say])));
+    reads.length = 0; w.sea.waterOffset = 1.0; lowFor = () => null; km = 3;
+    const r3 = await w.uploadTideRisk(wps);
+    km = 500; lowFor = () => -2;
+    const r4 = await w.uploadTideRisk(wps);
+    km = 3;
+    check("1z5. ... and chart datum standing in for a read is no evidence against a cut level - no station answered, "
+          + "or none within WATER_REMOTE_KM: judged by the water now alone (+1.00 m, over both cuts), nothing is asked",
+          () => r3 === null && r4 === null && reads.length === 4,
+          () => JSON.stringify([r3, r4, reads.length]));
+    // ⚠ 1z5b-1z5d. THE REVIEW'S (2026-11-07): the water now still counts with no read; one unreached point does not
+    // hide the read ones; a survey cut down to one waypoint in what is sent is not read
+    w.sea.waterOffset = 0.2; lowFor = () => null;
+    const r3b = await w.uploadTideRisk(wps);
+    w.sea.waterOffset = 1.0;
+    lowFor = (l) => l[0].lat === 43.08 ? [{ low_m: 0.12, km: 3, kind: "predicted", name: "Near" }, { low_m: 0.9, km: 500, kind: "predicted", name: "Far" }] : 5;
+    const r3c = await w.uploadTideRisk(wps);
+    reads.length = 0; lowFor = () => 0.1;
+    const r3d = await w.uploadTideRisk([wps[0], wps[1], wps[2], wps[4]]);
+    check("1z5b. ... but NO READ IS NOT NO QUESTION: nothing read and the water now +0.20 m, S1 cut at +0.50 m is named "
+          + "at the water now, said so; a read with ONE point no station reaches still judges the points read (S1's "
+          + "+0.12 m - chart datum stood in for the whole survey before); and a survey cut to one waypoint in what is "
+          + "sent (S2, its remainder) is not read at all",
+          () => r3b && r3b.over.length === 1 && r3b.over[0].s.id === "S1" && Math.abs(r3b.over[0].low - 0.2) < 1e-9
+                && r3b.over[0].say === "+0.20 m, the water now (no prediction along it could be read)"
+                && r3c && r3c.over.length === 1 && r3c.over[0].s.id === "S1" && Math.abs(r3c.over[0].low - 0.12) < 1e-9
+                && /^\+0\.12 m, the lowest predicted along it .*\(Near, /.test(r3c.over[0].say)
+                && reads.length === 1 && JSON.stringify(reads[0].line) === "[43.08,43.081]",
+          () => JSON.stringify({ r3b: r3b && r3b.over.map((o) => [o.s.id, o.low, o.say]),
+                                 r3c: r3c && r3c.over.map((o) => [o.s.id, o.low, o.say]), reads }));
+    // 1z5c. the window in words: none for one that starts now; when it starts later; and the server's 24 h cap, said
+    const fwNow = w.flightWindow(0, 1000), fwLater = w.flightWindow(20000, 1000), fwLong = w.flightWindow(0, 200000);
+    check("1z5c. flightWindow says the window it reads: nothing extra for a flight that starts now ('over the next N h'), "
+          + "'over its flight, X h from now to Y h' for one later in the plan, and the server's 24 h cap where it cuts one short",
+          () => fwNow.when === null && fwNow.t0 - Date.now() / 1000 < 1
+                && /^over its flight, 1\.8 h from now to \d+\.\d h$/.test(fwLater.when)
+                && fwLong.hours === 24 && /^over its flight, from now to 24\.0 h \(its first 24 h: the predictions are read no further ahead\)$/.test(fwLong.when),
+          () => JSON.stringify({ fwNow, fwLater, fwLong }));
+    lowFor = () => 0.45;
+    const r5 = await w.uploadTideRisk(wps);
+    w.asv = null;
+    const r6 = await w.uploadTideRisk(wps);
+    w.asv = { lat: 43.07, lon: -70.71 }; lowFor = () => { throw new Error("boom"); };
+    const r7 = await w.uploadTideRisk(wps);
+    check("1z6. ... a cut level within TIDE_REBUILD_M of the low is not named; no position fix, or a read that THROWS, "
+          + "asks nothing (never throws itself)",
+          () => r5 === null && r6 === null && r7 === null,
+          () => JSON.stringify([r5, r6, r7]));
+  }
   // ⚠⚠ 1n. AND AN ACCEPTED UPLOAD MAY NOT OVERTAKE A COMMAND GIVEN SINCE. The vessel
   // took the plan, so the upload is real - but the operator or the guard has commanded her
   // somewhere in the meantime, and that command owns the picture. Drawing the survey over it

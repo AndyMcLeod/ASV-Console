@@ -1266,6 +1266,31 @@ of the first coverage line - and picks the plan up at the first point clear of h
 rest of that stretch clear of it, the way in routed round her (ais_avoid 17h-17j); the bar says she
 was stopped off the coverage lines.
 
+**A charted hold past the line's end is walked past too (2026-11-07, Andy's S1 at Castine).** The
+guard looks ahead along the *route*, so what it holds her for can lie beyond the end of the line
+she is on: in the turn, the hop or the next line. On line 9 a shoal the falling tide had raised
+into the west-end turn held her. The way round asked only the rest of line 9, which read clear of
+that shoal, so the first point it offered was where she already was, and the console refused that,
+correctly, for 14.5 minutes on end. For a charted feature the way round now walks the route (the
+rest of this line, its end, the turn, the hop and the next line to its end) and picks the plan up
+past the feature, the way in routed round it. The rest of the held line is left, since the turn
+out of it is what ran into the feature, and the note says how much was left and which part ran
+into it: the turn, the next line, or the held line itself (ais_avoid 5w-5w9). The walk stays on
+the held survey. It never walks on into another survey's line or into a transit, which is planned
+at the transit standoff. When nothing lies on the way to the next line's end, it looks one hold
+horizon further and says what is out there (beyond the survey's last line, or past the next line)
+instead of offering a way round that would move nothing. A contact keeps the line walk: it moves.
+**And the bar says when the way round was refused.** It used to go on saying the console routes
+round it itself while every try was refused, and the refusal reached the session log nowhere but
+a once-only banner. The bar now reads *the console's way round it was REFUSED (the reason) - it
+tries again by itself only when something its answer depends on changes (the chart, the water, the
+traffic, her position, the plan or the standoff)*. For a contact it tries at the next AIS poll.
+Paused, it tries nothing until you resume the hold. A try that could not start reads *did NOT
+RUN*; one that failed partway (a command refused or unanswered, or an error) reads *FAILED*, with
+its cause. Each one is logged as `ais_around_refused`, with its stage (`plan`, `resume`,
+`not_running`, `failed`) and reason. The console's own tries are logged once per reason per episode,
+its numbers aside, and a press every time.
+
 **CPA and TCPA** — the closest the two vessels will come, and how long until that happens —
 are shown for every contact with a track. The contact is projected on its present course and
 speed. So is your boat, **unless she is being steered along a route** (a running plan, a
@@ -1940,8 +1965,11 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
      from what this page has seen her run ON each line - 90% of a line's coverage, leads left
      out, makes it done; it is kept in this browser and survives a reorder, a refresh and a
      re-punch over the same water. **The water each survey was cut at** is recorded at Add to
-     plan; once the level has moved a quarter meter either way the row shows ⚠ and its tip says
-     which way and what it means (fallen: its lines were cut for deeper water than there is).
+     plan, with where that level came from. Since 2026-11-07 a survey is cut at the lowest water
+     predicted over its own flight (see *The water a survey is punched at*, below), so the water
+     stands above that level for most of the run. The row shows ⚠ only once the level has
+     **fallen** a quarter meter under it, and its tip says what that means: its lines were cut
+     for deeper water than there is now. A rise is not flagged.
      **Punch all** (beside the table's heading) punches every survey with a recorded drawing
      again, each with its own settings, against the chart and the water now, and replaces each
      where it stands; a survey the punch refuses is left exactly as it was, and the banner names
@@ -2293,9 +2321,10 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    run:
    - **the standoff** is held at the highest live value of the last two minutes,
      rounded up to 0.1 m. It is raised if the current rises, and never lowered.
-   - **the water level** is held at the level when Punch Out was pressed. The runs are
-     cut again only when the level moves 0.1 m or more, or when the update rebuilds the
-     chart model (it was built at another level).
+   - **the water level** is held at the level the first punch was cut at (since 2026-11-07,
+     the survey's predicted low; see below). It is only ever lowered: the runs are cut again
+     when the water falls 0.1 m under it, or when an update rebuilds the chart model (it was
+     built at another level). A rise changes nothing the cut depends on.
 
    Both are taken once the chart has been read, so a change during the read is in the
    cut. The strikes now survive a water change, and every re-cut: a struck run is
@@ -2304,6 +2333,41 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    It comes back only if the re-cut takes more than half of it off one end, or makes it
    more than twice as long (and 50 m longer). That happens when a rising tide merges it
    with the next piece of its line. Either way it is a different run and is judged again.
+
+   *The water a survey is punched at (2026-11-07).* A survey used to be cut at the water of
+   the minute Punch Out was pressed. Andy's S1 at Castine was punched near high water
+   (+3.43 m) and flown for hours: once the tide fell through the DriX's draft plus its
+   under-keel clearance, 37 stretches of what was left (line ends and turns at both shores)
+   lay inside the guard's buffer, and the guard held her at the first one. ENC depth bands
+   switch whole, so this is a cliff, not a slope. Each punch is now cut at the **lowest water
+   predicted along the survey's own lines over its flight**, read the way a passage's section
+   is (`/api/water/along`, `sectionLevel`: a point counts at its low only with a station near
+   it, else at chart datum; chart datum when nothing could be read; a lower manual level
+   wins). The flight is the window from when she reaches the survey (the plan before it, at
+   the transit or survey speed, whichever is faster) to when she finishes it: the lines at the
+   survey speed and the turns at the turn speed, with slack. The turns the punch lays are far
+   longer than the drawing shows (eight 200 m lines 10 m apart drew 1670 m and flew 2493 m),
+   so once the punch has laid them the water is read again over the route it made, and the
+   survey is punched again if that is lower. The predictions are read 24 h ahead at most, and the summary says so when
+   that cuts the window short. It is never cut above the water she is in now. The punch summary
+   says the level it was cut at and where it came from, and, when the water now is higher,
+   that water deep enough only nearer high water is left out of the lines. That is the cost:
+   coverage, said. The read is kept ten minutes per drawing and survey speed, so a clearing's
+   strikes are all judged at one level. A failed read is tried again after a minute, and a
+   Punch Out or Unblock press always reads afresh. A cut is held at the level it was cut at:
+   if the drawing or the survey speed changes while the water is being read, the punch is cut
+   at chart datum and says to Punch Out again. While a clearing holds its level below the
+   prediction, the summary says the cut is at the level the clearing is held at, not the
+   water now. **Upload asks** when a survey it sends was cut
+   0.1 m or more above the lowest water predicted along it over its own flight window (for
+   example, uploaded the next day, or after a long approach): *Upload — survey cut for deeper
+   water* names each one, its cut level and that low. Only points with a station near them
+   count. With nothing that could be read, it is judged against the water now and says so.
+   Cancel sends nothing, and the note says which surveys to punch again. A survey cut before
+   this change is judged the same way. *Not yet:* the red hops Upload's router judges, and the
+   hops Punch Out checks against it, are still judged at the water now. And chart datum stands
+   in when no station answers, as it does for a passage's sections, so a tide predicted below
+   chart datum is not allowed for then.
 
    *Punch Out no longer freezes the page.* Joining the runs (a turn ladder for each
    reversal, a route round each hop) used to hold the page for the whole punch, 10–20 s
@@ -2721,6 +2785,29 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    lengths back down the line, the way back checked against the chart (and *"no chart"* is
    not *"clear"*), the backtrack — never the resume — given up when that water is foul, and
    low speed until you press RELEASE LOW on the bar.
+
+   **RESUME AT LOW SPEED is refused when the way on runs into the chart (2026-11-07).** The
+   press hands her the same remainder with your override, which is right for a hold you have
+   judged (a contact you can see is no threat, a buffer a few meters too wide). It is wrong
+   when the remainder itself runs *into* a charted keep-out at the water now. On Andy's S1 the
+   falling tide had raised a shoal into line 9's turn, and three presses drove her down the
+   same 92 m into the same turn, held again each time. The override lets a hazard pass at LOW;
+   it does not make a shoal deep. So before anything is commanded, the route she would be
+   handed (backtrack and way in included) is walked against the guard's model, from where she
+   is to the end of the first coverage line after hers. If it enters a keep-out (or comes
+   within a meter of one), the press is refused: *NOT RESUMED AT LOW SPEED* names what it runs
+   into, how far it is from her and how far along the way on (she is backed up first), and
+   the water now. It offers the first later line whose whole run (the line, the turn out of it
+   and the next line) is clear: *Right-click line N, beyond it, and Resume from here*. With no
+   such line it says so and offers none. ROUTE ROUND HER NOW is offered when the hold is a
+   charted one, and Stop and punch the survey again at the water it will be flown in always.
+   She stays station-keeping and the remainder stays held. A held Go-To, RTH or transit is
+   refused the same way and is planned again when you re-command it. A boat already inside a
+   keep-out is walked from where the way on leaves it: the way out is the way in's job and is
+   not judged, but a way back in after it is, and so is a way out straight across the
+   keep-out she is beside. The console's own resume and Resume from here
+   are not affected. The refusal is logged (`resume_low_refused`, with both distances). It
+   refuses a way on that enters a keep-out, not one that only passes inside the buffer.
 
    **The banner NAMES what refused each one** — blocked by a keep-out, more than 15° off
    a true reversal, line ends too close together, or a fold an obstacle forced on a

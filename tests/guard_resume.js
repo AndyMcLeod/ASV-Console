@@ -425,7 +425,7 @@ eval([
   H.match(/const IN_CUT_MS = [^;]*;/)[0], grab("cutAge"), grab("cutUnderWay"), grab("slowingOpts"), grab("twNowMs"),
   grab("patClipBufM"),                                                     // the standoff the resume's run-in is routed at (2026-09-26)
   grab("guardOverrideOk"), grabDecl("OVERRIDE_STALE_MS"), grab("guardHazardKey"), grab("aisNearestPoly"), grabDecl("guardKeyLast"),   // the override keyed on the hazard (2026-09-28)
-  "const { blockedInfo } = require('../static/js/keepouts.js');",
+  "const { blockedInfo, legCrossesEN } = require('../static/js/keepouts.js');",
   // the look-ahead's two facts beside the route, and the amend splice at the vessel's index (2026-10-06)
   "let routeCmdsInFlight = 0, legStart = null, lastWpIndex = null;", grab("spliceAt"), "function legStartsHere(){}",
   grab("guardTrack"), grab("guardOnStation"), grab("onStationWhy"), grab("clearanceGuard"),   // on station: the drift (2026-09-30)
@@ -444,6 +444,11 @@ eval([
   // sendSpeed is the one door a speed command reaches the wire by (2026-09-22).
   grab("took"), grab("sendSpeed"), grab("continueAtLow"), grab("resumeHeldSurvey"),
   grab("resumeHeldRun"),
+  // (2026-11-07) the held bar's way-round words, and the operator's RESUME AT LOW SPEED refused where the way on runs
+  // into the chart (resumeRunsInto - the real keepouts.js walk, at the water `sea` says)
+  grab("noteAroundRefused"), grab("aroundBarSay"), grab("fmtLevel"), "const sea = { waterOffset: 0 };",
+  grabDecl("RESUME_INTO_M"), grabDecl("RESUME_INTO_REACH_M"), grabDecl("RESUME_ESCAPE_STEP_M"), grab("resumeIntoWalk"), grab("resumeEscape"), grab("resumeRunsInto"), grab("refuseResumeInto"),
+  "const { firstBlockAlong } = require('../static/js/keepouts.js');",
   // a refusal the planner made is said in the operator's units (planWhy, 2026-10-03) - the page's own
   "const { beyondChartSay } = require('../static/js/passage.js');",
   grab("planWhy"),
@@ -505,7 +510,11 @@ function standingIn(sogKn) {
                   env_set_deg: 0, env_set_kn: 0, holding: false, drifting: false } };
   asv = ll(0, 0);
   runLineIdx = 0;
-  runRoute = [ll(-200, 0), LINE_E.b, ll(200, 60), ll(-200, 60)];
+  // ⚠ THE NEXT LINE 120 m SOUTH, CLEAR OF THE PIER AND OF 15f's WALL (2026-11-07). It was 60 m NORTH - inside the pier, which runs from
+  // 30 m to 330 m north - so the remainder's hop to it ran INTO the pier: a plan no punch could have made, and the very
+  // case the operator's RESUME AT LOW SPEED now refuses (resumeRunsInto; checks 15j-15n drive it, that geometry
+  // included). The checks of the resume itself want a remainder the chart lets her fly.
+  runRoute = [ll(-200, 0), LINE_E.b, ll(200, -120), ll(-200, -120)];
   window._wpIndex = 1;                                    // one leg flown, three to go
   nogo = { ready: true, frame: ref, ko: PIER, buffer: 5 };
   __clr = { m: 25, kind: "a dock / pier", info: { kind: "a dock / pier" } };
@@ -900,6 +909,9 @@ console.log("The guard stopped the survey, and the operator has to be able to ca
 async function resumeFrom(opts) {
   opts = opts || {};
   standingIn(6);
+  // the route aboard when the guard holds her (2026-11-07: 15j drives the fixture's old north line, inside the pier)
+  if (opts.route) { runRoute = opts.route.slice(); S.wp_total = runRoute.length; }
+  if (opts.lines) mission = { ...mission, lines: opts.lines.slice() };   // the survey's lines, for the line beyond (15j3)
   // THE HOLD BEFORE A SURVEY (3b): the plan aboard was split at a held survey whose start is `holdAt` - the plan gets
   // that start as a waypoint and the pending hold points at it, as the split's own upload leaves them.
   if (opts.holdAt) { mission.waypoints = [...mission.waypoints, opts.holdAt]; __setHold({ sv: "S2", at: 1 }, mission.waypoints.length - 1); }
@@ -929,6 +941,7 @@ async function resumeFrom(opts) {
   // ⚠ ARMED ONLY ACROSS THE SUBJECT, not across the fixture's own setup. standingIn()
   // drives the real hold rung, which posts /api/cmd/hold - and a guard tick on THAT command
   // would run before the capture exists.
+  if (opts.before) opts.before();                 // the scene's last word before the press (15j2: a contact's hold)
   tickGuard = true;
   try { await resumeHeldSurvey(); } catch(e) { raised = e.message; }
   finally { tickGuard = false; }
@@ -952,7 +965,8 @@ async function resumeFrom(opts) {
               && r.sent.find(x => x.p === "/api/cmd/speed").speed === "low",
         () => JSON.stringify(r.paths) + ", the speed being '"
             + (r.sent.find(x => x.p === "/api/cmd/speed") || {}).speed + "'. Without the "
-            + "pause she takes off at the transit speed the moment the upload lands");
+            + "pause she takes off at the transit speed the moment the upload lands"
+            + (r.raised ? "; THREW " + r.raised : "") + (r.banners.length ? "; banners " + JSON.stringify(r.banners) : ""));
 
   const rte = (r.up && r.up.route) || [];
   check("10. it uploads the REMAINDER, not the survey",
@@ -966,7 +980,7 @@ async function resumeFrom(opts) {
   // loiter it would take the End of plan setting - RTH - and chain home from the point she was told to wait at.
   check("10b. with no hold pending the remainder asks for no end action of its own - the plan's setting applies",
         () => !!r.up && !("completion" in r.up), () => JSON.stringify(r.up && r.up.completion));
-  const HELD_AT = ll(-200, 60);                              // the route aboard ends there: the held survey's start
+  const HELD_AT = ll(-200, -120);                            // the route aboard ends there: the held survey's start
   const rh = await resumeFrom({ holdAt: HELD_AT });
   __setHold(null, -1);
   check("10c. a remainder that ENDS at the start of the survey the plan was split for keeps the LOITER there",
@@ -1136,6 +1150,188 @@ async function resumeFrom(opts) {
         "the pair sent " + pauses + " pause(s) and " + uploads + " upload(s) - without the "
           + "one-at-a-time gate the second press pauses an already-paused boat and uploads a "
           + "second copy of the remainder over the first, both races writing runRoute");
+
+  // ── 15j-15n. RESUME AT LOW SPEED INTO THE CHART (2026-11-07, D) ──
+  // ⚠⚠ Andy's S1 at Castine, 12:56-13:00: held at line 9's west-end turn for a shoal the falling tide had raised into
+  // it, he pressed RESUME AT LOW SPEED three times, and each press backed her up 92 m and handed her the same remainder
+  // with the override and LOW - down the same line into the same turn, where the guard held her again. The override
+  // lets the same hazard pass at LOW; it does not make a shoal deep. The press is refused now where the remainder
+  // itself runs INTO a charted keep-out at the water now (resumeRunsInto), and says what to do instead.
+  // The fixture's OLD plan (before 2026-11-07) is the refusal case: its next line lay 60 m north, inside the pier.
+  const NORTH = [ll(-200, 0), LINE_E.b, ll(200, 60), ll(-200, 60)];
+  const into = await resumeFrom({ route: NORTH });
+  const lr = into.logged.filter(e => e && e.kind === "resume_low_refused").map(e => e.data);
+  const bInto = into.banners.join(" | ");
+  check("15j. the operator's RESUME AT LOW SPEED is REFUSED where the remainder she would be handed back runs INTO a "
+        + "charted keep-out (the hop to the next line, into the pier): nothing commanded, no override recorded, no LOW "
+        + "latched, the remainder still held - and the banner says what, how far, at what water, and what to do",
+        () => into.paths.length === 0 && guardOverride === null && resumeSlow === false && !!guardHeld
+              && /^⚠ NOT RESUMED AT LOW SPEED — the survey she would be handed back runs INTO a dock \/ pier 20\d m from her \(4\d\d m along the way on\), at the water now \(\+0\.00 m\): at LOW she would be driven into it, or held again at it\. /.test(bInto)
+              // ⚠ NO LINE IS OFFERED THAT THE WALK DID NOT FIND (review 2026-11-07), and in the console's own words:
+              // the button is ROUTE ROUND HER NOW, offered here because the hold is a CHARTED one
+              && /No later line of the survey runs clear of the chart at the water now, so none is offered to resume beyond it; ROUTE ROUND HER NOW on this bar tries the way round it; or Stop and punch the survey again at the water it will be flown in\. She is still station-keeping and the remainder is still held\.$/.test(bInto)
+              && !/Right-click/.test(bInto) && !!(aisAvoid && aisAvoid.chart),
+        () => "sent " + JSON.stringify(into.paths) + ", override " + JSON.stringify(guardOverride) + ", LOW " + resumeSlow
+            + ", held " + !!guardHeld + ", charted hold " + !!(aisAvoid && aisAvoid.chart) + "; banners " + bInto.slice(0, 520));
+  // HOW FAR FROM HER as well as along the way on (review 2026-11-07): the walk runs from her through the backtrack, so
+  // "414 m on" was the distance she would be driven, not where the pier is - which is 202 m from her, here
+  const offJ = Math.hypot(200, 29);
+  check("15k. ... and it is in the session log: what it runs into, how far along the way on AND how far from her, at "
+        + "what water, and where",
+        () => lr.length === 1 && lr[0].kind === "a dock / pier" && lr[0].dist_m > 300 && lr[0].dist_m < 420
+              && Math.abs(lr[0].off_m - offJ) <= 2 && lr[0].off_m < lr[0].dist_m
+              && lr[0].water_m === 0 && lr[0].at && Number.isFinite(lr[0].at.lat) && lr[0].beyond === null,
+        () => JSON.stringify(lr) + " (from her expected ~" + offJ.toFixed(0) + " m; logged kinds "
+            + JSON.stringify(into.logged.map(e => e && e.kind)) + ")");
+  // 15j2 (review 2026-11-07, D8). ... and a hold for a CONTACT is not offered ROUTE ROUND HER NOW for the chart: its way
+  // round walks past her, which is not what the remainder runs into
+  const intoC = await resumeFrom({ route: NORTH, before: () => { if (aisAvoid) aisAvoid.chart = null; } });
+  const bC = intoC.banners.join(" | ");
+  check("15j2. ... and on a hold that is not a charted one, ROUTE ROUND HER NOW is not offered - the refusal stands "
+        + "and says the rest",
+        () => intoC.paths.length === 0 && /^⚠ NOT RESUMED AT LOW SPEED — /.test(bC)
+              && !/ROUTE ROUND/.test(bC) && /so none is offered to resume beyond it; or Stop and punch the survey again/.test(bC),
+        () => "sent " + JSON.stringify(intoC.paths) + "; banners " + bC.slice(0, 520));
+  // 15j3 (review 2026-11-07, D6). ... and where the walk DOES find a line beyond, it names it, with the menu row's own
+  // words: the hop north runs into the pier, the line after it (120 m south, back west) is clear
+  const LINE_S = { a: ll(200, -60), b: ll(-200, -60) };
+  const intoB = await resumeFrom({ route: [ll(-200, 0), LINE_E.b, ll(200, 60), LINE_S.a, LINE_S.b], lines: [LINE_E, LINE_S] });
+  const bB = intoB.banners.join(" | ");
+  const lrB = intoB.logged.filter(e => e && e.kind === "resume_low_refused").map(e => e.data);
+  check("15j3. ... and where a later line runs clear it is named - 'Right-click line " + lineNo(1) + ", beyond it, and "
+        + "Resume from here' (the menu row's own words), then ROUTE ROUND HER NOW - and logged as the line beyond",
+        () => intoB.paths.length === 0
+              && new RegExp("Right-click line " + lineNo(1) + ", beyond it, and Resume from here - the way in is routed round it; or ROUTE ROUND HER NOW on this bar; or Stop and punch the survey again at the water it will be flown in\\.").test(bB)
+              && !/Resume survey here/.test(bB) && lrB.length === 1 && lrB[0].beyond === lineNo(1),
+        () => "sent " + JSON.stringify(intoB.paths) + "; logged " + JSON.stringify(lrB) + "; banners " + bB.slice(0, 520));
+  // the pair is check 9 (the same press, the fixture's plan clear of the pier, resumes), named here so a reader of 15j
+  // sees it was not the press switched off - and asked again on this very fixture, now
+  const clear = await resumeFrom();
+  check("15k2. ... while the same press on a remainder CLEAR of the chart resumes as it always did (9-14)",
+        () => clear.paths.includes("/api/cmd/start") && !clear.banners.some(b => /NOT RESUMED AT LOW SPEED/.test(b))
+              && !clear.logged.some(e => e && e.kind === "resume_low_refused"),
+        () => "sent " + JSON.stringify(clear.paths) + "; banners " + JSON.stringify(clear.banners.map(b => b.slice(0, 70))));
+  // A BOAT ALREADY INSIDE ONE is not being driven into it: getting her out is the way in's to answer, and it does
+  const rockRing = [{ e: -3, n: -3 }, { e: 3, n: -3 }, { e: 3, n: 3 }, { e: -3, n: 3 }];
+  const inRock = { polys: [PIER.polys[0], { ring: rockRing, bb: bbOf(rockRing), kind: "a charted rock" }],
+                   lines: [], points: [], marks: [], sys: [], chans: [] };
+  const inside = await resumeFrom({ ko: inRock, pin: { route: [LINE_E.b], routed: true } });
+  check("15l. ... and a boat already INSIDE a keep-out (standing in a rock) is not refused by it - the press resumes, "
+        + "the way in being what gets her out",
+        () => inside.paths.includes("/api/cmd/start") && !inside.banners.some(b => /NOT RESUMED AT LOW SPEED/.test(b)),
+        () => "sent " + JSON.stringify(inside.paths) + "; banners " + JSON.stringify(inside.banners.map(b => b.slice(0, 90))));
+  // ⚠ IT WALKS THE ROUTE THE PRESS WOULD UPLOAD, the way in's detour included - not the straight run in it replaces.
+  // After an escape (15f's scene) the straight line from where she is to the rejoin point crosses the wall; the router
+  // routes round it, and the press must go - the way on beyond the rejoin point is clear.
+  const viaD = ll(-150, -60);
+  const wallKoD = { polys: [PIER.polys[0],
+                    (() => { const q = [{ e: -60, n: -70 }, { e: 60, n: -70 }, { e: 60, n: -50 }, { e: -60, n: -50 }];
+                             return { ring: q, bb: bbOf(q), kind: "land" }; })()],
+                    lines: [], points: [], marks: [], sys: [], chans: [] };
+  const routedD = await resumeFrom({ escape: true, ko: wallKoD, pin: { route: [viaD, ll(-92.5, 0)], routed: true } });
+  check("15m. ... and it judges the route the press would UPLOAD - the way in's detour, not the straight run in it "
+        + "replaces: after an escape, a straight line back that crosses land is routed round and the press goes",
+        () => routedD.paths.includes("/api/cmd/start") && !routedD.banners.some(b => /NOT RESUMED AT LOW SPEED/.test(b))
+              && routedD.up && distTo(routedD.up.route[0], viaD) < 0.5,
+        () => "sent " + JSON.stringify(routedD.paths) + "; first wpt " + JSON.stringify(routedD.up && routedD.up.route[0])
+            + "; banners " + JSON.stringify(routedD.banners.map(b => b.slice(0, 90))));
+  // AND THE CONSOLE'S OWN RESUMES ARE NOT REFUSED BY IT: the AIS return and a way round carry no override and no LOW,
+  // and a way round's way in is routed round what stopped her (resumeRunsInto is asked of the operator's press alone)
+  check("15n. ... and only the operator's press asks it: the console's own return and way round (auto / at) do not",
+        () => /if\(!auto && !at\)\{\s*const into = resumeRunsInto\(backFrom, tail, g\.mark \? g\.mark\.line : null\);/.test(grab("resumeHeldRun"))
+              && /if\(!auto && !at\)\{\s*const into = resumeRunsInto\(from, tail, null\);/.test(grab("resumeHeldLeg")),
+        "the gate's text in both resumes");
+  // 15o. THE WALK ITSELF, on his S1's shape: line 1 runs east to e = 200, the turn swings out through a shoal to line 2
+  // running west at n = -60. Found in the turn, past the line's end; and the line offered beyond it is line 2, the
+  // first coverage line after it whose own run is clear - while the same remainder with the turn clear of the shoal
+  // is not refused at all.
+  {
+    standingIn(6);
+    const SR = [{ e: 222, n: -45 }, { e: 262, n: -45 }, { e: 262, n: -15 }, { e: 222, n: -15 }];
+    nogo = { ...nogo, ko: { polys: [{ ring: SR, bb: bbOf(SR), kind: "a charted shoal" }],
+                            lines: [], points: [], marks: [], sys: [], chans: [] } };
+    const LINE_2 = { a: ll(200, -60), b: ll(-200, -60) };
+    mission = { ...mission, lines: [LINE_E, LINE_2] };
+    const rO = resumeRunsInto(ll(100, 0), [LINE_E.b, ll(240, -30), LINE_2.a, LINE_2.b], 0);
+    const clearO = resumeRunsInto(ll(100, 0), [LINE_E.b, LINE_2.a, LINE_2.b], 0);
+    // THE REACH: a shoal on line 3, past the end of the first coverage line after hers, is the way on's to meet when she
+    // gets there (the guard holds her for it then) - a press refused for it would refuse every resume of a long survey
+    // whose far lines a low tide fouls somewhere
+    const LINE_3 = { a: ll(-200, -120), b: ll(200, -120) };
+    const S3 = [{ e: -20, n: -130 }, { e: 20, n: -130 }, { e: 20, n: -110 }, { e: -20, n: -110 }];
+    nogo = { ...nogo, ko: { polys: [{ ring: S3, bb: bbOf(S3), kind: "a charted shoal" }],
+                            lines: [], points: [], marks: [], sys: [], chans: [] } };
+    mission = { ...mission, lines: [LINE_E, LINE_2, LINE_3] };
+    const farO = resumeRunsInto(ll(100, 0), [LINE_E.b, LINE_2.a, LINE_2.b, LINE_3.a, LINE_3.b], 0);
+    // ... and the line OFFERED beyond is one that does not itself run in: the turn's shoal AND one across line 2, so the
+    // line offered is line 3 (offering line 2 would offer a resume this very refusal would refuse)
+    const S2 = [{ e: -20, n: -70 }, { e: 20, n: -70 }, { e: 20, n: -50 }, { e: -20, n: -50 }];
+    nogo = { ...nogo, ko: { polys: [{ ring: SR, bb: bbOf(SR), kind: "a charted shoal" }, { ring: S2, bb: bbOf(S2), kind: "a charted shoal" }],
+                            lines: [], points: [], marks: [], sys: [], chans: [] } };
+    const rO2 = resumeRunsInto(ll(100, 0), [LINE_E.b, ll(240, -30), LINE_2.a, LINE_2.b, LINE_3.a, LINE_3.b], 0);
+    check("15o. resumeRunsInto finds a shoal in the TURN past the held line's end, how far on, and offers line 2 beyond "
+          + "it (the first coverage line after it whose own run is clear) - line 3 when line 2 runs into a shoal too; "
+          + "the same remainder with the turn clear of the shoal is not refused - nor one whose only shoal lies on "
+          + "line 3, past the end of the next line",
+          () => !!rO && rO.info && rO.info.kind === "a charted shoal" && rO.distM > 110 && rO.distM < 140
+                && rO.beyond === lineNo(1) && clearO === null && farO === null
+                && !!rO2 && rO2.beyond === lineNo(2) && Math.abs(rO2.distM - rO.distM) < 0.5,
+          () => JSON.stringify(rO && { kind: rO.info && rO.info.kind, distM: Math.round(rO.distM), beyond: rO.beyond })
+              + " (line 2 is " + lineNo(1) + "); clear turn -> " + JSON.stringify(clearO)
+              + "; a shoal on line 3 -> " + JSON.stringify(farO && { distM: Math.round(farO.distM) })
+              + "; line 2 fouled too -> beyond " + JSON.stringify(rO2 && rO2.beyond) + " (line 3 is " + lineNo(2) + ")");
+    // 15o2 (review 2026-11-07, D5). THE LINE OFFERED IS ONE WHOSE WHOLE RUN IS CLEAR - the line, the turn out of it and
+    // the line after - not its own leg alone: line 2 is clear, but the turn from it to line 3 swings through a shoal, so
+    // a resume there would be refused by this very test; the line offered is line 3
+    const ST = [{ e: -250, n: -105 }, { e: -210, n: -105 }, { e: -210, n: -75 }, { e: -250, n: -75 }];
+    nogo = { ...nogo, ko: { polys: [{ ring: SR, bb: bbOf(SR), kind: "a charted shoal" }, { ring: ST, bb: bbOf(ST), kind: "a charted shoal" }],
+                            lines: [], points: [], marks: [], sys: [], chans: [] } };
+    mission = { ...mission, lines: [LINE_E, LINE_2, LINE_3] };
+    const rT = resumeRunsInto(ll(100, 0), [LINE_E.b, ll(240, -30), LINE_2.a, LINE_2.b, ll(-230, -90), LINE_3.a, LINE_3.b], 0);
+    const rT0 = resumeRunsInto(ll(100, 0), [LINE_E.b, ll(240, -30), LINE_2.a, LINE_2.b, LINE_3.a, LINE_3.b], 0);
+    check("15o2. ... and the line offered beyond is one whose WHOLE run is clear - the turn out of line 2 running into a "
+          + "shoal, line 3 is offered, not line 2 (whose own leg alone is clear); with that turn clear, line 2",
+          () => !!rT && rT.beyond === lineNo(2) && !!rT0 && rT0.beyond === lineNo(1),
+          () => "turn out of line 2 fouled -> beyond " + JSON.stringify(rT && rT.beyond) + " (line 3 is " + lineNo(2)
+              + "); clear -> " + JSON.stringify(rT0 && rT0.beyond) + " (line 2 is " + lineNo(1) + ")");
+    // 15l2 (review 2026-11-07, D4). A BOAT ALREADY INSIDE ONE IS WALKED FROM WHERE SHE LEAVES IT - not excused the whole way
+    // on: standing in a 3 m rock, the remainder whose hop runs into the pier is refused for the PIER (the way out of
+    // the rock is not asked), how far on counted from her; the same remainder clear of the pier is not refused; and a
+    // way on that never leaves the rock within the reach is the way in's to answer
+    // 3.5 m, OFF the 2 m sample grid: an escape judged at no buffer stops 0.5 m outside it, which the walk's own 1 m
+    // buffer then reads as the rock - so the escape and the walk must ask the same buffer, or she is refused for what she leaves
+    const RK = [{ e: -3.5, n: -3.5 }, { e: 3.5, n: -3.5 }, { e: 3.5, n: 3.5 }, { e: -3.5, n: 3.5 }];
+    const rockKo = (extra) => ({ polys: [{ ring: RK, bb: bbOf(RK), kind: "a charted rock" }, ...(extra || [])],
+                                 lines: [], points: [], marks: [], sys: [], chans: [] });
+    mission = { ...mission, lines: [LINE_E] };
+    nogo = { ...nogo, ko: rockKo([PIER.polys[0]]) };
+    const rR = resumeRunsInto(ll(0, 0), [LINE_E.b, ll(200, 60)], 0);
+    const rR0 = resumeRunsInto(ll(0, 0), [LINE_E.b, ll(200, -60)], 0);
+    const BIG = [{ e: -500, n: -500 }, { e: 500, n: -500 }, { e: 500, n: 500 }, { e: -500, n: 500 }];
+    nogo = { ...nogo, ko: { polys: [{ ring: BIG, bb: bbOf(BIG), kind: "a charted shoal" }], lines: [], points: [], marks: [], sys: [], chans: [] } };
+    const rIn = resumeRunsInto(ll(0, 0), [LINE_E.b, ll(200, 60)], 0);
+    check("15l2. ... a boat INSIDE a rock is walked from where she leaves it: the hop into the pier beyond is refused, "
+          + "for the pier, its distance counted from her - a way on clear past the rock is not, and one that never "
+          + "leaves the keep-out is not judged here",
+          () => !!rR && rR.info && rR.info.kind === "a dock / pier" && rR.distM > 220 && rR.distM < 235
+                && rR0 === null && rIn === null,
+          () => "in the rock, the hop north -> " + JSON.stringify(rR && { kind: rR.info && rR.info.kind, distM: Math.round(rR.distM) })
+              + "; the hop south -> " + JSON.stringify(rR0) + "; never out -> " + JSON.stringify(rIn));
+    // 15l3 (the third review, 2026-11-07). THE WAY OUT IS NOT A WAY THROUGH: 0.5 m beside a pier drawn as a LINE, she is
+    // "inside" its 1 m, and the escape stepped 2 m at a time asking only whether each step's END was clear - so a way on
+    // straight across the pier stepped over it, landed clear on the far side, and the walk from there found nothing. Each
+    // step is now asked whether it CROSSES the keep-out: the way across is refused for the pier; the way away from it is not
+    const PL = [{ e: -50, n: 0 }, { e: 50, n: 0 }];
+    nogo = { ...nogo, ko: { polys: [], lines: [{ pts: PL, bb: bbOf(PL), kind: "a dock / pier" }], points: [], marks: [], sys: [], chans: [] } };
+    mission = { ...mission, lines: [] };
+    const rX = resumeRunsInto(ll(0, 0.5), [ll(0, -200)], null);
+    const rX0 = resumeRunsInto(ll(0, 0.5), [ll(0, 200)], null);
+    check("15l3. ... and a boat 0.5 m beside a pier drawn as a line, the way on straight ACROSS it, is refused for the pier "
+          + "- the way out of its 1 m does not step over it - while the way on away from it is not refused",
+          () => !!rX && rX.info && rX.info.kind === "a dock / pier" && rX.distM >= 0 && rX.distM < 3 && rX0 === null,
+          () => "across -> " + JSON.stringify(rX && { kind: rX.info && rX.info.kind, distM: Math.round(rX.distM * 10) / 10 })
+              + "; away -> " + JSON.stringify(rX0));
+  }
 
   finish();
 })();

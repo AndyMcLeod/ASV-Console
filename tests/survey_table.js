@@ -651,16 +651,39 @@ function commit(w, lines, anchors) {
           () => JSON.stringify([s1.water_m, s1.punched_at, s2.water_m]));
     const at = (lvl) => { v.env.sea.waterOffset = lvl; return w.surveyTideMoved(s1); };
     const r = [at(0.39), at(0.20), at(0.14), at(0.64), at(-0.5)];
-    check("22. the row flags the tide only from a quarter meter either way, signed (fallen negative), and never a "
-          + "survey with no stamp",
-          () => r[0] === null && r[1] === null && Math.abs(r[2] + 0.25) < 1e-9 && Math.abs(r[3] - 0.25) < 1e-9
+    // (2026-11-07) a FALL only: every punch is cut at the survey's predicted low, so water over the level it was cut at
+    // leaves out only lines deep enough nearer high water - nothing unsafe, and the flag said "re-punch" all up a flood
+    check("22. the row flags the tide only once it has FALLEN a quarter meter under the level the lines were cut at "
+          + "(signed, negative), never for a rise, and never a survey with no stamp",
+          () => r[0] === null && r[1] === null && Math.abs(r[2] + 0.25) < 1e-9 && r[3] === null
                 && Math.abs(r[4] + 0.89) < 1e-9 && w.surveyTideMoved(s2) === null,
           () => JSON.stringify(r));
     v.env.sea.waterOffset = -0.5; w.renderSurveyTable();
     const html = v.env.els["#sv_table"].innerHTML;
-    check("22b. ... and says which way on the row: ⚠ before its figures, FALLEN and what it means in its tip",
-          () => /svinfo">⚠/.test(html) && /FALLEN 0\.89 m since it was punched, so its lines were cut for deeper water/.test(html),
-          () => (html.match(/svinfo">[^<]*/) || [""])[0]);
+    check("22b. ... and says so on the row: ⚠ before its figures, FALLEN under the level it was cut at and what it means "
+          + "in its tip",
+          () => /svinfo">⚠/.test(html)
+                && /FALLEN 0\.89 m under the level it was cut at, so its lines were cut for deeper water than there is now/.test(html),
+          () => (html.match(/svinfo">[^<]*/) || [""])[0] + " | " + (html.match(/FALLEN[^"]*/) || [""])[0]);
+    v.env.sea.waterOffset = 0.64; w.renderSurveyTable();
+    const htmlRise = v.env.els["#sv_table"].innerHTML;
+    check("22c. ... and a row whose water has RISEN over the cut level carries no ⚠ and no tide words",
+          () => !/svinfo">⚠/.test(htmlRise) && !/FALLEN|ROSE|RISEN/.test(htmlRise),
+          () => (htmlRise.match(/svinfo">[^<]*/) || [""])[0]);
+    // 22d (2026-11-07): the stamp says where the level came from - the punch's own words, as the card showed them
+    v.env.sea.waterOffset = 0.39;
+    const say = "cut at -0.31 m, the lowest predicted along it over the next 1.3 h (Stn, 3 km off)";
+    w.patFunnel = { cut: { bufM: 3, waterM: -0.31, setKn: null, held: false, say } };
+    await commit(w, pattern(1, 100, 10, 0, 600), ANCH(600));
+    const s3 = w.mission.surveys[w.mission.surveys.length - 1];
+    w.patFunnel = { cut: { bufM: 3, waterM: -0.31, setKn: null, held: false, say: "x".repeat(900) } };
+    await commit(w, pattern(1, 100, 10, 0, 900), ANCH(900));
+    const s4 = w.mission.surveys[w.mission.surveys.length - 1];
+    w.patFunnel = null;
+    check("22d. Add to plan stamps the level the lines were CUT at (the predicted low, not the water now) and the words "
+          + "that say where it came from - capped at 400 characters, as the server takes it; with no cut on record, none",
+          () => s3.water_m === -0.31 && s3.water === say && s4.water.length === 400 && s1.water === null,
+          () => JSON.stringify([s3.water_m, s3.water, s4.water && s4.water.length, s1.water]));
   }
 
   // ── 23. the row's state and the picked row's actions ────────────────────────────────────────────────────────────
@@ -927,7 +950,7 @@ function buildWorld(env) {
     + " trackLineCoverage, saveLineCov, lineDoneFrac, surveyProgress, surveyTideMoved, goToSurvey, uploadFromSurvey,"
     + " repunchSurvey, punchAll, reverseSurvey, clearSurveyProgress, lineGeoKey, toggleSurveyHold, continueHold,"
     + " get pendingHold(){ return pendingHold; }, set pendingHold(v){ pendingHold = v; },"
-    + " set runUnsafe(v){ runUnsafe = v; },"
+    + " set runUnsafe(v){ runUnsafe = v; }, set patFunnel(v){ patFunnel = v; },"
     + " get lineCov(){ return lineCov; }, set lineCov(v){ lineCov = v; }, get patReverse(){ return patReverse; },"
     + " setPatReverse: (v) => { patReverse = v; }, at: (k, p) => { runLineIdx = k; asv = p; },"
     + " set missionLoaded(v){ missionLoaded = v; }, get punchAllBusy(){ return punchAllBusy; },"

@@ -164,7 +164,10 @@ const PAGE_FUNCS = ["punchOut", "currentPattern", "surveyPattern", "patSourceLin
   "patLeadTotal", "leadMetres", "leadInM", "leadOutM", "easeLsM", "roleSpeed", "roleSpeedMS", "depthRange",
   "kindsSummary", "emptyPunchRefusal", "isStepKey", "spdTxt", "spdAtTxt", "slowestSelectableKey", "punchRefusal", "commitPattern", "resetPattern", "updatePatReadout", "flushRepunch", "punchNow",
   "dropStruckFromPunch", "strikeSelectedRun", "scheduleRepunch", "applyWaterOffset",
-  "patternWaypoints"];                                   // commitPattern's lines and waypoints (2026-11-06)
+  "patternWaypoints",                                    // commitPattern's lines and waypoints (2026-11-06)
+  // the level a punch is cut at (2026-11-07): punchOut's liveCut reads punchWaterM, its summary punchLevelSay - the
+  // patClipBufM trap again (missing, every punch here was "0 runs, 0 turns built"). The read itself is auto_clear 5b-5f's.
+  "liveCut", "punchWaterM", "punchLevelSay", "fmtLevel"];
 const PAGE_DECLS = [/^const NO_LEAD = [^;]*;/m, /^const LEAD_GIVE = [^;]*;/m, /^const MAX_SURVEY_LINES = [^;]*;/m,
   /^const LEAD_MAX_M = [^;]*;/m, /^const REPUNCH_DELAY_MS = [^;]*;/m, /^const TIDE_REBUILD_M = [^;]*;/m, /^const TRIM_MAX_M = [^;]*;/m, /^const JUDGE_RUN_M = [^;]*;/m, /^const SPEED_ROLES = [^;]*;/m,
   /^const PUNCH_SLICE = [^;]*;/m];
@@ -239,6 +242,9 @@ function makeWorld(opts) {
     + "const heldCutAfterRead = () => null, releasePunchHold = () => {}, endClearing = () => {};\n"
     + "const stopClearingFor = () => {}, noteSurveyUpdated = () => {};\n"
     + "const renderClearRow = () => {};\n"
+    // no prediction read in this world (2026-11-07): every punch is cut at the water now, as it always was here
+    + "let punchLevel = null; const refreshPunchLevel = async () => punchLevel, settlePunchLevel = async () => {};\n"
+    + "const punchFlightOutgrewRead = async () => false, PUNCH_FLIGHT_REREAD = 2;   // the route re-read: auto_clear\n"
     + "const rebuildNogo = () => { nogo.builtOffset = sea.waterOffset; };   // the model's own rebuild is not under test\n"
     + PAGE_FUNCS.map(grab).join("\n")
     // The ladder exactly as punchOut asks it, over the model punchOut builds (a dock has no channel and no chart ink,
@@ -508,7 +514,8 @@ const redList = (w) => redOf(w.get().patRed);
         () => hint.slice(0, 40) + " ... " + hint.slice(-90));
 
   // ── 14. A PUNCH THE TIDE THROWS AWAY ─────────────────────────────────────────────────────────────────────────────
-  // applyWaterOffset drops the punch on ANY change of level - a station update moves it a few centimeters - and until
+  // applyWaterOffset drops the punch when the level moves (since 2026-11-07: when the move rebuilds the guard's chart, or
+  // the water falls TIDE_REBUILD_M under the level it was cut at - a station update moves it a few centimeters) - and until
   // 2026-09-16 it did only that: the next readout lifted the refusal and Add to plan committed the pattern UN-punched.
   // Found on the live check, where one tide update and one chart click turned a punch refused for 15 reversals into a
   // committed plan of 23 unclipped lines with no turns at all.
@@ -523,7 +530,10 @@ const redList = (w) => redOf(w.get().patRed);
   const c14 = await safely(() => tide.commitPattern());
   check("14. a CLEAN punch the tide throws away (a station update, +0.34 m) is not swapped for the un-punched pattern: "
         + "the button and the note say so the moment it happens, and Add to plan commits nothing",
-        () => cleanBefore && g14.patClip === null && /^the water level moved \(\+0\.00 m to \+0\.34 m\)$/.test(g14.patDropped)
+        // (2026-11-07) a rise drops it only because it rebuilds the guard's chart (0.34 m from the level it was built at);
+        // a rise that does not is kept (auto_clear 5e, 45c), so the words say which it was
+        () => cleanBefore && g14.patClip === null
+              && /^the water level moved \(\+0\.00 m to \+0\.34 m\) and the guard's chart was rebuilt at it$/.test(g14.patDropped)
               && ref14 && /UN-punched/.test(ref14.text) && /Punch Out again\.$/.test(ref14.text)
               && btn14.disabled === true && btn14.note === ref14.text
               && /or Punch Out again\.$/.test(btn14.hint) && !/Add to plan/.test(btn14.hint)
@@ -564,7 +574,7 @@ const redList = (w) => redOf(w.get().patRed);
         () => "dropped=" + neverDropped + "; committed " + never.mission.lines.length + " lines");
   const bare = makeWorld({ features: [FAR()] });
   await safely(() => bare.punchOut());
-  bare.water(0.7);
+  bare.water(0.45);                                  // a FALL under the +0.62 m it was cut at (a rise of 0.08 m keeps it now)
   const refBare = bare.punchRefusal();
   S.nogo.features = [];                              // the re-punch finds no chart at all
   await safely(() => bare.punchOut());

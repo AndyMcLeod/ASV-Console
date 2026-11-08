@@ -533,6 +533,11 @@ eval([
   // sendSpeed is the one door a speed command reaches the wire by (2026-09-22).
   grab("took"), grab("sendSpeed"), grab("continueAtLow"), grab("resumeHeldSurvey"),
   grab("resumeHeldRun"),
+  // (2026-11-07) a way round refused is kept on its episode, said on both bars and logged; the operator's RESUME AT LOW
+  // SPEED is refused where the way on runs into the chart (resumeRunsInto - the real keepouts.js walk)
+  grab("noteAroundRefused"), grab("aroundBarSay"), grab("fmtLevel"),
+  grabDecl("RESUME_INTO_M"), grabDecl("RESUME_INTO_REACH_M"), grabDecl("RESUME_ESCAPE_STEP_M"), grab("resumeIntoWalk"), grab("resumeEscape"), grab("resumeRunsInto"), grab("refuseResumeInto"),
+  "const { firstBlockAlong } = require('../static/js/keepouts.js');",
   // a refusal the planner made is said in the operator's units (planWhy, 2026-10-03) - the page's own
   "const { beyondChartSay } = require('../static/js/passage.js');",
   grab("planWhy"),
@@ -583,7 +588,7 @@ const LINE_E = { a: ll(-200, 0), b: ll(200, 0) };
 // ================================================================================================
 // THE AIS WORLD - this suite's own additions to the copied world above.
 // ================================================================================================
-const { blockedInfo } = require("../static/js/keepouts.js");
+const { blockedInfo, legCrossesEN } = require("../static/js/keepouts.js");
 var AIS_KEY = "asv_ais_show_v1";
 var aisArea = null, aisState = "idle", aisSrc = null, aisSrcName = null, aisNote = "", aisBusy = false;
 var aisStall = null, aisStallSaid = false;
@@ -996,6 +1001,11 @@ function guardHeld_at_mark() { return ll(0, 0); }
 // was always kind-blind: aisWalkPast takes two opaque keep-out models and sameContact tests identity before mmsi.
 {
   surveying(6, [], { ko: PIER });                   // guard_resume's pier, 30 m north; no contacts
+  // ⚠ THE NEXT LINE SOUTH, CLEAR OF THE PIER (2026-11-07). The fixture's own next line lies 60 m NORTH - INSIDE this
+  // pier, which runs from 30 m to 330 m north - and the charted walk now looks past the held line's end (B, Andy's S1),
+  // so on that plan it finds nothing clear on the way on at all and says so (5b1, below). 5b's subject is the way round
+  // that moves her nowhere, which needs a plan the chart lets her fly.
+  runRoute = [ll(-200, 0), LINE_E.b, ll(200, -60), ll(-200, -60)];
   S.status.cog_deg = 0; S.status.heading_deg = null;   // standing into it, no heading: the straight projection
   frame();
   const held = !!guardHeld;
@@ -1029,6 +1039,105 @@ function guardHeld_at_mark() { return ll(0, 0); }
         () => "sent " + JSON.stringify(sent5) + ", still held " + !!guardHeld
             + ", episode " + (aisAvoid ? "open" : "SPENT")
             + ", banners " + JSON.stringify(banners.map(b => b.slice(0, 90))));
+  // 5b0 (2026-11-07, C: Andy's S1 - the bar said "the console routes round it itself now" for 14.5 minutes over a way
+  // round the no-op gate had refused, and the refusal was nowhere in the session log). The bar after 5b's refusal:
+  {
+    const g5 = guardHeldOffer();
+    EL["#gb_why"].textContent = ""; if (g5) renderGuardBar(g5);
+    const bar5 = EL["#gb_why"].textContent || "";
+    const lr5 = logged.filter(e => e.kind === "ais_around_refused").map(e => e.data);
+    frame(); await settle();                          // the same model again: tried on it, so nothing new is logged
+    const lr5b = logged.filter(e => e.kind === "ais_around_refused").length;
+    // ... and TRIED again (the try-model forgotten, as a moved model would have it) for the SAME reason: the console's
+    // own refusal is logged once per reason per episode, so still one - while the operator's press logs every time
+    if (aisAvoid) aisAvoid.triedOn = null;
+    frame(); await settle();
+    const lr5c = logged.filter(e => e.kind === "ais_around_refused").length;
+    if (aisAvoid) aisAvoid.forceAround = true;
+    frame(); await settle();
+    const lr5d = logged.filter(e => e.kind === "ais_around_refused").map(e => e.data);
+    check("5b0. ... and the held bar SAYS it was refused, why, and when the console tries again - never 'routes round it "
+          + "itself now' - and the refusal is in the session log, once per reason however often tried, a press every "
+          + "time (not ais_around_failed, which "
+          + "playback reads as the end of the episode)",
+          () => /the console's way round it was REFUSED \(the plan already runs where the way round would put her - she would/.test(bar5)
+                && /\) - it tries again by itself only when something its answer depends on changes \(the chart, the water, the traffic, her position, the plan or the standoff\)/.test(bar5)
+                && !/routes round it itself/.test(bar5)
+                && lr5.length === 1 && lr5[0].stage === "plan" && lr5[0].charted === true && lr5[0].manual === false
+                && /the plan already runs where the way round would put her/.test(lr5[0].why) && lr5[0].kind === "a dock / pier"
+                && lr5b === 1 && lr5c === 1
+                && lr5d.length === 2 && lr5d[1].manual === true && lr5d[1].stage === "plan"
+                && !logged.some(e => e.kind === "ais_around_failed"),
+          () => "bar '" + bar5.slice(-260) + "'; logged " + JSON.stringify(lr5) + ", then " + lr5b
+              + ", tried again " + lr5c + ", pressed " + JSON.stringify(lr5d.slice(1)));
+    // 5b0b (review 2026-11-07, C #9). ... and on a PAUSED boat the bar does not promise a try she will not make: it
+    // tries nothing while paused, and says when it will
+    const run0 = S.run;
+    S.run = "paused";
+    const barP = aroundBarSay(aisAvoid, "it");
+    S.run = run0;
+    check("5b0b. ... and paused, the bar says the console tries NOTHING while she is paused, and tries again once the "
+          + "hold is resumed - only when something its answer depends on changes",
+          () => /\) - it tries nothing while she is paused; once you resume the hold it tries again only when something its answer depends on changes \(/.test(barP)
+                && !/it tries again by itself/.test(barP),
+          () => "bar '" + barP.slice(-220) + "'");
+    // 5b0c (review 2026-11-07, C #3 and #9). ... and the log key is the REASON, its numbers aside: a refusal that names
+    // a distance logs once however the distance moves, a different reason or a different STAGE logs again - and the
+    // FAILED stage is said as FAILED, in the reason's own words, never "was REFUSED"
+    const epC = { kind: "a dock / pier", chart: true, line: null };
+    const n0 = logged.filter(e => e.kind === "ais_around_refused").length;
+    noteAroundRefused(epC, "⚠ NO WAY ROUND a dock / pier — the way is 12.3 m short of it. More words.", false, "plan");
+    noteAroundRefused(epC, "⚠ NO WAY ROUND a dock / pier — the way is 15.75 m short of it. More words.", false, "plan");
+    const nSame = logged.filter(e => e.kind === "ais_around_refused").length - n0;
+    noteAroundRefused(epC, "⚠ NO WAY ROUND a dock / pier — the way is 15.75 m short of it. More words.", false, "resume");
+    const nStage = logged.filter(e => e.kind === "ais_around_refused").length - n0;
+    noteAroundRefused(epC, "⚠ COULD NOT RESUME THE SURVEY — the pause was refused (x). The boat is still holding.", false, "failed");
+    const lgC = logged.filter(e => e.kind === "ais_around_refused").map(e => e.data);
+    const barF = aroundBarSay(epC, "it");
+    check("5b0c. ... a refusal is logged once per REASON, its numbers aside - again for another stage or reason - and a "
+          + "way round that FAILED is said FAILED, with its cause, not 'was REFUSED'",
+          () => nSame === 1 && nStage === 2 && lgC.length - n0 === 3 && lgC[lgC.length - 1].stage === "failed"
+                && /the console's way round it FAILED \(the pause was refused \(x\)\) - it tries again by itself only when something/.test(barF)
+                && !/REFUSED/.test(barF),
+          () => "same reason logged " + nSame + ", with another stage " + nStage + "; last " + JSON.stringify(lgC[lgC.length - 1])
+              + "; bar '" + barF.slice(0, 200) + "'");
+  }
+  // 5b1 (2026-11-07). ... and on the fixture's own plan - the leg on from line 1's end runs north INTO the pier, and
+  // it is no line of the survey (the survey is line 1 alone): the way round does NOT walk on into what is a transit
+  // there, planned at the transit standoff (review 2026-11-07), and says so - refused, in the words true of it
+  {
+    surveying(6, [], { ko: PIER });
+    S.status.cog_deg = 0; S.status.heading_deg = null;
+    frame();
+    const p51 = aisAroundPlan(guardHeld, aisKeepoutsNow(), patClipBufM(), null, aisAvoid && aisAvoid.chart);
+    nowHolding(); sent = []; banners = []; logged = [];
+    frame(); await settle();
+    const g51 = guardHeldOffer();
+    EL["#gb_why"].textContent = ""; if (g51) renderGuardBar(g51);
+    const bar51 = EL["#gb_why"].textContent || "";
+    const lr51 = logged.filter(e => e.kind === "ais_around_refused").map(e => e.data);
+    check("5b1. ... and where the way on past the end of the survey's LAST line runs into the feature, the walk does not "
+          + "go on into the transit beyond it and SAYS so - nothing sent, the hold and the episode standing, the bar "
+          + "saying why, and the PLAN's refusal logged",
+          () => /^a dock \/ pier lies beyond the end of line 1, the last line of its survey - the way round walks no further, since the plan beyond is a transit/.test(p51.error || "")
+                && paths().length === 0 && !!guardHeld && !!aisAvoid
+                && banners.some(b => /NO WAY ROUND a dock \/ pier/.test(b) && /the last line of its survey/.test(b))
+                && /was REFUSED \(a dock \/ pier lies beyond the end of line 1, the last line of its survey/.test(bar51)
+                && lr51.length === 1 && lr51[0].stage === "plan" && lr51[0].why === p51.error,
+          () => "plan " + JSON.stringify(p51) .slice(0, 160) + "; sent " + JSON.stringify(paths())
+              + "; banners " + JSON.stringify(banners.map(b => b.slice(0, 120))) + "; bar '" + bar51.slice(-200)
+              + "'; logged " + JSON.stringify(lr51));
+    // 5b1b. the same water with that leg a line OF the survey (line 2, inside the pier): walked, and nothing on it is clear
+    surveying(6, [], { ko: PIER });
+    mission = {...mission, lines: [LINE_E, {a: ll(200, 60), b: ll(-200, 60)}]};
+    S.status.cog_deg = 0; S.status.heading_deg = null;
+    frame();
+    const p51b = guardHeld ? aisAroundPlan(guardHeld, aisKeepoutsNow(), patClipBufM(), null, aisAvoid && aisAvoid.chart) : {};
+    check("5b1b. ... while with that leg a line of the survey (line 2, inside the pier) it is walked - the turn and line "
+          + "2 - and nothing on it is clear: 'it lies across it'",
+          () => /^nothing on the way on to the end of line 2 is clear of a dock \/ pier - it lies across it$/.test(p51b.error || ""),
+          () => JSON.stringify(p51b).slice(0, 200));
+  }
   // ⚠ AND THE ACCEPTANCE, WITHOUT WHICH 5b IS JUST THE FEATURE TURNED OFF. The case a charted way round is
   // FOR is a feature that has moved ONTO the line ahead of her - a chart read taken since the plan was built,
   // or a plan laid before the feature was known - which is precisely when the plan's geometry and the guard's
@@ -1335,6 +1444,173 @@ const EAST3 = () => [ll(-200, 0), ll(200, 0), ll(200, 60)];
         () => "logged " + !!la5o + ", uploaded " + rte5o.length + " wpts, the pick-up is "
             + (quayClr == null ? "-" : quayClr.toFixed(1)) + " m off the quay (buffer 3.0, standoff "
             + (la5o ? la5o.data.std_m : "-") + "); banners " + JSON.stringify(banners.map(b => b.slice(0, 70))));
+}
+// ── 5w. A CHARTED FEATURE IN THE TURN PAST THE LINE'S END IS WALKED PAST (2026-11-07, B) ─────────────────────
+// ⚠⚠ Andy's S1 at Castine: the falling tide raised a shoal into line 9's west-end TURN; the guard's look-ahead follows
+// the route, so it held her short of the line's end for it - and the way round walked only the REST OF LINE 9, which
+// read clear of the shoal, so its first point was where she already was (skipM 0), and the no-op gate refused that
+// for 14.5 minutes. Line 1 here runs east to e = 200; the turn swings out to (240, -30), through a shoal, onto line 2
+// running west at n = -60. Held at e = 150 on line 1.
+{
+  const SR = [{e: 222, n: -45}, {e: 262, n: -45}, {e: 262, n: -15}, {e: 222, n: -15}];
+  const SHOAL = {ring: SR, bb: bbOf(SR), kind: "a charted shoal"};
+  const TURN_KO = {polys: [SHOAL], lines: [], points: [], marks: [], sys: [], chans: []};
+  const LINE_2 = {a: ll(200, -60), b: ll(-200, -60)};
+  const ROUTE_T = [ll(-200, 0), ll(200, 0), ll(240, -30), ll(200, -60), ll(-200, -60)];
+  const turnScene = (ko) => {
+    surveying(6, [], { ko });
+    mission = {...mission, lines: [LINE_E, LINE_2], waypoints: ROUTE_T.slice()};
+    runRoute = ROUTE_T.slice(); window._wpIndex = 1; S.wp_total = runRoute.length;
+  };
+  turnScene(TURN_KO);
+  const gT = {at: ll(150, 0), route: ROUTE_T.slice(), idx: 1, mark: {line: 0, along: 350, fwd: 1}, kind: "a charted shoal"};
+  const std = patClipBufM();
+  const pT = aisAroundPlan(gT, [], std, null, SHOAL);
+  const pickClr = pT.to ? clearanceM(nogo.frame.toEN(pT.to), {polys: [SHOAL], lines: [], points: []}, 1e6) : null;
+  const pickEN = pT.to ? nogo.frame.toEN(pT.to) : null;
+  // the pick-up: on the turn's last leg, (240, -30) to (200, -60), past the shoal - the first point clear of it with
+  // the rest of the way to the end of line 2 clear too - and the waypoint after it is line 2's start (j = 3)
+  const onTurnLeg = pT.to ? Math.abs(distTo(ROUTE_T[2], pT.to) + distTo(pT.to, ROUTE_T[3]) - distTo(ROUTE_T[2], ROUTE_T[3])) < 0.5 : false;
+  check("5w. a charted feature in the TURN past the held line's end is walked PAST along the route - the rest of line "
+        + "1, the turn, on toward line 2 - and the plan is picked up beyond it, clear of it at the standoff, on the "
+        + "turn's last leg with line 2 still to fly and the rest of line 1 (50 m) left; not the rest of line 1 alone, "
+        + "where the first point clear is where she stopped (skipM 0, the no-op the gate refused 14.5 minutes on his S1)",
+        () => !pT.error && pT.pastEnd === 0 && pT.fromTurn === true && pT.line === null
+              && pT.skipM > 100 && Math.abs(pT.leftM - 50) < 0.5 && pT.onLine === null && pT.j === 3
+              && pickClr != null && pickClr >= std - 0.05 && onTurnLeg && pickEN && pickEN.n < -45,
+        () => JSON.stringify(pT.error ? {error: pT.error} : {pastEnd: pT.pastEnd, fromTurn: pT.fromTurn, line: pT.line,
+              skipM: Math.round(pT.skipM), leftM: pT.leftM && Math.round(pT.leftM), onLine: pT.onLine, j: pT.j,
+              pickClr: pickClr && Math.round(pickClr * 10) / 10, pick: pickEN && [Math.round(pickEN.e), Math.round(pickEN.n)]}));
+  // the pair: a feature ON the held line ahead of her is still picked up on that line, in the line walk's own shape
+  const OR = [{e: 160, n: -10}, {e: 175, n: -10}, {e: 175, n: 10}, {e: 160, n: 10}];
+  const ONL = {ring: OR, bb: bbOf(OR), kind: "a charted rock"};
+  turnScene({polys: [ONL], lines: [], points: [], marks: [], sys: [], chans: []});
+  const pO = aisAroundPlan({...gT, mark: {line: 0, along: 330, fwd: 1}, at: ll(130, 0)}, [], std, null, ONL);
+  check("5w2. ... while a charted feature ON the held line ahead is picked up past it ON that line, in the line walk's "
+        + "shape - j at the line's end, the line named, no pastEnd - so the walk past the end did not swallow the "
+        + "on-line case",
+        () => !pO.error && pO.line === 0 && pO.pastEnd === undefined && pO.j === 1 && pO.skipM > 40 && pO.skipM < 70
+              && Math.abs(pO.fromStart - (330 + pO.skipM)) < 0.5,
+        () => JSON.stringify(pO.error ? {error: pO.error} : {line: pO.line, pastEnd: pO.pastEnd, j: pO.j,
+              skipM: Math.round(pO.skipM), fromStart: Math.round(pO.fromStart)}));
+  // and a CONTACT keeps the line walk his 2026-09-28 tuning set: the same water, her in the turn, is not walked past
+  turnScene(OPEN);
+  const her = contact(240, -30, { sog: 0, cog: null, heading: 0 });
+  aisVessels = [her]; aisPolledAt = clock;
+  const kos = aisKeepoutsNow();
+  const pC = aisAroundPlan(gT, kos, std, her.mmsi, null);
+  check("5w3. ... and a CONTACT keeps the line walk (she moves; his 2026-09-28 tuning of that maneuver is not "
+        + "re-opened): no pastEnd, the held line named",
+        () => !pC.error && pC.pastEnd === undefined && pC.line === 0,
+        () => JSON.stringify(pC.error ? {error: pC.error} : {line: pC.line, pastEnd: pC.pastEnd, skipM: pC.skipM}));
+  // ⚠⚠ THE REVIEW'S (2026-11-07). 5w5: the turn past line 1's end is a TRANSIT when line 2 is ANOTHER survey's - the
+  // way round does not walk into it (it is planned at the transit standoff, not the coverage one the walk keeps)
+  turnScene(TURN_KO);
+  mission = {...mission, lines: [{...LINE_E, sv: "S1"}, {...LINE_2, sv: "S2"}]};
+  const p55 = aisAroundPlan(gT, [], std, null, SHOAL);
+  check("5w5. CONFINED TO THE HELD SURVEY: with line 2 another survey's, the turn to it is a transit, and the way round "
+        + "does not walk on into it - refused, saying the shoal lies beyond the end of line 1, its survey's last line",
+        () => /^a charted shoal lies beyond the end of line 1, the last line of its survey - the way round walks no further/.test(p55.error || ""),
+        () => JSON.stringify(p55).slice(0, 220));
+  // 5w5b: a reef over the turn AND the whole of line 2, the plan going on south past line 2's end: the walk ends at line
+  // 2's end - it does not run on into what follows the survey's lines to find a pick-up there
+  const XR = [{e: -220, n: -75}, {e: 262, n: -75}, {e: 262, n: -15}, {e: -220, n: -15}];
+  const LONG = {ring: XR, bb: bbOf(XR), kind: "a charted reef"};
+  turnScene({polys: [LONG], lines: [], points: [], marks: [], sys: [], chans: []});
+  const p55b = aisAroundPlan({...gT, route: [...ROUTE_T, ll(-200, -200)]}, [], std, null, LONG);
+  check("5w5b. ... and the walk ends at the end of line 2: a reef over the turn and all of line 2 is 'nothing clear - it "
+        + "lies across it', though the plan's leg on south past line 2 leaves the reef behind",
+        () => /^nothing on the way on to the end of line 2 is clear of a charted reef - it lies across it$/.test(p55b.error || ""),
+        () => JSON.stringify(p55b).slice(0, 220));
+  // 5w6: a rock ON the held line ahead that the NEXT line passes too: picked up on the held line past it, as the line
+  // walk would - "she is behind" runs to the end of the line the pick-up is on, not to the end of the next line
+  const TR = [{e: 160, n: -70}, {e: 175, n: -70}, {e: 175, n: 10}, {e: 160, n: 10}];
+  const TALL = {ring: TR, bb: bbOf(TR), kind: "a charted reef"};
+  turnScene({polys: [TALL], lines: [], points: [], marks: [], sys: [], chans: []});
+  const p56 = aisAroundPlan({...gT, mark: {line: 0, along: 330, fwd: 1}, at: ll(130, 0)}, [], std, null, TALL);
+  check("5w6. ... a reef ON the held line ahead that line 2 crosses too is picked up past it ON line 1 (the rest of line "
+        + "1 clear of it) - not refused, and not skipped on to line 2 because line 2 passes it as well",
+        () => !p56.error && p56.line === 0 && p56.pastEnd === undefined && p56.skipM > 40 && p56.skipM < 70,
+        () => JSON.stringify(p56.error ? {error: p56.error} : {line: p56.line, pastEnd: p56.pastEnd, skipM: Math.round(p56.skipM), j: p56.j}));
+  // 5w7: what the way on first ran into, for the words: line 1 to its end ("line"), or line 2 after the turn ("next")
+  const RE = [{e: 185, n: -10}, {e: 215, n: -10}, {e: 215, n: 10}, {e: 185, n: 10}];
+  const ENDR = {ring: RE, bb: bbOf(RE), kind: "a charted rock"};
+  turnScene({polys: [ENDR], lines: [], points: [], marks: [], sys: [], chans: []});
+  const p57 = aisAroundPlan({...gT, mark: {line: 0, along: 330, fwd: 1}, at: ll(130, 0)}, [], std, null, ENDR);
+  const RN = [{e: 150, n: -70}, {e: 170, n: -70}, {e: 170, n: -50}, {e: 150, n: -50}];
+  const ON2 = {ring: RN, bb: bbOf(RN), kind: "a charted rock"};
+  turnScene({polys: [ON2], lines: [], points: [], marks: [], sys: [], chans: []});
+  const p57n = aisAroundPlan(gT, [], std, null, ON2);
+  check("5w7. ... and the walk says WHERE the way on first ran into it: a rock over line 1's end ('line', the last 70 m "
+        + "of line 1 left, picked up in the turn past it); a rock on line 2 ('next', picked up on line 2 past it)",
+        () => !p57.error && p57.pastEnd === 0 && p57.hitOn === "line" && Math.abs(p57.leftM - 70) < 0.5
+              && !p57n.error && p57n.pastEnd === 0 && p57n.hitOn === "next" && p57n.onLine === 1,
+        () => JSON.stringify({p57: p57.error || {hitOn: p57.hitOn, leftM: p57.leftM, onLine: p57.onLine},
+                              p57n: p57n.error || {hitOn: p57n.hitOn, onLine: p57n.onLine, skipM: p57n.skipM}}));
+  // 5w9 (the third review, 2026-11-07): ONE depth-area ring round the turn, a band 15 m south of line 2 and a lobe over
+  // line 2's far end - the shape one shoreline DEPARE band round an embayment has. A pick-up in the turn past the lobe
+  // was cleared "behind" to the end of line 2, so the band ahead of it, in the same ring, counted as behind her and every
+  // candidate was refused: "it lies across it". The same water as TWO rings was routed. Behind is now only the way she
+  // came, to the candidate's own hold reach, so the ring is routed as the two rings are.
+  const sayP = (p) => p.error ? {error: p.error} : {pastEnd: p.pastEnd, hitOn: p.hitOn, j: p.j, skipM: Math.round(p.skipM), onLine: p.onLine, line: p.line};
+  const UR = [{e: 222, n: -15}, {e: 262, n: -15}, {e: 262, n: -90}, {e: -230, n: -90}, {e: -230, n: -55},
+              {e: -190, n: -55}, {e: -190, n: -75}, {e: 222, n: -75}];
+  const URING = {ring: UR, bb: bbOf(UR), kind: "a charted shoal"};
+  turnScene({polys: [URING], lines: [], points: [], marks: [], sys: [], chans: []});
+  const p59 = aisAroundPlan(gT, [], std, null, URING);
+  const LOBE = {ring: [{e: 222, n: -15}, {e: 262, n: -15}, {e: 262, n: -75}, {e: 222, n: -75}], kind: "a charted shoal"};
+  LOBE.bb = bbOf(LOBE.ring);
+  const BAND = [{e: 262, n: -76}, {e: 262, n: -90}, {e: -230, n: -90}, {e: -230, n: -55}, {e: -190, n: -55}, {e: -190, n: -76}];
+  turnScene({polys: [LOBE, {ring: BAND, bb: bbOf(BAND), kind: "a charted shoal"}], lines: [], points: [], marks: [], sys: [], chans: []});
+  const p59b = aisAroundPlan(gT, [], std, null, LOBE);
+  check("5w9. ... and ONE ring round the turn, along line 2 and over its far end is routed as the same water drawn as two "
+        + "rings is - picked up in the turn past it, line 2 still to fly - not refused as 'it lies across it' because the "
+        + "ring's band ahead of the pick-up counted as behind her",
+        () => !p59.error && !p59b.error && JSON.stringify(sayP(p59)) === JSON.stringify(sayP(p59b))
+              && p59.pastEnd === 0 && p59.hitOn === "turn" && p59.j === 3,
+        () => JSON.stringify({one: sayP(p59), two: sayP(p59b)}).slice(0, 400));
+  // END TO END: held for the shoal in the turn, the console routes round it itself, and says what it left
+  turnScene(TURN_KO);
+  asv = ll(185, 0); S.status.cog_deg = 90; S.status.heading_deg = 90;
+  frame();
+  const heldT = !!guardHeld, chT = !!(aisAvoid && aisAvoid.chart === SHOAL);
+  nowHolding(); sent = []; banners = []; notes = []; logged = [];
+  frame(); await settle();
+  const upT = sent.find(x => x.p === "/api/cmd/upload"), rteT = (upT && upT.route) || [];
+  const laT = logged.find(e => e.kind === "ais_around");
+  const saidT = [...banners, ...notes].join(" | ");
+  const wayIn = rteT.length ? [ll(185, 0), ...rteT] : [];
+  let wayInClr = Infinity;
+  for (let i = 1; i < wayIn.length; i++) wayInClr = Math.min(wayInClr, legClear(wayIn[i - 1], wayIn[i], nogo.frame, TURN_KO, nogo.buffer) ? Infinity : 0);
+  check("5w4. END TO END: held for the shoal in the turn, she is routed round it by the console itself on the first "
+        + "station frame - the route uploaded clear of it at the buffer, the plan picked up past it - and the words say "
+        + "what was left: the way on past the end of line 1 ran into it, the last 15 m of line 1 left - and the shoal is "
+        + "'it', not 'her' (the lab's banner for his line 9 said 'she was still in the way')",
+        () => heldT && chT && paths().indexOf("/api/cmd/pause") === 0 && paths().includes("/api/cmd/start")
+              && rteT.length >= 2 && wayInClr === Infinity && !!laT && laT.data.skip_m > 50
+              // the log says the same (review 2026-11-07): the line walked past, what of it was left, where it ran into it
+              && laT.data.past_end === 1 && laT.data.left_m === 15 && laT.data.hit_on === "turn" && laT.data.on_line === null
+              && /the way on past the end of line 1 runs into a charted shoal, so the plan is picked up [\d.]+ m on, past it/.test(saidT)
+              && /the last 15 m of line 1 are left, since the turn out of it is what ran into it/.test(saidT)
+              && /ROUTED ROUND a charted shoal — it was still in the way, so the survey goes on beyond it without waiting: /.test(saidT)
+              && !/\bher\b|\bshe was\b/.test(saidT.replace(/to fly.*$/, "")),
+        () => "held " + heldT + " (charted " + chT + "), sent " + JSON.stringify(paths()) + ", " + rteT.length
+            + " wpts, way in " + (wayInClr === Infinity ? "clear" : "FOUL") + ", logged " + JSON.stringify(laT && laT.data).slice(0, 160)
+            + "; said " + saidT.slice(0, 400));
+  // 5w8 (review 2026-11-07). END TO END for the rock over line 1's END (5w7's): the words say what is true of it - it
+  // covers the line to its end - not that the turn ran into it
+  turnScene({polys: [ENDR], lines: [], points: [], marks: [], sys: [], chans: []});
+  asv = ll(160, 0); S.status.cog_deg = 90; S.status.heading_deg = 90;
+  frame();
+  const held8 = !!guardHeld;
+  nowHolding(); sent = []; banners = []; notes = []; logged = [];
+  frame(); await settle();
+  const said8 = [...banners, ...notes].join(" | ");
+  check("5w8. ... and end to end the words say WHERE: a rock over line 1's end 'covers it to its end' - not 'the turn "
+        + "out of it is what ran into it'",
+        () => held8 && paths().includes("/api/cmd/upload")
+              && /of line 1 are left, since a charted rock covers it to its end/.test(said8) && !/the turn out of it/.test(said8),
+        () => "held " + held8 + ", sent " + JSON.stringify(paths()) + "; said " + said8.slice(0, 400));
 }
 // ── 5n. A WAY ROUND WHOSE TAIL IS THE CONDEMNED REMAINDER IS REFUSED ─────────────────────────
 // ⚠⚠ A DISTANCE CANNOT ANSWER THIS (2026-11-03, the third review, measured). Where the walk's first step lands
@@ -3065,8 +3341,11 @@ const pausedSetToward = (kn) => { S = { ...S, status: { ...S.status, sog_kn: kn,
   replyState["/api/cmd/start"] = { behavior: "survey" };
   clock += 1000; aisPolledAt = clock; frame(); await settle();        // a fresh poll: the retry goes
   replyState = {};
-  check("20d. ... the bar counts NOTHING - it says 'now' - and the next try goes when the MODEL moves, not on a clock: 60 s on the same model sends nothing, and the first frame with a fresh AIS poll routes her round, starts the remainder, says so, and spends both records",
-        () => /routes round her itself now/.test(why20d) && !/routes round her itself in \d+ s/.test(why20d) && at20.length === 0
+  // (2026-11-07) the bar no longer promises "routes round her itself now" after a try that did not run: it says what
+  // happened and when the next try goes (aroundBarSay) - and still counts nothing
+  check("20d. ... the bar counts NOTHING - it says the way round did NOT RUN, why, and that the next try goes at the next AIS poll - and the next try goes when the MODEL moves, not on a clock: 60 s on the same model sends nothing, and the first frame with a fresh AIS poll routes her round, starts the remainder, says so, and spends both records",
+        () => /the console's way round her did NOT RUN \([^)]*station-keep plan[^)]*\) - it tries again by itself at the next AIS poll/.test(why20d)
+              && !/routes round her itself/.test(why20d) && !/\d+ s\b/.test(why20d) && at20.length === 0
               && paths().indexOf("/api/cmd/pause") === 0 && paths().includes("/api/cmd/start")
               && banners.some(b => /ROUTED ROUND/.test(b)) && guardHeld === null && aisAvoid === null,
         () => "bar '" + why20d.slice(-80) + "'; at 20 s " + JSON.stringify(at20) + "; at 31 s " + JSON.stringify(paths())
@@ -3151,6 +3430,48 @@ const pausedSetToward = (kn) => { S = { ...S, status: { ...S.status, sog_kn: kn,
               && banners.some(b => /THE WAY ROUND IS NOT RUNNING/.test(b) && /took the helm while the remainder was being uploaded/.test(b))
               && guardHeld === kept && aisAvoid === ep,
         () => "latch kept " + latchKept + "; mid-resume sent " + JSON.stringify(midSent) + "; after the escape " + JSON.stringify(after20h)
+            + "; banners " + JSON.stringify(banners.map(b => b.slice(0, 110))));
+}
+{
+  // 20h2 (review 2026-11-07, C #3). THE UPLOAD'S ANSWER LOST, nothing else moving: the console's own way round FAILED
+  //      in flight - said in its banner, and KEPT on the episode and LOGGED as the FAILED stage, so the bar stops
+  //      promising a way round that did not run, and the session log has it (before, only the banner said it)
+  const latchKept = heldAndKept();
+  const kept = guardHeld, ep = aisAvoid;
+  lost = "/api/cmd/upload";
+  sent = []; banners = []; logged = [];
+  clock += WHILE_MS - 6000; aisPolledAt = clock; frame(); await settle();
+  lost = null;
+  const lg = logged.filter(e => e.kind === "ais_around_refused").map(e => e.data);
+  const ar = ep && ep.aroundRefused;
+  check("20h2. the upload's answer LOST on the console's own way round: COULD NOT RESUME is said, and the episode keeps "
+        + "it as FAILED and the session log has it (stage 'failed', the console's own) - the bar's words from it",
+        () => latchKept && banners.some(b => /COULD NOT RESUME THE SURVEY — no answer/.test(b))
+              && ar && ar.stage === "failed" && /COULD NOT RESUME THE SURVEY — no answer/.test(ar.why)
+              && lg.length === 1 && lg[0].stage === "failed" && lg[0].manual === false
+              && / FAILED \(no answer\) - /.test(aroundBarSay(ep, "it"))
+              && guardHeld === kept && aisAvoid === ep,
+        () => "latch kept " + latchKept + "; sent " + JSON.stringify(paths()) + "; kept " + JSON.stringify(ar)
+            + "; logged " + JSON.stringify(lg) + "; banners " + JSON.stringify(banners.map(b => b.slice(0, 110))));
+}
+{
+  // 20h3 (review 2026-11-07, C #3). ... and a way round that THROWS inside the resume (aisAroundGo's catch) is kept and
+  //      logged as FAILED too - the banner was its only trace before
+  const rhs = resumeHeldSurvey;
+  let ep = null;
+  // the way round goes on the first station frame, inside heldAndKept - so the resume is made to throw before it
+  const latchKept = heldAndKept(null, () => { ep = aisAvoid; resumeHeldSurvey = async () => { throw new Error("test: the resume threw"); }; });
+  await settle();
+  resumeHeldSurvey = rhs;
+  const lg = logged.filter(e => e.kind === "ais_around_refused").map(e => e.data);
+  const ar = ep && ep.aroundRefused;
+  check("20h3. a way round that THROWS in the resume: THE WAY ROUND FAILED is said, and kept on the episode and logged "
+        + "as FAILED - the bar's words from it",
+        () => latchKept && banners.some(b => /THE WAY ROUND FAILED — test: the resume threw/.test(b))
+              && ar && ar.stage === "failed" && /test: the resume threw/.test(ar.why)
+              && lg.length === 1 && lg[0].stage === "failed"
+              && / FAILED \(test: the resume threw\) - /.test(aroundBarSay(ep, "it")),
+        () => "latch kept " + latchKept + "; kept " + JSON.stringify(ar) + "; logged " + JSON.stringify(lg)
             + "; banners " + JSON.stringify(banners.map(b => b.slice(0, 110))));
 }
 
@@ -3429,13 +3750,23 @@ const LEG_NAME = { goto: "Go-To", rth: "Return-to-Home", transit: "transit" };
   const kept = guardHeld, ep = aisAvoid;
   sent = []; banners = []; logged = [];
   const r = aisAroundNow(); await settle();
-  check("23h. the Go-To's answer names the vessel's STATION-KEEP plan: no way round is announced - THE WAY ROUND IS NOT RUNNING, why, and that the console tries again when anything that could change the answer changes - and the held Go-To and the episode stand, the attempt logged with the leg",
+  // (2026-11-07, C) ... and the LEG's bar and the log say it did not run: resumeHeldLeg's own refusal, at its stage
+  nowHolding();                                     // she answered with her station-keep plan: holding again
+  const gH = guardHeldOffer();
+  EL["#gb_why"].textContent = ""; if (gH) renderGuardBar(gH);
+  const barH = EL["#gb_why"].textContent || "";
+  const lrH = logged.filter(e => e.kind === "ais_around_refused").map(e => e.data);
+  check("23h. the Go-To's answer names the vessel's STATION-KEEP plan: no way round is announced - THE WAY ROUND IS NOT RUNNING, why, and that the console tries again when anything that could change the answer changes - and the held Go-To and the episode stand, the attempt logged with the leg; the leg's bar says the way round did NOT RUN and when it tries again, and the refusal is logged at that stage",
         () => r === true && paths().includes("/api/cmd/goto") && !banners.some(b => /ROUTED ROUND/.test(b))
               && banners.some(b => /THE WAY ROUND IS NOT RUNNING/.test(b) && /answered with its station-keep plan, not the Go-To/.test(b)
                                    && /tries again itself as soon as anything that could change the answer has changed/.test(b))
-              && guardHeld === kept && aisAvoid === ep && logged.some(e => e.kind === "resume_not_running" && e.data.leg === "goto"),
+              && guardHeld === kept && aisAvoid === ep && logged.some(e => e.kind === "resume_not_running" && e.data.leg === "goto")
+              && /the console's way round her did NOT RUN \(the vessel answered with its station-keep plan, not the Go-To/.test(barH)
+              && /\) - it tries again by itself at the next AIS poll/.test(barH) && !/routes round her itself/.test(barH)
+              && lrH.length === 1 && lrH[0].stage === "not_running" && lrH[0].manual === true && lrH[0].charted === false,
         () => "returned " + r + ", sent " + JSON.stringify(paths()) + ", banners " + JSON.stringify(banners.map(b => b.slice(0, 130)))
-            + ", record " + (guardHeld === kept ? "kept" : "CHANGED") + ", episode " + (aisAvoid === ep ? "kept" : "CHANGED"));
+            + ", record " + (guardHeld === kept ? "kept" : "CHANGED") + ", episode " + (aisAvoid === ep ? "kept" : "CHANGED")
+            + "; bar '" + barH.slice(-260) + "'; logged " + JSON.stringify(lrH));
 }
 {
   // 23i. IN EXTREMIS MID-RESUME: the helm rung escapes during the LOW's round trip
@@ -3487,6 +3818,75 @@ const LEG_NAME = { goto: "Go-To", rth: "Return-to-Home", transit: "transit" };
               && /pier|dock/i.test(ep23k.kind),
         () => "sent " + JSON.stringify(sent23k) + ", banked " + banked23k
             + ", episode " + JSON.stringify(ep23k));
+}
+{
+  // 23k2-23k5 (2026-11-07). D ON A LEG: the operator's RESUME <leg> AT LOW SPEED hands back the leg's remainder with
+  // the override and LOW - right for a hold the operator has judged, wrong where the remainder itself runs INTO the
+  // chart (Andy's S1: three presses drove her down the same 92 m into the same shoal). onLeg's Go-To ends at
+  // (200, 60), INSIDE the pier: its last leg runs into it. And C on a leg: the bar after a refused way round says so.
+  onLeg("goto", [], { ko: PIER }); S.status.cog_deg = 0; S.status.heading_deg = null; frame();
+  nowHolding(); sent = []; banners = []; notes = []; logged = [];
+  const chartD = !!(aisAvoid && aisAvoid.chart);
+  await resumeHeldSurvey(); await settle();
+  const sentD = paths().slice(), bD = banners.join(" | "), lgD = logged.filter(e => e.kind === "resume_low_refused").map(e => e.data);
+  const ovD = guardOverride, keptD = !!guardHeld, slowD = resumeSlow;
+  check("23k2. the operator's RESUME GO-TO AT LOW SPEED is REFUSED where the leg she would be handed back runs INTO a "
+        + "charted keep-out at the water now: nothing sent, no override recorded, no LOW latched, the record standing - "
+        + "the banner says what, how far on, at what water and what to do instead, and it is logged",
+        () => sentD.length === 0 && ovD === null && keptD && slowD === false
+              && /^⚠ NOT RESUMED AT LOW SPEED — the Go-To she would be handed back runs INTO a dock \/ pier \d+ m from her \(2\d\d m along the way on\), at the water now \(\+0\.00 m\): at LOW she would be driven into it, or held again at it\./.test(bD)
+              && /re-command the Go-To - it is planned again at the water now\. She is still station-keeping and the remainder is still held\.$/.test(bD)
+              // ROUTE ROUND HER NOW, in the button's own words, offered for a CHARTED hold (review 2026-11-07)
+              && chartD && /ROUTE ROUND HER NOW on this bar tries the way round it; or re-command the Go-To/.test(bD)
+              && lgD.length === 1 && lgD[0].kind === "a dock / pier" && lgD[0].dist_m > 200 && lgD[0].dist_m < 240 && lgD[0].water_m === 0
+              && Number.isFinite(lgD[0].off_m) && lgD[0].off_m <= lgD[0].dist_m,
+        () => "sent " + JSON.stringify(sentD) + ", override " + JSON.stringify(ovD) + ", kept " + keptD + ", LOW " + slowD
+            + ", charted hold " + chartD + "; banners " + bD.slice(0, 400) + "; logged " + JSON.stringify(lgD));
+  // 23k2b (review 2026-11-07, D8). ... and a hold that is not a charted one is not offered ROUTE ROUND HER NOW for it
+  onLeg("goto", [], { ko: PIER }); S.status.cog_deg = 0; S.status.heading_deg = null; frame();
+  nowHolding(); sent = []; banners = []; notes = []; logged = [];
+  if (aisAvoid) aisAvoid.chart = null;
+  await resumeHeldSurvey(); await settle();
+  const bD2 = banners.join(" | ");
+  check("23k2b. ... and on a leg held for what is not charted, ROUTE ROUND HER NOW is not offered - the refusal stands",
+        () => paths().length === 0 && /^⚠ NOT RESUMED AT LOW SPEED — the Go-To /.test(bD2) && !/ROUTE ROUND/.test(bD2)
+              && /it, or held again at it\. Re-command the Go-To - it is planned again at the water now\./.test(bD2),
+        () => "sent " + JSON.stringify(paths()) + "; banners " + bD2.slice(0, 400));
+  // the pair: the same press, the same hold, on a Go-To whose leg is clear of the chart, resumes it
+  onLeg("goto", [], { ko: PIER });
+  runRoute = [ll(-200, 0), ll(200, 0), ll(200, -60)]; S.wp_total = runRoute.length;
+  S.status.cog_deg = 0; S.status.heading_deg = null; frame();
+  nowHolding(); sent = []; banners = []; logged = [];
+  await resumeHeldSurvey(); await settle();
+  check("23k3. ... while the same press on a Go-To whose leg is CLEAR of the chart resumes it - the leg's own command "
+        + "sent, the override recorded, nothing refused",
+        () => paths().includes("/api/cmd/goto") && !!guardOverride && !banners.some(b => /NOT RESUMED AT LOW SPEED/.test(b))
+              && !logged.some(e => e.kind === "resume_low_refused"),
+        () => "sent " + JSON.stringify(paths()) + ", override " + JSON.stringify(guardOverride)
+            + "; banners " + JSON.stringify(banners.map(b => b.slice(0, 80))));
+  // C on a leg: held for the pier her Go-To's end point lies inside, the console's way round is refused (her end point
+  // inside what she must get past) - and the leg's bar says so instead of "routes round it itself now"
+  onLeg("goto", [], { ko: PIER }); S.status.cog_deg = 0; S.status.heading_deg = null; frame();
+  nowHolding(); sent = []; banners = []; logged = [];
+  frame(); await settle();
+  const gL = guardHeldOffer();
+  EL["#gb_why"].textContent = ""; if (gL) renderGuardBar(gL);
+  const barL = EL["#gb_why"].textContent || "";
+  const lrL = logged.filter(e => e.kind === "ais_around_refused").map(e => e.data);
+  check("23k4. C ON A LEG: a refused way round on a held Go-To is said on the LEG's bar - refused, why, and when it "
+        + "tries again - never 'routes round it itself now', and logged",
+        () => paths().length === 0 && !!gL && /; the console's way round it was REFUSED \([^)]+\) - it tries again by itself only when something its answer depends on changes \(the chart, the water, the traffic, her position, the plan or the standoff\)/.test(barL)
+              && !/routes round it itself/.test(barL) && lrL.length === 1 && lrL[0].charted === true,
+        () => "sent " + JSON.stringify(paths()) + "; bar '" + barL.slice(-240) + "'; logged " + JSON.stringify(lrL));
+  // ... and the acceptance: before any refusal the leg's bar still says the console routes round it now
+  onLeg("goto", [], { ko: PIER }); S.status.cog_deg = 0; S.status.heading_deg = null; frame();
+  nowHolding();
+  const gL0 = guardHeldOffer();
+  EL["#gb_why"].textContent = ""; if (gL0) renderGuardBar(gL0);
+  const barL0 = EL["#gb_why"].textContent || "";
+  check("23k5. ... and before any refusal the leg's bar still says the console routes round it itself now",
+        () => /; the console routes round it itself now/.test(barL0) && !/REFUSED|did NOT RUN/.test(barL0),
+        () => "bar '" + barL0.slice(-160) + "'");
 }
 {
   // 23l. A GO-TO STILL RUNNING: the chart menu's row amends the leg round her
