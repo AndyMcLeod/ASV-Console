@@ -797,9 +797,9 @@ console.log("The passage, sailed:");
         () => W15.mission.passage === null && hk15 && hk15.run_seq === 7 && distTo(hk15, P1) < 1 && kept15 && !gone15
               && keptReload && W15c.mission.passage === null && W15c.mission.passage_hold === null,
         () => JSON.stringify({ hk15, kept15, gone15, keptReload, under: W15c.mission.passage_hold }));
-  check("15c. THE WIRING: a tab that takes over re-reads the plan (the passage record with it); the loader carries the kept "
-        + "hold; the drop's confirm says she keeps holding; the server carries the hold in both of its mission dicts",
-        () => /const j = await supervisorBeat\(true\);[\s\S]{0,400}?if\(j && j\.you\) await loadMission\(\);/.test(H)
+  check("15c. THE WIRING: a tab that takes over re-reads the plan (the passage record with it), after the hull; the loader "
+        + "carries the kept hold; the drop's confirm says she keeps holding; the server carries the hold in both of its mission dicts",
+        () => /const j = await supervisorBeat\(true\);[\s\S]{0,700}?if\(j && j\.you\)\{ await loadVessel\(\); await loadMission\(\); \}/.test(H)
               && /passage_hold:\(m\.passage_hold && typeof m\.passage_hold === "object"\) \? m\.passage_hold : null,/.test(H)
               && /She keeps holding here: End of plan does not send her home/.test(H)
               && (PY.match(/"passage_hold": m\.get\("passage_hold"\) if isinstance\(m\.get\("passage_hold"\), dict\) else None,/g) || []).length === 2

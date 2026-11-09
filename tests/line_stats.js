@@ -232,7 +232,7 @@ check("10. and resetRunTimer clears the key, so a genuinely new run re-captures"
 check("11. the run-state reset is KEPT, but it is no longer the only thing that resets — a " +
       "run commanded inside a run never changes the state it watches",
       () => {
-        const os = H.slice(H.indexOf("function onState"), H.indexOf("function onState") + 900);
+        const os = grab("onState");   // the whole function: a fixed slice went short when a line was added above (2026-11-09)
         return /prevRun!=="running" && prevRun!=="paused" && s\.run==="running"/.test(os)
             && /resetLineStats\(\); resetRunTimer\(\)/.test(os);
       },
@@ -289,7 +289,7 @@ check("14. the row's tooltip says BOTH as soon as there is more than one — the
 check("15. and it is WIRED to the console's counter, not to the run state: onState starts a new motion when " +
       "s.run_seq moves, a page that opened mid-run adopts the number it finds, and the row writes the tooltip",
       () => {
-        const os = H.slice(H.indexOf("function onState"), H.indexOf("function onState") + 1400);
+        const os = grab("onState");   // (as 11: the whole function, not its first 1400 characters)
         return /s\.run_seq!=null && s\.run_seq!==runSeq/.test(os) &&
                /if\(!freshRun && runSeq!=null\) startNewMotion\(\)/.test(os) &&
                /runSeq = s\.run_seq/.test(os) && /setTip\(el, runTimeTip\(\)\)/.test(grab("updateRunTime"))   // ⚠ through setTip since 2026-09-23; the row still writes the tip;

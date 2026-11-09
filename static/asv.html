@@ -7670,8 +7670,9 @@ function applyVesselToUI(v){
   setDefault("sr_spacing", s.parallel_spacing_m);
   setDefault("sr_lanes",   s.parallel_lanes);
   // THE HULL'S FLOOR MOVED THE GUARD'S CHART WITH IT (2026-11-09): this function writes V.NOGO_MIN_DEPTH_M and builds
-  // nothing. Of the three ways here only a switch that TOOK reads the chart again after it (switchVessel); a REFUSED
-  // switch re-reads the console's vessel through loadVessel and rebuilt nothing. A no-op at page start, before any chart.
+  // nothing. Every caller now comes through vesselAdopted, which rebuilds for the WHOLE hull after it (her buffer, wreck
+  // radius and air need are built in too) and skips that rebuild when this one has just been made - so this names the
+  // floor, for any caller, and the punch's reason is vesselAdopted's. A no-op at page start, before any chart.
   floorFollows();
 }
 // --- OPERATING PORTS: where the console opens, and where the sim boat spawns ------ //
@@ -8049,30 +8050,79 @@ function fillVesselPicker(available, activeId){
   (available||[]).forEach(v=>{ const o=document.createElement("option");
     o.value=v.id; o.textContent=v.name || v.id; if(v.id===activeId) o.selected=true; sel.appendChild(o); });
 }
+// ⚠⚠ THE CONSOLE'S VESSEL, FOLLOWED (2026-11-09). The console flies ONE hull - /api/vessel serves it and every state frame
+// names it (`vessel_id`) - and ANY chart tab can switch it: the picker is not a supervising-tab control, and the console
+// gates a switch on her being safe (disarmed, idle), not on who asks. This tab used to read the hull once, at page start,
+// so a hull switched from another tab left it planning, guarding and punching for the OLD one - her floor, buffer, wreck
+// radius, air draft and speeds - for as long as it stayed open; and Take over re-read the plan but not the vessel. Now
+// every frame compares the id (vesselFollows), Take over reads the hull before the plan, and a hull this tab does not hold
+// is ADOPTED (vesselAdopted). The same hull again is NOT re-applied: applyVesselToUI re-seeds the search inputs and the
+// speed selectors, so a refused switch - which reads the console's hull to put the picker back - no longer resets them.
+// Answers whether this tab now holds a hull it did not before.
+let vesselBusy = 0;                  // a switch or a read in flight: the frames' own ask waits for it
+let vesselAskedAt = 0;               // when a frame's ask last came back WITHOUT the hull the frame named
+const VESSEL_ASK_MS = 5000;          // ... which is asked again only after this, not on every frame (4 Hz)
 async function loadVessel(){
+  vesselBusy++;
   try{ const r = await fetch("/api/vessel"); const d = await r.json();
-    applyVesselToUI(d.vessel);
+    const v = d && d.vessel, was = V.VESSEL;
+    const changed = !!(v && v.id) && !(was && was.id === v.id);
+    if(changed){
+      vesselAdopted(v);
+      if(was) flashNote("The console's vessel is now " + (v.name || v.id) + ", switched outside this tab · nogo floor "
+                        + V.NOGO_MIN_DEPTH_M.toFixed(1) + " m - this tab plans and guards for her");
+    }
     fillVesselPicker(d.available, d.active);
-  }catch(e){}
+    return changed;
+  }catch(e){ return false; }
+  finally{ vesselBusy--; }
+}
+// A HULL THIS TAB DID NOT HOLD, ADOPTED - the one path a switch that took (switchVessel) and a hull followed from the
+// console (loadVessel) share. Her parameters (applyVesselToUI); the trail cleared when she REPLACES another, since the
+// console respawns the sim boat at the new hull's spawn point; and the guard's chart rebuilt for her over the water already
+// read, because the floor is not the only input buildKeepouts reads once (koOpts: her buffer, wreck radius and air need are
+// built in too) - unless applyVesselToUI's floorFollows has just rebuilt it. A rebuild, not a re-read: /api/enc serves every
+// depth area whatever floor it is asked at (setMinDepth). A punch cut on the old hull's chart goes and is SAID, as for the
+// tide and the floor (patDropped), so Add to plan waits for Punch Out again.
+function vesselAdopted(v){
+  const was = V.VESSEL, ko0 = nogo.ko, punched = patClip !== null;
+  if(was && was.id !== v.id) clearTrack();
+  applyVesselToUI(v);
+  if(nogo.ko === ko0 && nogo.features && nogo.features.length) rebuildNogo();
+  if(punched){
+    patClip = null;
+    patDropped = "the vessel changed to " + (v.name || v.id)
+               + (nogo.ko !== ko0 ? " and the guard's chart was rebuilt for her" : "");
+    updatePatReadout();
+  }
+  render();
+}
+// Every state frame names the hull the console flies: one this tab does not hold is read and adopted (loadVessel),
+// whichever tab - or tool - switched her. Not while a switch or a read is in flight (page start's own read among them),
+// and a read that came back without that hull is asked again only after VESSEL_ASK_MS.
+function vesselFollows(id){
+  if(typeof id !== "string" || !id || vesselBusy || (V.VESSEL && V.VESSEL.id === id)) return;
+  if(Date.now() - vesselAskedAt < VESSEL_ASK_MS) return;
+  loadVessel().then(() => { if(!(V.VESSEL && V.VESSEL.id === id)) vesselAskedAt = Date.now(); });
 }
 async function switchVessel(id){
+  vesselBusy++;                    // the frames wait: the console may name her in a frame before this answer lands
   try{
     const r = await fetch("/api/vessel", {method:"POST", headers:{"Content-Type":"application/json"},
                                           body:JSON.stringify({id})});
     const d = await r.json();
     if(!r.ok){ flashNote(d.error || "vessel switch failed"); await loadVessel(); return; }
-    clearTrack();                                  // new boat respawns elsewhere - drop the old trail
-    applyVesselToUI(d.vessel);
-    // a switch respawns the sim boat and reseeds vessel-scaled defaults; refresh
-    // the mission-derived controls, then RE-EXTRACT the nogo model at the vessel's
-    // new depth floor (a deeper-draft boat pulls in depth areas the old floor
-    // didn't fetch, so re-extract rather than just reclassify the cache).
+    // her parameters, a new trail (she respawns elsewhere) and the guard's chart rebuilt for her - unless a read
+    // already adopted her
+    if(!(V.VESSEL && V.VESSEL.id === d.vessel.id)) vesselAdopted(d.vessel);
+    // a switch respawns the sim boat and reseeds vessel-scaled defaults; refresh the mission-derived controls, then
+    // read the chart again round where she is now (vesselAdopted has already rebuilt it for her floor).
     await loadMission();
     if(asv && typeof refreshNogo==="function") refreshNogo({lat:asv.lat, lon:asv.lon});
-    else if(typeof rebuildNogo==="function" && nogo.ready) rebuildNogo();
     render();
     flashNote("Vessel: " + (d.vessel.name || id) + " · nogo floor " + V.NOGO_MIN_DEPTH_M.toFixed(1) + " m");
   }catch(e){ flashNote("vessel switch failed"); }
+  finally{ vesselBusy--; }
 }
 // --- geodesy (flat-earth, fine at survey scale) -------------------------- //
 // Azimuth 0=N, 90=E, clockwise - matching CAMP's QGeoCoordinate convention so
@@ -25035,8 +25085,9 @@ $("#supPill").onclick = async ()=>{
   const j = await supervisorBeat(true);
   // THE PLAN AS SAVED, READ AGAIN (the 2026-10-16 review, finding 4): the tab that supervised wrote the passage record
   // (which section she is on, where she holds); this one loaded the plan when it opened and knows none of that - and
-  // would have chained an RTH from a passage's hold, or sent no section ahead.
-  if(j && j.you) await loadMission();
+  // would have chained an RTH from a passage's hold, or sent no section ahead. THE HULL FIRST (2026-11-09), in page
+  // start's order: the frames follow one switched elsewhere (vesselFollows), but a tab that slept may not have yet.
+  if(j && j.you){ await loadVessel(); await loadMission(); }
   showNote(j && j.you ? "This tab is supervising." : "The console did not hand supervision over.");
 };
 $("#b_estop").onclick = async ()=>{
@@ -25266,6 +25317,7 @@ function onState(s){
   S = s;
   checkBoot(s.boot_id);                          // drop a stale trail if the sim rebooted
   if(typeof logWakeTick === "function") logWakeTick(s);   // the recording woke: what a quiet log dropped is said again
+  vesselFollows(s.vessel_id);                    // the hull the console flies, followed if switched elsewhere (2026-11-09)
   const freshRun = prevRun!=="running" && prevRun!=="paused" && s.run==="running";
   if(freshRun){ resetLineStats(); resetRunTimer();
     if(s.behavior!=="rth"){ rthChained=false; rthChainFailed=false; } }  // fresh run re-arms the RTH chain (but not the chained RTH itself)

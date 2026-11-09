@@ -657,7 +657,13 @@ Pick the active vessel with `--vessel <id>`, or switch live from the **vessel
 selector** in the top bar (allowed only when disarmed and stopped — swapping
 physics under a running boat is refused). Switching in sim respawns the boat with
 the new vessel's parameters, so you can run the same mission on different hulls
-and compare.
+and compare. Since 2026-11-09 **every chart tab follows the switch, whichever tab made
+it**: each state frame names the hull the console flies (`vessel_id`), and a tab holding
+another one reads her and adopts her (her parameters, a new trail, and the guard's chart
+rebuilt for her floor, buffer, wreck radius and air draft), and says so. A Punch Out on
+its card, cut for the old hull, is thrown away, and Add to plan says so until Punch Out
+runs again. Before, a tab read the hull once, when it opened, and went on planning and
+guarding for the old one.
 
 Each profile also carries its own **spawn** position, so a vessel comes up in its own
 work area — `zboat_1800hs` in **Erie** (Presque Isle Bay) and both DriX profiles at **Lewes**
@@ -1501,7 +1507,8 @@ and says on its own window when the supervising tab has not reported for 10 s. A
 tab shows **👁 VIEW ONLY · TAKE OVER** in the top bar, greys its command bar, and draws
 everything else exactly as before — a second screen is what it is for, and you can still
 draw and save a plan from it. Click the pill to supervise from there instead; the handover
-is immediate and recorded. Taking over reads the plan again as the other tab saved it, and
+is immediate and recorded. Taking over reads the console's vessel again (since 2026-11-09:
+see the vessel selector) and then the plan as the other tab saved it, and
 since 2026-11-09 **the guard's chart follows the Min depth it carries**: where that moves the
 routing floor, the chart is rebuilt at it on the spot (`floorFollows`, which the hull's floor
 from a vessel profile goes through too), and a Punch Out still on the card - cut on the old

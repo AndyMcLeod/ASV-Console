@@ -587,7 +587,275 @@ async function check18() {
         () => said);
 }
 
-check18().then(() => {
+// 19. THE CONSOLE'S VESSEL, FOLLOWED (2026-11-09). The console flies ONE hull - /api/vessel serves it and every state
+// frame names it (`vessel_id`) - and any chart tab can switch it. A tab read the hull once, at page start, so a switch
+// made in another tab left it planning and guarding for the OLD hull, and Take over re-read the plan but not the vessel.
+// The page's own loadVessel / vesselAdopted / vesselFollows / switchVessel, with applyVesselToUI, floorFollows and
+// rebuildNogo over chart.js's REAL builder on state.js's V and nogo; the network, the trail, the notes and the picker
+// stubbed and counted. Bravo has Alpha's FLOOR and a wider wreck radius: the case floorFollows alone cannot see.
+async function check19() {
+  const ST = require("../static/js/state.js"), CH = require("../static/js/chart.js");
+  const K = require("../static/js/keepouts.js");
+  const { planeFrame } = require("../static/js/geodesy.js");
+  const { V, nogo, sea } = ST, { nogoDR, buildKeepouts, buildMargin } = CH;
+  const REF = { lat: 43.07, lon: -70.71 }, F = planeFrame(REF);
+  const P = (e, n) => { const q = F.fromEN(e, n); return [q.lon, q.lat]; };
+  const box = (e) => [[P(e - 100, -100), P(e + 100, -100), P(e + 100, 100), P(e - 100, 100), P(e - 100, -100)]];
+  // 2-3 m water at the origin (a keep-out under a 4.5 m floor, open water at 1 m) and a wreck 600 m north, whose built
+  // radius is the hull's own wreck_radius_m (keepouts.js hazExtent: no sounding over it, so its extent is unknown)
+  const FEATS = [{ role: "depth_area", props: { DRVAL1: 2, DRVAL2: 3 }, geometry: { type: "Polygon", coordinates: box(0) } },
+                 { role: "hazard_point", cls: "Wreck_point", props: {}, geometry: { type: "Point", coordinates: P(0, 600) } }];
+  const wreckR = () => (((nogo.ko && nogo.ko.points) || []).find((q) => q.cls === "Wreck_point") || {}).r;
+  const three = () => K.blocked({ e: 0, n: 0 }, nogo.ko, 1);
+  const HULL = (id, name, draft_m, wreck_radius_m, step) => ({ id, name, hull: { draft_m },
+    planning: { under_keel_clearance_m: 0, wreck_radius_m, nogo_buffer_m: 1, search: { expbox_step_m: step } } });
+  const HULLS = { alpha: HULL("alpha", "Alpha", 1, 10, 40), bravo: HULL("bravo", "Bravo", 1, 50, 60),
+                  charlie: HULL("charlie", "Charlie", 4.5, 10, 80) };
+  const LIST = Object.values(HULLS).map((v) => ({ id: v.id, name: v.name }));
+  // The leaves, stubbed and counted. A rebuild is one updateNogoUI (rebuildNogo's last line).
+  const foldChartInk = () => 0, featuresBboxRef = () => REF, center = REF;
+  let asv = null, builds = 0, trails = 0, loads = 0;
+  const notes = [], reads = [], pickers = [];
+  const updateNogoUI = () => { builds++; }, updatePatReadout = () => {}, render = () => {};
+  const clearTrack = () => { trails++; }, flashNote = (t) => { notes.push(t); }, loadMission = async () => { loads++; };
+  const refreshNogo = (ll) => { reads.push(ll); };
+  const fillVesselPicker = (available, active) => { pickers.push(active); };
+  const els = {};
+  const $ = (sel) => (els[sel] = els[sel] || { value: 0, style: {} });
+  const document = { activeElement: null }, bufferFloor = (b) => b;
+  let NOW = 1e9;
+  const Date = { now: () => NOW };            // vesselFollows' clock, settable
+  // THE CONSOLE: the hull it flies (GET /api/vessel serves it), a switch it takes or refuses, either answer held back
+  let CONSOLE = null, refuse = null, gets = 0, posts = 0, getGate = null, postGate = null;
+  const held = () => { let open; const p = new Promise((r) => { open = r; }); return { p, open }; };
+  const answer = (status, body) => ({ ok: status < 400, status, json: async () => JSON.parse(JSON.stringify(body)) });
+  const fetch = async (url, opts) => {
+    if (url !== "/api/vessel") throw new Error("test setup: unexpected fetch " + url);
+    if (opts && opts.method === "POST") {
+      posts++;
+      if (refuse) return answer(409, { error: refuse });
+      CONSOLE = HULLS[JSON.parse(opts.body).id];          // the console switches, THEN answers
+      if (postGate) await postGate.p;
+      return answer(200, { ok: true, vessel: CONSOLE });
+    }
+    gets++;
+    if (getGate) await getGate.p;
+    return answer(200, { vessel: CONSOLE, available: LIST, active: CONSOLE && CONSOLE.id });
+  };
+  const settle = async () => { for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r)); };
+  const DECL = ["^let vesselBusy = [^;]*;", "^let vesselAskedAt = [^;]*;", "^const VESSEL_ASK_MS = [^;]*;",
+                "^const NOGO_RETRY_MS = [^;]*;"].map((re) => {
+    const m = H.match(new RegExp(re, "m"));
+    if (!m) throw new Error("test setup: declaration " + re + " not found (renamed?)");
+    return m[0];
+  }).join("\n");
+  // eslint-disable-next-line no-eval
+  const page = eval("(function(){ let patClip = null, patDropped = null, mission = {waypoints: []};"
+    + " let boundary = [], boundaryClosed = false, surveyBounded = false;"
+    + " var lockWaiver = null; function lockFeatureKey(f){ return String(f); }\n" + DECL + "\n"
+    + [grab(H, "bandWord"), grab(H, "modelFeatures"), grab(H, "rebuildNogo"), grab(H, "floorFollows"),
+       grab(H, "applyVesselToUI"), "async " + grab(H, "loadVessel"), grab(H, "vesselAdopted"),
+       grab(H, "vesselFollows"), "async " + grab(H, "switchVessel")].join("\n")
+    + "\nreturn { loadVessel, vesselFollows, switchVessel, rebuildNogo, ASK_MS: VESSEL_ASK_MS,"
+    + " get: () => ({ patClip, patDropped, busy: vesselBusy }), punch: (c) => { patClip = c; patDropped = null; } }; })()");
+  const step = () => $("#sr_step").value, ids = () => V.VESSEL && V.VESSEL.id, last = () => notes[notes.length - 1];
+
+  // 19. PAGE START: no hull held yet, the console flying Alpha, no chart read.
+  V.VESSEL = null; V.OPER_MIN_DEPTH_M = 0; sea.waterOffset = 0; nogo.features = null;
+  CONSOLE = HULLS.alpha;
+  const ch19 = await page.loadVessel();
+  const s19 = { ch: ch19, held: ids(), trails, notes: notes.length, builds, picker: pickers[pickers.length - 1], step: step() };
+  check("19. at page start the console's hull is adopted - her parameters, the picker, the search step - with no trail "
+        + "cleared, nothing said about a switch, and no chart to rebuild",
+        () => s19.ch === true && s19.held === "alpha" && V.WRECK_RADIUS_M === 10 && s19.trails === 0 && s19.notes === 0
+              && s19.builds === 0 && s19.picker === "alpha" && s19.step === 40,
+        () => JSON.stringify(s19));
+
+  // The chart is read and built for Alpha; a punch on the card; the operator's own search step typed in.
+  nogo.features = FEATS; page.rebuildNogo();
+  const a = { r: wreckR(), three: three(), built: nogo.builtMin, ko: nogo.ko };
+  page.punch("runs cut for Alpha"); $("#sr_step").value = 99;
+
+  // 19b. THE DEFECT: another tab switched the console to Bravo, and this tab's next frame names her.
+  CONSOLE = HULLS.bravo;
+  const b0 = { gets, builds, trails, notes: notes.length };
+  page.vesselFollows("bravo"); await settle();
+  const g19b = page.get();
+  check("19b. A HULL SWITCHED IN ANOTHER TAB IS FOLLOWED: the next frame naming Bravo reads her and adopts her - her wreck "
+        + "radius built into the guard's chart though her floor is Alpha's, a new trail, the picker and the search step "
+        + "hers - the punch cut for Alpha is thrown away and SAID, and the switch is said",
+        () => a.r === 10 && !a.three && a.built === 1 && gets === b0.gets + 1 && ids() === "bravo"
+              && V.WRECK_RADIUS_M === 50 && wreckR() === 50 && nogo.ko !== a.ko && builds === b0.builds + 1
+              && nogo.builtMin === 1 && trails === b0.trails + 1 && pickers[pickers.length - 1] === "bravo"
+              && step() === 60 && g19b.patClip === null
+              && g19b.patDropped === "the vessel changed to Bravo and the guard's chart was rebuilt for her"
+              && notes.length === b0.notes + 1
+              && last() === "The console's vessel is now Bravo, switched outside this tab · nogo floor 1.0 m - this tab "
+                          + "plans and guards for her",
+        () => "Alpha's chart: wreck r " + a.r + "; after the frame: held " + ids() + ", wreck r " + wreckR() + ", rebuilds "
+              + (builds - b0.builds) + ", trails " + (trails - b0.trails) + ", reads " + (gets - b0.gets) + ", step "
+              + step() + ", punch " + JSON.stringify(g19b.patClip) + " dropped " + JSON.stringify(g19b.patDropped)
+              + ", note " + JSON.stringify(last()));
+
+  // 19c. ... and the frames after it, naming the hull this tab now holds - or naming none.
+  const c0 = { gets, builds, trails, notes: notes.length };
+  for (let i = 0; i < 4; i++) page.vesselFollows("bravo");
+  page.vesselFollows(null); page.vesselFollows(undefined); page.vesselFollows("");
+  await settle();
+  check("19c. ... and frames naming the hull this tab holds, or naming none, ask nothing",
+        () => gets === c0.gets && builds === c0.builds && trails === c0.trails && notes.length === c0.notes,
+        () => "reads " + (gets - c0.gets) + ", rebuilds " + (builds - c0.builds) + ", trails " + (trails - c0.trails));
+
+  // 19d. The SAME hull read again - how a refused switch puts the picker back.
+  page.punch("runs cut for Bravo"); $("#sr_step").value = 99;
+  const d0 = { builds, trails, notes: notes.length, pickers: pickers.length, ko: nogo.ko };
+  const ch19d = await page.loadVessel();
+  check("19d. the SAME hull read again is not re-applied - the operator's search step and the punch stay, nothing is "
+        + "rebuilt or said - and the picker is refilled",
+        () => ch19d === false && step() === 99 && page.get().patClip === "runs cut for Bravo" && nogo.ko === d0.ko
+              && builds === d0.builds && trails === d0.trails && notes.length === d0.notes
+              && pickers.length === d0.pickers + 1 && pickers[pickers.length - 1] === "bravo",
+        () => "changed " + ch19d + ", step " + step() + ", punch " + JSON.stringify(page.get().patClip) + ", rebuilt "
+              + (nogo.ko !== d0.ko) + ", picker refills " + (pickers.length - d0.pickers));
+
+  // 19e. A frame naming a hull the console no longer serves (switched back before the read landed): the read is out
+  // while four more frames arrive, and comes back with Bravo.
+  getGate = held();
+  const e0 = gets;
+  for (let i = 0; i < 5; i++) page.vesselFollows("ghost");
+  const out = gets - e0, busy = page.get().busy;
+  getGate.open(); getGate = null; await settle();
+  NOW += 1000; page.vesselFollows("ghost"); await settle();
+  const soon = gets - e0;
+  NOW += page.ASK_MS; page.vesselFollows("ghost"); await settle();
+  const later = gets - e0;
+  check("19e. frames that arrive while a read is out ask nothing more, and a read that came back WITHOUT the hull the "
+        + "frame named is asked again only after VESSEL_ASK_MS - not four times a second",
+        () => out === 1 && busy === 1 && soon === 1 && later === 2 && ids() === "bravo" && page.get().busy === 0,
+        () => "reads while one was out " + out + " (busy " + busy + "); a second later " + soon + "; after "
+              + page.ASK_MS + " ms " + later + "; held " + ids());
+
+  // 19f. A hull with a DEEPER floor, a punch on the card.
+  NOW += page.ASK_MS;                         // (the ghost's wait run out)
+  CONSOLE = HULLS.charlie;
+  const f0 = { builds };
+  page.vesselFollows("charlie"); await settle();
+  const g19f = page.get();
+  check("19f. a hull with a DEEPER floor is followed with ONE rebuild (floorFollows makes it and vesselAdopted makes no "
+        + "second), the 2-3 m water a keep-out at her 4.5 m, and the punch's reason names the VESSEL, not only the floor",
+        () => ids() === "charlie" && builds === f0.builds + 1 && nogo.builtMin === 4.5 && three() && wreckR() === 10
+              && g19f.patClip === null
+              && g19f.patDropped === "the vessel changed to Charlie and the guard's chart was rebuilt for her",
+        () => "held " + ids() + ", rebuilds " + (builds - f0.builds) + ", built at " + nogo.builtMin + ", 2-3 m blocked "
+              + three() + ", dropped " + JSON.stringify(g19f.patDropped));
+
+  // 19g. Switched AGAIN, a second later.
+  NOW += 1000; CONSOLE = HULLS.alpha;
+  const g0 = gets;
+  page.vesselFollows("alpha"); await settle();
+  check("19g. ... and a hull switched AGAIN a second after a follow that landed is read at once: the wait is for a read "
+        + "that came back without the hull, not for every read",
+        () => gets === g0 + 1 && ids() === "alpha" && nogo.builtMin === 1 && !three(),
+        () => "reads " + (gets - g0) + ", held " + ids() + ", built at " + nogo.builtMin);
+
+  // 19h. No chart read.
+  nogo.features = null;
+  const h0 = { builds, ko: nogo.ko };
+  NOW += 1000; CONSOLE = HULLS.bravo;
+  page.vesselFollows("bravo"); await settle();
+  check("19h. with no chart read a followed hull is adopted and said, and nothing is rebuilt",
+        () => ids() === "bravo" && V.WRECK_RADIUS_M === 50 && builds === h0.builds && nogo.ko === h0.ko
+              && /^The console's vessel is now Bravo, switched outside this tab/.test(last() || ""),
+        () => "held " + ids() + ", rebuilds " + (builds - h0.builds) + ", note " + JSON.stringify(last()));
+  nogo.features = FEATS; page.rebuildNogo();  // the chart back, built for Bravo
+
+  // 19i. A SWITCH THIS TAB MAKES, to Alpha; the console's next frames name her before its answer lands.
+  asv = { lat: REF.lat, lon: REF.lon };
+  postGate = held();
+  const i0 = { gets, posts, builds, trails, loads, reads: reads.length, notes: notes.length };
+  const sw = page.switchVessel("alpha");
+  await settle();
+  for (let i = 0; i < 4; i++) page.vesselFollows("alpha");
+  const during = { reads: gets - i0.gets, busy: page.get().busy };
+  postGate.open(); postGate = null; await sw;
+  const i1 = { during, posts: posts - i0.posts, held: ids(), r: wreckR(), rebuilds: builds - i0.builds,
+               trails: trails - i0.trails, plans: loads - i0.loads, charts: reads.length - i0.reads,
+               notes: notes.length - i0.notes, note: last(), busy: page.get().busy };
+  check("19i. A SWITCH THIS TAB MAKES: frames naming the new hull before the console's answer lands ask nothing; the "
+        + "answer adopts her once (a new trail, the chart rebuilt for her wreck radius), the plan and the chart round "
+        + "her are read again, the switch is said - and the frames are free again after it",
+        () => i1.during.reads === 0 && i1.during.busy === 1 && i1.posts === 1 && i1.held === "alpha" && i1.r === 10
+              && i1.rebuilds === 1 && i1.trails === 1 && i1.plans === 1 && i1.charts === 1 && i1.notes === 1
+              && i1.note === "Vessel: Alpha · nogo floor 1.0 m" && i1.busy === 0,
+        () => JSON.stringify(i1));
+
+  // 19j. A read already out (another tab switched to Bravo) when the operator here picks Bravo too.
+  CONSOLE = HULLS.bravo;
+  getGate = held();
+  const j0 = { builds, trails };
+  page.vesselFollows("bravo");
+  postGate = held();
+  const sw2 = page.switchVessel("bravo");
+  await settle();
+  getGate.open(); getGate = null; await settle();
+  postGate.open(); postGate = null; await sw2;
+  check("19j. a read already out when the operator picks the same hull adopts her once: the switch's answer, landing "
+        + "after it, does not adopt her a second time",
+        () => ids() === "bravo" && builds === j0.builds + 1 && trails === j0.trails + 1 && page.get().busy === 0,
+        () => "held " + ids() + ", rebuilds " + (builds - j0.builds) + ", trails " + (trails - j0.trails));
+
+  // 19k. A REFUSED switch - and one refused while another tab has switched the console meanwhile.
+  refuse = "Disarm first";
+  $("#sr_step").value = 99; page.punch("runs cut for Bravo");
+  const k0 = { builds, trails, pickers: pickers.length, notes: notes.length };
+  await page.switchVessel("charlie");
+  const k1 = { held: ids(), step: step(), punch: page.get().patClip, rebuilds: builds - k0.builds, trails: trails - k0.trails,
+               refills: pickers.length - k0.pickers, picker: pickers[pickers.length - 1], said: notes.slice(k0.notes) };
+  CONSOLE = HULLS.charlie;
+  await page.switchVessel("alpha");
+  const k2 = { held: ids(), picker: pickers[pickers.length - 1], note: last(), busy: page.get().busy };
+  refuse = null;
+  check("19k. A REFUSED switch says why and puts the picker back on the console's hull without re-applying it (the "
+        + "operator's search step and the punch stay); refused while the console flies ANOTHER hull, that hull is adopted",
+        () => k1.held === "bravo" && k1.step === 99 && k1.punch === "runs cut for Bravo" && k1.rebuilds === 0
+              && k1.trails === 0 && k1.refills === 1 && k1.picker === "bravo" && k1.said.join("|") === "Disarm first"
+              && k2.held === "charlie" && k2.picker === "charlie" && k2.busy === 0
+              && /^The console's vessel is now Charlie, switched outside this tab/.test(k2.note || ""),
+        () => JSON.stringify({ k1, k2 }));
+
+  // 19l. THE WIRING, as text: the frame, Take over, page start, and the console's frame.
+  const on = noComments(grab(H, "onState"));
+  const pillAt = H.indexOf('$("#supPill").onclick');
+  const pill = pillAt < 0 ? "" : noComments(H.slice(pillAt, H.indexOf("\n};", pillAt)));
+  const wired = {
+    frame: /checkBoot\(s\.boot_id\);\s*if\(typeof logWakeTick === "function"\) logWakeTick\(s\);\s*vesselFollows\(s\.vessel_id\);/.test(on),
+    takeOver: /const j = await supervisorBeat\(true\);\s*if\(j && j\.you\)\{ await loadVessel\(\); await loadMission\(\); \}/.test(pill),
+    start: /loadPorts\(\)\.then\(loadVessel\)\.then\(loadMission\);/.test(H),
+    server: /"vessel_id": \(VESSEL or \{\}\)\.get\("id"\) if isinstance\(VESSEL, dict\) else None,/.test(PY),
+  };
+  check("19l. THE WIRING: every state frame asks vesselFollows with the console's vessel_id, at its top; TAKE OVER reads "
+        + "the hull BEFORE the plan, as page start does; and the console sends vessel_id in every frame",
+        () => wired.frame && wired.takeOver && wired.start && wired.server,
+        () => JSON.stringify(wired));
+
+  // 19m. THE CENSUS AS A CHECK, as 18h is for the floor: the hull's other built-in chart inputs have ONE writer in the
+  // page (applyVesselToUI) and it is called from vesselAdopted alone, which rebuilds after it - so no write of them
+  // goes unbuilt. A new writer, or a caller of applyVesselToUI that goes round vesselAdopted, reddens this.
+  const code19 = noComments(H.split("\r\n").join("\n"));
+  const fnAt = (i) => (code19.slice(Math.max(code19.lastIndexOf("\nfunction ", i), code19.lastIndexOf("\nasync function ", i)))
+                         .match(/function (\w+)\(/) || [])[1];
+  const writers = [...code19.matchAll(/V\.(NOGO_BUFFER_M|WRECK_RADIUS_M|AIR_DRAFT_M|OVERHEAD_CLEARANCE_M)\s*=(?!=)/g)]
+    .map((w) => w[1] + ":" + fnAt(w.index)).sort();
+  const callers = [...code19.matchAll(/(?<!function )applyVesselToUI\(/g)].map((w) => fnAt(w.index)).sort();
+  const census = writers.join(" ") + " | " + callers.join(" ");
+  check("19m. the hull's built-in chart inputs (buffer, wreck radius, air draft, overhead clearance) have one writer in "
+        + "the page, applyVesselToUI, and vesselAdopted - which rebuilds after it - is its only caller",
+        () => census === "AIR_DRAFT_M:applyVesselToUI NOGO_BUFFER_M:applyVesselToUI OVERHEAD_CLEARANCE_M:applyVesselToUI "
+                       + "WRECK_RADIUS_M:applyVesselToUI | vesselAdopted",
+        () => census);
+}
+
+check18().then(check19).then(() => {
   __finished = true;
   console.log("\n" + (fails ? fails + " CHECK(S) FAILED" : "all " + ran + " checks passed"));
   process.exit(fails ? 1 : 0);
@@ -654,3 +922,30 @@ check18().then(() => {
 // 13 mutations, 13 killed by their named check. The master page (no floorFollows) fails the suite at FAIL 0.
 // ⚠ The first run scored three SURVIVED as crashes: with the punch kept, punchRefusal read the joins (patJoined) this
 // world does not stand up - 18 asks it only of a dropped punch now, which is the one it is about.
+//
+// 2026-11-09 - THE CONSOLE'S VESSEL, FOLLOWED (checks 19-19l: loadVessel / vesselAdopted / vesselFollows / switchVessel),
+// with 19m the census, the same sidecar method, each mutant written with the check whose FAIL is its kill named first:
+//   onState never asks vesselFollows                       -> 19l
+//   Take over reads only the plan (THE DEFECT)             -> 19l
+//   vesselFollows ignores a read in flight                 -> 19e (and 19i)
+//   ... asks whatever the frame names                      -> 19c
+//   ... takes a frame naming no hull                       -> 19c (and 19e)
+//   no wait after a read that came back without the hull   -> 19e
+//   the wait after EVERY read                              -> 19g (and 19e, 19h)
+//   loadVessel re-applies the same hull                    -> 19d (and 19f, 19k)
+//   the picker refilled only on a change                   -> 19d (and 19k)
+//   the switch said at page start                          -> 19
+//   the trail cleared at page start                        -> 19
+//   vesselAdopted never rebuilds (floorFollows alone)      -> 19b (and 19i, 19j)
+//   vesselAdopted rebuilds again after floorFollows        -> 19f
+//   the punch cut for the old hull kept                    -> 19b
+//   the punch read after applyVesselToUI (floor's reason)  -> 19f
+//   switchVessel never holds the frames off                -> 19i (and 19j, 19k)
+//   switchVessel adopts again after a read did             -> 19j
+//   switchVessel never lets the frames go                  -> 19i (and 19j, 19k)
+//   a refused switch reads nothing back                    -> 19k
+//   switchVessel's old success path                        -> 19i (and 19j, 19m)
+//   loadVessel never lets the frames go                    -> 19b (and 19d-19k)
+//   a NEW writer of the wreck radius that rebuilds nothing -> 19m
+//   loadVessel applies the hull itself, round vesselAdopted -> 19m (and 19b, 19f, 19j)
+// 23 mutations, 23 killed by their named check, none crashed. The master page (no vesselBusy) fails at FAIL 0.
