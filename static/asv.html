@@ -7577,7 +7577,7 @@ async function loadMission(){
       // The operator MIN DEPTH is a routing floor now, so it is restored the same way the
       // buffer is below: onto the card's control AND into V, which is what nogoDR() reads.
       V.OPER_MIN_DEPTH_M = mission.min_depth_m ?? 2;
-      $("#sp_mindepth").value = V.OPER_MIN_DEPTH_M;
+      $("#sp_mindepth").value = V.OPER_MIN_DEPTH_M;           // (the guard's chart follows it below: floorFollows)
       updateSpeedNote();
       $("#c_completion").value = mission.completion || "rth";
       // Apply the persisted nogo buffer to the card's control + the shared model, but never
@@ -7593,6 +7593,10 @@ async function loadMission(){
       if($("#sp_lead_out"))  $("#sp_lead_out").value  = mission.lead_out ?? 0;
       if($("#sp_turn_ease")) $("#sp_turn_ease").value = mission.turn_ease || "arc";
       updateLeadNote(); updateEaseNote();
+      // ... AND THE GUARD'S CHART REBUILT AT THE MIN DEPTH ABOVE when the floor in force moved (2026-11-09): Take over
+      // reads the plan the other tab saved, whose Min depth may not be this tab's - now, not at the next punch, control
+      // or tide step. LAST, after every restore: a rebuild that threw here must not skip the controls above it.
+      floorFollows();
       // The plan just came back from the server, so the survey card can describe it
       // again - without this, a committed plan reads blank after every page refresh.
       updatePatReadout(); render(); } }catch(e){ if(!missionLoaded) why = why || "the console did not answer"; }
@@ -7665,6 +7669,10 @@ function applyVesselToUI(v){
   setDefault("sr_length",  s.parallel_length_m);
   setDefault("sr_spacing", s.parallel_spacing_m);
   setDefault("sr_lanes",   s.parallel_lanes);
+  // THE HULL'S FLOOR MOVED THE GUARD'S CHART WITH IT (2026-11-09): this function writes V.NOGO_MIN_DEPTH_M and builds
+  // nothing. Of the three ways here only a switch that TOOK reads the chart again after it (switchVessel); a REFUSED
+  // switch re-reads the console's vessel through loadVessel and rebuilt nothing. A no-op at page start, before any chart.
+  floorFollows();
 }
 // --- OPERATING PORTS: where the console opens, and where the sim boat spawns ------ //
 // Modelled deliberately on the vessel picker (Andy: "the ASV selection is a good model"):
@@ -12688,7 +12696,8 @@ function emptyPunchRefusal(f){
 function punchRefusal(){
   // No punch: an un-punched pattern is the operator's to add, as it always was - unless the page threw the punch away
   // under them (patDropped), in which case adding would commit something they never saw.
-  if(!patClip) return !patDropped ? null : {short: "the punch was thrown away when the water level moved",
+  // (the short one names no cause: the water and the routing floor both throw a punch away - patDropped says which)
+  if(!patClip) return !patDropped ? null : {short: "the punch was thrown away when the chart or the water it was cut for moved",
     text: "ADD TO PLAN REFUSED — Punch Out's runs were thrown away when " + patDropped + ": they were cut for "
         + "water, or against a chart, that is not there now. Adding now would commit the pattern UN-punched - its lines as drawn, through "
         + "anything in the way, with no turns between them. Punch Out again."};
@@ -13837,6 +13846,8 @@ function rebuildNogo(){                         // (re)build the keep-out model 
   // The water level this model credits the vessel with - buildKeepouts reads it only now.
   // applyWaterOffset rebuilds once the live level moves TIDE_REBUILD_M away from it.
   nogo.builtOffset = sea.waterOffset;
+  // ... and the DEPTH FLOOR it was built at (2026-11-09): floorFollows rebuilds once a writer moves the floor in force.
+  nogo.builtMin = nogoDR().min;
   // STRUCTURES READ OFF THE CHART, folded in HERE and nowhere else.
   //
   // ⚠ IT HAS TO BE INSIDE rebuildNogo, NOT BESIDE IT. Every path that changes the buffer, a
@@ -13918,6 +13929,34 @@ function applyWaterOffset(wl){
     updatePatReadout();
   }
   if(rebuilds) rebuildNogo();
+}
+/**
+ * THE GUARD'S CHART FOLLOWS THE DEPTH FLOOR (2026-11-09; found by the adversarial re-review of 2026-11-08). buildKeepouts
+ * reads nogoDR() once, when it runs - the deeper of the hull's floor (V.NOGO_MIN_DEPTH_M, applyVesselToUI) and the
+ * operator's Min depth (V.OPER_MIN_DEPTH_M) - and rebuildNogo records it as nogo.builtMin. setMinDepth rebuilds beside its
+ * write; loadMission did NOT. Take over reads the plan as the supervising tab saved it, and its Min depth need not be this
+ * tab's: the floor was written and the guard's chart left built at the old one until a punch, a control or the tide
+ * rebuilt it - a saved floor DEEPER than this tab's had the guard judge water the plan calls too shallow as deep enough.
+ * Each writer that does not rebuild beside its write asks this after it (loadMission, applyVesselToUI).
+ *
+ * MEASURED FROM THE FLOOR THE CHART WAS BUILT AT, not the value the writer replaced (applyWaterOffset's rule): it also
+ * catches a chart read that landed before the vessel and the plan had loaded, built at state.js's defaults. Rebuilds only
+ * with a chart loaded (setMinDepth's own guard) and only when the floor in force is not the one it was built at; answers
+ * whether it rebuilt. A punch cut on the old chart goes and is SAID (patDropped), so Add to plan stays refused until Punch
+ * Out runs again - nobody moved this floor on this page's control, so the punch did not vanish at the operator's hand.
+ */
+function floorFollows(){
+  if(!(nogo.features && nogo.features.length) || nogo.builtMin === nogoDR().min) return false;
+  const was = nogo.builtMin;
+  rebuildNogo();
+  if(patClip){
+    const m = v => (+v.toFixed(2)) + " m";
+    patClip = null;
+    patDropped = "the routing floor moved" + (Number.isFinite(was) ? " from " + m(was) : "") + " to " + m(nogo.builtMin)
+               + " and the guard's chart was rebuilt at it";
+    updatePatReadout();
+  }
+  return true;
 }
 // The extract in flight, so a caller that arrives mid-fetch can WAIT for it rather than be
 // told "done". Settled in refreshNogo's own `finally`, on every path including the throw.

@@ -130,6 +130,8 @@ export const NOGO_ENF = {land:true, depth:true, haz:true, area:false, wreck:true
 // `builtOffset`: the water level (m above chart datum) the model in `ko` was built at, or null
 // before the first build. The page's applyWaterOffset rebuilds the model once the live level
 // has moved TIDE_REBUILD_M away from it, because buildKeepouts reads the level only at build.
+// `builtMin` (2026-11-09): the depth floor (nogoDR().min) the same model was built at, or null before the first build -
+// the page's floorFollows rebuilds once a writer of either floor (the hull's, the operator's Min depth) moves it.
 // `ais` (2026-10-07): the page's read of the AIS proxy along a passage, taken as the passage is
 // planned - {vessels, polledAt} - from which passage.js passageKo lays the route round the
 // vessels NOT under way. null: no read, and a passage is laid in the chart's model alone.
@@ -138,7 +140,7 @@ export const NOGO_ENF = {land:true, depth:true, haz:true, area:false, wreck:true
 // clear water, so passage.js beyondChart refuses a route through them as it refuses one past the box.
 export const nogo = {ready:false, busy:false, frame:null, ko:null, band:null, note:"nogo not loaded",
             buffer:V.NOGO_BUFFER_M, enf:{...NOGO_ENF}, features:null, bbox:null, center:null,
-            builtOffset:null, ais:null, unread:null,
+            builtOffset:null, builtMin:null, ais:null, unread:null,
             // a read that FAILED (2026-10-18): {at, why}, or null - the planners refuse rather than route direct
             // (passage.js chartFailedRefusal); a sea no chart covers is `ready` false with this null, routed direct
             failed:null};

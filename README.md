@@ -1501,7 +1501,12 @@ and says on its own window when the supervising tab has not reported for 10 s. A
 tab shows **👁 VIEW ONLY · TAKE OVER** in the top bar, greys its command bar, and draws
 everything else exactly as before — a second screen is what it is for, and you can still
 draw and save a plan from it. Click the pill to supervise from there instead; the handover
-is immediate and recorded. **Stop, Pause and E-STOP work from every tab**, in both
+is immediate and recorded. Taking over reads the plan again as the other tab saved it, and
+since 2026-11-09 **the guard's chart follows the Min depth it carries**: where that moves the
+routing floor, the chart is rebuilt at it on the spot (`floorFollows`, which the hull's floor
+from a vessel profile goes through too), and a Punch Out still on the card - cut on the old
+chart - is thrown away and Add to plan says so until Punch Out runs again. Before, the chart
+stayed at the old floor until a punch, a control or the tide rebuilt it. **Stop, Pause and E-STOP work from every tab**, in both
 directions — the page never withholds them and the console never refuses them. A lapse with
 **another tab still reporting** is an **alarm, not a hold**: nothing the vessel does depends
 on the page, and a browser hiccup halting a survey mid-line would be its own hazard.

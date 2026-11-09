@@ -113,9 +113,11 @@ console.log("Saving the plan - against a revision, one at a time, and said when 
   const $ = () => ({ value: 0 }), SPEED_ROLES = [], V = {}, nogo = {};
   const updateSpeedNote = () => {}, bufferFloor = (b) => b, updateLeadNote = () => {};
   const updateEaseNote = () => {}, updatePatReadout = () => {}, render = () => {};
+  // loadMission asks floorFollows after its Min depth (2026-11-09): the REAL one, which with no chart here (nogo has no
+  // features) rebuilds nothing - tests/min_depth_floor.js 18 is its subject.
   // eslint-disable-next-line no-eval
   const page = eval("(function(){ " + DECL + "\n" + grab("saveMission") + "\n" + grab("flushMission") + "\n"
-    + grab("loadMission") + "\n"
+    + grab("floorFollows") + "\n" + grab("loadMission") + "\n"
     + "return { saveMission, flushMission, loadMission, get: () => ({ missionRev, missionSaving, "
     + "missionSaveAgain, missionConflict, missionLoaded, surveyBounded }), setRev: (v) => { missionRev = v; }, "
     + "setLoaded: (v) => { missionLoaded = v; } }; })()");
@@ -266,7 +268,7 @@ console.log("Saving the plan - against a revision, one at a time, and said when 
   const loadingPage = () => eval("(function(){ const setTimeout = (fn, ms) => { timers.push({ fn, ms }); return timers.length; };"
     + " const clearTimeout = () => {}; const $ = (sel) => els[sel] || { value: 0 };"
     + " const showBanner = (t) => { banners.push(t); els['#encbanner'].textContent = t; els['#encbanner'].style.display = 'block'; };\n"
-    + DECL + "\n" + grab("saveMission") + "\n" + grab("flushMission") + "\n" + grab("loadMission") + "\n"
+    + DECL + "\n" + grab("saveMission") + "\n" + grab("flushMission") + "\n" + grab("floorFollows") + "\n" + grab("loadMission") + "\n"
     + "return { loadMission, flushMission, get: () => ({ missionLoaded, missionRev }) }; })()");
   const page5 = loadingPage();
   const tryLoad = async (p, reply) => {        // reply: [status, body] or "no answer"

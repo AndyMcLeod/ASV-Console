@@ -423,8 +423,175 @@ check("17b. ... and each model is bound to its own consumer: koClip spreads koCo
         + "koCov restores this finding - and neither is visible in a suite that only checks "
         + "the identifiers exist");
 
-console.log("\n" + (fails ? fails + " CHECK(S) FAILED" : "all " + ran + " checks passed"));
-process.exit(fails ? 1 : 0);
+
+// ── 18. THE GUARD'S CHART FOLLOWS THE FLOOR EVERY WRITER SETS (2026-11-09) ───────────────
+//
+// The adversarial re-review of 2026-11-08 found it: loadMission wrote V.OPER_MIN_DEPTH_M and rebuilt nothing. It runs
+// again on Take over, reading the plan as the supervising tab saved it - so a saved Min depth DEEPER than this tab's left
+// the guard's chart (nogo.ko) built at the shallower floor until a punch, a control or the tide rebuilt it, and the guard
+// judged water the plan calls too shallow as deep enough. setMinDepth (check 6) always rebuilt beside its write.
+// DRIVEN: the page's own loadMission, applyVesselToUI, rebuildNogo, floorFollows and punchRefusal, over chart.js's REAL
+// builder and nogoDR on state.js's V / nogo / sea (the objects the page imports), with fetch answering the saved plan.
+// Each refusal is paired with the acceptance beside it: the same floor rebuilds nothing, a Min depth under the hull's
+// floor rebuilds nothing, and no chart rebuilds nothing.
+let __finished = false;
+process.on("beforeExit", () => {             // a load that never settles must not exit 0 with nothing said (plan_save's trap)
+  if (__finished) return;
+  console.log("  FAIL 0. the suite stopped before finishing - a load waited on an answer it was never given");
+  console.log("\n1 CHECK(S) FAILED (stopped before finishing)");
+  process.exitCode = 1;
+});
+async function check18() {
+  const ST = require("../static/js/state.js"), CH = require("../static/js/chart.js");
+  const K = require("../static/js/keepouts.js");
+  const { planeFrame } = require("../static/js/geodesy.js");
+  const { normalizeSurveys } = require("../static/js/surveys.js");
+  const { V, nogo, sea } = ST, { nogoDR, buildKeepouts, buildMargin } = CH;
+  // the harness's own premise: chart.js reads THIS V (one module instance), or the builder is judging another floor
+  V.NOGO_MIN_DEPTH_M = 7.25;
+  if (nogoDR().min !== 7.25) throw new Error("test setup: chart.js does not read state.js's V here");
+  // Two charted depth areas in one frame: 2-3 m water at the origin, 4-4.5 m water 300 m east. depthExcluded makes an
+  // area a keep-out when its DEEPEST charted depth is under the floor: the first at a 4 m floor, the second at 5 m.
+  const REF = { lat: 43.07, lon: -70.71 }, F = planeFrame(REF);
+  const P = (e, n) => { const q = F.fromEN(e, n); return [q.lon, q.lat]; };
+  const box = (e) => [[P(e - 100, -100), P(e + 100, -100), P(e + 100, 100), P(e - 100, 100), P(e - 100, -100)]];
+  const FEATS = [{ role: "depth_area", props: { DRVAL1: 2, DRVAL2: 3 }, geometry: { type: "Polygon", coordinates: box(0) } },
+                 { role: "depth_area", props: { DRVAL1: 4, DRVAL2: 4.5 }, geometry: { type: "Polygon", coordinates: box(300) } }];
+  const three = () => K.blocked({ e: 0, n: 0 }, nogo.ko, 1), fourHalf = () => K.blocked({ e: 300, n: 0 }, nogo.ko, 1);
+  // The leaves, stubbed: the chart-image fold (tests/chart_ink.js), the frame's reference (the REF above), the DOM.
+  const foldChartInk = () => 0, featuresBboxRef = () => REF, asv = null, center = REF;
+  let nogoUI = 0, readouts = 0;
+  const updateNogoUI = () => { nogoUI++; }, updatePatReadout = () => { readouts++; }, render = () => {};
+  const els = {};
+  const $ = (sel) => (els[sel] = els[sel] || { value: 0, style: {} });
+  const SPEED_ROLES = [], updateSpeedNote = () => {}, bufferFloor = (b) => b;
+  const updateLeadNote = () => {}, updateEaseNote = () => {}, banners = [], showBanner = (t) => banners.push(t);
+  let PLAN = null;
+  const fetch = async () => ({ ok: true, status: 200, json: async () => JSON.parse(JSON.stringify(PLAN)) });
+  const plan = (min_depth_m) => ({ waypoints: [], lines: [], buffer_m: 3, min_depth_m, rev: 1 });
+  const DECL = ["^let missionRev = [^;]*;", "^let missionLoaded = [^;]*;", "^const MISSION_LOAD_RETRY_MS = [^;]*;",
+                "^const NOGO_RETRY_MS = [^;]*;"].map((re) => {
+    const m = H.match(new RegExp(re, "m"));
+    if (!m) throw new Error("test setup: declaration " + re + " not found (renamed?)");
+    return m[0];
+  }).join("\n");
+  // eslint-disable-next-line no-eval
+  const page = eval("(function(){ let patClip = null, patDropped = null, mission = {waypoints: []};"
+    + " let boundary = [], boundaryClosed = false, surveyBounded = false;"
+    + " var lockWaiver = null; function lockFeatureKey(f){ return String(f); }\n" + DECL + "\n"
+    + [grab(H, "bandWord"), grab(H, "modelFeatures"), grab(H, "rebuildNogo"), grab(H, "floorFollows"),
+       grab(H, "punchRefusal"), grab(H, "applyVesselToUI"), "async " + grab(H, "loadMission")].join("\n")
+    + "\nreturn { loadMission, applyVesselToUI, rebuildNogo, punchRefusal,"
+    + " get: () => ({ patClip, patDropped, missionLoaded }), punch: (c) => { patClip = c; patDropped = null; } }; })()");
+  const hull = (draft_m, ukc) => ({ hull: { draft_m }, planning: { under_keel_clearance_m: ukc } });
+  const takeOver = async (m) => { PLAN = plan(m); await Promise.race([page.loadMission(), new Promise((r) => setTimeout(r, 200))]); };
+
+  // This tab: a 1.0 m hull floor under a 2 m Min depth, the chart built there, a punch on the card.
+  V.NOGO_MIN_DEPTH_M = 1.0; V.OPER_MIN_DEPTH_M = 2; sea.waterOffset = 0;
+  nogo.features = FEATS; page.rebuildNogo();
+  const atTwo = { ko: nogo.ko, three: three(), built: nogo.builtMin };
+  page.punch("runs cut at 2 m");
+
+  // 18. THE REPORTED DEFECT: the plan the other tab saved says 4 m.
+  await takeOver(4);
+  // (asked only of a DROPPED punch: with one still on the card punchRefusal reads the joins - another suite's world)
+  const g18 = page.get(), r18 = g18.patClip === null ? (page.punchRefusal() || {}) : {};
+  check("18. TAKE OVER at a saved Min depth DEEPER than this tab's rebuilds the guard's chart at it: 2-3 m water that was "
+        + "clear at 2 m is a keep-out at 4 m, and the punch cut on the old chart is thrown away and SAID - Add to plan "
+        + "refused until Punch Out again, its short reason naming no water move",
+        () => !atTwo.three && atTwo.built === 2 && g18.missionLoaded && V.OPER_MIN_DEPTH_M === 4
+              && nogo.ko !== atTwo.ko && three() && nogo.builtMin === 4
+              && g18.patClip === null
+              && g18.patDropped === "the routing floor moved from 2 m to 4 m and the guard's chart was rebuilt at it"
+              && /thrown away when the routing floor moved from 2 m to 4 m and the guard's chart was rebuilt at it: /.test(r18.text || "")
+              && /Punch Out again\.$/.test(r18.text || "") && !!r18.short && !/water level/.test(r18.short),
+        () => "at 2 m: 2-3 m water blocked=" + atTwo.three + " built " + atTwo.built + "; after the load: blocked=" + three()
+              + " built " + nogo.builtMin + " rebuilt=" + (nogo.ko !== atTwo.ko) + "; punch " + JSON.stringify(g18.patClip)
+              + "; dropped: " + JSON.stringify(g18.patDropped) + "; short: " + JSON.stringify(r18.short));
+
+  // 18b. ... and the SAME floor again rebuilds nothing and keeps the punch.
+  page.punch("runs cut at 4 m");
+  const ko18b = nogo.ko, ui18b = nogoUI;
+  await takeOver(4);
+  const g18b = page.get();
+  check("18b. ... and a plan at the floor the chart was built at rebuilds nothing and keeps the punch",
+        () => nogo.ko === ko18b && nogoUI === ui18b && g18b.patClip === "runs cut at 4 m" && g18b.patDropped === null,
+        () => "rebuilt=" + (nogo.ko !== ko18b) + " punch " + JSON.stringify(g18b.patClip));
+
+  // 18e. THE HULL'S WRITER: applyVesselToUI writes V.NOGO_MIN_DEPTH_M - switchVessel's REFUSED path re-reads the
+  // console's vessel through it and rebuilt nothing. A 4.0 m draft and 1.0 m under-keel clearance: a 5 m floor.
+  const ko18e = nogo.ko, before18e = fourHalf();
+  page.applyVesselToUI(hull(4.0, 1.0));
+  const after18e = { ko: nogo.ko, four: fourHalf(), built: nogo.builtMin, punch: page.get().patClip };
+  page.punch("runs cut at 5 m");
+  page.applyVesselToUI(hull(4.0, 1.0));
+  check("18e. the HULL's floor moves the chart too: a vessel profile asking 5 m makes the 4-4.5 m water a keep-out, the "
+        + "punch going with the old chart - and the same profile again rebuilds nothing",
+        () => !before18e && after18e.ko !== ko18e && after18e.four && after18e.built === 5 && after18e.punch === null
+              && nogo.ko === after18e.ko && page.get().patClip === "runs cut at 5 m",
+        () => "4-4.5 m water at 4 m blocked=" + before18e + ", at 5 m " + after18e.four + " (built " + after18e.built
+              + "); the same profile again rebuilt=" + (nogo.ko !== after18e.ko));
+
+  // 18c. ... a Min depth that moves UNDER the hull's floor moves nothing the chart is built at.
+  const ko18c = nogo.ko;
+  await takeOver(3);
+  check("18c. ... and a saved Min depth that changes but stays under the hull's 5 m floor rebuilds nothing: the floor in "
+        + "force did not move",
+        () => V.OPER_MIN_DEPTH_M === 3 && nogoDR().min === 5 && nogo.ko === ko18c && page.get().patClip === "runs cut at 5 m",
+        () => "Min depth " + V.OPER_MIN_DEPTH_M + ", floor in force " + nogoDR().min + ", rebuilt=" + (nogo.ko !== ko18c));
+
+  // 18d. ... and the chart follows the floor DOWN as well as up: back to a 1.0 m hull, then a plan at 2 m.
+  page.applyVesselToUI(hull(0.5, 0.5));
+  const built18d = nogo.builtMin, ko18d = nogo.ko;
+  await takeOver(2);
+  check("18d. ... and DOWN as well as up: a shallower saved floor rebuilds the chart at it, and the 2-3 m water is clear again",
+        () => built18d === 3 && nogo.ko !== ko18d && nogo.builtMin === 2 && !three(),
+        () => "built " + built18d + " -> " + nogo.builtMin + ", 2-3 m water blocked=" + three());
+
+  // 18f. NO CHART LOADED: the floor is written and nothing is built.
+  const ko18f = nogo.ko, built18f = nogo.builtMin;
+  nogo.features = null;
+  await takeOver(6);
+  const g18f = page.get();
+  check("18f. with no chart loaded the floor is written and nothing is built - the load completes as before",
+        () => g18f.missionLoaded && V.OPER_MIN_DEPTH_M === 6 && nogo.ko === ko18f && nogo.builtMin === built18f,
+        () => "Min depth " + V.OPER_MIN_DEPTH_M + ", built " + nogo.builtMin + ", rebuilt=" + (nogo.ko !== ko18f));
+
+  // 18g. A CHART BUILT UNDER THE FLOOR IN FORCE IS CAUGHT BY THE NEXT WRITER, even one writing the value already there
+  // - measured from the floor the chart was BUILT at, not the value the write replaced (the page-start race: a chart
+  // read landing before the vessel and the plan, built at state.js's defaults).
+  nogo.features = FEATS;                     // the chart is back, still built at 2 m; the floor in force is 6 m
+  const ko18g = nogo.ko;
+  await takeOver(6);
+  check("18g. a chart built below the floor in force - by a write that rebuilt nothing - is rebuilt by the next load, "
+        + "even one writing the same Min depth again",
+        () => ko18g !== nogo.ko && nogo.builtMin === 6 && three() && fourHalf(),
+        () => "built " + built18f + " under a floor of 6 m; after the load built " + nogo.builtMin
+              + ", 2-3 m water blocked=" + three() + ", 4-4.5 m blocked=" + fourHalf());
+
+  // 18h. THE CENSUS AS A CHECK: every writer of either floor in the page, and what it does after its write. A NEW writer
+  // reddens this until it either rebuilds beside its write (setMinDepth's guarded rebuild) or asks floorFollows AFTER it.
+  const code = noComments(H.split("\r\n").join("\n"));
+  const sites = [...code.matchAll(/V\.(OPER|NOGO)_MIN_DEPTH_M\s*=(?!=)/g)].map((w) => {
+    const at = Math.max(code.lastIndexOf("\nfunction ", w.index), code.lastIndexOf("\nasync function ", w.index));
+    const name = (code.slice(at).match(/function (\w+)\(/) || [])[1];
+    const body = grab(code, name), wr = body.indexOf(w[0]);
+    const ff = body.indexOf("floorFollows();", wr);
+    const rb = /if\(nogo\.features && nogo\.features\.length\)\s*rebuildNogo\(\)/.exec(body.slice(wr));
+    return { name, follows: ff > wr ? "floorFollows" : (rb ? "rebuild" : "NOTHING") };
+  });
+  const said = sites.map((s) => s.name + ":" + s.follows).sort().join(" ");
+  check("18h. every writer of V.OPER_MIN_DEPTH_M / V.NOGO_MIN_DEPTH_M in the page rebuilds the guard's chart after its "
+        + "write, or asks floorFollows after it - and there are exactly the three",
+        () => said === "applyVesselToUI:floorFollows loadMission:floorFollows setMinDepth:rebuild",
+        () => said);
+}
+
+check18().then(() => {
+  __finished = true;
+  console.log("\n" + (fails ? fails + " CHECK(S) FAILED" : "all " + ran + " checks passed"));
+  process.exit(fails ? 1 : 0);
+});
 
 // TEETH - asv.html mutated in a SIDECAR (ASV_HTML); chart.js and asv_console.py have no env
 // override, so those were written, run, and restored from a saved buffer in a finally, with
@@ -468,3 +635,22 @@ process.exit(fails ? 1 : 0);
 //     isolates each function body first. That is the "every" trap found in speed_modes 11b
 //     three days ago, in a different file: an assertion that says EVERY must enumerate the
 //     population, not scan for one witness.
+//
+// 2026-11-09 - THE GUARD'S CHART FOLLOWS THE FLOOR (checks 18-18h, floorFollows), same sidecar method (LF-normalized,
+// ASV_HTML), each mutant written with the check whose FAIL is its kill named first:
+//   loadMission never asks floorFollows (THE DEFECT)       -> 18 (and 18d, 18g, 18h)
+//   floorFollows rebuilds at every ask                     -> 18b (and 18c, 18e)
+//   ... with no chart loaded                               -> 18f
+//   rebuildNogo stops recording nogo.builtMin              -> 18b
+//   compares the operator's Min depth, not the floor       -> 18c (and 18e)
+//   the punch on the old chart kept                        -> 18
+//   the punch dropped but not SAID (setMinDepth's shape)   -> 18
+//   applyVesselToUI never asks floorFollows                -> 18e (and 18c, 18d, 18h)
+//   the refusal's short reason names the water again       -> 18
+//   measured from the value replaced, not the chart built  -> 18g
+//   loadMission asks BEFORE its write                      -> 18 (and 18h)
+//   a NEW writer of the floor that rebuilds nothing        -> 18h
+//   the punch dropped, the chart not rebuilt               -> 18
+// 13 mutations, 13 killed by their named check. The master page (no floorFollows) fails the suite at FAIL 0.
+// ⚠ The first run scored three SURVIVED as crashes: with the punch kept, punchRefusal read the joins (patJoined) this
+// world does not stand up - 18 asks it only of a dropped punch now, which is the one it is about.
