@@ -3344,11 +3344,32 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    **What it does not plan**: the water within 4 km of each port, and the narrow stretches, are left
    to the console's own planner (lanes, the chart image, moored AIS) as she comes to them; the
    coarse route runs on cells of about 100 m, so the route she sails will be a little longer.
+   **Out of a port by water** (2026-11-09, Andy: "\"Passage\" feature is not operating as defined.
+   It does not route out of Pago Pago properly"): inside a port's 4 km circle the coarse route may
+   cross cells its grid calls land or too shallow - a berth, or a channel narrower than its ~100 m
+   cells - but a meter of them is priced as a kilometer of water, so in practice only where no water
+   way leads out, and then as little of it as it can; no diagonal step between two cells of water
+   slips past a land cell's corner, and the pull never shortcuts over one. Until then such a cell
+   cost 8 times a meter of water, so land was crossed whenever the way round ran more than 8 times
+   as far: his Go-To north from Pago Pago (63 km, so a passage)
+   was planned straight over Tutuila - from the bay to the north shore, 1,273 m of land, all of it
+   inside the circle - so its first section ended north of the island, and the harbor's Go-To,
+   planned on a chart read round that section, found no way out
+   inside it (NOT SAILABLE: "leaving: the chart is not read over all of it"). Replayed on his
+   grids, the passage now runs out of the bay and round the island's east end, 80.8 km in four
+   sections, and a scratch console plans both ends in detail and sends section 1. The fuel
+   monitor's coarse way home (below) asks the same grid the same way, so north of the island her
+   distance home is the 38 km round, not the 9 km over the land, and her RTH point comes in time.
+   Over every other harbor his console had grids for (New Castle, Portland, Castine, Honolulu,
+   Bellingham, Cape Canaveral; 8 directions, out and in), no route crosses more land than before,
+   and none runs more than 2% longer; a crossing that cannot be avoided still runs straight through
+   the land, not in square steps round each cell's corner. `tests/passage_plan.js` 5b, 5c, 6b, 6c.
    **A section that leaves or makes a port is planned as a Go-To is** (2026-10-14, Andy: "ASV exit
    from port through channel looks like the ASV is drunk ... should all harbor entrance/exit be
    goto?"): in one leg to its end - the Rule 9 lane, the marks and open water first over all of it -
-   with none of the coarse route's turning points, which cross a port's water on ~100 m cells and
-   blocked ones too; its chart is still read, and its water judged, along them. The sections out at
+   with none of the coarse route's turning points, which cross a port's water on ~100 m cells (and
+   blocked ones, where no water way leads out); its chart is still read, and its water judged, along
+   them. The sections out at
    sea, hold to hold, still run through them. His Portland departure, flown from his wharf on a
    scratch console: 15 coarse points and five turns past 45 degrees before, none of either after.
    **And the Go-To is the harbor's only** (2026-10-15, Andy: "The GOTO should not need to parallel

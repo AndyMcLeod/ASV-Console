@@ -18,7 +18,9 @@
 //   LV_UNREAD   no chart covers it - or its tile was not read
 // The search (searchLeg) is an 8-neighbor A* across the tiles, cost per meter by level (COST), no corner cut past a
 // cell it may not enter. A blocked cell is never entered - except inside a port's circle (PORT_R_M), where the detail
-// is the console planner's and the coarse route only has to leave by water. The path is then pulled taut (pullTaut):
+// is the console planner's and the coarse route only has to leave by water - and there only where no water way leads
+// out, as little of it as it can (a meter of it costs a kilometer of water: PORT_BLOCKED_COST, 2026-11-09), and no
+// step between two cells of water slips past one's corner. The path is then pulled taut (pullTaut):
 // a shortcut is taken only over cells no worse than the stretch of path it replaces.
 //
 // OPEN WATER FIRST (Andy, 2026-10-14; openwater.js, where the detail planner does the same): every cell also costs
@@ -49,8 +51,20 @@ export const COST = [1, 1.25, 3, Infinity, Infinity];
 export const PORT_R_M = 4000;
 
 /** Inside a port's circle, a blocked cell may be crossed at this cost per meter: the harbor's way out is the detail
- *  planner's, and the coarse route needs only to reach open water by the cheapest way it can see. */
-export const PORT_BLOCKED_COST = 8;
+ *  planner's, and the coarse route needs only to reach open water - BY WATER wherever the grid has a way, and across
+ *  the fewest blocked cells only where it has none (a berth or a channel its ~100 m cells cannot resolve).
+ *  ⚠ IT WAS 8 (2026-10-12 to 2026-11-09), and 8 is a price, not a last resort: land crossed was cheaper than water
+ *  round it whenever the way round ran more than 8x as far as the land. Andy's Go-To north from Pago Pago (Tutuila,
+ *  2026-11-09; "It does not route out of Pago Pago properly"): the coarse route ran from the bay straight over the
+ *  island to its north shore - 1,273 m of land, all inside the port's circle, at 8 against ~17 km of water round it -
+ *  its first section ended north of the island, and the harbor's Go-To, planned on a chart read round
+ *  that section, had no way out inside it ("leaving: the chart is not read over all of it"). At 1000, a meter of land
+ *  costs a KILOMETER of water: one ~100 m cell crossed is ~100 km round, Pago Pago's neck ~1,270 km - so the crossing
+ *  is taken only where no water way leads out within any distance a passage's tiles hold, or round a single cell's
+ *  channel the grid cannot resolve that only a ~100 km detour avoids. ⚠ NOT "INFINITELY" DEAR: tried at 1e6, the
+ *  crossing's place was chosen by the cell's WIDTH - 0.03 m narrower a few rows north (its latitude's cosine) outweighed
+ *  6 km of water (tests/passage_plan.js 5b, the closed wall); at 1000 that is 30 m, under a cell. */
+export const PORT_BLOCKED_COST = 1000;
 
 /** A narrow stretch closer than this to the next is the same one. */
 export const NARROW_MERGE_M = 1000;
@@ -287,6 +301,11 @@ export function searchLeg(field, a, b, ports, popCap = SEARCH_POP_CAP) {
   const goal = idOf(tb, b.gx, b.gy);
   let pops = 0;
   const open = (gx, gy) => (gx === b.gx && gy === b.gy) || cellCost(field, ports, gx, gy) < Infinity;
+  // WATER, for the corner rule (2026-11-09): a move between two cells of water passes no corner but water's - a blocked
+  // cell in a port's circle is entered only where no water way leads out, so it is no side for such a move to slip past
+  // (it was: open, so a diagonal clipped a land cell's corner free of any cost). A move INTO or OUT OF one - a crossing
+  // there is no other way for - keeps the open rule.
+  const water = (gx, gy) => field.level(gx, gy) < LV_BLOCKED;
   while (H.size) {
     const id = H.pop();
     if (++pops > popCap) return { error: "too_long", pops };
@@ -310,7 +329,10 @@ export function searchLeg(field, a, b, ports, popCap = SEARCH_POP_CAP) {
         const tn = tileOf(nx, ny);
         if (!tn) continue;
         if (!open(nx, ny)) continue;
-        if (dx && dy && (!open(gx + dx, gy) || !open(gx, gy + dy))) continue;   // no corner cut
+        if (dx && dy) {                                                         // no corner cut
+          const side = water(gx, gy) && water(nx, ny) ? water : open;
+          if (!side(gx + dx, gy) || !side(gx, gy + dy)) continue;
+        }
         const there = (nx === b.gx && ny === b.gy) ? Math.min(1, cellCost(field, ports, nx, ny)) : cellCost(field, ports, nx, ny);
         const gn = g0 + cellDistM(gx, gy, nx, ny) * (here + there) / 2;
         const nid = idOf(tn, nx, ny), sn = slot(tn), jn = nid % N2;
@@ -350,10 +372,14 @@ export function lineCells(a, b) {
   return out;
 }
 
-/** The level a cell counts as on the route: a blocked cell inside a port's circle counts as partly (it was crossed). */
+/** The level a cell counts as on the route: a blocked cell inside a port's circle, where the search may cross one,
+ *  counts as CROSSED - worse than partly, so a shortcut runs over one only where the stretch it replaces did, and then
+ *  only for no more than that stretch cost (pullTaut). (Until 2026-11-09 it counted as partly: a shortcut past a
+ *  stretch the search kept beside a danger could cut over land in the circle wherever open water was off.) */
+const LV_CROSSED = LV_PARTLY + 0.5;
 function routeLevel(field, ports, gx, gy) {
   const lv = field.level(gx, gy);
-  return lv === LV_BLOCKED && ports.length && inPort(ports, gx, gy) ? LV_PARTLY : lv;
+  return lv === LV_BLOCKED && ports.length && inPort(ports, gx, gy) ? LV_CROSSED : lv;
 }
 
 /**
@@ -370,14 +396,13 @@ export function pullTaut(field, cells, ports) {
   const last = cells.length - 1;
   const costOf = (gx, gy) => ((gx === cells[0].gx && gy === cells[0].gy) || (gx === cells[last].gx && gy === cells[last].gy)
     ? 1 : cellCost(field, ports, gx, gy));
+  // (priced whether or not open water is on: a shortcut over a CROSSED cell is held to the cost rule either way)
   const cum = new Float64Array(cells.length);
-  if (field.openWater) {
-    let pc = costOf(cells[0].gx, cells[0].gy);
-    for (let k = 1; k < cells.length; k++) {
-      const c = costOf(cells[k].gx, cells[k].gy);
-      cum[k] = cum[k - 1] + cellDistM(cells[k - 1].gx, cells[k - 1].gy, cells[k].gx, cells[k].gy) * (pc + c) / 2;
-      pc = c;
-    }
+  let pc = costOf(cells[0].gx, cells[0].gy);
+  for (let k = 1; k < cells.length; k++) {
+    const c = costOf(cells[k].gx, cells[k].gy);
+    cum[k] = cum[k - 1] + cellDistM(cells[k - 1].gx, cells[k - 1].gy, cells[k].gx, cells[k].gy) * (pc + c) / 2;
+    pc = c;
   }
   const lineCost = (a, b) => {
     const n = Math.max(1, Math.ceil(Math.max(Math.abs(b.gx - a.gx), Math.abs(b.gy - a.gy)) * 4));
@@ -393,12 +418,14 @@ export function pullTaut(field, cells, ports) {
   const worstBetween = (i, j) => { let w = 0; for (let k = i + 1; k < j; k++) if (lv[k] > w) w = lv[k]; return w; };
   const clearSeg = (i, j) => {
     const allow = worstBetween(i, j);
+    let crosses = false;
     for (const c of lineCells(cells[i], cells[j])) {
       if ((c.gx === cells[i].gx && c.gy === cells[i].gy) || (c.gx === cells[j].gx && c.gy === cells[j].gy)) continue;
       const v = routeLevel(field, ports, c.gx, c.gy);
       if (v > allow || v >= LV_BLOCKED) return false;
+      if (v === LV_CROSSED) crosses = true;
     }
-    return !field.openWater || lineCost(cells[i], cells[j]) <= cum[j] - cum[i] + 1e-6;
+    return (!field.openWater && !crosses) || lineCost(cells[i], cells[j]) <= cum[j] - cum[i] + 1e-6;
   };
   const out = [cells[0]];
   let i = 0;
@@ -785,7 +812,10 @@ export function coarseHomeField(field, home) {
       if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
       const j = i + off[m], there = cc[j];
       if (there === Infinity || done[j]) continue;
-      if (nv[m] && (cc[i + v1[m]] === Infinity || cc[i + v2[m]] === Infinity)) continue;   // no corner cut
+      if (nv[m]) {                                    // no corner cut - past water only on a move between water (searchLeg)
+        const lim = here < PORT_BLOCKED_COST && there < PORT_BLOCKED_COST ? PORT_BLOCKED_COST : Infinity;
+        if (cc[i + v1[m]] >= lim || cc[i + v2[m]] >= lim) continue;
+      }
       const d = mlen[y * M + m], cn = c0 + d * (here + there) / 2;
       if (cn >= cost[j]) continue;
       cost[j] = cn; len[j] = l0 + d; Hp.push(cn, j);

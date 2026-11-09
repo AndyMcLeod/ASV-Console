@@ -9,7 +9,13 @@
 //   3    OPEN WATER: two tiles, one straight segment, its length the flat distance within 0.5%;
 //   4    AN ISLAND: the route goes round it - no cell of it blocked - where (the control) open water is straight;
 //   5    NO CORNER CUT: a wall of cells touching only at their corners is not slipped through;
+//   5b   ... NOR INSIDE A PORT'S CIRCLE (2026-11-09): such a wall 1.5 km off a port gone ROUND by the search and the
+//        coarse home field alike; the same wall closing the harbor, crossed;
+//   5c   ... and a crossing there is no other way for runs straight through the land, not in square steps;
 //   6    A PORT: a start 1 km inside land is left by water when it is a port; the same start NOT a port, refused;
+//   6b   A PORT AT A BAY HEAD, A NECK OF LAND FROM ANOTHER SEA (Pago Pago, 2026-11-09): left BY WATER, out and in, never
+//        over the land its circle reaches across; the bay shut, the neck crossed (the least land); the home field the same;
+//   6c   THE PULL NEVER CUTS OVER LAND IN A PORT'S CIRCLE, open water on or off; a crossing it had to make kept to that;
 //   7    UNREAD: an end off the chart read refused, with where; a band of unread water not crossed;
 //   8    NARROW: a channel of cells a danger touches, the only way: the route takes it and says so once, its length;
 //        the same channel inside a port's circle is not narrow;
@@ -191,6 +197,49 @@ const FLOOR = 30;
         () => !r5.error && cut5 === 0 && r5.cost > straight5 * 3,
         () => (r5.error || "") + " corner cuts " + cut5 + "; cost " + (r5.cost | 0) + " vs " + (straight5 | 0) + " straight");
 
+  // ── 5b. no corner cut INSIDE A PORT'S CIRCLE either (2026-11-09) ─────────────────────────────────────────────────
+  // A diagonal wall of land cells touching only at corners (c + r = 215, cols 95-120), ~1.5 km from a port, the sea
+  // beyond it ~2 km off: inside the circle a blocked cell may be ENTERED (no water way, 6), and the corner rule read that
+  // as leave to slip between two of them on a move from water to water. Now it goes ROUND the wall's end - the passage's
+  // search and the coarse home field alike; the same wall CLOSING the harbor (across the whole tile) is crossed.
+  const wall5 = (closed) => {
+    const g = grid(TX, TY);
+    for (let c = closed ? 0 : 95; c <= (closed ? 215 : 120); c++) setC(g, c, 215 - c, C.GRID_HARD);
+    return g;
+  };
+  const cutsOf = (fld, cells) => { let n = 0; for (let k = 1; k < cells.length; k++) { const p = cells[k - 1], q = cells[k];
+    if (p.gx !== q.gx && p.gy !== q.gy && fld.level(q.gx, p.gy) >= C.LV_BLOCKED && fld.level(p.gx, q.gy) >= C.LV_BLOCKED) n++; } return n; };
+  const port5 = { gx: TX * N + 100, gy: TY * N + 100 }, sea5 = { gx: TX * N + 115, gy: TY * N + 115 };
+  const w5o = wall5(false), w5c = wall5(true), f5o = C.buildField([w5o], FLOOR), f5c = C.buildField([w5c], FLOOR);
+  const s5o = C.searchLeg(f5o, port5, sea5, [port5]), s5c = C.searchLeg(f5c, port5, sea5, [port5]);
+  const len5 = (r) => (r.cells ? C.routeLengthM(r.cells) : NaN), st5 = C.routeLengthM([port5, sea5]);
+  const home5o = C.coarseHomeDistM(C.coarseHomeField(f5o, C.cellLL(port5.gx, port5.gy)), C.cellLL(sea5.gx, sea5.gy));
+  const home5c = C.coarseHomeDistM(C.coarseHomeField(f5c, C.cellLL(port5.gx, port5.gy)), C.cellLL(sea5.gx, sea5.gy));
+  check("5b. NO CORNER CUT INSIDE A PORT'S CIRCLE: a diagonal wall of land touching only at corners, 1.5 km off a port - "
+        + "the passage's search and the coarse home field go ROUND its end, never between two of its cells; the same wall "
+        + "closing the harbor (no way round) is crossed by both",
+        () => !s5o.error && cutsOf(f5o, s5o.cells) === 0 && len5(s5o) > 1.3 * st5 && home5o > 1.3 * st5
+              && !s5c.error && len5(s5c) < 1.2 * st5 && Number.isFinite(home5c) && home5c < 1.2 * st5,
+        () => "open wall: search " + (s5o.error || Math.round(len5(s5o)) + " m, corner cuts " + cutsOf(f5o, s5o.cells))
+              + ", home " + Math.round(home5o) + " m; closed: search " + (s5c.error || Math.round(len5(s5c)) + " m")
+              + ", home " + Math.round(home5c) + " m; straight " + Math.round(st5) + " m");
+
+  // ── 5c. ... and a crossing there is no other way for runs STRAIGHT through ─────────────────────────────────────
+  // The corner rule binds a step between two cells of water; a step into or out of a cell crossed keeps the open rule.
+  // A dock 1.3 km inside land on the diagonal (land where c + r < 110, the dock at 45,45), the sea off to the northeast:
+  // the search's own cells and the home field's length run the diagonal through the land, within 5% of the straight
+  // line - not a staircase of square steps (~11% longer, and a third more land).
+  const dock5 = grid(TX, TY);
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) if (c + r < 110) setC(dock5, c, r, C.GRID_HARD);
+  const fd5 = C.buildField([dock5], FLOOR), at5 = { gx: TX * N + 45, gy: TY * N + 45 }, to5 = { gx: TX * N + 80, gy: TY * N + 80 };
+  const sd5 = C.searchLeg(fd5, at5, to5, [at5]), std5 = C.routeLengthM([at5, to5]);
+  const hd5 = C.coarseHomeDistM(C.coarseHomeField(fd5, C.cellLL(at5.gx, at5.gy)), C.cellLL(to5.gx, to5.gy));
+  check("5c. ... A CROSSING THERE IS NO OTHER WAY FOR RUNS STRAIGHT THROUGH: a dock 1.3 km inside land on the diagonal - "
+        + "the search's cells and the home field's length within 5% of the straight line, not a staircase",
+        () => !sd5.error && C.routeLengthM(sd5.cells) < 1.05 * std5 && Number.isFinite(hd5) && hd5 < 1.05 * std5,
+        () => "search " + (sd5.error || Math.round(C.routeLengthM(sd5.cells)) + " m") + ", home " + Math.round(hd5)
+              + " m; straight " + Math.round(std5) + " m");
+
   // ── 6. a port ───────────────────────────────────────────────────────────────────────────────────────────────────
   const h6 = grid(TX, TY);
   for (let r = 0; r < N; r++) for (let c = 0; c < 60; c++) setC(h6, c, r, C.GRID_HARD);   // land to the west
@@ -205,6 +254,80 @@ const FLOOR = 30;
         () => !p6.legs[0].error && landCells6.length > 0 && farthest6 <= C.PORT_R_M && n6.legs[0].error === "blocked",
         () => "port: " + (p6.legs[0].error || "planned") + ", land cells " + landCells6.length + " to " + farthest6.toFixed(0)
               + " m; not a port: " + (n6.legs[0].error || "planned"));
+
+  // ── 6b. a port at a bay head, a neck of land from another sea (Pago Pago, 2026-11-09) ─────────────────────────────
+  // Andy's Go-To north from Pago Pago: the bay head lies 1.3 km from Tutuila's north shore, inside the port's 4 km circle,
+  // and at PORT_BLOCKED_COST 8 the coarse route ran straight over the island - the land cheaper than the water round it.
+  // Here a peninsula from the west edge (rows 100-140, ~4.5 km), a bay cut into it from the south to 7 rows (~760 m) of
+  // its north shore, the port at the bay head, the sea 10.7 km north. SHUT: the same bay walled off for 21 rows - no
+  // water way out, so the land is crossed, and the least of it (the neck, not the wall).
+  const bay = (shut) => {
+    const g = grid(TX, TY);
+    for (let r = 100; r <= 140; r++) for (let c = 0; c < 200; c++) {
+      const inBay = c >= 96 && c <= 104 && r <= 133;
+      if (!inBay || (shut && r <= 120)) setC(g, c, r, C.GRID_HARD);
+    }
+    return g;
+  };
+  const b6 = bay(false), s6 = bay(true), head6 = ll(b6, 100, 132), north6 = ll(b6, 100, 230);
+  const out6 = C.planPassage({ grids: [b6], floorDm: FLOOR, points: [{ ...head6, port: true }, north6] }).legs[0];
+  const in6 = C.planPassage({ grids: [b6], floorDm: FLOOR, points: [north6, { ...head6, port: true }] }).legs[0];
+  const sh6 = C.planPassage({ grids: [s6], floorDm: FLOOR, points: [{ ...head6, port: true }, north6] }).legs[0];
+  const fb6 = C.buildField([b6], FLOOR), fs6 = C.buildField([s6], FLOOR);
+  const land6 = (fld, g) => cellsOf(g.pts || []).filter((c) => fld.level(c.gx, c.gy) === C.LV_BLOCKED).length;
+  const straight6 = flat(head6, north6);
+  const homeB6 = C.coarseHomeDistM(C.coarseHomeField(fb6, head6), north6);
+  const homeS6 = C.coarseHomeDistM(C.coarseHomeField(fs6, head6), north6);
+  check("6b. A PORT AT A BAY HEAD, A NECK OF LAND FROM ANOTHER SEA (Pago Pago): the route leaves BY WATER - down the bay "
+        + "and round - never over the ~760 m of land its circle reaches across, out and in alike; the same bay SHUT (no "
+        + "water way out) still crosses, and only the neck; the coarse home field (the fuel monitor's way home) the same",
+        () => !out6.error && land6(fb6, out6) === 0 && out6.lengthM > 1.5 * straight6
+              && !in6.error && land6(fb6, in6) === 0 && in6.lengthM > 1.5 * straight6
+              && !sh6.error && land6(fs6, sh6) > 0 && land6(fs6, sh6) <= 10 && sh6.lengthM < 1.1 * straight6
+              && homeB6 > 1.5 * straight6 && homeS6 < 1.1 * straight6,
+        () => "out " + (out6.error || Math.round(out6.lengthM) + " m, land cells " + land6(fb6, out6)) + "; in "
+              + (in6.error || Math.round(in6.lengthM) + " m, land " + land6(fb6, in6)) + "; shut " + (sh6.error
+              || Math.round(sh6.lengthM) + " m, land " + land6(fs6, sh6)) + "; straight " + Math.round(straight6)
+              + " m; home from the north: open " + Math.round(homeB6) + " m, shut " + Math.round(homeS6) + " m");
+
+  // ── 6c. the pull never cuts over land in a port's circle ─────────────────────────────────────────────────────────
+  // A search's path round a block of land (cols 110-112, rows 95-105) inside the port's circle, beside a danger on its
+  // way (row 107 partly): the straight shortcut through the block is refused with open water on AND off (until
+  // 2026-11-09 the block counted as PARTLY, and a stretch with a partly cell let the pull through it); the same path with
+  // no block is pulled straight. FORCED: a path that must cross one land cell out of its pocket (col 101) and then goes
+  // round the block - the shortcut crosses the block too, refused; one over the same land cell, no dearer, taken.
+  const pullCase = (block, forced) => {
+    const g = grid(TX, TY);
+    if (block) for (let r = 95; r <= 105; r++) for (let c = 110; c <= 112; c++) setC(g, c, r, C.GRID_HARD);
+    if (forced) setC(g, 101, 100, C.GRID_HARD);
+    for (let c = 100; c <= 115; c++) setT(g, c, 107, 10);
+    const at = (c, r) => ({ gx: TX * N + c, gy: TY * N + r });
+    const cells = [at(100, 100)];
+    if (forced) { cells.push(at(101, 100), at(102, 100)); for (let r = 101; r <= 107; r++) cells.push(at(102, r)); }
+    else for (let r = 101; r <= 107; r++) cells.push(at(100, r));
+    for (let c = forced ? 103 : 101; c <= 115; c++) cells.push(at(c, 107));
+    for (let r = 106; r >= 100; r--) cells.push(at(115, r));
+    for (let c = 116; c <= 130; c++) cells.push(at(c, 100));
+    return { g, cells, port: [at(100, 100)] };
+  };
+  const pulled = (pc, ow) => C.pullTaut(C.buildField([pc.g], FLOOR, 0, { openWater: ow }), pc.cells, pc.port);
+  const landOn = (pc, out) => { const f = C.buildField([pc.g], FLOOR); let n = 0;
+    for (let k = 1; k < out.length; k++) for (const c of C.lineCells(out[k - 1], out[k])) if (f.level(c.gx, c.gy) === C.LV_BLOCKED) n++;
+    return n; };
+  const blk6 = pullCase(true, false), clr6 = pullCase(false, false), frc6 = pullCase(true, true), frcClr6 = pullCase(false, true);
+  const pB = { on: pulled(blk6, true), off: pulled(blk6, false) }, pC = { on: pulled(clr6, true), off: pulled(clr6, false) };
+  const pF = { on: pulled(frc6, true), off: pulled(frc6, false) }, pFc = pulled(frcClr6, false);
+  check("6c. THE PULL NEVER CUTS OVER LAND IN A PORT'S CIRCLE: round a block of land beside a danger, the shortcut through "
+        + "it is refused, open water on and off (none of the block on the pulled route); the same path with no block, "
+        + "straight; a path that must cross one land cell keeps to that one - the block refused, a shortcut over the "
+        + "same cell taken",
+        () => landOn(blk6, pB.on) === 0 && landOn(blk6, pB.off) === 0 && pB.off.length > 2 && pB.on.length > 2
+              && pC.on.length === 2 && pC.off.length === 2
+              && landOn(frc6, pF.on) === 1 && landOn(frc6, pF.off) === 1 && pF.off.length > 2
+              && landOn(frcClr6, pFc) === 1 && pFc.length === 2,
+        () => "block: on " + pB.on.length + " pts/" + landOn(blk6, pB.on) + " land, off " + pB.off.length + "/" + landOn(blk6, pB.off)
+              + "; clear: on " + pC.on.length + ", off " + pC.off.length + "; forced: on " + pF.on.length + "/" + landOn(frc6, pF.on)
+              + ", off " + pF.off.length + "/" + landOn(frc6, pF.off) + "; forced, no block: " + pFc.length + "/" + landOn(frcClr6, pFc));
 
   // ── 7. unread ───────────────────────────────────────────────────────────────────────────────────────────────────
   const u7 = grid(TX, TY);
