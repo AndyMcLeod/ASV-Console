@@ -276,6 +276,16 @@ check("13. ?file=asv_<ts>.jsonl&t=<s> opens that recording at that second (a nam
             && lab13 === "20261105-060135  ·  ben_cworker4  ·  Honolulu  ·  SIM  ·  :8795  ·  2 KB" && lab13b === "20261105-060135  ·  4 KB"
             && /parseDeepLink\(location\.search\)/.test(loadSrc) && /link\.t/.test(loadSrc),
       () => JSON.stringify({ dl, bad, none, lab13, lab13b }));
+// 13b (2026-11-10). WHERE IT RAN beats where the console booted: his overnight Eastport survey (booted at Pago Pago) was
+// listed as "pago pago" and taken for a file that did not exist
+const lab13c = F.pickLabel({ name: "asv_20261109-194359.jsonl", size: 2048, vessel: "drix08_em712", base: "pago pago", places: ["Eastport, ME"], mode: "sim", port: 8791 });
+const lab13d = F.pickLabel({ name: "asv_20261109-194359.jsonl", size: 2048, base: "Castine, Maine", places: ["Castine, Maine", "New Castle, NH"] });
+const lab13e = F.pickLabel({ name: "asv_20261109-194359.jsonl", size: 2048, base: "durham", places: [] });
+check("13b. the picker names the bases a recording's runs started at (`places`), in order, over the base it booted at; with "
+      + "none, the base as before",
+      () => lab13c === "20261109-194359  ·  drix08_em712  ·  Eastport, ME  ·  SIM  ·  :8791  ·  2 KB"
+            && lab13d === "20261109-194359  ·  Castine, Maine → New Castle, NH  ·  2 KB" && lab13e === "20261109-194359  ·  durham  ·  2 KB",
+      () => JSON.stringify({ lab13c, lab13d, lab13e }));
 
 // 14. THE SPLICE (review 2026-11-05): the console's Engine.amend keeps waypoints [0, splice_at) and flies the tail after
 // them; drawn as the tail alone, the flown waypoints vanished and every one still ahead read 'passed'

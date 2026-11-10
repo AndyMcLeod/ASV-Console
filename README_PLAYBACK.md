@@ -26,10 +26,19 @@ python asv_console.py --sim            # (or a real --vcu session)
 - Playback doesn't need a boat connected — it only reads `logs/`. You can review
   a session at the dock, or a past run any time.
 - The recording is selected from the drop-down (newest first). Each option names
-  the session timestamp, the vessel, the base, the mode (SIM / REAL), the HTTP
+  the session timestamp, the vessel, where it ran, the mode (SIM / REAL), the HTTP
   port of the console that wrote it, and the file size, so a recording a test
   console on another port left in the same `logs/` can be told from yours. A field
   the file does not carry is left out.
+- **Where it ran** is the bases its runs started at, in order (`Castine → New
+  Castle`), and for a session with no run, every base it was at. It is NOT the
+  base the console booted at: the console starts at the base it last had, so an
+  overnight Eastport survey from a console that booted at Pago Pago was listed as
+  "pago pago" and looked like a missing recording (2026-11-10). A session written
+  since then says where it ran in a `session_summary` record at shutdown; one that
+  did not shut down cleanly, or is older, is named by where its first run started
+  (a base it moved to after that run is not shown). A recording older than
+  2026-11-05 is named by its starting base, as before.
 - **Deep link.** `/playback?file=asv_<ts>.jsonl&t=<s>` opens that recording at that
   moment. `t` is seconds into the recording, or an epoch time. The address bar
   follows the cursor whenever you pause, step, scrub, restart or click a row, so
@@ -152,7 +161,7 @@ Playback adds three GET routes; none of them can change console state:
 | Route | Returns |
 |---|---|
 | `GET /playback` | The playback page. |
-| `GET /api/logs` | Newest-first list of recordings: `{name, size, mtime}`, and the picker's labels, read from the head of each file (never the whole file): `port`, `mode`, `vessel` and `base`. The command line is read, not served (an older recording carries its own raw). An older recording is labeled from its `session_start` command line and first `connect`. |
+| `GET /api/logs` | Newest-first list of recordings: `{name, size, mtime}`, and the picker's labels, read from the head of each file (never the whole file): `port`, `mode`, `vessel` and `base`, and `places`, the names of the bases its runs started at (the live recording's from the console's own logger; another's from the `session_summary` in its last 64 KB, else from its head as far as its first run). The command line is read, not served (an older recording carries its own raw). An older recording is labeled from its `session_start` command line and first `connect`. |
 | `GET /api/log?file=asv_<ts>.jsonl` | The raw JSONL of one recording. The filename is validated to a bare `asv_*.jsonl` basename inside `logs/` (no path traversal). |
 
 ---

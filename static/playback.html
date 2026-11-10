@@ -352,9 +352,12 @@ async function loadList(){
 // ⚠ THE PICKER SAYS WHICH CONSOLE MADE EACH FILE (2026-11-05): 37 old sessions came from verification consoles on other
 // ports into the same logs/ folder, and the list named each by its time and size alone. /api/logs now reads each file's
 // head (list_logs: vessel, port, mode); a field it does not have is simply left out.
+// ⚠ AND WHERE IT RAN (2026-11-10): `places`, the bases its runs started at (asv_console.py places_label), before the
+// base it BOOTED at - his overnight Eastport survey was listed as "pago pago", and read as a file that did not exist.
 function pickLabel(L){
   const core = String((L && L.name) || "").replace(/^asv_|\.jsonl$/g, "");
-  const port = L.port_name || L.base || (L.port && typeof L.port === "object" ? (L.port.name || L.port.id) : null);
+  const ran = Array.isArray(L.places) && L.places.length ? L.places.join(" → ") : null;
+  const port = ran || L.port_name || L.base || (L.port && typeof L.port === "object" ? (L.port.name || L.port.id) : null);
   const bits = [core, L.vessel, port, L.mode ? String(L.mode).toUpperCase() : null,
                 (typeof L.port === "number" ? ":" + L.port : null), ((+L.size || 0) / 1024).toFixed(0) + " KB"];
   return bits.filter(x => x != null && x !== "").join("  ·  ");

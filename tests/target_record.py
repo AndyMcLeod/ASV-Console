@@ -821,6 +821,131 @@ check("27. a recording is labeled from its head - port, mode, vessel, base - pla
 check("27b. an OLD recording (session_start alone) is labeled from its argv",
       lambda: lab3["mode"] == "real" and lab3["vessel"] == "drix08" and lab3["base"] == "durham" and lab3["port"] == 8791,
       lambda: json.dumps(lab3))
+
+# WHERE IT RAN (2026-11-10): his overnight Eastport survey was listed under the base the console BOOTED at ("pago pago")
+# and taken for a recording that did not exist
+PE = lambda i, n: {"id": i, "name": n}  # noqa: E731
+pl_a = A.places_label([{"id": "pago", "name": "Pago Pago", "runs": 0}, {"id": "east", "name": "Eastport, ME", "runs": 1}])
+pl_b = A.places_label([{"id": "cas", "name": "Castine", "runs": 0}, {"id": "nc", "name": "New Castle", "runs": 0}])
+pl_c = A.places_label([{"id": "cas", "name": "Castine", "runs": 2}, {"id": "x", "name": "Durham", "runs": 0},
+                       {"id": "nc", "name": "New Castle", "runs": 3}, {"id": "nc2", "name": "New Castle", "runs": 1}])
+check("27c. places_label: the bases a run started at, in order; with no run, every base it was at; a name once in a row",
+      lambda: pl_a == ["Eastport, ME"] and pl_b == ["Castine", "New Castle"] and pl_c == ["Castine", "New Castle"]
+      and A.places_label(None) == [] and A.places_label([{"id": None, "name": None, "runs": 1}, 7]) == [],
+      lambda: json.dumps([pl_a, pl_b, pl_c]))
+
+lgp = new_log()
+lgp.event("session_start", port=8795)
+lgp.event("manifest", mode="sim")
+lgp.event("port", why="boot", port=PE("pago", "Pago Pago"))
+lgp.event("port", why="switch", port=PE("east", "Eastport, ME"))
+lgp.event("port", why="reload", port=PE("east", "Eastport, ME"))       # the base in force again: not a second visit
+lgp._write("run_start", {"run_id": "r1", "run_seq": 1})
+lgp._write("run_start", {"run_id": "r2", "run_seq": 2})
+lgp.event("port", why="switch", port={"id": None})                       # a record naming no base moves nothing
+pls = lgp.places()
+if pls:
+    pls[0]["runs"] = 99                                                # a COPY: the logger's own is untouched
+check("27d. a SessionLogger keeps where its session ran from the records it WRITES: a switch is a second base, the same "
+      "base again is not, a run counts against the base in force",
+      lambda: [(p["id"], p["runs"]) for p in lgp.places()] == [("pago", 0), ("east", 2)]
+      and A.places_label(lgp.places()) == ["Eastport, ME"],
+      lambda: json.dumps(lgp.places()))
+lgp.event("port", why="switch", port=PE("nc", "New Castle"))           # a switch AFTER a run: only the summary has it
+lgp._write("run_start", {"run_id": "r3", "run_seq": 3})
+lgp.event("session_summary", places=lgp.places())
+lgp.event("session_end")
+lgp.close()
+_sum_name = os.path.basename(lgp.path)
+_sum_dir = os.path.dirname(lgp.path)
+st_s = os.stat(lgp.path)
+_pt = A._prev_tail(_sum_dir, _sum_name)
+check("27e. a recording with a `session_summary` in its tail is listed under the bases its runs started at - and still "
+      "ends clean (session_end is its last record)",
+      lambda: A._summary_places(lgp.path) == lgp.places() and A._log_places(lgp.path, _sum_name, st_s.st_size,
+                                                                           st_s.st_mtime) == ["Eastport, ME", "New Castle"]
+      and _pt["ended_clean"] is True and _pt["last_kind"] == "session_end",
+      lambda: json.dumps([A._summary_places(lgp.path), _pt.get("last_kind")]))
+
+# one that did NOT end cleanly (or predates the summary): read from its head, as far as its first run - a switch AFTER
+# that run is not read (the named residual), and filler bigger than one chunk sits between
+LP2 = STATE.path("labels2")
+os.makedirs(LP2)
+hp = os.path.join(LP2, "asv_20261109-194359.jsonl")
+_fill = json.dumps({"t": 5, "kind": "telemetry", "pad": "x" * 900}) + "\n"
+with open(hp, "w", encoding="utf-8") as f:
+    for r in ({"t": 1, "kind": "session_start", "port": 8791}, {"t": 2, "kind": "manifest", "mode": "sim"},
+              {"t": 3, "kind": "port", "why": "boot", "port": PE("pago", "pago pago")}):
+        f.write(json.dumps(r) + "\n")
+    f.write(_fill * 60)
+    # the switch STRADDLES the first chunk's end (a line cut by a read is carried into the next)
+    _sw = json.dumps({"t": 4, "kind": "port", "why": "switch", "port": PE("east", "Eastport, ME")}) + "\n"
+    _gap = A.LOG_PLACES_CHUNK_B - 30 - f.tell()
+    f.write(json.dumps({"t": 5, "kind": "telemetry", "pad": "y" * (_gap - 45)}).ljust(_gap - 1) + "\n")
+    f.write(_sw)
+    f.write(_fill * 100)
+    f.write(json.dumps({"t": 6, "kind": "run_start", "run_id": "r1"}) + "\n")
+    f.write(json.dumps({"t": 7, "kind": "port", "why": "switch", "port": PE("nc", "New Castle")}) + "\n")
+    f.write(json.dumps({"t": 8, "kind": "run_start", "run_id": "r2"}) + "\n")
+with open(hp, "rb") as fi, gzip.open(hp + ".gz", "wb") as fo:
+    shutil.copyfileobj(fi, fo)
+with open(hp, "rb") as f:
+    _hb = f.read()
+_sw_at = _hb.rfind(b"\n", 0, _hb.find(b'"kind": "port", "why": "switch"')) + 1
+_sw_end = _hb.find(b"\n", _sw_at)
+st_h, st_hz = os.stat(hp), os.stat(hp + ".gz")
+hp_l = A._log_places(hp, os.path.basename(hp), st_h.st_size, st_h.st_mtime)
+hp_z = A._log_places(hp + ".gz", os.path.basename(hp) + ".gz", st_hz.st_size, st_hz.st_mtime)
+check("27f. without a summary, a recording is named by where its FIRST run started (read from its head, past the first "
+      "chunk; plain or .gz) - not the base it booted at",
+      lambda: _sw_at < A.LOG_PLACES_CHUNK_B < _sw_end
+      and A._summary_places(hp) is None and hp_l == ["Eastport, ME"] and hp_z == ["Eastport, ME"]
+      and A._log_label(hp, os.path.basename(hp), st_h.st_size, st_h.st_mtime)["base"] == "pago pago",
+      lambda: json.dumps([hp_l, hp_z, _sw_at, _sw_end]))
+
+np_ = os.path.join(LP2, "asv_20261108-082442.jsonl")
+with open(np_, "w", encoding="utf-8") as f:
+    for r in ({"t": 1, "kind": "session_start", "port": 8791}, {"t": 2, "kind": "manifest", "mode": "sim"},
+              {"t": 3, "kind": "port", "why": "boot", "port": PE("nc", "New Castle, NH")},
+              {"t": 4, "kind": "port", "why": "switch", "port": PE("pago", "pago pago")}):
+        f.write(json.dumps(r) + "\n")
+op_ = os.path.join(LP2, "asv_20261001-120000.jsonl")
+with open(op_, "w", encoding="utf-8") as f:
+    f.write(json.dumps({"t": 1, "kind": "session_start", "port": 8791, "argv": ["--base", "durham"]}) + "\n")
+    f.write(json.dumps({"t": 2, "kind": "port", "why": "boot", "port": PE("x", "would-be")}) + "\n")
+_np, _op = os.stat(np_), os.stat(op_)
+np_l = A._log_places(np_, os.path.basename(np_), _np.st_size, _np.st_mtime)
+op_l = A._log_places(op_, os.path.basename(op_), _op.st_size, _op.st_mtime)
+check("27g. a session with no run is named by every base it was at; one older than the manifest record by none (its "
+      "`base` names it, as before)",
+      lambda: np_l == ["New Castle, NH", "pago pago"] and op_l == [] and A._head_places(op_, False) == [],
+      lambda: json.dumps([np_l, op_l]))
+
+_real_log_dir, _real_LOG = A.LOG_DIR, A.LOG
+lg_live = new_log()
+lg_live.event("manifest", mode="sim")
+lg_live.event("port", why="boot", port=PE("pago", "pago pago"))
+lg_live.event("port", why="switch", port=PE("east", "Eastport, ME"))
+lg_live._write("run_start", {"run_id": "r1"})
+shutil.copyfile(hp, os.path.join(os.path.dirname(lg_live.path), os.path.basename(hp)))
+try:
+    A.LOG_DIR, A.LOG = os.path.dirname(lg_live.path), lg_live
+    rows_l = {r["name"]: r for r in A.list_logs()}
+    lg_live.event("port", why="switch", port=PE("nc", "New Castle"))
+    lg_live._write("run_start", {"run_id": "r2"})
+    rows_l2 = {r["name"]: r for r in A.list_logs()}
+finally:
+    A.LOG_DIR, A.LOG = _real_log_dir, _real_LOG
+_ln = os.path.basename(lg_live.path)
+check("27h. /api/logs rows carry `places`: the LIVE recording's from its own logger (a switch shows at once), every "
+      "other's from its file",
+      lambda: rows_l[_ln]["places"] == ["Eastport, ME"] and rows_l2[_ln]["places"] == ["Eastport, ME", "New Castle"]
+      and rows_l[os.path.basename(hp)]["places"] == ["Eastport, ME"] and rows_l[_ln]["base"] == "pago pago",
+      lambda: json.dumps([rows_l.get(_ln, {}).get("places"), rows_l2.get(_ln, {}).get("places")]))
+_msrc = inspect.getsource(A.main)
+_i_sum, _i_end = _msrc.find('LOG.event("session_summary", places=LOG.places())'), _msrc.rfind('LOG.event("session_end")')
+check("27i. the console writes its session_summary at shutdown, BEFORE its session_end (so the tail still ends clean)",
+      lambda: 0 < _i_sum < _i_end, lambda: "summary at %d, session_end at %d" % (_i_sum, _i_end))
 check("28. /api/logevent is a quiet post: the client record is the record, not a command line beside it",
       lambda: "/api/logevent" in A.LOG_QUIET_POSTS and "/api/enc/corridor" in A.LOG_QUIET_POSTS)
 check("29. a number that is not finite (or is a bool) is not a number in the record",

@@ -1020,6 +1020,26 @@ def _plan_digest(doc):
                                      default=str).encode("utf-8")).hexdigest()
 
 
+LOG_PLACES_KEEP = 64                # bases kept in a session's places (the newest): a label, not a history
+
+
+def place_step(places, kind, rec):
+    """WHERE A SESSION RAN, one record at a time (2026-11-10): a `port` record puts its base on `places` (in order; a
+    record naming the base already in force again is not a second visit), a `run_start` counts against the base in
+    force. ONE rule for the live logger (SessionLogger._note_place) and for a recording read back (_head_places)."""
+    if kind == "port":
+        pe = rec.get("port") if isinstance(rec.get("port"), dict) else None
+        if not pe or not (pe.get("id") or pe.get("name")):
+            return
+        if places and places[-1]["id"] == pe.get("id"):
+            places[-1]["name"] = pe.get("name") or places[-1]["name"]
+            return
+        places.append({"id": pe.get("id"), "name": pe.get("name"), "runs": 0})
+        del places[:-LOG_PLACES_KEEP]
+    elif kind == "run_start" and places:
+        places[-1]["runs"] += 1
+
+
 class SessionLogger:
     # top-level state fields whose change marks a "salient" transition worth a
     # full snapshot (vs. a routine motion sample between transitions).
@@ -1092,6 +1112,12 @@ class SessionLogger:
         self.path = None
         self.session_id = None
         self.enabled = bool(enabled)
+        # ⚠ WHERE THIS SESSION RAN (2026-11-10): each base it was at, in order, and how many runs started while it was
+        # in force - kept from the records this logger WRITES (`port`, `run_start`, _note_place), so it cannot drift
+        # from the file. The playback picker names a recording by it (places_label): it named the base the console
+        # BOOTED at, and his overnight Eastport survey - booted at Pago Pago, switched 21 s later - was listed as
+        # "pago pago", so he took it for a recording that did not exist.
+        self._places = []
         self._last_salient = None
         self._last_state_t = 0.0
         self._last_full_t = 0.0
@@ -1146,6 +1172,7 @@ class SessionLogger:
                     return
                 if self._f is not None:
                     self._f.write(line)
+                    self._note_place(kind, rec)
         except (ValueError, TypeError):
             pass
         except OSError as e:
@@ -1161,6 +1188,17 @@ class SessionLogger:
     def event(self, kind, **payload):
         """Record a lifecycle marker (session_start/end, connect, disconnect)."""
         self._write(kind, payload)
+
+    def _note_place(self, kind, rec):
+        """Under the lock, after `rec` was written: the session's places stepped by it (place_step - the same rule a
+        recording's head is read back with, _head_places)."""
+        place_step(self._places, kind, rec)
+
+    def places(self):
+        """The bases this session has been at so far ([{id, name, runs}], a copy) - the `session_summary` record's, and
+        the live recording's label in /api/logs."""
+        with self._lock:
+            return [dict(p) for p in self._places]
 
     def routine(self, kind, payload):
         """Record one ROUTINE stream record (env, targets, track_info, incident). ⚠ DROPPED WHILE QUIET, BY THIS CALL:
@@ -9809,6 +9847,9 @@ def list_logs():
             row["compressed"], row["on_disk"] = True, stat.st_size
             row["size"] = _gz_raw_size(p) or stat.st_size
         row.update(_log_label(p, base, stat.st_size, stat.st_mtime))
+        # where it RAN (2026-11-10): the live recording from its own logger, every other from its file (_log_places)
+        live = LOG is not None and LOG.path and os.path.basename(LOG.path) == base and not gz
+        row["places"] = places_label(LOG.places()) if live else _log_places(p, base, stat.st_size, stat.st_mtime)
         out.append(row)
     out.sort(key=lambda r: r["mtime"], reverse=True)
     return out
@@ -9886,6 +9927,111 @@ def _log_label(path, name, size, mtime):
             _LOG_LABELS.clear()
         _LOG_LABELS[key] = lab
     return dict(lab)
+
+
+# ⚠ THE PICKER NAMES WHERE A SESSION RAN, NOT WHERE THE CONSOLE BOOTED (Andy, 2026-11-10: "Overnight a long survey in
+# Eastport was run but the file does not exist"). It did - asv_20261109-194359, 57 MB, the whole survey - listed as
+# "pago pago": `base` is the FIRST port record, and the console boots at the base it last had, so a session switched
+# after its boot (that one 21 s in; 11-08's Castine -> New Castle, 18 runs, the same) is listed under a base it never
+# ran at. `places` (places_label) is the bases its runs started at, in order - or, with no run, every base it was at:
+# from the `session_summary` record a session writes before session_end (read from the tail), else - a session that
+# did not end cleanly, or one recorded before 2026-11-10 - from its head as far as its FIRST run (every switch before a
+# run measured within the first 50 KB, the first run within 0.7 MB). ⚠ A session recorded before the summary that moved
+# base AFTER a run is named by where its first run started. A recording older than the `manifest` record (2026-11-05)
+# has no port records at all: nothing (`base`, from its argv, as before).
+LOG_PLACES_CHUNK_B = 65536
+LOG_PLACES_HEAD_MAX_B = 2 * 1024 * 1024
+_LOG_PLACES = {}
+_LOG_PLACES_LOCK = threading.Lock()
+
+
+def places_label(places):
+    """The names a recording is listed under, from its places ([{id, name, runs}]): the bases a run started at, in
+    order - or, where none did, every base it was at - each once in a row."""
+    ps = [p for p in (places or []) if isinstance(p, dict) and (p.get("name") or p.get("id"))]
+    ran = [p for p in ps if isinstance(p.get("runs"), int) and p["runs"] > 0]
+    out = []
+    for p in (ran or ps):
+        nm = str(p.get("name") or p.get("id"))
+        if not out or out[-1] != nm:
+            out.append(nm)
+    return out
+
+
+def _summary_places(path):
+    """The places of the `session_summary` record in a plain recording's last PREV_TAIL_B, or None without one."""
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            start = max(0, f.tell() - PREV_TAIL_B)
+            f.seek(start)
+            lines = f.read().split(b"\n")
+    except OSError:
+        return None
+    if start > 0 and lines:
+        lines = lines[1:]                      # the first line of a tail is cut
+    for ln in reversed(lines):
+        if b'"session_summary"' not in ln:
+            continue
+        try:
+            r = json.loads(ln)
+        except ValueError:
+            continue
+        if isinstance(r, dict) and r.get("kind") == "session_summary" and isinstance(r.get("places"), list):
+            return r["places"]
+    return None
+
+
+def _head_places(path, gz):
+    """The places read from a recording's head, as far as its first run (place_step over its `port` and `run_start`
+    records), at most LOG_PLACES_HEAD_MAX_B; [] for one with no `manifest` in its first chunk (no port records)."""
+    places = []
+    try:
+        with (gzip.open(path, "rb") if gz else open(path, "rb")) as f:
+            buf, read, first = b"", 0, True
+            while read < LOG_PLACES_HEAD_MAX_B:
+                chunk = f.read(LOG_PLACES_CHUNK_B)
+                read += len(chunk)
+                buf += chunk
+                lines = buf.split(b"\n")
+                buf = lines.pop() if chunk else b""
+                for ln in lines:
+                    if b'"kind": "port"' not in ln and b'"kind": "run_start"' not in ln:
+                        continue
+                    try:
+                        r = json.loads(ln)
+                    except ValueError:
+                        continue
+                    if not isinstance(r, dict):
+                        continue
+                    place_step(places, r.get("kind"), r)
+                    if r.get("kind") == "run_start":
+                        return places
+                if first and b'"kind": "manifest"' not in chunk:
+                    return []
+                first = False
+                if not chunk:
+                    break
+    except (OSError, EOFError, zlib.error):
+        pass
+    return places
+
+
+def _log_places(path, name, size, mtime):
+    """`places` for one recording (places_label), kept per (path, size, mtime) as _log_label's are."""
+    key = (path, size, mtime)
+    with _LOG_PLACES_LOCK:
+        hit = _LOG_PLACES.get(key)
+    if hit is not None:
+        return list(hit)
+    gz = path.endswith(".gz")
+    found = None if gz else _summary_places(path)      # a .gz is read from the start or not at all
+    out = places_label(found if found is not None else _head_places(path, gz))
+    with _LOG_PLACES_LOCK:
+        if len(_LOG_PLACES) > 4096:
+            _LOG_PLACES.clear()
+        _LOG_PLACES[key] = out
+    return list(out)
 
 
 def safe_log_path(name):
@@ -13270,6 +13416,9 @@ def main():
         ENGINE.disconnect()
         srv.shutdown()
         if LOG is not None:
+            # where the session ran, for the playback picker (places_label) - read from the tail, BEFORE session_end
+            # so the last record is still that (_prev_tail)
+            LOG.event("session_summary", places=LOG.places())
             LOG.event("session_end")
             LOG.close()
 
