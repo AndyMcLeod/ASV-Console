@@ -53,7 +53,10 @@ export const FUEL_MIN_GROUND_MS = 0.3;
 /** Above the RTH point by this fraction of the usable span, the card warns that she is close to it. */
 export const FUEL_NEAR_FRAC = 0.05;
 
-/** Back above the RTH point by this fraction of the usable span (refuelled, an override, a nearer home), it re-arms. */
+/**
+ * Back above the RTH point by this fraction of the usable span (refuelled, a nearer home), it re-arms. (The energy
+ * override does not re-arm by a level any more - under it there is none: rthDecision drops the latch outright.)
+ */
 export const FUEL_REARM_FRAC = 0.02;
 
 /**
@@ -92,9 +95,18 @@ export function energyModel(vessel, highKn) {
   return null;
 }
 
-/** Her level now, in the model's unit, off the console's state frame - or null when the vessel reports none. */
+/**
+ * Her level now, in the model's unit, off the console's state frame - or null when the vessel reports none.
+ *
+ * ⚠ NULL UNDER THE ENERGY OVERRIDE (`status.unlimited_energy`, 2026-11-10): the console then reports a full pack or
+ * tank whatever the vessel says, and a forced reading is not her level. Every reader already has a "no level" path -
+ * the projection shows the usage and not what is left, a passage starts from a full tank and says so, Continue is not
+ * held for fuel, a break-off banks no level - where a fictitious full tank was read as fuel aboard: the RTH monitor
+ * sent a battery hull home on it (rthDecision), and a survey broken off at "full" could never be continued (no reading
+ * is 2% above full). The pill shows the forced reading; that is the status, not this.
+ */
 export function energyLevel(model, status) {
-  if (!model || !status) return null;
+  if (!model || !status || status.unlimited_energy) return null;
   const v = model.kind === "fuel" ? status.fuel_l : status.battery_v;
   return Number.isFinite(v) ? v : null;
 }
@@ -235,17 +247,27 @@ export function passageFuel(model, legs, twKn, level0) {
 
 /**
  * WHAT THE MONITOR DOES ON THIS FRAME, given her level, the RTH point, and the console's state. Pure; the page acts on
- * it. `o`: {level, rth, model, armed, estop, behavior, atHome, acted}. `acted` is the page's latch: the console has
- * already sent her home for this crossing, or found her already going.
+ * it. `o`: {level, rth, model, armed, estop, behavior, atHome, acted, said, override}. `acted` is the page's latch: the
+ * console has already sent her home for this crossing, or found her already going. `said`: the page has already SAID
+ * this crossing (its alert) - which re-arms as `acted` does (2026-11-10 review: a crossing said where she could not be
+ * sent - disarmed at the dock, a window that does not supervise - was never re-armed, and the page's "already said"
+ * then swallowed her next alert, the 20% reserve out of range included, whose alert is the monitor's whole answer).
  *
- *   { state: "unknown" | "ok" | "near" | "reached", send, latch, rearm }
+ *   { state: "unknown" | "ok" | "near" | "reached" | "override", send, latch, rearm }
+ *
+ * ⚠ `o.override` - THE ENERGY OVERRIDE IS ON, AND NOTHING IS MONITORED (Andy, 2026-11-10: "energy over-ride failed in
+ * the running instance"). It was judged as a LEVEL: the console reports a full pack under it, a battery hull is watched
+ * against the RTH point at any range (fuelWatch), and past the reach of a full pack that point stands ABOVE full - so
+ * 3.46 nm from home, with the override on, a full reading was "reached" and the console sent her home over the Go-To
+ * she was flying. The state is its own ("override": the card and the pill say NOT MONITORED off it), never a send, and
+ * the latch is DROPPED (`rearm`) - so the frame the override goes off is judged as a first look, with her real level.
  *
  *   send  - command the RTH now: reached, not yet acted on, armed, no E-STOP, not at home, and not already going home
  *           ("rth") nor in the guard's in-extremis escape ("escape" - the RTH waits for the operator's next command
  *           there, as the end-of-plan chain does).
  *   latch - the crossing is answered: sent now, or already on her way home.
- *   rearm - back above the RTH point by FUEL_REARM_FRAC of the span (refuelled, an override, a nearer home): the next
- *           crossing is acted on again.
+ *   rearm - back above the RTH point by FUEL_REARM_FRAC of the span (refuelled, a nearer home): the next crossing is
+ *           acted on again. Under the override, always (below).
  *
  * `o.alertOnly` (fuelWatch's "alert": home out of range, `rth` the reserve itself): reached, it is never a send - the
  * alert IS the answer, so it latches at once and re-arms as above. The latch is not dropped when the rule changes: a
@@ -255,11 +277,13 @@ export function passageFuel(model, legs, twKn, level0) {
 export function rthDecision(o) {
   const res = { state: "unknown", send: false, latch: false, rearm: false };
   const m = o && o.model;
-  if (!m || !Number.isFinite(o.level) || !Number.isFinite(o.rth)) return res;
+  if (!m) return res;
+  if (o.override) { res.state = "override"; res.rearm = true; return res; }
+  if (!Number.isFinite(o.level) || !Number.isFinite(o.rth)) return res;
   const span = m.full - m.floor;
   if (o.level > o.rth) {
     res.state = o.level <= o.rth + FUEL_NEAR_FRAC * span ? "near" : "ok";
-    res.rearm = !!o.acted && o.level > o.rth + FUEL_REARM_FRAC * span;
+    res.rearm = (!!o.acted || !!o.said) && o.level > o.rth + FUEL_REARM_FRAC * span;
     return res;
   }
   res.state = "reached";

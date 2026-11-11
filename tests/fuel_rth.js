@@ -28,6 +28,17 @@
 //   projection and doRTH; 9e the row and the pill say which rule she is under. DIESEL HULLS ONLY (Andy: "Long range
 //   missions are not to be undertaken by the battery powered units"): 6d, 8j a battery hull keeps the RTH point.
 //   (The server's sim-only `level` on /api/cmd/energy is tests/energy_chartinfo.py 13-13c.)
+//   THE ENERGY OVERRIDE (Andy, 2026-11-10 live: "energy over-ride failed in the running instance"). The console reports
+//   a full pack under it, and the monitor judged that as her level: a battery hull is watched against the RTH point at
+//   any range (6d), and past the reach of a full pack the point stands above full - so 3.46 nm out, the override on, she
+//   was sent home over her Go-To (three sessions in five days in the recordings; 20 RTHs in 26 s in one). 6e the
+//   decision's own state and energyLevel's null; 8k-8l the page's monitor silent under it and answering on the frame it
+//   goes off, the latch not outliving it; 8m ONE low-fuel RTH in flight; 8n its own alert comes down; 9h both rows and
+//   the pill say NOT MONITORED; 9f2 the rehearsal stands down; 9i the pill's click awaited, one at a time; 9g the walk
+//   redone when her level goes or comes back; 10g the alert's sentence reckons what she arrives with. And from the
+//   review of that change: 8o a view-only window does not count a crossing as answered (taking over, it sends her);
+//   8p a new link (boot_id) is a new watch. (The server's half - every new link told the override - is
+//   tests/run_link_control.py 21-21e and tests/energy_chartinfo.py 14-15; doRTH's withdrawal is tests/command_result.js 54b.)
 //
 // TEETH - twenty-one mutations RUN, each on a scratch copy of static/, tests/, vessels/ and asv_console.py, all caught:
 //   the reserve 25% (the Fuel planner's), not his 20%          -> 4, 5, 8
@@ -68,6 +79,26 @@
 //   the row's label not switched / 'RTH due' out of range      -> 9e
 //   the pill keeps the RTH point out of range                  -> 9e
 //   a battery hull put under the long-range rule (a 16th)      -> 6d, 8j
+// and forty for the energy override (2026-11-10; scratchpad mut_en.py / mut_en2.py: fuel.js on a sidecar app through
+// ASV_APP, the page on a sidecar through ASV_HTML), all caught - one SURVIVED the first cut, and what it found was
+// this suite: with the pill's one-click-at-a-time guard removed, 9i's stub left two awaits unsettled and node exited 0
+// at 9f2, the rest never run. The floor below (`finished`) and a resolver per post answer it.
+//   energyLevel still reads the forced gauge                    -> 6e, 8k
+//   rthDecision not told the override / told after the level    -> 6e, 8k, 8l
+//   the override re-arms only a latch that was set / sends      -> 6e, 8l
+//   fuelTick does not pass the override / says it is not on     -> 8k, 8l
+//   no in-flight guard / never cleared / no bound / never set   -> 8m (and 8, 8l, 8p: the next crossing blocked)
+//   a late landing clears the next one's mark                   -> 8m
+//   the latch set in a window that cannot send                  -> 8o
+//   the latch kept across a new boot_id                         -> 8p
+//   the alert left up / every LOW FUEL banner taken / one kind  -> 8n
+//   the RTH row, the Fuel row, the tips, the pill unbranched    -> 9h
+//   the rehearsal row and its gate live under the override      -> 9f2, 9h
+//   the walk kept when her level goes or comes back             -> 9g
+//   the sentence asserts the reserve / no tolerance / no "more
+//   than she has" / no "above its alarm"                        -> 10g
+//   the click: no busy guard, no took(), the request's state,
+//   busy never released, the same value posted                  -> 9i
 
 function __crash(e) {
   console.log("  FAIL 0. the suite itself CRASHED before finishing - " +
@@ -77,6 +108,20 @@ function __crash(e) {
 }
 process.on("uncaughtException", __crash);
 process.on("unhandledRejection", __crash);
+// ⚠ A SUITE THAT STOPS RUNNING ITS CHECKS MUST NOT EXIT 0 (2026-11-10; tests/command_result.js holds the same floor).
+// The checks from 9f on run inside an async function, and an await that never settles does not crash node: the
+// process ends quietly, code 0, with every check after it never run. Found by mutation - with the energy pill's
+// one-click-at-a-time guard removed, 9i's own stub left two promises unsettled, and the suite "passed" having stopped
+// at 9f2.
+let finished = false;
+process.on("exit", (code) => {
+  if (!finished && !code) {
+    console.log("  FAIL 0. THE SUITE DID NOT FINISH - node was about to exit 0 with checks still to run: an await that "
+                + "never settles is a SILENT PASS");
+    console.log("\n1 CHECK(S) FAILED (did not finish)");
+    process.exitCode = 1;
+  }
+});
 
 // the AVOIDING record the guard, the resumes and setPlanIntent now touch (2026-11-02):
 // a stub, because this suite owns none of the flag's behaviour - tests/ais_avoid.js does.
@@ -289,6 +334,30 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
               && near(z.far.level, F.rthLevel(zm, 0.5), 1e-9) && near(z.pastFull.level, F.rthLevel(zm, 5), 1e-9)
               && z.pastFull.level > zm.full && z.none.mode === "rth" && z.none.level === null,
         () => Object.entries(z).map(([k, x]) => k + ":" + x.mode + "@" + x.level).join(" "));
+  // UNDER THE ENERGY OVERRIDE (Andy, 2026-11-10 live: "energy over-ride failed in the running instance"). The console
+  // reports a full pack under it, and a full pack is AT OR BELOW a battery hull's RTH point wherever the fuel home is
+  // more than the span less the reserve (6d): 26.5 V against a point of 26.6 V was "reached", and she was sent home
+  // over her Go-To with the override on. The override is the decision's own input, asked BEFORE any level.
+  const O = (o) => D({ override: true, ...o });
+  const full = { model: zm, level: zm.full, rth: F.rthLevel(zm, 2.9), armed: true, estop: false, behavior: "goto", atHome: false, acted: false };
+  const u = { below: O({}), acted: O({ acted: true }), alertOnly: O({ alertOnly: true }), going: O({ behavior: "rth" }),
+              disarmed: O({ armed: false }), above: O({ level: 100 }), aboveActed: O({ level: 100, acted: true }),
+              noLevel: O({ level: null }), noPoint: O({ rth: null }), pastFull: F.rthDecision({ ...full, override: true }) };
+  const off = F.rthDecision(full), noModel = F.rthDecision({ override: true });
+  // ... and a forced reading is not her level: energyLevel answers null under it, for both kinds (the pill shows the
+  // status; every reader of the LEVEL has a "no level" path)
+  const lv = { batt: F.energyLevel(zm, { battery_v: 26.5, unlimited_energy: true }), fuel: F.energyLevel(model, { fuel_l: 250, unlimited_energy: true }),
+               battOff: F.energyLevel(zm, { battery_v: 26.5, unlimited_energy: false }), fuelOff: F.energyLevel(model, { fuel_l: 250 }) };
+  check("6e. UNDER THE ENERGY OVERRIDE the decision is a state of its own, 'override': never a send, never a latch - below "
+        + "the point, already answered, out of range, going home, disarmed, above it, with no level or no point, and with a "
+        + "battery's RTH point ABOVE a full pack (26.6 V of 26.5) - and it lets the latch go (rearm, whether or not it was "
+        + "set), so the crossing after it goes off is answered; the override off, that same full pack is REACHED and sent; "
+        + "and under it energyLevel reads NO level (null), fuel or battery",
+        () => Object.values(u).every((x) => x.state === "override" && !x.send && !x.latch && x.rearm === true)
+              && full.rth > zm.full && off.state === "reached" && off.send && off.latch && noModel.state === "unknown"
+              && lv.batt === null && lv.fuel === null && lv.battOff === 26.5 && lv.fuelOff === 250,
+        () => Object.entries({ ...u, off }).map(([k, x]) => k + ":" + x.state + (x.send ? "+send" : "") + (x.latch ? "+latch" : "") + (x.rearm ? "+rearm" : "")).join(" ")
+            + " | levels " + JSON.stringify(lv));
 }
 
 // ── 7. THE WATER DISTANCE HOME ────────────────────────────────────────────────────────────────────────────────────
@@ -378,22 +447,36 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
   const RTH_MAX = 10 * +(/const NOGO_RADIUS_M = ([\d.]+);/.exec(H) || [])[1];
   // The page's own fuelTick, fuelWatchAt (is home in range) and the out-of-range sentence, with the world stubbed:
   // `need` the fuel home, `far` the distance rthTooFar refuses a return by (null: within it), `S.home` null for none.
+  // (2026-11-10) `fields` counts the two home-field ticks; `clock` is the page's Date.now(), moved by the check; and the
+  // RTH doRTH is asked for is a thing with the two calls the page makes on it (.catch, then .finally) - LANDED AT ONCE
+  // (its finally run before the next frame, as every check before 8m assumes) unless the world holds it IN FLIGHT
+  // (`hang`), when the check lands it itself (w.land()).
+  const FLIGHT_MS = +(/^const FUEL_FLIGHT_MS = (\d+);/m.exec(H) || [])[1];
   const world = (mdl) => {
     const m0 = mdl || model;
-    const w = { banners: [], logs: [], sent: [], sup: true, need: 11, far: null, S: { home: { lat: 0, lon: 0 } } };
-    const mk = new Function("S", "asv", "fuelModel", "energyLevel", "fuelHomeNeed", "rthTooFar", "fuelWatch", "rthLevel", "rthDecision",
+    // `up` is the banner standing on the page (showBanner puts one up; the page's takeDownBanner lifts it by its text)
+    const w = { banners: [], logs: [], sent: [], sup: true, need: 11, far: null, S: { home: { lat: 0, lon: 0 } },
+                fields: 0, clock: 1000000, hang: false, land: null, up: null };
+    const mk = new Function("S", "asv0", "fuelModel", "energyLevel", "fuelHomeNeed", "rthTooFar", "fuelWatch", "rthLevel", "rthDecision",
       "homeFieldTick", "coarseHomeTick", "supervising", "showBanner", "logClient", "doRTH", "fuelSay", "fuelFmt", "fmtDist", "FUEL_AT_HOME_M",
-      "FUEL_RESERVE_FRAC", "RTH_MAX_M", "fmtVol",
-      "let fuelRth = {acted: false, alerted: false};\nlet fuelNow = null, fuelErrSaid = false;\n" + grab("fuelTick")
+      "FUEL_RESERVE_FRAC", "RTH_MAX_M", "fmtVol", "FUEL_FLIGHT_MS", "Date", "takeDownBanner",
+      // `asv` a binding the world can set (8t: a page's first frame, before it has a position of its own)
+      "let asv = asv0;\nlet fuelRth = {acted: false, alerted: false};\nlet fuelNow = null, fuelErrSaid = false, fuelFlight = 0, fuelBoot;\n" + grab("fuelTick")
       + "\n" + grab("fuelWatchAt") + "\n" + grab("fuelOutOfRangeSay") + "\n" + grab("fuelReserveOf") + "\n" + grab("homeHowSay")
-      + "\nreturn {tick: fuelTick, latch: () => ({...fuelRth}), now: () => fuelNow};");
+      + "\nreturn {tick: fuelTick, latch: () => ({...fuelRth}), now: () => fuelNow, flight: () => fuelFlight, setAsv: (v) => { asv = v; }};");
+    // (2026-11-10 review) .then is handed `w.outcome` when it settles - what became of the post, as doRTH answers it
+    // (undefined: taken; {notTaken: <cmd()'s answer>}: not) - before the finally, as a promise chain runs them
+    const flown = () => { const p = { thens: [], catch() { return p; }, then(fn) { p.thens.push(fn); return p; },
+      finally(fn) { const settle = () => { p.thens.forEach((t) => t(w.outcome)); fn(); }; if (w.hang) w.land = settle; else settle(); return p; } };
+      return p; };
     w.api = mk(w.S, { lat: 0.01, lon: 0 }, () => m0, F.energyLevel,
-      () => ({ need: w.need, m: 5000, water: true, twKn: 8 }), () => (w.far == null ? null : { m: w.far }), F.fuelWatch,
-      F.rthLevel, F.rthDecision, () => {}, () => {}, () => w.sup,
-      (t) => w.banners.push(t), (k, d) => w.logs.push([k, d]),
-      (o) => { w.sent.push(o); return Promise.resolve(); }, () => "the sentence", (m, x) => x.toFixed(1) + " L",
+      (m, ll) => { w.at = ll; return { need: w.need, m: 5000, water: true, twKn: 8 }; }, () => (w.far == null ? null : { m: w.far }), F.fuelWatch,
+      F.rthLevel, F.rthDecision, () => { w.fields++; }, () => { w.fields++; }, () => w.sup,
+      (t) => { w.banners.push(t); w.up = t; }, (k, d) => w.logs.push([k, d]),
+      (o) => { w.sent.push(o); return flown(); }, () => "the sentence", (m, x) => x.toFixed(1) + " L",
       (m) => (m / 1000).toFixed(1) + " km", AT_HOME, F.FUEL_RESERVE_FRAC, RTH_MAX,
-      require("../static/js/units.js").fmtVol);   // the alert's tenths in the operator's units (2026-10-17)
+      require("../static/js/units.js").fmtVol,   // the alert's tenths in the operator's units (2026-10-17)
+      FLIGHT_MS, { now: () => w.clock }, (re) => { if (w.up != null && re.test(w.up)) w.up = null; });
     w.frame = (fuel, o) => w.api.tick({ armed: true, estop: false, behavior: "survey",
       status: m0.kind === "fuel" ? { fuel_l: fuel } : { battery_v: fuel }, ...(o || {}) });
     return w;
@@ -498,6 +581,222 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
               && Kb.banners.length === 0 && Kb.sent.length === 0,
         () => "out of range: " + Jb.sent.length + " sent, banners " + JSON.stringify(Jb.banners.map((t) => t.slice(0, 60)))
             + "; no home: " + Kb.banners.length + " banner(s), " + Kb.sent.length + " sent");
+  // ── THE ENERGY OVERRIDE (Andy, 2026-11-10 live: "energy over-ride failed in the running instance"). The frame's own
+  // status says it (status.unlimited_energy) beside the gauge the console forces full: the small-class boat's 26.5 V,
+  // and the fuel home 2.9 V - the RTH point 23 + 0.7 + 2.9 = 26.6 V, ABOVE the pack. The figures of the frame that sent
+  // her home over her Go-To with the override on.
+  const ovr = (o) => ({ status: { battery_v: zm.full, unlimited_energy: true }, behavior: "goto", ...(o || {}) });
+  const Ov = world(zm); Ov.need = 2.9;
+  for (let i = 0; i < 4; i++) Ov.frame(zm.full, ovr());
+  const quiet = Ov.banners.length === 0 && Ov.sent.length === 0 && Ov.logs.length === 0, built = Ov.fields;
+  const said = Ov.api.now();
+  Ov.frame(21.31, { behavior: "goto" }); Ov.frame(21.3, { behavior: "goto" });   // the override off: the pack as it is, below the point
+  check("8k. THE ENERGY OVERRIDE ON, a battery hull whose RTH point is ABOVE a full pack (26.6 V of 26.5 - where the "
+        + "forced-full gauge was 'reached' and she was sent home): nothing is said, logged or sent on any frame, the monitor "
+        + "says 'override' with NO level, and the fields round home are still built; the frame it goes OFF with the pack "
+        + "below the point she is alerted and sent home, once",
+        () => quiet && built === 8 && said && said.override === true && said.state === "override" && said.level === null
+              && Ov.sent.length === 1 && Ov.banners.length === 1 && /LOW FUEL/.test(Ov.sent[0].why) && Ov.logs[0][1].sent === true
+              && Ov.sent[0].breakWhy === "fuel",
+        () => "under it: " + (quiet ? "quiet" : Ov.banners.length + " banner(s) / " + Ov.sent.length + " sent") + ", state "
+            + (said && said.state) + ", level " + (said && said.level) + ", field ticks " + built + " (want 8); after it went off: "
+            + Ov.sent.length + " sent, " + Ov.banners.length + " banner(s)");
+  // the latch does not outlive it: SENT before it went on, and SAID while disarmed before it went on
+  const Ls = world(zm); Ls.need = 2.9;
+  Ls.frame(26.4); for (let i = 0; i < 3; i++) Ls.frame(zm.full, ovr()); Ls.frame(26.3);
+  const Ld = world(zm); Ld.need = 2.9;
+  Ld.frame(26.4, { armed: false }); Ld.frame(26.39, { armed: false });
+  const saidDisarmed = Ld.banners.length === 1 && Ld.sent.length === 0;
+  for (let i = 0; i < 3; i++) Ld.frame(zm.full, ovr({ armed: false }));
+  const letGo = Ld.api.latch();
+  Ld.frame(26.3, { armed: false });
+  // ... a diesel hull whose RTH point is EXACTLY a full tank (the fuel home 200 L of 250): a full gauge is 'reached' there too
+  const Dz = world(); Dz.need = 200;
+  for (let i = 0; i < 3; i++) Dz.frame(250, { status: { fuel_l: 250, unlimited_energy: true } });
+  // ... a window that does not supervise is quiet under it as well (every chart window alerts, with the override off)
+  const Vw = world(zm); Vw.need = 2.9; Vw.sup = false;
+  for (let i = 0; i < 3; i++) Vw.frame(zm.full, ovr());
+  check("8l. ... and THE LATCH DOES NOT OUTLIVE IT: sent before it went on, the crossing after it goes off is answered "
+        + "again; said while disarmed before it went on, it is said again after; a diesel hull whose RTH point is exactly a "
+        + "full tank is not sent home by a gauge forced full; and a view-only window is as quiet under it",
+        () => Ls.sent.length === 2 && Ls.banners.length === 2 && saidDisarmed && !letGo.acted && !letGo.alerted
+              && Ld.banners.length === 2 && Ld.sent.length === 0 && Dz.banners.length === 0 && Dz.sent.length === 0
+              && Vw.banners.length === 0 && Vw.sent.length === 0 && Vw.logs.length === 0,
+        () => "sent before: " + Ls.sent.length + " sent in all (want 2); said disarmed: " + Ld.banners.length + " banner(s) (want 2), latch "
+            + JSON.stringify(letGo) + "; diesel at a full tank: " + Dz.banners.length + " banner(s), " + Dz.sent.length + " sent; viewer: "
+            + Vw.banners.length + " banner(s)");
+  // ... and its own alert does not stand over a monitor that is off: said while disarmed, then the override on - the
+  // banner comes down; the RTH's OWN banner (a fact about a command she took) and anyone else's stay up
+  const Bn = world(zm); Bn.need = 2.9;
+  Bn.frame(26.4, { armed: false });
+  const alertUp = /^⚠ LOW FUEL — THE RTH POINT: /.test(Bn.up || "");
+  Bn.frame(zm.full, ovr({ armed: false }));
+  const alertDown = Bn.up === null;
+  const Br = world(); Br.far = 900000; Br.frame(49.9);                      // the out-of-range alert (a diesel hull's)
+  const reserveUp = /^⚠ LOW FUEL — AT THE 20% RESERVE: /.test(Br.up || "");
+  Br.frame(250, { status: { fuel_l: 250, unlimited_energy: true } });
+  const keep = ["⚠ LOW FUEL, at the RTH point (26.50 V on the pack) · RTH: routed around nogo zone(s) via 156 waypoints", "Routing home…"].map((t) => {
+    const k = world(zm); k.need = 2.9; k.up = t; k.frame(zm.full, ovr()); return k.up === t; });
+  check("8n. UNDER THE OVERRIDE THE MONITOR'S OWN ALERT COMES DOWN (the banner is sticky, and stood over a card reading NOT "
+        + "MONITORED): the RTH-point alert and the out-of-range alert both - while the banner of an RTH she was given, and "
+        + "any other, stay up",
+        () => alertUp && alertDown && reserveUp && Br.up === null && keep.every(Boolean),
+        () => JSON.stringify({ alertUp, alertDown, reserveUp, reserveDown: Br.up === null, othersKept: keep }));
+  // ── A WINDOW THAT CANNOT SEND HAS NOT ANSWERED (2026-11-10, the review). The latch was set at the decision, before
+  // "is this the supervising window": a view-only window counted the crossing as answered, and after TAKE OVER - the
+  // reason for one is often that the supervising tab has died - nobody sent her home.
+  const Tk = world(); Tk.sup = false;
+  Tk.frame(60); Tk.frame(59.9);
+  const viewSaid = Tk.banners.length === 1 && /supervising window/.test(Tk.banners[0]) && Tk.sent.length === 0 && !Tk.api.latch().acted;
+  Tk.sup = true; Tk.frame(59.8);                   // TAKE OVER, she is still on her survey below the point
+  // ... while one that watched her sent home by the supervising window latches once she IS going home: taken over
+  // after the operator's change, it sends nothing (the change stands, as in the window that sent)
+  const Tw = world(); Tw.sup = false;
+  Tw.frame(60); Tw.frame(59.9, { behavior: "rth" });
+  const wLatched = Tw.api.latch().acted;
+  Tw.sup = true; Tw.frame(59.8, { behavior: "goto" });
+  check("8o. A VIEW-ONLY WINDOW DOES NOT COUNT THE CROSSING AS ANSWERED: it says the supervising window sends her home, "
+        + "once, and is not latched - so when it TAKES OVER with her still below the point and not going home, IT sends "
+        + "her; once she is going home it latches like any window, and an operator's change after that stands there too",
+        () => viewSaid && Tk.sent.length === 1 && /Returning home now/.test(Tk.banners[1] || "") && wLatched && Tw.sent.length === 0
+              && Tw.banners.length === 1,
+        () => JSON.stringify({ viewSaid, sentAfterTakeOver: Tk.sent.length, banners: Tk.banners.map((t) => t.slice(-40)),
+                               watcherLatched: wLatched, watcherSent: Tw.sent.length }));
+  // ── A NEW LINK IS A NEW WATCH (2026-11-10, the review). The latch is the page's, and a page that is not reloaded kept
+  // it through a Spawn, a vessel or port switch and a reconnect: a new boat (`boot_id`) below her point was neither
+  // said nor sent on a page that had answered the last one's crossing.
+  const Bt = world(zm); Bt.need = 0.5;                                      // the point 24.2 V
+  Bt.frame(24.0, { boot_id: "a" }); Bt.frame(23.9, { boot_id: "a", behavior: "goto" });   // sent; her change stands
+  const stoodA = Bt.sent.length === 1;
+  Bt.frame(23.9, { boot_id: "b", behavior: "goto" }); Bt.frame(23.8, { boot_id: "b", behavior: "goto" });
+  const Bd = world(zm); Bd.need = 0.5;                                      // said while disarmed on boat a: said again on b
+  Bd.frame(24.0, { boot_id: "a", armed: false }); Bd.frame(23.9, { boot_id: "b", armed: false });
+  check("8p. A NEW LINK IS A NEW WATCH: answered on one boat (sent, and the operator's change standing), a NEW boot_id "
+        + "below her point is answered again, once; said while disarmed on one, it is said again on the next",
+        () => stoodA && Bt.sent.length === 2 && Bt.banners.length === 2 && Bd.banners.length === 2 && Bd.sent.length === 0,
+        () => JSON.stringify({ stoodA, sent: Bt.sent.length, banners: Bt.banners.length, disarmedSaid: Bd.banners.length }));
+  // 8q (2026-11-10 review). A CROSSING SAID RE-ARMS AS ONE ACTED ON DOES. Said where she could not be sent - in a window
+  // that does not supervise, or disarmed at the dock - the crossing was never re-armed (only `acted` re-armed), so the
+  // page's "already said" swallowed her NEXT alert: a second crossing, and out of range the 20% reserve alert, which is
+  // the monitor's whole answer there.
+  const Qv = world(); Qv.sup = false;
+  Qv.frame(60); Qv.frame(100); Qv.frame(60.5);                 // said in a viewer; up 2% above the point; the point again
+  const Qd = world();
+  Qd.frame(45, { armed: false }); Qd.frame(250, { armed: false });   // low and disarmed at the dock, said; refueled
+  Qd.far = 900000; Qd.frame(55); Qd.frame(49.9);                     // the next trip: home out of range, down to 20%
+  const Qc = world(); Qc.sup = false; Qc.frame(60); Qc.frame(62); Qc.frame(59);   // no re-arm without the 2% rise
+  check("8q. A CROSSING SAID RE-ARMS LIKE ONE ACTED ON: said in a window that does not supervise, then back above the "
+        + "point by 2%, the next crossing is said again; said disarmed at the dock, refueled, then out of range, the 20% "
+        + "RESERVE alert is said; and with no rise, nothing is said twice",
+        () => Qv.banners.length === 2 && Qv.sent.length === 0
+              && Qd.banners.length === 2 && /DISARMED/.test(Qd.banners[0]) && /AT THE 20% RESERVE/.test(Qd.banners[1]) && Qd.sent.length === 0
+              && Qc.banners.length === 1,
+        () => JSON.stringify({ viewer: Qv.banners.length, dock: Qd.banners.map((t) => t.slice(0, 50)), noRise: Qc.banners.length }));
+  // 8r (2026-11-10 review). A LOW-FUEL RTH NOT TAKEN FOR A REASON THE DECISION ITSELF GATES IS NOT AN ANSWER. The latch
+  // is set at the ask and doRTH routes for seconds: refused because she was disarmed meanwhile, or never sent because
+  // this window lost the post meanwhile, it left her below her point with nothing sent - for good. Now the next frame
+  // decides again: nothing while she cannot be sent, sent the frame she can be. A refusal that would only repeat (no
+  // link) keeps the latch, and one TAKEN keeps it (the operator's change after it stands).
+  const notTaken = (o) => ({ notTaken: Object.assign({ ok: false, sent: true, refused: false }, o) });
+  const Ra = world(); Ra.hang = true; Ra.S.armed = true; Ra.frame(60);
+  Ra.S.armed = false; Ra.outcome = notTaken({ refused: true, error: "ARM before commanding the boat" }); Ra.land();
+  Ra.frame(59.9, { armed: false }); const raHeld = Ra.sent.length === 1 && Ra.banners.length === 1;
+  Ra.S.armed = true; Ra.frame(59.8);
+  const Rb = world(); Rb.hang = true; Rb.S.armed = true; Rb.frame(60);
+  Rb.outcome = notTaken({ sent: false, error: "this tab is VIEW ONLY" }); Rb.sup = false; Rb.land();
+  Rb.frame(59.9); const rbHeld = Rb.sent.length === 1 && Rb.banners.length === 1;
+  Rb.sup = true; Rb.frame(59.8);
+  const Rc = world(); Rc.hang = true; Rc.S.armed = true; Rc.S.estop = false; Rc.frame(60);
+  Rc.outcome = notTaken({ refused: true, error: "not connected" }); Rc.land(); Rc.frame(59.9); Rc.frame(59.8);
+  const Rd = world(); Rd.hang = true; Rd.S.armed = true; Rd.frame(60); Rd.land(); Rd.frame(59.9, { behavior: "goto" });
+  check("8r. A LOW-FUEL RTH REFUSED BECAUSE SHE WAS DISARMED while it was routed: nothing more while she is disarmed "
+        + "(and nothing said twice), SENT the frame she is armed; one NEVER SENT (the post passed to another tab): sent when "
+        + "this window supervises again; refused for another reason (no link) or TAKEN: not sent again",
+        () => raHeld && Ra.sent.length === 2 && Ra.banners.length === 2 && /Returning home now/.test(Ra.banners[1])
+              && rbHeld && Rb.sent.length === 2 && Rc.sent.length === 1 && Rd.sent.length === 1,
+        () => JSON.stringify({ disarmed: [raHeld, Ra.sent.length], viewOnly: [rbHeld, Rb.sent.length], noLink: Rc.sent.length, taken: Rd.sent.length }));
+  // 8s (2026-11-10 review). JUDGED AT THE FRAME'S OWN FIX. onState moves `asv` after it calls fuelTick, so the first frame
+  // of a new link was judged where the OLD boat was (a battery hull spawned out of a full pack's reach of it read
+  // "reached" on a full pack at home). The frame's fix when it carries one; `asv` when it does not.
+  const Sx = world();
+  Sx.frame(70, { status: { fuel_l: 70, lat_deg: 43.5, lon_deg: -70.25 } }); const atFix = Sx.at;
+  Sx.frame(70); const atAsv = Sx.at;
+  check("8s. EACH FRAME IS JUDGED AT ITS OWN FIX (the fuel home asked from the frame's lat/lon), and at the page's last "
+        + "position only when the frame carries none",
+        () => atFix && atFix.lat === 43.5 && atFix.lon === -70.25 && atAsv && atAsv.lat === 0.01 && atAsv.lon === 0,
+        () => JSON.stringify({ atFix, atAsv }));
+  // 8t (2026-11-10 verify round). NOTHING WITHOUT A POSITION OF THE PAGE'S OWN. 8s's fix let a page's FIRST frame (`asv`
+  // still null) decide off the frame's fix - and doRTH, which reads `asv`, posted a bare RTH with no route: a straight
+  // line home. With no `asv` nothing is decided; the next frame, with one, sends the routed RTH.
+  const Tn = world(); Tn.api.setAsv(null);
+  Tn.frame(60, { status: { fuel_l: 60, lat_deg: 0.01, lon_deg: 0 } }); const firstFrame = Tn.sent.length + Tn.banners.length;
+  Tn.api.setAsv({ lat: 0.01, lon: 0 }); Tn.frame(59.9, { status: { fuel_l: 59.9, lat_deg: 0.01, lon_deg: 0 } });
+  check("8t. A PAGE WITH NO POSITION OF ITS OWN DECIDES NOTHING (its first frame, `asv` null - doRTH would post a bare, "
+        + "unrouted RTH): nothing said or sent on it, and the next frame, with one, sends her home",
+        () => firstFrame === 0 && Tn.sent.length === 1 && Tn.banners.length === 1,
+        () => JSON.stringify({ firstFrame, sent: Tn.sent.length, banners: Tn.banners.length }));
+  // 8u (2026-11-10 verify round). THE REFUSAL JUDGED ON THE CONSOLE'S OWN STATE, AND WHICH STOP WITHDREW IT. The page's
+  // S is a frame old: a 409 "ARM" back before the frame showing her disarmed kept the latch (S.armed still true). And a
+  // plan withdrawn by an E-STOP pressed in this window is the E-STOP's case (sent the frame she can be); by a Stop it
+  // stands - the operator's change.
+  const Ua = world(); Ua.hang = true; Ua.S.armed = true; Ua.S.estop = false; Ua.frame(60);
+  Ua.outcome = notTaken({ refused: true, error: "ARM before commanding the boat", state: { armed: false, estop: false } });
+  Ua.land(); Ua.frame(59.9, { armed: false }); const uaHeld = Ua.sent.length === 1; Ua.frame(59.8);
+  const Ub = world(); Ub.hang = true; Ub.frame(60);
+  Ub.outcome = { notTaken: { withdrawn: true, by: "E-STOP" } }; Ub.land();
+  Ub.frame(59.9, { estop: true }); const ubHeld = Ub.sent.length === 1; Ub.frame(59.8);
+  const Uc = world(); Uc.hang = true; Uc.frame(60);
+  Uc.outcome = { notTaken: { withdrawn: true, by: "STOP" } }; Uc.land(); Uc.frame(59.9, { behavior: "idle" }); Uc.frame(59.8, { behavior: "idle" });
+  check("8u. A REFUSAL IS JUDGED ON THE CONSOLE'S OWN STATE (refused disarmed with the page's S still armed: dropped, sent "
+        + "the frame she is armed); WITHDRAWN BY AN E-STOP pressed here: sent the frame she is out of it; withdrawn by a "
+        + "STOP: it stands",
+        () => uaHeld && Ua.sent.length === 2 && ubHeld && Ub.sent.length === 2 && Uc.sent.length === 1,
+        () => JSON.stringify({ consoleState: [uaHeld, Ua.sent.length], estop: [ubHeld, Ub.sent.length], stop: Uc.sent.length }));
+  // ── ONE LOW-FUEL RTH IN FLIGHT (2026-11-10, from the recording of 2026-11-08: 20 sent in 26 s, each queueing its own
+  // route, with her level pinned at the point). doRTH takes seconds before its RTH lands; a latch re-armed meanwhile -
+  // the point dips and comes back, here by the fuel home going 11 -> 5 -> 11 L (the point 61 -> 55 -> 61, the re-arm
+  // line 60) - was answered with another doRTH. This world's RTH stays in flight until the check lands it.
+  const dip = (w, lv) => { w.need = 5; w.frame(lv, { behavior: "goto" }); w.need = 11; };
+  const Fl = world(); Fl.hang = true;
+  Fl.frame(60.9, { behavior: "goto" });                       // the crossing: sent, and in flight
+  const first = Fl.sent.length === 1 && Fl.api.flight() === Fl.clock;
+  dip(Fl, 60.8); const rearmed = !Fl.api.latch().acted;       // re-armed while it is in flight
+  Fl.frame(60.7, { behavior: "goto" });                       // the point again: NOT another RTH beside the one in flight
+  dip(Fl, 60.6); Fl.frame(60.5, { behavior: "goto" });        // ... nor the next time
+  const held = Fl.sent.length === 1 && Fl.banners.length === 1 && Fl.logs.length === 1;
+  Fl.land();                                                  // it settles WITHOUT her going home (refused, or lost)
+  const landed = Fl.api.flight() === 0;
+  Fl.frame(60.45, { behavior: "goto" });                      // the crossing it held back is answered now, at once
+  const retried = Fl.sent.length === 2 && Fl.banners.length === 2;
+  // ... and when the one in flight LANDS - she is going home - that answers the crossing it held: nothing more is
+  // sent, and the operator's change after it stands
+  const Fg = world(); Fg.hang = true;
+  Fg.frame(60.9, { behavior: "goto" }); dip(Fg, 60.8); Fg.frame(60.7, { behavior: "goto" });
+  const notCounted = !Fg.api.latch().acted;                   // held back, and not counted as answered
+  Fg.land(); Fg.frame(60.6, { behavior: "rth" });
+  const answeredByIt = Fg.api.latch().acted && Fg.sent.length === 1;
+  Fg.frame(60.5, { behavior: "goto" });
+  // ... and a flight that never settles is not the monitor off for good: past FUEL_FLIGHT_MS the next crossing is sent
+  const Fh = world(); Fh.hang = true;
+  Fh.frame(60.9, { behavior: "goto" }); dip(Fh, 60.8);
+  const landFirst = Fh.land;
+  Fh.clock += FLIGHT_MS - 1; Fh.frame(60.7, { behavior: "goto" });
+  const stillHeld = Fh.sent.length === 1;
+  dip(Fh, 60.6); Fh.clock += 2; Fh.frame(60.5, { behavior: "goto" });
+  // ... and the first, landing late, does not take down the mark of the one sent after it
+  const second = Fh.api.flight(); landFirst();
+  const secondStands = second === Fh.clock && Fh.api.flight() === second;
+  check("8m. ONE LOW-FUEL RTH IN FLIGHT: while the RTH she was sent is still being routed, a latch re-armed and a point "
+        + "reached again send NO second one (no banner, no log either) - it sent 20 in 26 s on 2026-11-08. The crossing it "
+        + "holds back is not counted as answered: when the one in flight settles WITHOUT her going home (refused, lost) the "
+        + "next frame sends; when it lands, she is going home and that answers it - nothing more sent, and the operator's "
+        + "change after it stands. One that never settles stops holding after FUEL_FLIGHT_MS (" + (FLIGHT_MS / 1000)
+        + " s), so the monitor is never off for good; and landing late, it leaves the next one's mark",
+        () => FLIGHT_MS >= 30000 && first && rearmed && held && landed && retried && notCounted && answeredByIt
+              && Fg.sent.length === 1 && stillHeld && Fh.sent.length === 2 && secondStands,
+        () => JSON.stringify({ first, rearmed, held, landed, retried, heldNotCounted: notCounted, answeredByLanding: answeredByIt,
+                               sentAfterHerChange: Fg.sent.length,
+                               neverSettles: { held: stillHeld, sentPastTheBound: Fh.sent.length, secondStands } }));
 }
 
 // ── 9. THE WIRING ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -508,7 +807,9 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
         + "both ask fuelWatchAt - fuelHomeNeed (water distance at the TRANSIT speed: an RTH flies the transit role) and "
         + "rthTooFar, the test doRTH refuses a return by - so the card cannot promise a mission the monitor will cut short, "
         + "and the monitor cannot send an RTH doRTH would refuse; out of range a step's level is the reserve itself",
-        () => /fuelWatchAt\(model, \{lat: asv\.lat, lon: asv\.lon\}\)/.test(TICK) && /fuelWatchAt\(model, fr\.fromEN\(q\.e, q\.n\)\)/.test(PROJ)
+        () => /fuelWatchAt\(model, fix\)/.test(TICK)
+              && /const fix = !asv \? null : st\.lat_deg != null && st\.lon_deg != null \? \{lat: st\.lat_deg, lon: st\.lon_deg\} : \{lat: asv\.lat, lon: asv\.lon\};/.test(TICK)
+              && /fuelWatchAt\(model, fr\.fromEN\(q\.e, q\.n\)\)/.test(PROJ)
               && /w\.mode === "rth" \? \(w\.h \? w\.h\.need : null\) : 0/.test(PROJ)
               && /fuelHomeNeed\(model, ll\)/.test(WATCH) && /rthTooFar\(ll, S\.home\)/.test(WATCH) && /fuelWatch\(model, /.test(WATCH)
               && /rthTooFar\(\{lat:asv\.lat,lon:asv\.lon\}, S\.home\)/.test(grab("doRTH"))
@@ -540,14 +841,16 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
     "fuelSay", "S", "RTH_MAX_M", "FUEL_RESERVE_FRAC", "N0",
     "let fuelNow = N0;\n" + grab("renderFuelRows") + "\n" + grab("fuelPillLine") + "\n" + grab("fuelOutOfRangeSay") + "\n"
     + grab("fuelReserveOf") + "\n" + grab("homeHowSay") + "\nreturn {rows: renderFuelRows, pill: fuelPillLine};");
-  const run = (N) => {
+  // (2026-11-10: `proj` the projection the card is handed - none before 9h - and `mdl` the hull; the Fuel row is returned too)
+  const run = (N, proj, mdl) => {
     const els = {}, $ = (s) => (els[s] = els[s] || { className: "vv", text: "", tip: "" });
-    const api = mk($, () => model, (e, t) => { e.text = t; }, (e, t) => { e.tip = t; }, () => null, (m, x) => x.toFixed(1) + " L",
+    const api = mk($, () => mdl || model, (e, t) => { e.text = t; }, (e, t) => { e.tip = t; }, () => proj || null, (m, x) => x.toFixed(1) + " L",
       (m, x) => Math.round(100 * (x - m.floor) / (m.full - m.floor)), (s) => s + " s", (m) => (m / 1000).toFixed(1) + " km",
       () => "the sentence", { home: { lat: 0, lon: 0 }, behavior: "survey" }, RTH_MAX, F.FUEL_RESERVE_FRAC, N);
     api.rows();
-    const r = $("#mi_rthpt");
-    return { label: $("#mi_rthpt_k").text, row: r.text, cls: r.className, tip: r.tip, pill: api.pill() };
+    const r = $("#mi_rthpt"), fr = $("#mi_fuel");
+    return { label: $("#mi_rthpt_k").text, row: r.text, cls: r.className, tip: r.tip, pill: api.pill(),
+             fuel: fr.text, fuelCls: fr.className, fuelTip: fr.tip };
   };
   const hFar = { need: 11, m: 900000, water: false, twKn: 8 }, hNear = { need: 11, m: 5000, water: true, twKn: 8 };
   const far = F.fuelWatch(model, 11, 900000), inr = F.fuelWatch(model, 11, null);
@@ -563,6 +866,57 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
               && hit.row === "REACHED · 50.0 L · find a port" && hit.cls === "vv critical"
               && inR.label === "RTH point" && inR.row === "61.0 L · 9.0 L above" && /^\nRTH point: 61\.0 L/.test(inR.pill),
         () => JSON.stringify({ out: [out.label, out.row], hit: [hit.row, hit.cls], inR: [inR.label, inR.row], pill: out.pill.slice(0, 90) }));
+  // ── 9h. UNDER THE ENERGY OVERRIDE BOTH ROWS AND THE PILL SAY SO (2026-11-10). One sentence said it, at the END of the
+  // tip after the burn law's source line, while the rows above it read "REACHED · RTH due" (critical), "reached in
+  // 2 nm" (warn) and "left (-36%)" (critical) off a full tank that is not hers. The monitor's word is `override` (8k):
+  // her level is not read (null), so what the plan TAKES is shown and what is LEFT is not.
+  const O = { model, level: null, rth: inr.level, h: hNear, w: { ...inr, h: hNear, farM: null }, state: "override", override: true };
+  const plan = { legs: 3, used: 20, seconds: 100, levelEnd: null, turn: null, home: null };
+  // a projection a frame stale - walked while the forced-full gauge still read as a level: its "left" and "reached in"
+  const stale = { legs: 3, used: 20, seconds: 100, levelEnd: -90, turn: { alongM: 2000, idx: 4 }, home: null };
+  const oPlan = run(O, plan), oStale = run(O, stale), oNone = run(O, null);
+  const zv = vessel("zboat_1800hs"), zm = F.energyModel(zv, zv.propulsion.speeds_kn.high);
+  const hZ = { need: 2.9, m: 6400, water: true, twKn: 6 }, zw = F.fuelWatch(zm, 2.9, null);
+  const oBatt = run({ model: zm, level: null, rth: zw.level, h: hZ, w: { ...zw, h: hZ, farM: null }, state: "override", override: true }, null, zm);
+  const ctl = run({ ...O, level: 250, state: "ok", override: false }, { ...plan, levelEnd: 230 });   // the same card, the override off
+  check("9h. UNDER THE ENERGY OVERRIDE the RTH row reads NOT MONITORED (amber, never REACHED / RTH due / reached in), "
+        + "the Fuel row what the plan takes and 'override on' with nothing 'left' (plain, never amber or red off a level "
+        + "that is not hers - a stale projection included), both tips LEAD with the override and what it turns off, the "
+        + "pill's line says not monitored; where a battery's point is above a full pack the tip says what turning it off "
+        + "does; the override off, the same card reads its figures; and the rehearsal row is gated off under it",
+        () => [oPlan, oStale, oNone].every((x) => x.row === "NOT MONITORED · override on" && x.cls === "vv warn" && x.label === "RTH point"
+                 && /^THE ENERGY OVERRIDE IS ON: /.test(x.tip) && /NOTHING IS MONITORED - no low-fuel alert and no automatic RTH/.test(x.tip)
+                 && /^\nRTH point: NOT MONITORED while the energy override is on/.test(x.pill))
+              && [oPlan, oStale].every((x) => x.fuel === "~20.0 L · override on" && x.fuelCls === "vv" && !/left|at home/.test(x.fuel)
+                 && /THE ENERGY OVERRIDE IS ON: /.test(x.fuelTip) && /What is left is not shown/.test(x.fuelTip))
+              && oNone.fuel === "override on · no plan"
+              && /With the override off the RTH point here is 61\.0 L/.test(oPlan.tip) && !/ABOVE a full/.test(oPlan.tip)
+              && /ABOVE a full pack: turning the override off here raises the low-battery alert at once/.test(oBatt.tip)
+              && /until the BATT pill is clicked again/.test(oBatt.tip) && /until the FUEL pill is clicked again/.test(oPlan.tip)
+              && ctl.row === "61.0 L · 189.0 L above" && /left/.test(ctl.fuel) && !/OVERRIDE/.test(ctl.tip + ctl.fuelTip + ctl.pill)
+              && /cmGate\("#cmFuelRth",\s+canSpawn\(\) && !!\(fuelNow && fuelNow\.rth != null && !fuelNow\.override\),/.test(H)
+              && /\(fuelNow && fuelNow\.override\) \? "override on" : "no RTH point"/.test(H),
+        () => JSON.stringify({ plan: [oPlan.row, oPlan.cls, oPlan.fuel, oPlan.fuelCls], stale: [oStale.row, oStale.fuel, oStale.fuelCls],
+                               none: oNone.fuel, pill: oPlan.pill.slice(0, 70), batt: (oBatt.tip.match(/With the override off[^\n]*/) || [""])[0].slice(0, 200),
+                               ctl: [ctl.row, ctl.fuel] }));
+  // 9j (2026-11-10 review). THE OVERRIDE'S ROW IN THE STATES 9h DID NOT HAVE: home by the straight line (no "straight
+  // line" tag - nothing is measured - and nothing amber off it); home OUT OF RANGE (no "the RTH point here is" - there is
+  // no RTH point, only the alert); and a battery hull past the 50 km a return is routed, where turning it off raises the
+  // alert but the RTH is REFUSED - the tip said "sends her home if she is armed".
+  const oLine = run({ ...O, h: { ...hNear, water: false }, w: { ...inr, h: { ...hNear, water: false }, farM: null } }, plan);
+  const oFar = run({ model, level: null, rth: far.level, h: hFar, w: { ...far, h: hFar, farM: 900000 }, state: "override", override: true }, plan);
+  const hZfar = { need: 5, m: 80000, water: true, twKn: 6 }, zf = F.fuelWatch(zm, 5, 80000);
+  const oBfar = run({ model: zm, level: null, rth: zf.level, h: hZfar, w: { ...zf, h: hZfar, farM: 80000 }, state: "override", override: true }, null, zm);
+  check("9j. ... and in the states 9h had not: home by the straight line (no 'straight line', amber only for the override), "
+        + "home out of range (the alert's own words, no RTH point offered), and a battery hull past 50 km (the tip says the "
+        + "RTH is REFUSED, not that she is sent home; inside 50 km it still says she is)",
+        () => oLine.row === "NOT MONITORED · override on" && oLine.cls === "vv warn"
+              && oFar.row === "NOT MONITORED · override on" && /^THE ENERGY OVERRIDE IS ON: /.test(oFar.tip) && !/RTH point here is/.test(oFar.tip)
+              && zf.mode === "rth" && zf.level >= zm.full
+              && /turning the override off here raises the low-battery alert at once, and the RTH is REFUSED - home is 80\.0 km away, past the 50\.0 km the console will route a return: Set Home where she is\./.test(oBfar.tip)
+              && !/sends her home/.test(oBfar.tip) && /alert at once, and sends her home if she is armed\./.test(oBatt.tip),
+        () => JSON.stringify({ line: [oLine.row, oLine.cls], far: (oFar.tip.match(/RTH point here[^\n]*/) || ["(none)"])[0].slice(0, 80),
+                               bfar: (oBfar.tip.match(/turning the override off[^\n]*/) || [""])[0].slice(0, 200) }));
 }
 
 // ── 10. HOME ALONG THE PASSAGE, NOT THE STRAIGHT LINE (2026-10-12, Andy: "fix the fuel monitor's straight-line distance
@@ -615,7 +969,8 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
       "const nogoDR = () => ({min: 3.15}), airNeedM = () => 4.85, coarseHomeDistM = w.coarseDist || (() => null);",
       "const groundVel = (deg, kn) => ({e: kn * KN * Math.sin(deg * Math.PI / 180), n: kn * KN * Math.cos(deg * Math.PI / 180)});",
       "const planeFrame = (o) => ({toEN: (p) => ({e: (p.lon - o.lon) * M * Math.cos(o.lat * Math.PI / 180), n: (p.lat - o.lat) * M})});",
-      "const fmtDist = (x) => (x / 1000).toFixed(1) + ' km', fuelFmt = (md, x) => x.toFixed(1) + ' L';",
+      "const fmtDist = (x) => (x / 1000).toFixed(1) + ' km', fuelFmt = w.fuelFmt || ((md, x) => x.toFixed(1) + ' L');",
+      "const fmtVol = w.fmtVol || ((x, d) => x.toFixed(1) + ' L');",   // the SHORT sentence's tenths (10h hands the real one)
       ["fineHomeDist", "homeDistFrom", "homeHowSay", "coarseHomeKey", "passageHome", "fuelHomeNeed", "fuelSay"].map(grab).join("\n"),
       "return {homeDistFrom, fuelHomeNeed, fuelSay, key: coarseHomeKey};"].join("\n");
     return new Function("w", "HOME", "M", "KN", "distTo", "homeSections", "homeEnergy", "pathEnergy", "FUEL_RESERVE_FRAC", src)(
@@ -673,6 +1028,39 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
         + "reads 'by water (coarse grid)', its fuel at that distance",
         () => nC && nC.along === "coarse" && nC.m === 31000 && nC.water === true && /home is 31\.0 km by water \(coarse grid\) and takes /.test(sC),
         () => JSON.stringify({ along: nC && nC.along, m: nC && nC.m }) + "; " + sC.slice(0, 70));
+  // 10g (2026-11-10). WHAT SHE ARRIVES WITH IS RECKONED, NOT ASSERTED. The sentence ended "which leaves the 50 L reserve
+  // ... on arrival" whatever her level - true only AT the point. Live, on the frame the energy override went off: a pack
+  // at 21.31 V, already under its 23 V alarm, with home taking 0.99 V, "leaves the 0.70 V reserve on arrival". The DriX's
+  // point with home 11 L away is 61 L (reserve 50); the page's own fuelSay (this world's fuelFmt prints every level as L).
+  const hS = { need: 11, m: 5000, water: true, twKn: 7 };
+  const sAt = Pc.fuelSay(m, 61, 61, hS), sRound = Pc.fuelSay(m, 60.5, 61, hS);            // at it, and a gauge's rounding below
+  const sShort = Pc.fuelSay(m, 40, 61, hS), sNone = Pc.fuelSay(m, 8, 61, hS);            // arrives with 29 L; cannot arrive
+  const zv = vessel("zboat_1800hs"), zm = F.energyModel(zv, zv.propulsion.speeds_kn.high);
+  const hB = { need: 0.99, m: 2311, water: true, twKn: 6 }, pB = F.rthLevel(zm, 0.99);    // the live frame: the point 24.69 V
+  const sLive = Pc.fuelSay(zm, 21.31, pB, hB), sBshort = Pc.fuelSay(zm, 24.3, pB, hB), sBat = Pc.fuelSay(zm, pB, pB, hB);
+  check("10g. THE SENTENCE RECKONS WHAT SHE ARRIVES WITH: at the point (and within a gauge's rounding of it) 'which leaves "
+        + "the reserve on arrival', as before; below it, what is left on arrival and that it is SHORT of the reserve; and "
+        + "where home takes more than she has (a pack already under its alarm: the live frame, 21.31 V) it says so - never "
+        + "the reserve she will not have",
+        () => / and takes 11\.0 L at 7 kn, which leaves the 50\.0 L reserve \(20% of the tank\) on arrival\.$/.test(sAt) && sRound.slice(sRound.indexOf(";")) === sAt.slice(sAt.indexOf(";"))
+              && / at 7 kn, which leaves 29\.0 L on arrival - SHORT of the 50\.0 L reserve \(20% of the tank\)\.$/.test(sShort)
+              && / at 7 kn - MORE THAN SHE HAS aboard\.$/.test(sNone) && !/reserve/.test(sNone)
+              && / at 6 kn - MORE THAN SHE HAS above the pack's 23 V alarm\.$/.test(sLive) && !/which leaves/.test(sLive)
+              && /, which leaves 23\.3 L on arrival, 0\.3 L above its alarm - SHORT of the 0\.7 L reserve \(20% of the pack above its 23 V alarm\)\.$/.test(sBshort)
+              && !/above its alarm/.test(sShort)
+              && /which leaves the 0\.7 L reserve \(20% of the pack above its 23 V alarm\) on arrival\.$/.test(sBat),
+        () => JSON.stringify([sAt.slice(-70), sShort.slice(-75), sNone.slice(-40), sLive.slice(-60), sBshort.slice(-80)]));
+  // 10h (2026-11-10 review). THE SHORT SENTENCE IN GALLONS, to a tenth: the card writes whole gallons from 10 up, so 48 L
+  // on arrival beside the 50 L reserve read "leaves 13 gal on arrival - SHORT of the 13 gal reserve". The real units.js.
+  const U = require("../static/js/units.js");
+  U.setDistUnit("nm");
+  const Psae = page({ fmtVol: U.fmtVol, fuelFmt: (md, x) => U.fmtVol(x) });
+  const sSae = Psae.fuelSay(m, 59, 61, hS);                                               // 59 - 11 = 48 L on arrival
+  U.setDistUnit("km");
+  check("10h. ... and in GALLONS its shortfall to a tenth (12.7 gal on arrival, SHORT of the 13.2 gal reserve), never two "
+        + "equal whole numbers",
+        () => /which leaves 12\.7 gal on arrival - SHORT of the 13\.2 gal reserve \(20% of the tank\)\.$/.test(sSae),
+        () => sSae.slice(-90));
 }
 
 // ── 11. THE COARSE HOME FIELD (2026-10-12, Andy: "build the coarse home field") ──────────────────────────────────────
@@ -718,6 +1106,60 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
           () => JSON.stringify({ no: no.w, yes: { asked: yes.w.asked.length, sent: yes.w.sent.length },
                                  acts: [idle, paused, disarmed, alert].map(x => [x.w.asked.length, x.w.sent.length]),
                                  label: label("/api/cmd/energy", { level: 49.6 }), apart }));
+    // 9f2 (2026-11-10). Under the energy override the console refuses a level (it reports full whatever is set): the row
+    // said so only AFTER asking whether to send her home. Now before, and nothing is asked or sent.
+    const ovrRun = mk(UNDER_WAY, { ...N, override: true }, true), ovrIdle = mk({ armed: true, run: "idle" }, { ...N, override: true }, true);
+    await ovrRun.run(); await ovrIdle.run();
+    check("9f2. ... and UNDER THE ENERGY OVERRIDE the rehearsal asks nothing and sends nothing - it says to turn the "
+          + "override off first, under way or idle",
+          () => [ovrRun, ovrIdle].every((x) => x.w.asked.length === 0 && x.w.sent.length === 0 && /energy override off first/.test(x.w.notes[0] || "")),
+          () => JSON.stringify([ovrRun.w, ovrIdle.w]));
+  }
+
+  // ── 9i. THE ENERGY PILL SAYS WHAT THE CONSOLE ANSWERED, AFTER IT ANSWERED, ONE CLICK AT A TIME (2026-11-10). The page's
+  //        own click handler, lifted by its text. It flashed "Energy override ON" beside a command it had not awaited:
+  //        in a view-only window nothing was sent and that note replaced the refusal (and went into the history as done).
+  {
+    const src = (H.match(/\$\("#battPill"\)\.onclick = (async \(\)=>\{[\s\S]*?\r?\n\});/) || [])[1];
+    if (!src) throw new Error("the energy pill's click handler was not found in the page (renamed, or no longer async?)");
+    // every post waits for an answer of its OWN (w.answer(r) gives the oldest one waiting its reply; w.answerAll(r) every
+    // one): with one resolver for the lot, a handler that sent three left two awaits unsettled and the suite stopped
+    // there, exit 0 - the mutant that found the floor above
+    const mk = (on0) => {
+      const w = { sent: [], notes: [], waiting: [], S: { status: { unlimited_energy: on0 } } };
+      w.answer = (r) => { const res = w.waiting.shift(); if (res) res(r); };
+      w.answerAll = (r) => { while (w.waiting.length) w.answer(r); };
+      w.click = new Function("S", "cmd", "took", "flashNote", "let energyBusy = false;\nreturn " + src + ";")(w.S,
+        (path, body) => { w.sent.push([path, body]); return new Promise((res) => { w.waiting.push(res); }); },
+        (r) => !!(r && r.ok), (t) => w.notes.push(t));
+      return w;
+    };
+    const ok = (on) => ({ ok: true, state: { status: { unlimited_energy: on } } });
+    // ON, taken: one post, and the note only once the console has answered
+    const a = mk(false); const pa = a.click(); const early = a.notes.length;
+    a.answer(ok(true)); await pa;
+    // two more clicks before the answer: ONE post (S moves only with the stream - a second read the same value)
+    const b = mk(false); const pb1 = b.click(), pb2 = b.click(), pb3 = b.click();
+    const oneFlight = b.sent.length; b.answerAll(ok(true)); await Promise.all([pb1, pb2, pb3]);
+    b.S.status.unlimited_energy = true; const pb4 = b.click(); b.answer(ok(false)); await pb4;       // free again: OFF goes
+    // never sent (a view-only window), refused, lost: cmd() has said why, and the handler says NOTHING
+    const c = mk(false); const pc = c.click(); c.answer({ ok: false, error: "this tab is VIEW ONLY", sent: false, refused: false }); await pc;
+    const d = mk(true); const pd = d.click(); d.answer({ ok: false, error: "no answer", sent: true, refused: false }); await pd;
+    const freed = (() => { const p = d.click(); const n = d.sent.length; d.answer(ok(false)); return p.then(() => n); })();
+    const dSent = await freed;
+    // the note is the ANSWER's state, not the request's: asked ON, the console answers that it is off
+    const e = mk(false); const pe = e.click(); e.answer(ok(false)); await pe;
+    check("9i. THE ENERGY PILL'S CLICK is awaited and one at a time: it posts {unlimited: the opposite of the state}, says "
+          + "nothing until the console answers, then says what the ANSWER's state is - ON with 'the low-fuel monitor is "
+          + "OFF', OFF with 'no longer held off' (never 'is watching': it may have nothing to watch); three clicks before the answer are ONE post; a command never sent, refused or "
+          + "lost is left to cmd()'s own words (no 'Energy override ON' over a refusal), and the pill is free again after it",
+          () => a.sent.length === 1 && a.sent[0][0] === "/api/cmd/energy" && a.sent[0][1].unlimited === true && early === 0
+                && a.notes.length === 1 && /^Energy override ON — .*low-fuel monitor is OFF/.test(a.notes[0])
+                && oneFlight === 1 && b.sent.length === 2 && b.sent[1][1].unlimited === false && b.notes.length === 2
+                && /^Energy override OFF — .*monitor is no longer held off \(the card's RTH point row says what it watches\)\.$/.test(b.notes[1]) && !/watching/.test(b.notes[1])
+                && c.sent.length === 1 && c.notes.length === 0 && d.notes.length === 1 && dSent === 2 && /^Energy override OFF/.test(d.notes[0])
+                && e.notes.length === 1 && /^Energy override OFF/.test(e.notes[0]),
+          () => JSON.stringify({ a: [a.sent, early, a.notes], b: [oneFlight, b.sent.length, b.notes.length], c: c.notes, d: [dSent, d.notes], e: e.notes }));
   }
 
   // ── 9g. THE CARD'S WALK OF THE MISSION, EVERY 10 S NOT EVERY SECOND (2026-10-17, measured ~100 ms of the page's thread
@@ -743,11 +1185,18 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
     const w4 = at(api.MS + 100);                        // past the interval: walked
     level = 195; const w5 = at(api.MS + 600);           // a jump of 2% of the tank (the rehearsal row, a refuel): at once
     route = route.slice(); const w6 = at(api.MS + 900); // a new plan: at once
+    // (2026-11-10) the energy override takes her level away and gives it back: each is walked at once, or the row says
+    // what is left of a level it no longer has for up to the interval - and no level, steadily, is not walked every frame
+    level = null; const w7 = at(api.MS + 1000);         // the level gone (the override on): at once
+    const w8 = at(api.MS + 1100);                       // still none: kept
+    level = 195; const w9 = at(api.MS + 1200);          // the level back: at once
     check("9g. THE CARD'S WALK OF THE MISSION IS KEPT FOR " + (api.MS / 1000) + " S (2026-10-17: ~100 ms of the page's thread "
           + "every second, the whole run) - kept 1.2 s on, on a new waypoint alone and on a 0.2% level drift; walked again past "
-          + "the interval, and AT ONCE on a level jump of 2% of the tank or a new plan",
-          () => api.MS >= 10000 && w0 === 1 && w1 === 1 && w2 === 1 && w3 === 1 && w4 === 2 && w5 === 3 && w6 === 4,
-          () => JSON.stringify({ interval_ms: api.MS, walks: [w0, w1, w2, w3, w4, w5, w6] }));
+          + "the interval, and AT ONCE on a level jump of 2% of the tank or a new plan - and when her level goes (the energy "
+          + "override) or comes back, though not while it stays away",
+          () => api.MS >= 10000 && w0 === 1 && w1 === 1 && w2 === 1 && w3 === 1 && w4 === 2 && w5 === 3 && w6 === 4
+                && w7 === 5 && w8 === 5 && w9 === 6,
+          () => JSON.stringify({ interval_ms: api.MS, walks: [w0, w1, w2, w3, w4, w5, w6, w7, w8, w9] }));
   }
 
   const C = require(path.join(APP, "static", "js", "coarse.js"));
@@ -1004,5 +1453,6 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
         "fuelTick / coarseHomeInWorker / the import");
 
   console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
+  finished = true;
   process.exit(fails ? 1 : 0);
 })().catch((e) => { console.log("  FAIL 0. the suite itself CRASHED before finishing - " + (e && e.stack ? e.stack.split("\n").slice(0, 3).join(" | ") : e)); console.log("\n1 CHECK(S) FAILED (crashed before finishing)"); process.exit(1); });

@@ -94,6 +94,14 @@ against this file trimmed to its setup and 17-17g, 15/15 caught (recorded result
   * the fault report unguarded (a closed stderr raises)   -> caught by 17g
   * the recovery report unguarded                         -> caught by 17g
 
+TEETH for 21-21e (2026-11-10, the energy override that failed live: every new link dropped it while the console went on
+showing it ON) - 5 mutations RUN, each on a scratch copy of the app with this suite run there, 5/5 caught:
+  * connect() does not tell the new link                  -> caught by 21, 21b, 21d
+  * the link always told OFF                              -> caught by 21, 21b, 21d
+  * Reset's note silent about the override                -> caught by 21d
+  * the hours and miles derived before the liters forced  -> caught by 21e
+  * the click no longer tells the link in hand            -> caught by 21d
+
 Harness rules as estop_chain: every condition is a THUNK and a throw is a failed check;
 the server's output goes to a temp file and the last check reads it.
 """
@@ -1004,6 +1012,161 @@ check("20. state() READS THE LINK ONCE: `self._link` appears once in it (a disco
       "in the state read)",
       lambda: _state_src.count("self._link") == 1,
       lambda: "self._link x%d" % _state_src.count("self._link"))
+
+# ── 21-21f. THE ENERGY OVERRIDE OUTLIVES THE LINK IT WAS CLICKED ON (Andy, 2026-11-10 live: "energy over-ride failed in
+# the running instance") ──────────────────────────────────────────────────────────────────────────────────────────────
+# Engine.energy_override is the CONSOLE's; SimVcu._unlimited_energy is the LINK's, and connect() builds a NEW link on a
+# Reset, a Spawn, a vessel or port switch and /api/connect. Only the link in hand at the click was told: after his Reset
+# the pack drained 26.5 V -> 21.31 V in 73 minutes under a gauge reading 100 % and a pill showing the override ON.
+# state() reports the Engine's flag and forces the gauge full, so over HTTP a link that burns under the override looks
+# exactly like one that holds (tests/energy_chartinfo.py can only turn it OFF and read the next frame): these read the
+# LINK ITSELF. The loop is parked (Engine._run replaced on the instance, as 17d replaces _autonomy_label), so every tick
+# is this check's own and no monitor is woken.
+def _tank(link):
+    return link.fuel_l if _C.POWER_TYPE == "fuel" else link.battery_v
+
+
+def _full():
+    return _C.FUEL_CAPACITY_L if _C.POWER_TYPE == "fuel" else _C.BATT_FULL_V
+
+
+def _sim():
+    E.connect("sim", "", _C.DEFAULT_VCU_PORT, "tcp")
+
+
+def _hull(vid):
+    _C.apply_vessel(_C.load_vessel(vid))                    # the /api/vessel route's own two lines
+    _sim()
+
+
+def _port_switch():
+    _C.SPAWN_LAT, _C.SPAWN_LON = 43.07, -70.70              # what apply_port() does for a new base; then its connect
+    _sim()
+
+
+def _after(reconnect):
+    """The NEW link after `reconnect`, and ten simulated minutes under way at the hull's top speed (2400 ticks)."""
+    reconnect()
+    link, note = E._link, E.note
+    link.upload_plan([{"lat": link.lat + 0.5, "lon": link.lon}], 5.0, "high", 2.0, completion="loiter")
+    link.start()
+    tel = {}
+    for _ in range(2400):
+        tel = link.tick(0.25)
+    return {"link": link._unlimited_energy, "frame": tel.get("unlimited_energy"), "tank": _tank(link), "full": _full(),
+            "state": E.state()["status"].get("unlimited_energy"), "sog": tel.get("sog_kn") or 0.0, "note": note}
+
+
+_hull0, _spawn0 = _C.VESSEL["id"], (_C.SPAWN_LAT, _C.SPAWN_LON)
+_got, _toggle, _derived = {}, {}, {}
+E._run = lambda stop: None                                  # no loop while these run
+try:
+    for _on in (True, False):
+        _hull(_hull0)
+        E.set_energy_override(_on)
+
+        def _no_link(on=_on):
+            E.disconnect()
+            E.set_energy_override(on)                       # with no link: the Engine's flag alone
+            _sim()
+        _got[_on] = [("connect()", _after(_sim)), ("reset()", _after(E.reset)),
+                     ("reset(spawn)", _after(lambda: E.reset(spawn={"lat": 43.0, "lon": -70.6}))),
+                     ("set with no link, then connect()", _after(_no_link)),
+                     ("a port switch", _after(_port_switch)),
+                     ("a switch to the battery hull", _after(lambda: _hull("zboat_1800hs"))),
+                     ("reset() on the battery hull", _after(E.reset))]
+    # the click itself still reaches the link in hand, both ways (the one call, _tell_energy_override)
+    _hull(_hull0)
+    E.set_energy_override(True)
+    _toggle["on"] = (E._link._unlimited_energy, E.energy_override)
+    E.set_energy_override(False)
+    _toggle["off"] = (E._link._unlimited_energy, E.energy_override)
+    # 21e. what state() DERIVES from the tank under the override, on a link whose own tank is not full (a real link's):
+    # the frame as the loop would have stored it - 100 L aboard, 8 kn
+    for _on in (True, False):
+        E.set_energy_override(_on)
+        E.status = {"energy_type": "fuel", "fuel_l": 100.0, "battery_v": None, "sog_kn": 8.0}
+        _derived[_on] = dict(E.state()["status"])
+    # 21f. a link that is NOT the simulator, with the override on: connect() neither raises nor blocks, and SAYS it (the
+    # gauge reads full whatever she reports, and the page's low-fuel monitor is off for her)
+    E.set_energy_override(True)
+    E.connect("serial", "", _C.DEFAULT_VCU_PORT, "serial")
+    _real = {"note": E.note, "flag": E.energy_override, "real": isinstance(E._link, _C.RealVcu),
+             "told": getattr(E._link, "_unlimited_energy", None)}
+    E.disconnect()
+finally:
+    del E._run
+    E.set_energy_override(False)
+    _C.SPAWN_LAT, _C.SPAWN_LON = _spawn0
+    _C.apply_vessel(_C.load_vessel(_hull0))
+    _C.SPAWN_LAT, _C.SPAWN_LON = _spawn0
+    E.disconnect()
+_say = lambda rows: "; ".join("%s: link %s, state %s, %.4f of %.4g" % (n, r["link"], r["state"], r["tank"], r["full"])  # noqa: E731
+                              for n, r in rows)
+check("21. THE ENERGY OVERRIDE OUTLIVES THE LINK: on, a NEW link from connect(), reset(), reset(spawn), a connect after it "
+      "was set with no link, a port switch and a vessel switch each HOLDS ITS ENERGY - the link's own flag set, and the "
+      "tank or the pack exactly full after ten minutes under way at top speed (2400 ticks)",
+      lambda: len(_got[True]) == 7 and all(r["link"] is True and r["frame"] is True and r["tank"] == r["full"]
+                                           and r["sog"] > 1.0 for _, r in _got[True]),
+      lambda: _say(_got[True]))
+check("21b. ... and state() never says otherwise than the link: its unlimited_energy is the link's own after every one of "
+      "them, on and off",
+      lambda: all(r["state"] is r["link"] for rows in _got.values() for _, r in rows),
+      lambda: "on: %s | off: %s" % ([(r["state"], r["link"]) for _, r in _got[True]],
+                                    [(r["state"], r["link"]) for _, r in _got[False]]))
+check("21c. ... OFF, the same seven links BURN - none is unlimited, and each is below full after the same ten minutes (the "
+      "control: a link that never burned would pass 21)",
+      lambda: len(_got[False]) == 7 and all(r["link"] is False and r["tank"] < r["full"] and r["sog"] > 1.0
+                                            for _, r in _got[False]),
+      lambda: _say(_got[False]))
+_rn = {on: [r["note"] for n, r in _got[on] if n.startswith("reset")] for on in (True, False)}
+_ovr_src, _con_src = inspect.getsource(_C.Engine.set_energy_override), inspect.getsource(_C.Engine.connect)
+check("21d. Reset and Spawn SAY the override is still on (it is the console's, and outlives the boat it was clicked on) and "
+      "say nothing of it when it is off; the click reaches the link in hand both ways; and the link is told under the lock "
+      "that wrote the flag, in connect() before the new link is opened or its loop started (ONE call for both)",
+      lambda: len(_rn[True]) == 3 and all("The energy override is still ON." in n for n in _rn[True])
+      and len(_rn[False]) == 3 and not any("override" in n for n in _rn[False])
+      and all(("Reset - fresh sim boot" in n) or ("Spawned here" in n) for n in _rn[True] + _rn[False])
+      and _toggle == {"on": (True, True), "off": (False, False)}
+      and _ovr_src.count("with self._lock:") == 1 and _ovr_src.count("self._tell_energy_override(self._link)") == 1
+      and _con_src.count("self._tell_energy_override(self._link)") == 1
+      and 0 < _con_src.index("self._tell_energy_override(self._link)") < _con_src.index("self._link.open()")
+      < _con_src.index("self._thread.start()"),
+      lambda: "notes on %s | off %s | toggle %s" % ([n[-40:] for n in _rn[True]], [n[-30:] for n in _rn[False]], _toggle))
+_built = {on: [(n, r["note"]) for n, r in _got[on] if not n.startswith("reset")] for on in (True, False)}
+_src_all = open(os.path.join(APP, "asv_console.py"), encoding="utf-8").read()
+_eng = {f: inspect.getsource(getattr(_C.Engine, f)) for f in ("__init__", "connect", "disconnect")}
+_ovr_lines = _ovr_src.splitlines()
+_with_at = next((i for i, l in enumerate(_ovr_lines) if l.strip() == "with self._lock:"), -1)
+_tell_at = next((i for i, l in enumerate(_ovr_lines) if l.strip() == "self._tell_energy_override(self._link)"), -1)
+_ind = lambda l: len(l) - len(l.lstrip())  # noqa: E731
+check("21f. ... and SAID on every link it is carried onto - a connect(), a port switch, a vessel switch, one set with no link - "
+      "never on one it is not; onto a link that is NOT the simulator it neither raises nor blocks and says the gauge reads full "
+      "whatever she reports; connect() is the ONE builder of a link (`._link =` only in __init__, connect and disconnect); "
+      "and the click tells the link INSIDE the lock that writes the flag",
+      lambda: len(_built[True]) == 4 and all("The energy override is still ON." in n for _, n in _built[True])
+      and len(_built[False]) == 4 and not any("override" in n for _, n in _built[False])
+      and _real["real"] and _real["flag"] is True
+      and "The energy override is still ON: the gauge reads full whatever she reports, and the low-fuel monitor is off." in _real["note"]
+      and ". The energy override is still ON:" in _real["note"]
+      and _src_all.count("._link = ") == sum(s.count("self._link = ") for s in _eng.values()) == 4
+      and 0 <= _with_at < _tell_at and _ind(_ovr_lines[_tell_at]) > _ind(_ovr_lines[_with_at])
+      and all(_ind(l) > _ind(_ovr_lines[_with_at]) for l in _ovr_lines[_with_at + 1:_tell_at + 1] if l.strip()),
+      lambda: "built on %s | off %s | real %s | _link= %d" % ([n[-45:] for _, n in _built[True]], [n[-30:] for _, n in _built[False]],
+                                                              _real, _src_all.count("._link = ")))
+_d1, _d0 = _derived.get(True, {}), _derived.get(False, {})
+check("21e. UNDER THE OVERRIDE THE HOURS AND MILES ARE THE SHOWN TANK'S: a link reporting 100 L reads capacity, 100 % and "
+      "the endurance and range OF a full tank at that speed (they were reckoned from the real 100 L beside a gauge saying "
+      "full); the override off, all four are the real tank's",
+      lambda: _d1.get("fuel_l") == round(_C.FUEL_CAPACITY_L, 1) and _d1.get("fuel_pct") == 100.0 and _d1.get("fuel_state") == "ok"
+      and _d1.get("unlimited_energy") is True and _d0.get("fuel_l") == 100.0 and _d0.get("unlimited_energy") is False
+      and _d1.get("burn_lph") == _d0.get("burn_lph") and _d1.get("burn_lph") > 0
+      and _d1.get("endurance_h") == round(_C.FUEL_CAPACITY_L / (_C.FUEL_BURN_IDLE + (_C.FUEL_BURN_FULL - _C.FUEL_BURN_IDLE)
+                                          * (min(1.0, 8.0 / _C.SPEED_KN["high"]) ** _C.FUEL_BURN_EXP)), 1)
+      and _d0.get("endurance_h") < _d1.get("endurance_h")
+      and _d1.get("range_nm") == round(_d1["endurance_h"] * 8.0, 1) and _d0.get("range_nm") == round(_d0["endurance_h"] * 8.0, 1),
+      lambda: "on %s | off %s" % ({k: _d1.get(k) for k in ("fuel_l", "fuel_pct", "endurance_h", "range_nm")},
+                                  {k: _d0.get(k) for k in ("fuel_l", "fuel_pct", "endurance_h", "range_nm")}))
 
 print(("\n%d CHECK(S) FAILED (%d ran)" % (fails, ran)) if fails
       else ("\nall checks passed (%d)" % ran))

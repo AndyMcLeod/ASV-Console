@@ -535,7 +535,7 @@
     <div class="pill" title="Bearing and range from Home to the ASV."><span class="k">HOME→</span><b id="p_home">--</b></div>
     <div class="pill" title="Vessel pitch (bow up +). In the sim, driven by the sea state (head seas pitch most)."><span class="k">PITCH</span><b id="p_pitch">--</b></div>
     <div class="pill" title="Vessel roll (starboard down +). In the sim, driven by the sea state (beam seas roll most)."><span class="k">ROLL</span><b id="p_roll">--</b></div>
-    <div class="pill batt" id="battPill" title="Click to toggle the energy-full override (report the battery/fuel as full and stop the sim drain/burn). Turns MAGENTA when on. Applies in every mode."><span class="k" id="p_batt_k">BATT</span><b id="p_batt">--</b></div>
+    <div class="pill batt" id="battPill" title="Click to toggle the energy-full override (report the battery/fuel as full and stop the sim drain/burn). Turns MAGENTA when on. Applies in every mode. While it is on the low-fuel monitor is OFF: no alert, no automatic RTH."><span class="k" id="p_batt_k">BATT</span><b id="p_batt">--</b></div>
     <div class="pill"><span class="k">WPT</span><b id="p_wpt">--</b></div>
     <div class="pill" id="unitsPill" style="cursor:pointer" title="Display units: METRIC - long distances (route lengths, remaining distance, HOME range, tide-station distance) in kilometers and fuel in liters - or SAE - nautical miles and US gallons. Click to toggle (persisted, both windows). Short distances (line spacing, buffers, depths, the LINES table) always read in meters, chart-tile soundings stay in feet, the AIS card always reads nm, and a battery reads volts."><span class="k">UNITS</span><b id="p_units">METRIC</b></div>
     <div class="pill" title="Local time · UTC"><span class="k">TIME</span><b id="p_time">--</b></div>
@@ -10582,8 +10582,12 @@ function fuelProjection(){
   const model = fuelModel(); if(!model || !asv) return null;
   const rr = indexedRoute(), idx = window._wpIndex || 0;
   const st = (S && S.status) || {}, level = energyLevel(model, st);
-  const jumped = fuelProj.level != null && level != null
-                 && Math.abs(level - fuelProj.level) >= FUEL_PROJECT_JUMP * Math.abs((model.full - model.floor) || 1);
+  // ... and a level that has just become KNOWN or UNKNOWN is a jump too (2026-11-10): the energy override takes her
+  // level away (fuel.js energyLevel) and gives it back, and the row said what was left of a level it no longer had for
+  // up to ten seconds after each click of the pill.
+  const jumped = (fuelProj.level == null) !== (level == null)
+                 || (fuelProj.level != null && level != null
+                     && Math.abs(level - fuelProj.level) >= FUEL_PROJECT_JUMP * Math.abs((model.full - model.floor) || 1));
   if(fuelProj.val && fuelProj.route === rr && !jumped && Date.now() - fuelProj.at < FUEL_PROJECT_MS) return fuelProj.val;
   const here = {lat: asv.lat, lon: asv.lon}, fr = planeFrame(here);
   const drift = groundVel(st.env_set_deg, st.env_set_kn) || {e: 0, n: 0}, legs = [];
@@ -10612,12 +10616,25 @@ function fuelFmt(model, x){
 // Percent of the USABLE span: the tank, or a pack down to its factory alarm (fuel.js header).
 function fuelPct(model, x){ return Math.round(100 * (x - model.floor) / (model.full - model.floor)); }
 // The one sentence the alert, the log and the card's tip share.
+// ⚠ WHAT SHE ARRIVES WITH IS RECKONED, NOT ASSERTED (2026-11-10). The sentence ended "which leaves the ... reserve ...
+// on arrival" WHATEVER her level - true only AT the point (the tip's use: level = the point). On the frame the energy
+// override went off, a pack at 21.31 V, already under its 23 V alarm, was said to arrive home with the reserve. Below
+// the point it now says what is left on arrival, or that home takes more than she has. A gauge's rounding (0.01 V,
+// 0.1 L) is not a shortfall: within half a percent of the usable span of the point it is the point's own sentence.
 function fuelSay(model, level, rth, h){
   const f = (x) => fuelFmt(model, x);
-  return f(level) + " " + (model.kind === "fuel" ? "aboard" : "on the pack") + "; home is " + fmtDist(h.m)
-    + homeHowSay(h, true) + " and takes " + f(h.need)
-    + " at " + h.twKn + " kn, which leaves the " + f(model.reserve) + " reserve (" + Math.round(FUEL_RESERVE_FRAC * 100)
-    + "% of " + (model.kind === "fuel" ? "the tank" : "the pack above its " + model.floor + " V alarm") + ") on arrival.";
+  const head = f(level) + " " + (model.kind === "fuel" ? "aboard" : "on the pack") + "; home is " + fmtDist(h.m)
+    + homeHowSay(h, true) + " and takes " + f(h.need) + " at " + h.twKn + " kn";
+  const of = " reserve (" + Math.round(FUEL_RESERVE_FRAC * 100)
+    + "% of " + (model.kind === "fuel" ? "the tank" : "the pack above its " + model.floor + " V alarm") + ")";
+  const reserve = f(model.reserve) + of, arrive = level - h.need;
+  if(!(rth - level > 0.005 * (model.full - model.floor))) return head + ", which leaves the " + reserve + " on arrival.";
+  // SHORT, to a tenth for a fuel hull (the alert-only banner's `fine`): whole gallons put 47.5 L on arrival as "13 gal"
+  // beside a "13 gal" reserve - a shortfall whose two numbers read equal (2026-11-10 review)
+  const fine = (x) => model.kind === "fuel" ? fmtVol(x, 1) : f(x);
+  if(arrive >= model.floor) return head + ", which leaves " + fine(arrive) + " on arrival"
+    + (model.kind === "fuel" ? "" : ", " + f(arrive - model.floor) + " above its alarm") + " - SHORT of the " + fine(model.reserve) + of + ".";
+  return head + " - MORE THAN SHE HAS" + (model.kind === "fuel" ? " aboard." : " above the pack's " + model.floor + " V alarm.");
 }
 // What the reserve is a fraction of, in words: the tank, or a pack down to its alarm (fuel.js header).
 function fuelReserveOf(model){
@@ -10635,22 +10652,57 @@ function fuelOutOfRangeSay(model, w){
 // THE MONITOR, on every state frame: the RTH point now, and - once she has come down to it - the alert and the shift
 // to RTH, ONCE per crossing (fuel.js rthDecision). The send is the supervising window's alone; every window alerts.
 // Out of range (fuelWatchAt) the level is the reserve itself, and reaching it is the alert alone, once per crossing.
+// ⚠ UNDER THE ENERGY OVERRIDE NOTHING IS MONITORED (Andy, 2026-11-10: "energy over-ride failed in the running instance").
+// The decision is told the override (fuel.js rthDecision: its own state, never a send, the latch dropped) - the tip
+// had always promised it, and the monitor never asked: with the override ON it read the forced-full pack as her level
+// and, 3.46 nm from home where a battery hull's RTH point stands above a full pack, sent her home over her Go-To.
+// ⚠ ONE LOW-FUEL RTH IN FLIGHT (2026-11-10, from the recordings). doRTH spends seconds reading the chart and routing
+// before it posts, and until its RTH lands she is not yet "going home": a latch re-armed in those seconds (the RTH
+// point moves with every change in the distance home) was answered with ANOTHER doRTH on the next crossing. On
+// 2026-11-08, her level pinned at the point by the energy override, the monitor sent 20 in 26 s, each queueing its own
+// route: the route worker's wait ran from 5 s to 105 s, supervision lapsed 8 times, the guard's Hold and its in-extremis
+// escape went unanswered, and the first RTH landed six minutes late. `fuelFlight` is when the one in flight was sent:
+// no other is sent until it settles, or FUEL_FLIGHT_MS has passed (a wait with no end would be the monitor off for good).
+// A crossing it holds back is NOT counted as answered: if the one in flight lands, she is going home and that answers
+// it; if it is refused or lost, the frame after it settles sends - the retry the re-armed crossing was always given.
+const FUEL_FLIGHT_MS = 120000;
+// ⚠ TWO MORE WAYS THE LATCH OUTLIVED WHAT IT ANSWERED (2026-11-10, the review of the above). (1) A NEW LINK IS A NEW
+// WATCH: the latch is this page's, and a page that is not reloaded carried it through a Spawn, a vessel or port switch
+// and a reconnect - a new boat (`boot_id`) below her point was neither said nor sent where a fresh page did both.
+// (2) A WINDOW THAT CANNOT SEND HAS NOT ANSWERED: the latch was set at the decision, before "is this the supervising
+// window" - so a view-only window counted the crossing as answered, and after TAKE OVER (the reason for one is often
+// that the supervising tab has died) nobody sent her home. It latches there only once she IS going home.
 let fuelRth = {acted: false, alerted: false};
-let fuelNow = null, fuelErrSaid = false;
+let fuelNow = null, fuelErrSaid = false, fuelFlight = 0, fuelBoot;
 function fuelTick(s){
   homeFieldTick();
   coarseHomeTick();
   const model = fuelModel(), st = (s && s.status) || {};
   if(!model){ fuelNow = null; return; }
+  if(s.boot_id !== fuelBoot){ fuelBoot = s.boot_id; fuelRth = {acted: false, alerted: false}; }
   const level = energyLevel(model, st);
-  const w = asv ? fuelWatchAt(model, {lat: asv.lat, lon: asv.lon}) : null;
+  // JUDGED AT THIS FRAME'S OWN FIX (2026-11-10 review): onState moves `asv` well below this call, so the first frame of a
+  // new link was judged where the OLD boat was - a battery hull spawned out of a full pack's reach of it read "reached"
+  // on a full pack at home. `asv` only when the frame carries no fix. ⚠ AND NOTHING WITHOUT A POSITION OF THE PAGE'S OWN
+  // (the verify round): on a page's FIRST frame `asv` is still null, and doRTH - called in this same turn - reads `asv`,
+  // not the frame: with none it posts a bare RTH, a straight line home the chart never saw. Before the frame's fix was
+  // asked, a frame with no `asv` decided nothing; it still does (a new link's first frame keeps the old `asv`, and a new
+  // link comes up SAFE, so nothing is sent off it).
+  const fix = !asv ? null : st.lat_deg != null && st.lon_deg != null ? {lat: st.lat_deg, lon: st.lon_deg} : {lat: asv.lat, lon: asv.lon};
+  const w = fix ? fuelWatchAt(model, fix) : null;
   const h = w ? w.h : null, rth = w ? w.level : null, alertOnly = !!w && w.mode === "alert";
   const atHome = !!(h && h.m <= FUEL_AT_HOME_M);
-  const dec = rthDecision({model, level, rth, alertOnly, armed: s.armed, estop: s.estop, behavior: s.behavior, atHome, acted: fuelRth.acted});
-  fuelNow = {model, level, rth, h, w, state: dec.state, override: !!st.unlimited_energy};
+  const override = !!st.unlimited_energy;
+  const dec = rthDecision({model, level, rth, alertOnly, armed: s.armed, estop: s.estop, behavior: s.behavior, atHome,
+                           acted: fuelRth.acted, said: fuelRth.alerted, override});
+  fuelNow = {model, level, rth, h, w, state: dec.state, override};
   if(dec.rearm) fuelRth = {acted: false, alerted: false};
+  // under the override the monitor's own alert does not stand over a monitor that is off (the banner is sticky); the
+  // RTH's own banner - "LOW FUEL, at the RTH point ... RTH: routed" - is a fact about a command she took, and stays
+  if(dec.state === "override") takeDownBanner(/^⚠ LOW FUEL — (THE RTH POINT|AT THE \d+% RESERVE): /);
   if(dec.state !== "reached") return;
-  if(dec.latch) fuelRth.acted = true;
+  const flying = !!(fuelFlight && Date.now() - fuelFlight < FUEL_FLIGHT_MS);
+  if(dec.latch && (!dec.send || (supervising() && !flying))) fuelRth.acted = true;
   // OUT OF RANGE: said once, in every window, and NOTHING commanded - "an alert at 20% with no automatic action".
   if(alertOnly){
     if(fuelRth.alerted) return;
@@ -10675,11 +10727,27 @@ function fuelTick(s){
   // and a boat armed after the alert was never sent (tests/fuel_rth.js 8c).
   if(dec.send && supervising()){
     fuelRth.alerted = true;
+    if(flying) return;                 // the one in flight answers this crossing, if it lands (unlatched above)
+    const sentAt = fuelFlight = Date.now(), bootAt = fuelBoot;
     showBanner("⚠ LOW FUEL — THE RTH POINT: " + say + " Returning home now.");
     logClient("fuel_rth", {...rec, sent: true});
     // ⚠ CAUGHT, NOT FIRED AND FORGOTTEN: an async command that throws must say so (doRTH's own refusals say themselves)
     doRTH({why: "⚠ LOW FUEL, at the RTH point (" + fuelFmt(model, level) + (model.kind === "fuel" ? " aboard" : " on the pack") + ")", breakWhy: "fuel"}).catch(e => showBanner("⚠ LOW FUEL — the RTH could not be commanded: "
-      + ((e && e.message) || e) + ". Command RTH by hand."));
+      + ((e && e.message) || e) + ". Command RTH by hand.")).then((out) => {
+      // ⚠ NOT TAKEN, FOR A REASON THE DECISION ITSELF GATES, IS NOT AN ANSWER (2026-11-10 review). The latch is set at
+      // the ask, and doRTH routes for seconds: an RTH this window never sent (supervision passed to another tab
+      // meanwhile) or that the console refused because she was disarmed or put in E-STOP meanwhile left her below her
+      // point with nothing sent, for good. Dropped, the next frame decides again - nothing while she cannot be sent,
+      // sent the frame she can be, as a point reached disarmed always was (8c). A refusal that would only repeat (no
+      // link, no home) keeps it: said once, not re-routed every few seconds. DISARMED OR IN E-STOP AS THE CONSOLE SAW IT
+      // (the verify round): its refusal carries its state, while the page's S is a frame old - a 409 back before the
+      // frame showing her disarmed kept the latch for good. And WITHDRAWN by an E-STOP pressed in THIS window while it
+      // routed (planInsideChart) is the E-STOP's case too; withdrawn by a Stop, Pause or Hold it stands, as any command
+      // given after it does.
+      const nt = out && out.notTaken, ns = nt && nt.state && typeof nt.state === "object" ? nt.state : S;
+      if(nt && fuelBoot === bootAt && (nt.sent === false || (nt.withdrawn && nt.by === "E-STOP")
+                                       || (nt.refused && (!ns.armed || ns.estop)))) fuelRth.acted = false;
+    }).finally(() => { if(fuelFlight === sentAt) fuelFlight = 0; });
     return;
   }
   if(fuelRth.alerted) return;
@@ -10703,23 +10771,33 @@ function renderFuelRows(){
   if(fk) setCellText(fk, model.kind === "fuel" ? "Fuel" : "Battery");
   const f = (x) => fuelFmt(model, x), N = fuelNow || {}, P = fuelProjection();
   const src = model.source || "the vessel file's energy model";
-  const lawTip = "Burn: " + (/^\s*(MEASURED|ESTIMATED)\b/i.test(src) ? "" : (model.measured ? "MEASURED - " : "ESTIMATED - ")) + src
-    + (N.override ? "\nTHE ENERGY OVERRIDE IS ON: the gauge reads full and nothing is monitored." : "");
+  const lawTip = "Burn: " + (/^\s*(MEASURED|ESTIMATED)\b/i.test(src) ? "" : (model.measured ? "MEASURED - " : "ESTIMATED - ")) + src;
+  // ⚠ UNDER THE ENERGY OVERRIDE BOTH ROWS SAY SO, AND NEITHER SHOWS A FIGURE DRAWN FROM THE FORCED-FULL GAUGE (2026-11-10).
+  // The one sentence that said it ended the tip, after the burn law's long source line, while the rows above it went on
+  // reading "left", "REACHED · RTH due" and "reached in 2 nm" in amber and red off a full tank that is not hers. Her
+  // level is not read under it (fuel.js energyLevel), so what the plan TAKES is still shown and what is LEFT is not.
+  const ovr = !!N.override;
+  const ovrSay = "THE ENERGY OVERRIDE IS ON: the gauge reads full whatever she has, her level is not read, and NOTHING IS "
+    + "MONITORED - no low-" + what + " alert and no automatic RTH - until the " + (model.kind === "fuel" ? "FUEL" : "BATT")
+    + " pill is clicked again.";
   // 1. THE MISSION'S FUEL - in the row, what it takes and what is left at the end of it (at home, when the run ends in an
   // RTH); in the tip, how each part was reckoned. The card is narrow: the row says the two numbers that are acted on.
   let t = "--", cls = "vv", tip = "";
   if(P && P.legs){
     const home = P.home && Number.isFinite(P.home.need) ? P.home : null;
-    t = "~" + f(P.used + (home ? home.need : 0));
+    t = "~" + f(P.used + (home ? home.need : 0)) + (ovr ? " · override on" : "");
     tip = "To the end of the plan: ~" + f(P.used) + " over ~" + fmtMS(P.seconds)
       + (home ? "; home from there: " + f(home.need) + ", " + fmtDist(home.m) + homeHowSay(home, false) + " at " + home.twKn + " kn" : "")
-      + (P.levelEnd != null ? ". She has " + f(N.level) + " now." : ". The vessel reports no level, so what is left is not known.");
-    if(P.levelEnd != null){
+      + (ovr ? ". What is left is not shown: her level is not read under the override."
+         : P.levelEnd != null ? ". She has " + f(N.level) + " now." : ". The vessel reports no level, so what is left is not known.");
+    if(!ovr && P.levelEnd != null){
       const lv = P.levelEnd - (home ? home.need : 0);
       t += " · " + f(lv) + " (" + fuelPct(model, lv) + "%) " + (home ? "at home" : "left");
       if(lv < model.floor) cls = "vv critical"; else if(P.turn || lv < model.floor + model.reserve) cls = "vv warn";
     }
-  } else if(N.level != null){ t = f(N.level) + " (" + fuelPct(model, N.level) + "%) · no plan"; tip = "No plan ahead to project."; }
+  } else if(ovr){ t = "override on · no plan"; tip = "No plan ahead to project."; }
+  else if(N.level != null){ t = f(N.level) + " (" + fuelPct(model, N.level) + "%) · no plan"; tip = "No plan ahead to project."; }
+  if(ovr) tip = ovrSay + "\n" + tip;
   setCellText(fe, t); if(fe.className !== cls) fe.className = cls;
   setTip(fe, "PROJECTED " + what.toUpperCase() + " FOR THE REST OF THE MISSION. " + tip + "\nEach leg at the speed the plan flies it "
     + "(survey, turn, transit), its time over the ground in the set now running, its burn at the speed through the water; "
@@ -10732,7 +10810,8 @@ function renderFuelRows(){
   const alertOnly = !!(N.w && N.w.mode === "alert"), rk = $("#mi_rthpt_k");
   if(rk) setCellText(rk, alertOnly ? (model.kind === "fuel" ? "Low fuel" : "Low battery") : "RTH point");
   let r = "--", rc = "vv";
-  if(N.level == null) r = "no " + what + " reading";
+  if(ovr){ r = "NOT MONITORED · override on"; rc = "vv warn"; }
+  else if(N.level == null) r = "no " + what + " reading";
   else if(N.rth == null) r = asv ? "no home set" : "no position fix";
   else if(N.state === "reached"){
     r = "REACHED · " + f(N.rth) + (alertOnly ? " · find a port" : S.behavior === "rth" ? " · going home" : " · RTH due"); rc = "vv critical"; }
@@ -10741,9 +10820,20 @@ function renderFuelRows(){
     if(N.state === "near") rc = "vv warn";
     if(P && P.turn){ r = f(N.rth) + " · reached in " + fmtDist(P.turn.alongM); rc = "vv warn"; }
   }
-  if(!alertOnly && N.h && N.rth != null && !N.h.water){ r += " · straight line"; if(rc === "vv") rc = "vv warn"; }
+  if(!ovr && !alertOnly && N.h && N.rth != null && !N.h.water){ r += " · straight line"; if(rc === "vv") rc = "vv warn"; }
   setCellText(re, r); if(re.className !== rc) re.className = rc;
-  setTip(re, alertOnly && N.level != null
+  // Under the override the tip leads with it, and says what turning it OFF will do here: past the reach of a full pack
+  // a battery hull's point is above full, so the click that ends the override sends her home on the next frame.
+  setTip(re, ovr
+    ? ovrSay + (alertOnly || !N.h || N.rth == null ? ""
+        : "\nWith the override off the RTH point here is " + f(N.rth) + " (home " + fmtDist(N.h.m) + homeHowSay(N.h, true)
+          + ", " + f(N.h.need) + " at " + N.h.twKn + " kn, arriving with the " + Math.round(FUEL_RESERVE_FRAC * 100) + "% reserve)"
+          + (N.rth >= model.full ? " - ABOVE a full " + (model.kind === "fuel" ? "tank" : "pack")
+             + ": turning the override off here raises the low-" + what + " alert at once, and "
+             + (N.w && N.w.farM != null ? "the RTH is REFUSED - home is " + fmtDist(N.w.farM) + " away, past the " + fmtDist(RTH_MAX_M)
+                  + " the console will route a return: Set Home where she is." : "sends her home if she is armed.") : "."))
+      + "\n" + lawTip
+    : alertOnly && N.level != null
     ? "THE LOW-" + what.toUpperCase() + " ALERT: " + fuelOutOfRangeSay(model, N.w) + ", so the console will NOT send her home. "
       + "It alerts once when she comes down to " + fuelReserveOf(model) + " (" + f(N.rth) + "), for you to find a port to "
       + "refuel. She has " + f(N.level) + " now."
@@ -10764,6 +10854,9 @@ function renderFuelRows(){
 // the low-fuel alert.
 function fuelPillLine(){
   const N = fuelNow;
+  // under the energy override her level is not read (fuel.js energyLevel): the line says what that turns off
+  if(N && N.override) return "\nRTH point: NOT MONITORED while the energy override is on - no low-"
+    + (N.model.kind === "fuel" ? "fuel" : "battery") + " alert, no automatic RTH.";
   if(!N || N.level == null || N.rth == null) return "";
   const at = fuelFmt(N.model, N.rth) + (N.state === "reached" ? " - REACHED" : " (" + fuelFmt(N.model, N.level - N.rth) + " above it)");
   if(N.w && N.w.mode === "alert")
@@ -10778,6 +10871,9 @@ async function setFuelToRthPoint(){
   if(!canSpawn()){ flashNote("Setting the fuel is a simulator rehearsal."); return; }
   const N = fuelNow;
   if(!N || N.rth == null){ flashNote("No RTH point to set the fuel to: it needs a home and a fuel reading."); return; }
+  // the console refuses a level under the override (it reports full whatever is set): said here, before the question
+  // below asks whether to send her home and the answer is then refused
+  if(N.override){ flashNote("Turn the energy override off first — it reports full whatever is set, and nothing is monitored."); return; }
   // ⚠ IT SENDS HER HOME, SO UNDER WAY IT ASKS FIRST (Andy, 2026-10-16 live: "clearing the target vessel deleted the transit
   // to the survey area sending the ASV home"). This row sat directly under "Clear test contacts"; in the middle of an
   // AIS rehearsal, with the page overloaded, it fired instead, the monitor did what it is for, and the survey was
@@ -14803,6 +14899,7 @@ async function doRTH(opts){
   // THE SURVEY IT BREAKS OFF (2026-10-11), taken at the press - before the RTH replaces the plan aboard - and banked on
   // the plan only once the vessel has taken the RTH (below). Not by the end-of-plan chain: nothing is left to fly.
   const brk = chained ? null : surveyBreakNow(opts && opts.breakWhy);
+  const lockWas = !!lockTransit;      // a lock transit this RTH ends: it is not one to withdraw afterwards (below)
   if(lockTransit) lockEnd("Return-to-Home replaces the lock transit");   // the gates back before this plans (2026-10-18 review)
   const wasGen = planGen;             // see doGoTo: taken at the press, not at the post
   if(!S.home){ flashNote("No home set (no GPS fix yet)."); if(chained) rthChainFailed=true; return; }
@@ -14840,7 +14937,10 @@ async function doRTH(opts){
     const from = {lat:asv.lat,lon:asv.lon}, to = {lat:S.home.lat,lon:S.home.lon}, o = {...holdOpts(), standoffM: transitStandoffM()};
     return planOffThread({op: "nogo", args: {from, to, opts: o}}, () => planNogoRoute(from, to, o));
   }, "RTH");
-  if(plan.withdrawn){ if(chained) rthChainFailed=true; return; }   // (see doGoTo; a chained RTH is not tried again by itself)
+  if(plan.withdrawn){                // (see doGoTo; a chained RTH is not tried again by itself)
+    if(chained) rthChainFailed=true;
+    return {notTaken: {withdrawn: true, by: routeStopName}};   // the low-fuel monitor asks which stop (fuelTick)
+  }
   if(plan.error){
     if(chained) rthChainFailed=true;
     setViolation(plan.reason);
@@ -14854,6 +14954,17 @@ async function doRTH(opts){
   // A HOME set at a berth is held OFF, at the nearest clear water - the route already ends
   // there (holdTarget) - and the vessel is told how much water is clear round that point.
   plan.holdClear = holdClearWithContacts(plan.route[plan.route.length-1] || S.home, plan.holdClear);   // + the contacts (2026-09-29)
+  // ⚠ A LOW-FUEL RTH THE OVERRIDE HAS SINCE STOOD DOWN IS NOT POSTED (2026-11-10). The monitor asked for this seconds
+  // ago (the chart read and the route above took 7.3 s in the session that found it); the operator's answer to its
+  // banner is a click on the energy pill, and under the override nothing is monitored - the one reason this RTH was
+  // planned for is gone. Nothing has been sent and no break-off banked: she carries on as she was. NOT where this RTH
+  // ended a lock transit at its press (`lockWas`: the gates are back in the model, and "as she was" would be untrue) -
+  // that one goes home.
+  if(opts && opts.breakWhy === "fuel" && !lockWas && fuelNow && fuelNow.override){
+    showBanner("Low-fuel RTH WITHDRAWN — the energy override was turned on while it was being routed, and under it "
+      + "nothing is monitored. She carries on as she was.");
+    updateMissionCard(); render(); return;
+  }
   const rCoast = solveCoastFor(plan);
   const r = await routeCmd("/api/cmd/rth", {route:plan.route, hold_clear_m:plan.holdClear,
                        coast_from_m: rCoast ? rCoast.groundM : null});
@@ -14890,7 +15001,8 @@ async function doRTH(opts){
     else showBanner(say + " - "
       + (chained ? "she is HOLDING at her last waypoint and nothing is coming for her."
                  : "the boat is still on her previous plan."));
-    updateMissionCard(); render(); return;
+    updateMissionCard(); render();
+    return {notTaken: r || {}};       // the low-fuel monitor asks why (fuelTick): never sent, refused, or no answer
   }
   if(planGen === wasGen) releaseEscapeClaim("RTH replaced it");     // see doGoTo
   if(brk) bankBreak(brk);                         // the survey she has left: Continue picks it up (2026-10-11)
@@ -15958,7 +16070,11 @@ function sailRestM(c, at){
 }
 /** The fuel to the next port from here, against what is aboard: null when it reaches it with 20%, else why not. */
 function sailFuelShort(P, k, bo){
-  const model = fuelModel(), lv = model ? energyLevel(model, S && S.status) : null;
+  // UNDER THE ENERGY OVERRIDE judged from a FULL tank - what Plan passage assumes - not "no level, not held" (2026-11-10
+  // review: the forced-full gauge had kept this refusal; reading no level under the override had dropped it, so the
+  // tank rule held at Sail and not at Continue). A vessel that reports no level is still not held.
+  const model = fuelModel(), ovr = !!(S && S.status && S.status.unlimited_energy);
+  const lv = !model ? null : ovr ? model.full : energyLevel(model, S && S.status);
   if(!model || lv == null || !asv) return null;      // no level reported: not held (as a survey's Continue)
   let L = bo ? distTo(asv, bo.at) + sailRestM(P.sections[k], bo.at) : distTo(asv, P.sections[k].from) + P.sections[k].lengthM;
   let j = k;
@@ -15966,7 +16082,9 @@ function sailFuelShort(P, k, bo){
   const x = passageFuel(model, [{lengthM: L}], P.kn || V.SPEED_KN[roleSpeed("transit")], lv);
   if(!x || x[0].ok) return null;
   const to = P.sections[j].port != null ? sailPortName(P, P.sections[j].port) : P.sections[j].end === "home" ? "home" : "the end";
-  return "refuel first: " + fuelFmt(model, lv) + " aboard, and " + to + " is " + fmtDist(L) + " on - she needs "
+  return (ovr ? "too far for even a full " + (model.kind === "fuel" ? "tank" : "pack") + " (" + fuelFmt(model, lv)
+                + " - the energy override is on, so her level is not read): "
+              : "refuel first: " + fuelFmt(model, lv) + " aboard, and ") + to + " is " + fmtDist(L) + " on - she needs "
     + fuelFmt(model, x[0].used + model.floor + model.reserve) + " to arrive with " + Math.round(FUEL_RESERVE_FRAC * 100) + "% of the tank";
 }
 /** Why Continue passage cannot go now, or null. */
@@ -19756,7 +19874,9 @@ function openChartMenu(clientX, clientY, ll){
   gateAvoidRow(ll);                                     // shown only over an AIS contact (2026-09-27)
   cmGate("#cmAisTest",  canSpawn(), "sim only");        // the rehearsal's moored hull (2026-09-27)
   cmGate("#cmAisClear", canSpawn(), "sim only");
-  cmGate("#cmFuelRth",  canSpawn() && !!(fuelNow && fuelNow.rth != null), canSpawn() ? "no RTH point" : "sim only");   // 2026-10-11
+  // (2026-10-11) ... and not under the energy override: the console refuses a level then, and nothing is monitored
+  cmGate("#cmFuelRth",  canSpawn() && !!(fuelNow && fuelNow.rth != null && !fuelNow.override),
+         !canSpawn() ? "sim only" : (fuelNow && fuelNow.override) ? "override on" : "no RTH point");
   { const t = $("#cmFuelRthT"); if(t) t.textContent = (fuelNow && fuelNow.w && fuelNow.w.mode === "alert")   // home out of range
       ? "Set fuel to the low-fuel alert" : "Set fuel to the RTH point"; }
   cmenuEl.style.display = "block";
@@ -22787,6 +22907,7 @@ async function startRun(opts){
 const SURVEY_BREAK_BACK_M = 100;     // Andy: "the break off point minus 100m for overlap coverage"
 const BREAKS_MAX = 3;                // the plan keeps this many, newest first (asv_console.py BREAKS_MAX)
 let breakSel = null, continueBusy = false, breakReadySaid = null;
+const breakWaited = new Set();        // the records this page has seen WAITING for the refuel (breakReady)
 /** Where she is in the survey under way, as a break-off record - or null when no survey is under way with anything left
  *  to fly (another behavior, the end of the plan, a hold). Taken at the press, by doRTH. */
 function surveyBreakNow(why){
@@ -22851,15 +22972,32 @@ function breakLabel(b){
   return (b && b.no != null ? "S" + b.no + (b.name ? " " + b.name : "") : "the survey")
        + (b && b.line_no != null ? ", line " + b.line_no : "");
 }
-/** May she Continue it now? A fuel break-off waits for the refuel. {ok, why} */
+/** May she Continue it now? A fuel break-off waits for the refuel. {ok, why, refueled, note}.
+ *  `refueled` ONLY when her level was READ at the mark - the REFUELED banner's one condition (2026-11-10 review: under
+ *  the energy override, or from a vessel that reports no level, Continue is not held for fuel, and the banner said
+ *  "REFUELED" off no reading - and, said once per record, was then spent before a real refuel). `note` says why it is not
+ *  held. THE MARK IS CAPPED AT FULL (less a gauge's rounding): a break-off banked at a full pack - the click that ends the
+ *  override sends a battery hull past a full pack's reach home at full - wanted 2% above full, and could never go.
+ *  AND REFUELED IS A RISE THIS PAGE HAS SEEN (the verify round): "reads full" cannot tell refueled from "has not left
+ *  full yet", so a record banked at full was announced REFUELED the frame it was banked - over the RTH's own banner - and
+ *  the once-per-record word was spent before the real one. `refueled` only for a record this page has seen waiting
+ *  (breakWaited); one ready from the start (a reload with her already recharged) enables Continue without the word. */
 function breakReady(b){
   if(!b) return {ok: false, why: "no survey was broken off"};
   if(b.why === "fuel"){
-    const model = fuelModel(), lv = model ? energyLevel(model, (S && S.status) || {}) : null;
-    if(model && lv != null && b.level != null && b.unit === model.unit
-       && lv < b.level + FUEL_REARM_FRAC * (model.full - model.floor))
-      return {ok: false, why: "waiting for her to be REFUELED (" + fuelFmt(model, lv) + " aboard, " + fuelFmt(model, b.level)
-                              + " when she broke off)"};
+    const st = (S && S.status) || {}, model = fuelModel(), lv = model ? energyLevel(model, st) : null;
+    if(model && lv == null)
+      return {ok: true, why: "", note: (st.unlimited_energy ? "the energy override is on, so her level is not read"
+                                                              : "the vessel reports no level") + " - whether she has enough is your call"};
+    if(model && b.level != null && b.unit === model.unit){
+      const span = model.full - model.floor, mark = Math.min(b.level + FUEL_REARM_FRAC * span, model.full - 0.005 * span);
+      if(lv < mark){
+        breakWaited.add(b.id);
+        return {ok: false, why: "waiting for her to be REFUELED (" + fuelFmt(model, lv) + " aboard, " + fuelFmt(model, b.level)
+                                + " when she broke off)"};
+      }
+      return {ok: true, why: "", refueled: breakWaited.has(b.id)};
+    }
   }
   return {ok: true, why: ""};
 }
@@ -22896,14 +23034,15 @@ function renderBreakControls(armed, estop, underWay){
   cb.disabled = !!why;
   cb.classList.toggle("flash", !why);
   const {tail, to, backedM} = breakTail(b), d = new Date(b.t);
-  setTip(cb, (why ? "CONTINUE - NOT YET: " + why + ".\n\n" : "CONTINUE ")
+  setTip(cb, (why ? "CONTINUE - NOT YET: " + why + ".\n\n" : rd.note ? "" : "CONTINUE ")
+    + (rd.note ? (why ? "Not held for fuel: " : "CONTINUE - NOT HELD FOR FUEL: ") + rd.note + ".\n\n" : "")
     + breakLabel(b) + ", broken off at " + d.toLocaleTimeString() + (b.why === "fuel" ? " for LOW FUEL" : " for an RTH")
     + ". She is routed from wherever she is to " + (to ? "line " + b.line_no + ", " + fmtDist(backedM) + " back from where she broke off "
       + "(so the new coverage overlaps the old)" : "the survey's next waypoint (she broke off between lines)")
     + ", then flies the rest of it - " + tail.length + " waypoint(s) - and End of plan. The × beside it drops the break-off."
     + (list.length > 1 ? " The selector picks which broken-off survey." : ""));
   // ON REFUEL, SAID ONCE: the option to regain the survey is PRESENTED, not left for the operator to find.
-  if(rd.ok && b.why === "fuel" && breakReadySaid !== b.id){
+  if(rd.ok && rd.refueled && b.why === "fuel" && breakReadySaid !== b.id){
     breakReadySaid = b.id;
     showBanner("REFUELED — " + breakLabel(b) + " can be continued: CONTINUE, beside Start, routes her back to "
       + (to ? "line " + b.line_no + ", " + fmtDist(backedM) + " back from where she broke off for low fuel, so the coverage overlaps,"
@@ -25197,11 +25336,24 @@ $("#b_reset").onclick = resetMission;
 // Energy override: click the energy pill (BATT/FUEL) anywhere to toggle "report the
 // energy as full" (and stop the sim drain/burn). Applies in every mode/behavior,
 // running or not. The pill turns MAGENTA while the override is on (see onState).
-$("#battPill").onclick = ()=>{
-  const on = !(S.status && S.status.unlimited_energy);
-  cmd("/api/cmd/energy", {unlimited: on});
-  flashNote(on ? "Energy override ON — reporting full."
-               : "Energy override OFF — actual energy reported.");
+// While it is on the low-fuel monitor is OFF (fuelTick, fuel.js rthDecision).
+// ⚠ IT SAYS WHAT THE CONSOLE ANSWERED, AFTER IT ANSWERED (2026-11-10). It flashed "Energy override ON" beside a command
+// it had not awaited: in a view-only window nothing was sent and the note replaced the refusal on screen (and went
+// into the history as done); a refused or lost command read the same. And ONE AT A TIME: `S` moves only with the
+// stream, so a second click inside the same frame sent the same value again, and one a frame later turned it back off -
+// which in the simulator refilled the pack without a word.
+let energyBusy = false;
+$("#battPill").onclick = async ()=>{
+  if(energyBusy) return;
+  energyBusy = true;
+  try{
+    const r = await cmd("/api/cmd/energy", {unlimited: !(S.status && S.status.unlimited_energy)});
+    if(!took(r)) return;                         // cmd() has said why: view only, refused, or no answer
+    const on = !!(r.state && r.state.status && r.state.status.unlimited_energy);
+    flashNote(on ? "Energy override ON — the gauge reads full and the low-fuel monitor is OFF."
+                 : "Energy override OFF — actual energy reported, and the low-fuel monitor is no longer held off "
+                   + "(the card's RTH point row says what it watches).");
+  } finally { energyBusy = false; }
 };
 
 // UNITS pill: METRIC (km, liters) <-> SAE (nm, US gallons) - units.js, where the scope decisions live (2026-10-17: it
@@ -25428,7 +25580,8 @@ function onState(s){
   // hover from the short one and nothing was lost with the row.
   const pbk = $("#p_batt_k"), pb = $("#p_batt"), pill = $("#battPill");
   const OVR_TIP = "Click to toggle the energy-full override (report the battery/fuel as full "
-                + "and stop the sim drain/burn). Turns MAGENTA when on. Applies in every mode.";
+                + "and stop the sim drain/burn). Turns MAGENTA when on. Applies in every mode. "
+                + "While it is on the low-fuel monitor is OFF: no alert, no automatic RTH.";
   if(st.energy_type==="fuel" || st.fuel_l!=null){
     const fstate = st.fuel_state || "unknown";
     const fcls = fstate==="critical"?"critical":fstate==="warn"?"warn":fstate==="ok"?"ok":"";

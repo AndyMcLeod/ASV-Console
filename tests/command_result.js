@@ -258,8 +258,11 @@ const PRELUDE = [
   "const guiConfirm = async () => true;",
   "const resumeRun = async () => { out.resumed++; };",
   // the survey break-off doRTH takes at the press and banks once the RTH took (2026-10-11): tests/survey_break.js's;
-  // this world has no survey under way, so there is none to take
-  "const surveyBreakNow = () => null, bankBreak = () => {};",
+  // this world has no survey under way, so there is none to take - unless a world hands one in (W.brk, 54b)
+  "const surveyBreakNow = () => (W.brk || null), bankBreak = (b) => { out.banked.push(b); };",
+  // the fuel monitor's own word on this frame (static/asv.html fuelTick): doRTH asks it whether a LOW-FUEL RTH still
+  // stands just before it posts (54b, 2026-11-10) - null in every world that does not say
+  "let fuelNow = W.fuelNow || null;",
   // the clearance guard's per-episode record, as it stands mid-episode when RTH is pressed
   "let guardOverride = {said:'proceed'}, edgeSpentM = 40, edgeCount = 2;",
   "let guardActedAt = 12345, holdWant = null, guardHeld = {route:[1,2]};",
@@ -272,7 +275,7 @@ const PRELUDE = [
   "const showNote = (t) => { out.notes.push(t); };",
   "const flashNote = (t) => { out.notes.push(t); };",
   "const $ = (sel) => (sel === '#encbanner' ? out.banner : {style:{}, textContent:''});",
-  "const ensureNogoCovers = async () => true;",
+  "const ensureNogoCovers = async () => { if (W.routing) W.routing(); return true; };",   // W.routing: what changes while she is routed (54c)
   "const planNogoRoute = () => W.plan;",
   "const routePlan = () => W.plan;",
   "const holdTarget = (p) => ({to: p, heldOff: null, holdClear: 12});",
@@ -311,7 +314,7 @@ const EPILOGUE = "\nconst bHold = " + grabHandler("b_hold") + ";"
   + "\nconst bEstop = " + grabHandler("b_estop") + ";"
   + "\nconst bPause = " + grabHandler("b_pause") + ";"
   + "\nconst bStop = " + grabHandler("b_stop") + ";"
-  + "\nreturn {cmd, doRTH, doGoTo, doTransit, takeDownBanner, took, notTookSay,"
+  + "\nreturn {cmd, doRTH, doGoTo, doTransit, takeDownBanner, took, notTookSay, routeStopPressed,"
   + " bHold, bStop, bStart, commandSpeed, bEstop,"
   + " seed: (r, i) => { runRoute = r; planIntent = i; runUnsafe = [[1,2]]; },"
   + " sendSpeed, setThrottle: (v) => { escapeThrottle = v; },"
@@ -343,7 +346,7 @@ const IR = require("../static/js/inkreads.js"), PS = require("../static/js/passa
 function world(opts) {
   const o = opts || {};
   const out = { notes: [], recorded: [], renders: 0, card: 0, violations: 0, violation: null, missions: [],
-                posts: [], bodies: [], banner: bannerEl(), aborts: 0, resumed: 0 };
+                posts: [], bodies: [], banner: bannerEl(), aborts: 0, resumed: 0, banked: [], lockEnded: 0 };
   // THE FETCH, not the command. `reply` decides what the console answers.
   const fetchStub = (url, init) => {
     out.posts.push(url);
@@ -407,6 +410,7 @@ function world(opts) {
       json: async () => ({ ok: true, state: { behavior: "rth", note: "Return-to-Home." } }) });
   };
   const W = { out, supervising: o.viewOnly ? false : true, fetch: fetchStub, holdClearAt: o.holdClearAt || null,
+              fuelNow: o.fuelNow || null, brk: o.brk || null, lock: o.lock || null, routing: o.routing || null,
               nogo: o.nogo || null, boxAround: IR.boxAround, beyondChart: PS.beyondChart, beyondChartSay: PS.beyondChartSay,
               transit: o.transit || [{ lat: 43.0, lon: -70.5 }, { lat: 43.01, lon: -70.49 }],
               S: { home: { lat: 43.0, lon: -70.5 }, note: "" },
@@ -473,7 +477,9 @@ function world(opts) {
                            + 'const readPassageAis = async () => {}, openWaterRead = async () => null;' + "\n" + grab("mooredNote") + "\n"
                            // THE ROUTE WORKER (2026-10-12) is not here: each search runs on this thread as it always did (tests/route_worker.js);
                            // and the four stop-class presses withdraw a plan in flight - the page's own (tests/route_worker.js 12-13)
-                           + 'const planOffThread = async (job, here) => here(); let routeStopGen = 0, routeStopName = null;' + "\n"
+                           // (W.searching: what is pressed while the search runs - 54d)
+                           + 'const planOffThread = async (job, here) => { if (W.searching) W.searching(); return here(); }; let routeStopGen = 0, routeStopName = null;' + "\n"
+                           + 'const logClient = () => {};' + "\n"   // planInsideChart's withdrawal records itself (54d)
                            + grab("routeStopPressed") + "\n"
                            // its first question - are the command's own points inside the box the chart was read
                            // over? - needs a model; this one has no box, so nothing is judged (as with no extract)
@@ -487,7 +493,8 @@ function world(opts) {
                            + grab("planInsideChart") + "\n"
                            // doGoTo plans through planGoToLeg since 2026-10-18 (the lock transit's legs); a refused Go-To
                            // offers a lock - none here (tests/lock_transit.js)
-                           + grab("planGoToLeg") + "\n" + "const lockOffer = () => {}; let lockTransit = null; const lockEnd = () => {};" + "\n"
+                           // ... and a world may be IN a lock transit (W.lock, 54b): lockEnd ends it, as the page's does
+                           + grab("planGoToLeg") + "\n" + "const lockOffer = () => {}; let lockTransit = W.lock || null; const lockEnd = () => { lockTransit = null; out.lockEnded++; };" + "\n"
                            + grab("doRTH") + "\n" + grab("doGoTo") + "\n" + grab("doTransit")
                            + EPILOGUE)(W, setTimeout, clearTimeout, AbortController);
   W.api = api;              // so a fetch stub can act INSIDE the bundle mid-round-trip
@@ -522,6 +529,56 @@ console.log("-- 54: a new mission's history (newMission) --");
               && chain.out.posts.length > 0 && m(chain).length === 0 && fuel.out.posts.length > 0 && m(fuel).length === 0,
         JSON.stringify({ go: m(go), rth: m(rth), tr: m(tr), refused: [m(goNo).length, m(rthNo).length, m(trNo).length],
                                chain: [chain.out.posts.length, m(chain).length], fuel: [fuel.out.posts.length, m(fuel).length] }));
+  // 54b (2026-11-10). A LOW-FUEL RTH THE ENERGY OVERRIDE HAS STOOD DOWN IS NOT POSTED. doRTH spends seconds on the chart
+  // and the route before it posts (7.3 s in the session that found it), the operator's answer to the monitor's banner is
+  // a click on the energy pill, and under the override nothing is monitored. Asked just before the post: nothing sent,
+  // no break-off banked, the banner says so. The operator's OWN RTH with the override on is his, and goes.
+  // TEETH - four mutations RUN on a sidecar page: the withdrawal removed; made for ANY RTH under the override; made
+  // whatever the override says; made over a lock transit it had ended - each caught here (the third by 54 as well).
+  const B = { id: "B1", why: "fuel" };
+  const stood = world({ fuelNow: { override: true }, brk: B }); await stood.doRTH({ why: "LOW FUEL", breakWhy: "fuel" });
+  const sent = world({ fuelNow: { override: false }, brk: B }); await sent.doRTH({ why: "LOW FUEL", breakWhy: "fuel" });
+  const own = world({ fuelNow: { override: true } }); await own.doRTH({});
+  // ... and one that ENDED A LOCK TRANSIT at its press is not withdrawn: the gates are back in the model, so "she
+  // carries on as she was" would be untrue - that RTH goes
+  const lock = world({ fuelNow: { override: true }, lock: { lock: { id: "L1" }, stage: "enter" } });
+  await lock.doRTH({ why: "LOW FUEL", breakWhy: "fuel" });
+  check("54b. a LOW-FUEL RTH is WITHDRAWN before its post when the energy override was turned on while it was routed - "
+        + "nothing sent, no break-off banked, said in the banner; with the override off it is sent and its break-off "
+        + "banked; the operator's own RTH goes whatever the override; and one that ended a lock transit at its press goes "
+        + "too",
+        () => stood.out.posts.length === 0 && stood.out.banked.length === 0 && /Low-fuel RTH WITHDRAWN/.test(stood.banner())
+              && sent.out.posts.length === 1 && sent.out.posts[0] === "/api/cmd/rth" && sent.out.banked.length === 1
+              && own.out.posts.length === 1 && m(own).length === 1
+              && lock.out.lockEnded === 1 && lock.out.posts.length === 1 && !/WITHDRAWN/.test(lock.banner()),
+        JSON.stringify({ stood: [stood.out.posts, stood.out.banked.length, stood.banner().slice(0, 60)],
+                         sent: [sent.out.posts, sent.out.banked.length], own: [own.out.posts, m(own).length],
+                         lock: [lock.out.lockEnded, lock.out.posts] }));
+  // 54c (2026-11-10 review). ... asked AT THE POST, not at the press: the override goes on WHILE she is routed (the
+  // chart read the seconds are spent on). A doRTH that read it at the press passed 54b - the page never presses a low-fuel
+  // RTH with the override on, so that withdrawal could never fire. And what a not-taken post answers: the refusal,
+  // for the monitor to ask (fuelTick), nothing for one taken.
+  const fnLate = { override: false };
+  const late = world({ fuelNow: fnLate, brk: B, routing: () => { fnLate.override = true; } });
+  await late.doRTH({ why: "LOW FUEL", breakWhy: "fuel" });
+  const tookOut = await world({}).doRTH({}), refOut = await world({ reply: "refuse" }).doRTH({});
+  check("54c. ... the override read AT THE POST: turned on while she is routed, the low-fuel RTH is withdrawn, nothing "
+        + "sent or banked; and a post not taken answers `notTaken` (the console's refusal), one taken nothing",
+        () => late.out.posts.length === 0 && late.out.banked.length === 0 && /Low-fuel RTH WITHDRAWN/.test(late.banner())
+              && tookOut === undefined && !!refOut && !!refOut.notTaken && refOut.notTaken.refused === true,
+        JSON.stringify({ late: [late.out.posts, late.out.banked.length], tookOut, refOut }));
+  // 54d (2026-11-10 verify round). A PLAN WITHDRAWN BY A STOP PRESSED WHILE IT IS SEARCHED SAYS WHICH: the monitor sends
+  // a low-fuel RTH an E-STOP withdrew the frame she is out of it (as one refused in E-STOP), and lets one a Stop withdrew
+  // stand - doRTH returned nothing there, so the monitor kept its latch whichever it was.
+  const byE = world({}); byE.W.searching = () => byE.routeStopPressed("E-STOP");
+  const outE = await byE.doRTH({ why: "LOW FUEL", breakWhy: "fuel" });
+  const byS = world({}); byS.W.searching = () => byS.routeStopPressed("STOP");
+  const outS = await byS.doRTH({ why: "LOW FUEL", breakWhy: "fuel" });
+  check("54d. ... a plan WITHDRAWN while it is searched answers `notTaken` with the stop that withdrew it (E-STOP, STOP), "
+        + "and nothing is posted",
+        () => byE.out.posts.length === 0 && !!outE && !!outE.notTaken && outE.notTaken.withdrawn === true && outE.notTaken.by === "E-STOP"
+              && byS.out.posts.length === 0 && !!outS && !!outS.notTaken && outS.notTaken.by === "STOP",
+        JSON.stringify({ outE, outS, posts: [byE.out.posts, byS.out.posts] }));
 }
 
 console.log("-- 1-2: cmd() answers THREE things, and the three are not the same thing --");

@@ -189,6 +189,14 @@ Run states: `idle · running · paused · stopped · complete`.
 The energy model comes from the **active vessel** (`power.type`), and the sim
 depletes it live so you can watch the gauge band change on a long run.
 
+**The energy override** (click the BATT/FUEL pill; it turns magenta) reports the
+tank as full and stops the sim's drain. It is the console's setting and outlives the
+boat it was clicked on: every new sim boat is told (Reset, Spawn here, a vessel or
+port switch, a reconnect), so it stays on until the pill is clicked again. While it
+is on the low-fuel monitor is off: no RTH point, no LOW FUEL alert, no automatic RTH
+(2026-11-10; before that a Reset silently dropped the hold while the gauge still read
+full). A stretch recorded under it reads full, with nothing used.
+
 **Battery vessels** (`power.type: "battery"` — `zboat_1800hs`)
 report a voltage that sags with load, banded from `power.battery_v`. For
 `zboat_1800hs`:

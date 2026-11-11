@@ -136,7 +136,7 @@ function world(o) {
     "const legStartsHere = () => {};",
     "const startRun = async (opts) => { w.calls.push(['start', opts]); return w.start; };",
     decl("SURVEY_BREAK_BACK_M"), decl("BREAKS_MAX"),
-    "let breakSel = null, continueBusy = false, breakReadySaid = null;",
+    "let breakSel = null, continueBusy = false, breakReadySaid = null;", decl("breakWaited"),
     grab("lineMark"), grab("resumePointOn"),
     grab("surveyBreakNow"), grab("bankBreak"), grab("breakList"), grab("breakSelected"), grab("breakLabel"),
     grab("breakReady"), grab("breakTail"), grab("continueSurvey"),
@@ -215,6 +215,28 @@ console.log("A survey broken off for a return home, and Continue:");
         + "she broke off at 49.6 L - and says so; a vessel reporting no level, or an operator's RTH, does not wait",
         () => !r1.ok && /REFUELED/.test(r1.why) && !r2.ok && r3.ok && r4.ok && op.ok,
         () => "50 L: " + r1.ok + ", 54.5: " + r2.ok + ", 55: " + r3.ok + ", no level: " + r4.ok + ", operator's: " + op.ok);
+  // 3b (2026-11-10 review). REFUELED ONLY OFF A LEVEL READ, AND THE MARK CAPPED AT FULL. Under the energy override (or
+  // from a vessel that reports no level) Continue is not held - and the REFUELED banner fired off no reading, spending
+  // its once-per-record word before a real refuel. A break-off banked at a FULL pack (the click that ends the override
+  // sends a battery hull home at full) wanted 2% above full: never continued.
+  const st = (status, rec) => { W.api.setS({ behavior: "rth", run: "running", status: Object.assign({ holding: true }, status) }); return W.api.ready(rec || b); };
+  const ovr = st({ fuel_l: 250, unlimited_energy: true }), none = st({}), up = st({ fuel_l: 55 });
+  const full = { id: "B3", why: "fuel", level: 250, unit: "L", route: [LB] };
+  const atFull = st({ fuel_l: 250 }, full), nearFull = st({ fuel_l: 248.9 }, full), belowFull = st({ fuel_l: 240 }, full);
+  const fullAgain = st({ fuel_l: 250 }, full);           // ... and recharged after she was SEEN below the mark
+  const RBC = grab("renderBreakControls");
+  check("3b. ... REFUELED only when her level was READ at the mark: under the energy override and with no level Continue "
+        + "is not held, with a note saying why and no 'refueled'; a break-off banked at a FULL tank is ready when she reads "
+        + "full again (within a gauge's rounding), not 2% above it - and is REFUELED only once this page has seen her "
+        + "below the mark (banked at full and still full is not a refuel); the banner keys on `refueled` and the tip says the note",
+        () => ovr.ok && !ovr.refueled && /^the energy override is on, so her level is not read - whether she has enough is your call$/.test(ovr.note || "")
+              && none.ok && !none.refueled && /^the vessel reports no level/.test(none.note || "")
+              && up.ok && up.refueled === true && !up.note && !r1.refueled
+              && atFull.ok && !atFull.refueled && nearFull.ok && !nearFull.refueled && !belowFull.ok && /REFUELED \(240\.0 L aboard, 250\.0 L/.test(belowFull.why)
+              && fullAgain.ok && fullAgain.refueled === true
+              && /if\(rd\.ok && rd\.refueled && b\.why === "fuel" && breakReadySaid !== b\.id\)/.test(RBC)
+              && /"CONTINUE - NOT HELD FOR FUEL: "\) \+ rd\.note/.test(RBC),
+        () => JSON.stringify({ ovr, none, up, atFull, nearFull, belowFull: belowFull.ok, fullAgain }));
 }
 
 // ── 4. THE POINT ──────────────────────────────────────────────────────────────────────────────────────────────────

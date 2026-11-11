@@ -57,6 +57,16 @@ mutations RUN on scratch copies, all caught:
   * the level accepted and not set                        -> caught by 13, 13b, 13c
   * a level set under the override                        -> caught by 13c
   * a level that is not a number let through              -> caught by 13b
+
+AND THE OVERRIDE THAT FAILED LIVE (2026-11-10, Andy: "energy over-ride failed in the running instance"). Checks 10-11
+turn the override OFF before they reconnect, so nothing here ever held it across a NEW link - and every new link
+dropped it: after his Reset the simulator drained the pack from 26.5 V to 21.31 V behind a gauge the engine layer went
+on forcing full. 15 is his path over HTTP, with the distinguishing trick above (the frame after OFF); the link itself,
+on every path that builds one, is read in-process by tests/run_link_control.py 21-21e. 14: `unlimited` is true or false
+or the post is refused - a body naming neither key used to switch the override OFF with a 200. Two mutations RUN on
+scratch copies, both caught:
+  * anything read as a boolean again                      -> caught by 14 (and 15: its posts had dropped the override)
+  * connect() does not tell the new link                  -> caught by 15
 """
 
 import glob as globmod
@@ -337,6 +347,41 @@ try:
           "words, nothing set",
           lambda: code_c == 409 and "override" in (rc.get("error") or "") and (st["status"].get("fuel_l") or 0) > 40,
           lambda: "code %s %r, fuel after %s" % (code_c, rc.get("error"), st["status"].get("fuel_l")))
+
+    # 14. TRUE OR FALSE, OR REFUSED (2026-11-10). bool(body.get("unlimited")) read a body that named neither key - an
+    # empty one, a mistyped one (tests/http_contract.py's own {"pct": 90}) - as OFF, answered 200 "Energy override OFF"
+    # and dropped the override; the string "false" read as ON. With it ON, three such posts: each a 400 in words, and
+    # the override still on after them.
+    cmd(port, "/api/cmd/energy", {"unlimited": True})
+    bad = [post_raw("/api/cmd/energy", b) for b in ({}, {"pct": 90}, {"unlimited": "false"}, {"unlimited": 0}, [], 5)]
+    st = state(port)
+    check("14. /api/cmd/energy takes `unlimited` as true or false and nothing else: a body that names neither key, or gives "
+          "it as a string or a number, or a body that is not an object at all ([], 5), is a 400 in words - and the override it would have dropped is still ON",
+          lambda: all(c == 400 and "unlimited: true or false" in (r.get("error") or "") for c, r in bad)
+          and st["status"].get("unlimited_energy") is True,
+          lambda: "codes %s, override after: %s" % ([c for c, _ in bad], st["status"].get("unlimited_energy")))
+
+    # 15. OVER HTTP, THE PATH HE TOOK (2026-11-10): the override ON, then Reset. The console said it was still on and
+    # showed a full gauge while the new sim boat drained (tests/run_link_control.py 21 reads the link itself, on every
+    # path that builds one). Here: the answer says the override is still ON, the state keeps it - and after a stretch
+    # of hard running under it, the frame after OFF still reads capacity.
+    code_r, rr = post_raw("/api/cmd/reset", {})
+    st = wait_for(port, lambda s: (s["status"] or {}).get("lat_deg") is not None, limit=30)
+    note_r, kept = ((rr.get("state") or {}).get("note") or ""), st["status"].get("unlimited_energy")
+    cmd(port, "/api/cmd/arm", {"on": True})
+    cmd(port, "/api/cmd/speed", {"speed": "high"})
+    cmd(port, "/api/cmd/goto", {"lat": st["status"]["lat_deg"] + 0.08, "lon": st["status"]["lon_deg"] + 0.05})
+    wait_for(port, lambda s: (s["status"].get("sog_kn") or 0) > 3.0, limit=60)
+    time.sleep(75)                           # at this hull's burn a tenth of a liter - the gauge's last digit - is ~1 min
+    cmd(port, "/api/cmd/energy", {"unlimited": False})
+    st = wait_for(port, lambda s: s["status"].get("unlimited_energy") is False, limit=15)
+    check("15. the override ON, then RESET: the answer says it is still ON, the state keeps it, and the NEW sim boat holds "
+          "her tank - after 75 s of hard running under it the frame after OFF still reads capacity (she burned behind a "
+          "full gauge)",
+          lambda: code_r == 200 and "energy override is still ON" in note_r and kept is True
+          and st["status"].get("unlimited_energy") is False and (st["status"].get("fuel_l") or 0) >= cap - 0.05,
+          lambda: "reset %s, note %r, kept %s, fuel after OFF %.2f of %.0f" % (code_r, note_r[-40:], kept,
+                                                                              st["status"].get("fuel_l") or -1, cap))
 
 finally:
     try:

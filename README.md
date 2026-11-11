@@ -669,8 +669,9 @@ Each profile also carries its own **spawn** position, so a vessel comes up in it
 work area — `zboat_1800hs` in **Erie** (Presque Isle Bay) and both DriX profiles at **Lewes**
 (the UDel facility on the Lewes-Rehoboth Canal). To place the boat anywhere else,
 right-click the chart and choose **Spawn here**: the sim boat comes up there
-instead, with the same clean slate as Reset (full energy, SAFE, no plan or home).
-That override lasts for the current sim boot only — the profile's spawn is untouched
+instead, with the same clean slate as Reset (full energy, SAFE, no plan or home; an
+energy override that was on stays on, and the note says so).
+That spawn override lasts for the current sim boot only — the profile's spawn is untouched
 and is restored on the next start or vessel switch. Sim only; a real boat can't be
 teleported. **A spawn makes the new position the reference** (2026-10-13): HOME is planted
 at the spawn point on her first fix (a mothership that owned home is released), the chart
@@ -3418,7 +3419,8 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    happens when no window is open to plan the next section, or when it could not be planned. At a
    fuel stop she also holds and waits. Nothing moves her on from a hold but **Continue passage**,
    beside Start. At a port, Continue passage is refused until the fuel aboard reaches the next port
-   with 20% of the tank, and the refusal says so with the numbers. A Go-To, an RTH, a Hold or a Stop
+   with 20% of the tank, and the refusal says so with the numbers (under the energy override the
+   leg is judged from a full tank, as Plan passage judges it). A Go-To, an RTH, a Hold or a Stop
    while she sails records where she left the passage, and Continue passage brings her back to that
    point and sails the rest of the section. **A Go-To given while she sails ends back on the
    passage** (Andy, 2026-10-16: "Follow the plan without adding another layer of confirmation"): at
@@ -4139,6 +4141,55 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    a click meant for that row during an AIS rehearsal set the fuel and sent her home mid-survey. It
    is set apart by a separator now, and the history names it (it was logged "Unlimited energy off").
 
+   **Under the energy override nothing is monitored (2026-11-10).** Clicking the BATT/FUEL pill
+   reports the tank as full and, in the simulator, stops the drain (`/api/cmd/energy {unlimited}`:
+   a JSON true or false, anything else a 400). It is the **console's** setting, not the boat's:
+   `Engine.connect` tells every new link, so it holds through Reset, Spawn here, a vessel or port
+   switch and a reconnect, and the note each of them leaves says it is still on. While it is on
+   the monitor is **off**: `fuel.js` `rthDecision` answers `override` (never a send, the latch
+   dropped) and `energyLevel`
+   reads no level, so there is no RTH point, no LOW FUEL and no automatic RTH; the two rows read
+   NOT MONITORED and what the plan takes; the rehearsal row is grayed; a low-fuel RTH still being
+   routed is withdrawn. The frame it goes off is judged as a first look, with her real level.
+   Before this the forced-full gauge was read as her level. A battery hull is watched against the
+   RTH point at any range, and past the reach of a full pack that point stands above full, so
+   with the override on she was sent home 3.46 nm out, over the Go-To she was flying - three
+   sessions in five days in the recordings, one of them 20 RTHs in 26 s. And a Reset dropped the
+   simulator's hold while the console still showed the override on: the pack drained from 26.5 V
+   to 21.31 V behind a gauge reading 100%. Since then only **one low-fuel RTH is in flight** at a
+   time (`fuelFlight`, at most `FUEL_FLIGHT_MS`), the alert's sentence reckons what she arrives
+   with instead of asserting the reserve, and the pill's click waits for the console's answer.
+   The review of that change closed two more ways the monitor's latch outlived what it answered:
+   a **view-only window** no longer counts a crossing as answered (taking over with her still
+   below the point, it sends her home), and **a new link is a new watch** (`boot_id`: a page not
+   reloaded through a Spawn, a switch or a reconnect watches the new boat afresh). And what reads
+   the level was made to agree: under the override **Continue passage** judges the next leg from a
+   full tank (as Plan passage does), a survey broken off for low fuel is not held for the refuel
+   and no **REFUELED** is said off no reading (nor at all until a level is read: its mark is also
+   capped at full, so one broken off at a full pack can be continued), the RTH row's tip says the
+   RTH will be **refused** where home is past 50 km, and the note when it goes off says the monitor
+   is no longer held off - not that it is watching, which it may have nothing to do. The last of
+   the review: a crossing **said** where she could not be sent (disarmed at the dock, a window that
+   does not supervise) re-arms as one acted on does, so her next alert - out of range, the 20%
+   reserve alert, the monitor's whole answer there - is not swallowed; a low-fuel RTH **refused
+   because she was disarmed** (or put in E-STOP) while it was routed, or **never sent** because the
+   window lost the post meanwhile, is sent the frame she can be (one refused for another reason,
+   no link say, is not re-routed every few seconds); and each frame is judged at **its own fix**,
+   not where the previous boat was - though a window with no position of its own yet (its first
+   frame) still decides nothing: doRTH would have sent her home in a straight line no chart saw.
+   A refusal is judged on the console's own answer, not the window's frame-old copy. An RTH
+   withdrawn because **E-STOP** was pressed in this window while it was routed is sent the frame
+   she can be, like one refused in E-STOP; withdrawn by a **Stop, Pause or Hold** it stands, as any
+   command you give after it does. **Open, for Andy to decide:** a window that takes the post and
+   never saw her go home sends her home, even over a command you gave her after the first RTH -
+   by TAKE OVER, or with no click at all when the supervising window is closed, reloaded or quiet
+   for 10 s. The latch is each page's own, and the console does not yet record which crossing
+   was answered. She arrives with the reserve either way; before, a dead supervising tab meant
+   nobody sent her.
+   `tests/fuel_rth.js` 6e, 8k-8u, 9f2, 9h-9j, 10g-10h; `tests/run_link_control.py` 21-21f;
+   `tests/energy_chartinfo.py` 14-15; `tests/command_result.js` 54b-54d; `tests/survey_break.js` 3b;
+   `tests/passage_sail.js` 8b2.
+
    **Home along the passage, not the straight line (2026-10-12).** The field covers only the chart
    box round her, so on a passage, with home tens or hundreds of km off, the monitor measured the
    straight line home: her RTH point too low wherever a headland stands between, and a full tank
@@ -4201,9 +4252,11 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    the old; then she flies the rest of the survey and End of plan. The point and the rest come
    from the record, not the plan, so an edit made meanwhile does not change what she completes.
    A fuel break-off waits until she is **refueled** (her level 2% of the tank above what it was
-   when she broke off): until then the button is grayed and its tip says what she has aboard;
-   once she is, a **REFUELED** banner says the survey can be continued and the button flashes.
-   A vessel that reports no level leaves that to you. Continue asks first, routes the way in
+   when she broke off, or full again if she broke off full and has used some since): until then
+   the button is grayed and its tip says what she has aboard; once she is, a **REFUELED**
+   banner says the survey can be continued and the button flashes. A vessel that reports no
+   level, or the energy override, leaves that to you: the button's tip says why, and no
+   REFUELED is said (nothing was read). Continue asks first, routes the way in
    round the keep-outs, uploads, starts a fresh run and then spends the record. If the way in
    cannot be routed, the point is one the keep-out model would hold her off, the upload or the
    Start does not take, or she was commanded meanwhile, nothing more is sent and the record is

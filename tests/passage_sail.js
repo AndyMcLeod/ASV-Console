@@ -697,6 +697,22 @@ console.log("The passage, sailed:");
         () => /refuel first: 55.0 L aboard, and P2 is 20.0 km on - she needs/.test(why8 || "") && lowFuel.cmds.length === 0
               && full8.api.continueRefusal(full8.mission.passage) === null && /under way/.test(under.api.continueRefusal(under.mission.passage) || ""),
         () => why8);
+  // 8b2 (2026-11-10 review). UNDER THE ENERGY OVERRIDE the leg is judged from a FULL tank - what Plan passage assumes -
+  // whatever the gauge says: the forced-full gauge had kept this refusal, and reading no level under the override had
+  // dropped it (the tank rule held at Sail and not at Continue). A vessel reporting no level is still not held.
+  const ovrOf = (fuel) => { const x = waiting("at_port", { asv: { ...P2 }, S: { armed: true, estop: false, run: "running",
+      status: { holding: true, fuel_l: fuel, unlimited_energy: true }, wp_total: 4 } }); x.mission.passage.sent = 1; return x; };
+  const ovrIn = ovrOf(55), ovrShort = ovrOf(55);
+  ovrShort.model = Object.assign({}, ovrShort.model, { full: 55 });     // a tank that, full, does not reach P2 with 20%
+  const whyOvrIn = ovrIn.api.continueRefusal(ovrIn.mission.passage), whyOvrShort = ovrShort.api.continueRefusal(ovrShort.mission.passage);
+  const noLv = waiting("at_port", { asv: { ...P2 }, S: { armed: true, estop: false, run: "running", status: { holding: true }, wp_total: 4 } });
+  noLv.mission.passage.sent = 1;
+  check("8b2. ... UNDER THE ENERGY OVERRIDE judged from a FULL tank, whatever the gauge: sent where a full tank reaches, "
+        + "refused - and the words say it is the full tank that is short - where it does not; no level reported: not held",
+        () => whyOvrIn === null
+              && /^too far for even a full tank \(55\.0 L - the energy override is on, so her level is not read\): P2 is 20\.0 km on - she needs/.test(whyOvrShort || "")
+              && noLv.api.continueRefusal(noLv.mission.passage) === null,
+        () => JSON.stringify({ whyOvrIn, whyOvrShort }));
 
   // ── 9. Divert ───────────────────────────────────────────────────────────────────────────────────────────────────
   const PORT = { lat: 43.2, lon: -70.6 };

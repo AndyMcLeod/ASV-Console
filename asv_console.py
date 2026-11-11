@@ -8336,9 +8336,27 @@ class Engine:
             else:
                 self._link = RealVcu(host, self._port, transport=transport)
                 self.note = "Connecting to VCU %s:%s (%s)..." % (host, self._port, transport)
+            # ⚠ THE ENERGY OVERRIDE IS THE CONSOLE'S, SO EVERY NEW LINK IS TOLD (Andy, 2026-11-10: "energy over-ride
+            # failed in the running instance"). Only the link in hand when the pill was clicked was told
+            # (set_energy_override), and a Reset, a spawn, a port switch and a vessel switch each bring up a FRESH
+            # SimVcu holding nothing: state() went on reporting a full pack and the override ON from this console's
+            # flag while the simulator drained the real one - 26.5 V to 21.31 V in the 73 minutes after his Reset, under
+            # the hull's 23 V alarm, the gauge reading 100 % throughout. Told HERE, under the lock and before the loop
+            # starts, so not one tick drains; set_energy_override reads the link under the same lock it writes the
+            # flag, so neither order of a click and a reconnect leaves a link untold. tests/run_link_control.py 21-21d.
+            self._tell_energy_override(self._link)
             self._link.open()
             if isinstance(self._link, RealVcu):
                 self.note = self._link.note
+            # ... and SAID on every link it is carried onto (2026-11-10 review: only Reset and Spawn said it - a vessel or
+            # port switch and /api/connect were silent, and onto a REAL link, whose gauge then reads full whatever she
+            # reports while the page's low-fuel monitor is off). reset() writes its own note after this, and says it there.
+            if self.energy_override:
+                # joined as a sentence: two of RealVcu.open()'s notes end without a period
+                self.note = self.note.rstrip() + ("" if self.note.rstrip().endswith(".") else ".")
+                self.note += (" The energy override is still ON." if mode == "sim" else
+                              " The energy override is still ON: the gauge reads full whatever she reports, and the "
+                              "low-fuel monitor is off.")
             # a fresh link always comes up SAFE
             self.armed = False
             self.estop = False
@@ -8665,20 +8683,28 @@ class Engine:
         the real reading, and - in sim - stop the drain/burn. Applies in EVERY mode and
         to every behavior, mission running or not: it just forces the energy the console
         sees (battery voltage or fuel tank, whichever the vessel uses). Not gated on
-        connection or mode."""
+        connection or mode. It is the CONSOLE's setting, not the link's: it outlives the
+        link, and connect() tells every new one (_tell_energy_override)."""
         on = bool(on)
         with self._lock:
             self.energy_override = on
-            link = self._link
-        if link is not None:
-            try:
-                link.set_unlimited_energy(on)   # sim: hold at full; real: no-op
-            except Exception:
-                pass
-        with self._lock:
+            # told UNDER the lock that wrote the flag (it was told after the lock was dropped): connect() tells a new
+            # link under the same lock, so a click and a reconnect - or two clicks - in either order leave the flag
+            # and the link in hand agreeing
+            if self._link is not None:
+                self._tell_energy_override(self._link)
             self.note = ("Energy override ON - reporting full (all modes)." if on
                          else "Energy override OFF - actual energy reported.")
         self._push_state()
+
+    def _tell_energy_override(self, link):
+        """Tell `link` the console's energy override (the simulator holds its pack/tank at full and stops the
+        drain; a real link has nothing to hold). The ONE call, for the pill (set_energy_override) and for every new
+        link (connect) - two were how a fresh link came up untold."""
+        try:
+            link.set_unlimited_energy(self.energy_override)
+        except Exception:               # noqa: BLE001 - a link that cannot be told changes nothing the console reports
+            pass
 
     def set_energy_level(self, level):
         """REHEARSAL, SIMULATOR ONLY (2026-10-11): put the sim's tank (liters) or pack (volts) at `level`, so the
@@ -9286,6 +9312,10 @@ class Engine:
             self.note = ("Spawned here - fresh sim boot: energy full, SAFE, no plan or home."
                          if spawn else
                          "Reset - fresh sim boot: energy full, SAFE, no plan or home.")
+            # the override is the console's and outlives the boat it was clicked on (connect): said, not left to the
+            # color of a pill
+            if self.energy_override:
+                self.note += " The energy override is still ON."
         if LOG is not None:
             LOG.event("spawn" if spawn else "reset", **(spawn or {}))
         self._push_state()
@@ -9680,6 +9710,12 @@ class Engine:
         st = dict(self.status)
         link = self._link                    # read ONCE: a disconnect between two reads raised in here (finding 23)
         etype = st.get("energy_type", POWER_TYPE)
+        # ⚠ THE OVERRIDE'S LITERS GO IN FIRST, so the hours and miles derived from the tank are derived from the one
+        # SHOWN (2026-11-10): they were reckoned from the link's own liters and the liters then replaced (the block
+        # below), so a tank that was not full read "250 L (100%)" beside the endurance and range of the real one.
+        # Only where the link reported a level: with none, nothing is derived, as before.
+        if self.energy_override and etype == "fuel" and st.get("fuel_l") is not None:
+            st["fuel_l"] = round(FUEL_CAPACITY_L, 1)
         if etype == "fuel" and st.get("fuel_l") is not None and FUEL_CAPACITY_L > 0:
             # Diesel: report tank %, and a live endurance (hrs) + range (nm) at the
             # CURRENT speed's burn rate, plus a warn/crit band on the reserve.
@@ -10901,6 +10937,11 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/cmd/energy":            # energy override (report full) on/off, all modes
                 # ... or, in the simulator, `level` - the tank (L) or pack (V) put where a rehearsal of the fuel
                 # RTH wants it (2026-10-11)
+                # A body that is not an object ([], "unlimited", 5) is the same 400 in words - it fell to the catch-all as
+                # a 500 naming a Python attribute (2026-11-10 review)
+                if not isinstance(body, dict):
+                    return 400, {"error": "energy needs unlimited: true or false (the override) - or level: a "
+                                          "number, the simulator's fuel rehearsal"}
                 if "level" in body:
                     try:
                         lv = float(body.get("level"))
@@ -10910,7 +10951,13 @@ class Handler(BaseHTTPRequestHandler):
                         return 400, {"error": "level must be a number - liters of fuel, or the pack's volts"}
                     ENGINE.set_energy_level(lv)
                 else:
-                    ENGINE.set_energy_override(bool(body.get("unlimited")))
+                    # ⚠ TRUE OR FALSE, OR IT IS REFUSED (2026-11-10). bool(body.get("unlimited")) read a body that
+                    # named neither key - an empty one, a mistyped one - as OFF and answered 200 "Energy override OFF":
+                    # a post that never mentioned the override could drop it. And the string "false" read as ON.
+                    if not isinstance(body.get("unlimited"), bool):
+                        return 400, {"error": "energy needs unlimited: true or false (the override) - or level: a "
+                                              "number, the simulator's fuel rehearsal"}
+                    ENGINE.set_energy_override(body["unlimited"])
             else:
                 return 404, {"error": "not found"}
             return 200, {"ok": True, "state": ENGINE.state()}
