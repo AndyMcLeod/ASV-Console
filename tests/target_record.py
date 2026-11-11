@@ -1184,6 +1184,39 @@ check("R8. on a passage the record asks with the page's floor (15 nm), not the 5
       lambda: _asked == [27.78, 0.0, 0.0] and "_AIS_FLOOR_ASKED[:] = [floor_km, time.monotonic()]" in _get_src,
       lambda: json.dumps(_asked))
 
+
+# R8b. THE REAL HANDLER, on a fake request: only a poll that ASKS a floor writes it (2026-11-11). Every poll wrote it, so
+# a tab polling with none - another chart tab, the page's reads along its route, a stale tab on the port - canceled the
+# passage page's ask, and tests/mission_record.py 11b recorded 5 nm under a stray tab's 5 s poll.
+class _AisReq:
+    def __init__(self, q):
+        self.path = "/api/ais?" + q
+        self.sent = None
+
+    def _send(self, code, body, ctype="application/json"):
+        self.sent = code
+
+
+_slots = []
+A.ais_traffic = lambda lat, lon, held=(), floor_km=0.0: {"ok": True, "vessels": [], "floor_km": floor_km}
+try:
+    _was = list(A._AIS_FLOOR_ASKED)
+    A._AIS_FLOOR_ASKED[:] = [0.0, None]
+    for _q in ("center=42,-70&floor_km=27.78", "center=42,-70", "center=42,-70&floor_km=0", "center=42,-70&floor_km=x",
+               "center=42,-70&floor_km=nan", "center=42,-70&floor_km=-5", "floor_km=30"):
+        _rq = _AisReq(_q)
+        A.Handler._serve_ais(_rq)
+        _slots.append([_rq.sent, A._AIS_FLOOR_ASKED[0], _q])
+    _in_force = A._ais_floor_in_force()
+finally:
+    A.ais_traffic = _real_traffic
+    A._AIS_FLOOR_ASKED[:] = _was
+check("R8b. the real /api/ais handler writes the floor only when a poll asks one: a poll with none, 0, garbage, NaN or a "
+      "negative leaves the ask standing (and in force for the record); a poll with no center still asks",
+      lambda: [s[0] for s in _slots] == [200] * 7 and [s[1] for s in _slots] == [27.78] * 6 + [30.0]
+      and _in_force == 30.0,
+      lambda: json.dumps(_slots))
+
 # R9. the real _env_extra: where the stations are, from what is in memory
 class _Tab:
     def __init__(self, i):

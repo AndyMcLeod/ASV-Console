@@ -371,8 +371,13 @@ try:
           lambda: json.dumps(j_ais)[:200])
 
     # ── A PASSAGE'S RANGE: the page's floor reaches the record ───────────────────────────────────────────────────────
-    t_floor = time.time()
     c_fl, j_fl = api(PORT, "/api/ais?center=%.6f,%.6f&floor_km=50" % (BOAT["lat"], BOAT["lon"]), client=None)
+    # ⚠ ANOTHER TAB POLLS WITH NO FLOOR (2026-11-11): a second chart tab, the passage page's own reads along its route, or
+    # a stale tab left on this port - that last one took supervision of this suite's console every run from the evening
+    # of 2026-11-10 and polled every 5 s, and the console's one floor slot was the last poller's, so the record asked at
+    # 5 nm. This suite makes its own second poller, so the check does not depend on whether such a tab is there.
+    c_ot, j_ot = api(PORT, "/api/ais?center=%.6f,%.6f" % (BOAT["lat"], BOAT["lon"]), client="tabMR0002-another-tab")
+    t_floor = time.time()                    # after BOTH polls: a record asked before the second one proves nothing
 
     def ais_far():
         for r in read_session(spath):
@@ -381,11 +386,14 @@ try:
                 return r
         return None
     tg_far = until(ais_far, 25)
-    check("11b. a page sailing a passage polls with floor_km, and the RECORD asks with it too: the contact 40 km out (past "
-          "the 5 nm setting) is in the recording, and the area says the range in force",
+    check("11b. a page sailing a passage polls with floor_km, and the RECORD asks with it too - after another tab polled "
+          "with none: the contact 40 km out (past the 5 nm setting) is in the recording, and the area says the range in "
+          "force; the other tab's own answer is the setting, not moved",
           lambda: c_fl == 200 and "366000002" in [str(v["mmsi"]) for v in j_fl["vessels"]]
+          and c_ot == 200 and "366000002" not in [str(v["mmsi"]) for v in j_ot["vessels"]]
+          and j_ot["area"]["show_km"] == j_ot["area"]["set_km"]
           and tg_far and tg_far["area"]["show_km"] == 50 and tg_far["area"]["set_km"] < 10,
-          lambda: json.dumps(tg_far["area"] if tg_far else None))
+          lambda: json.dumps([tg_far["area"] if tg_far else None, (j_ot or {}).get("area")]))
 
     # ── WHAT THE LINK WAS GIVEN, AND THE RUNS ────────────────────────────────────────────────────────────────────────
     recs = read_session(spath)

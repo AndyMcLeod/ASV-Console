@@ -10421,7 +10421,8 @@ class Handler(BaseHTTPRequestHandler):
             floor_km = 0.0
         if not math.isfinite(floor_km):
             floor_km = 0.0
-        _AIS_FLOOR_ASKED[:] = [floor_km, time.monotonic()]     # the session record asks with it (see _ais_targets)
+        if floor_km > 0:                          # ONLY AN ASK is remembered (see _AIS_FLOOR_ASKED for why)
+            _AIS_FLOOR_ASKED[:] = [floor_km, time.monotonic()]     # the session record asks with it (_ais_targets)
         if lat is None:
             return self._send(200, json.dumps({"ok": False, "vessels": [], "count": 0,
                               "area": {"mode": "none"}, "note": "no position for the AIS area"}))
@@ -12967,6 +12968,11 @@ def _ais_health(sources):
 # its card and the guard's keep-outs hold ships 10-28 km off; a recorder asking with no floor wrote 5 nm of them, and
 # the replay drew an empty sea under rings with no contact. The last floor a poll asked for, while it is fresh: a
 # page that stopped polling (closed, asleep) stops widening the record after AIS_FLOOR_TTL_S.
+# ⚠ A POLL THAT ASKS NO FLOOR SAYS NOTHING ABOUT IT (2026-11-11). The handler wrote [0, now] for every poll, so the
+# last poller won: a second chart tab, the passage page's own reads along its route (readPassageAis asks none), or a
+# stale tab left on the port canceled the passage page's ask until its next poll - and a stray tab polling every 5 s
+# kept the record at 5 nm for a whole run (tests/mission_record.py 11b, red from the evening of 2026-11-10). Only an ask
+# is written now; a passage that ends stops asking, so the record is back at the setting within AIS_FLOOR_TTL_S.
 AIS_FLOOR_TTL_S = 30.0
 _AIS_FLOOR_ASKED = [0.0, None]            # [floor_km, time.monotonic() of the poll]
 
