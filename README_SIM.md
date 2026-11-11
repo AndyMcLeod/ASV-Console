@@ -398,7 +398,11 @@ the `status` key of `/api/state`**, alongside the top-level C2 state
 for the UI) plus the `available` list; `GET /api/vessels` returns just the list;
 `POST /api/vessel {"id":"…"}` switches the active vessel — allowed only when
 disarmed, not e-stopped, and idle (otherwise **409**), and it respawns the sim
-boat with the new physics.
+boat with the new physics. A vessel switch and a port switch (`POST /api/ports`) are
+each the *same* power-cycle as Reset (`Engine.power_cycle`, 2026-11-11): a fresh
+`SimVcu` at the spawn, SAFE, no plan or home - Home is re-seeded at her first fix, the
+ROC that owned it released and the launch grant dropped. Before, both only reconnected,
+and Home stayed where the old boat had it - at the old base, after a port switch.
 
 **Click-to-spawn:** `POST /api/cmd/spawn {"lat":…,"lon":…}` places the sim boat at a
 point (**Spawn here** on the chart's right-click menu, at the point the menu was opened

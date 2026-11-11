@@ -468,6 +468,52 @@ try:
     check("13b. ... and the fresh link takes commands again - the lifecycle is a circle",
           lambda: st.get("armed") is True, "armed=%s" % st.get("armed"))
 
+    # ---- A PORT SWITCH, THEN A VESSEL SWITCH (Andy, 2026-11-11: "fix the port switch home next") ------------------ #
+    # Both called connect() alone: the new boat came up at the new base and HOME, the launch grant and the old behavior
+    # stayed where the old one left them - so a switch to a base far away kept home at the OLD base (the RTH refused,
+    # nothing re-armed it: home is seeded only while empty). Each is now Reset's power-cycle (Engine.power_cycle).
+    # This console's state folder is the suite's own, so the base it adds is written there and nowhere else.
+    cmd(port, "/api/cmd/arm", {"on": False})
+    st = wait_for(port, lambda s: s.get("armed") is False and s.get("home") is not None, limit=15)
+    h0 = st.get("home") or {"lat": 0.0, "lon": 0.0}
+    cmd(port, "/api/cmd/sethome", {"lat": h0["lat"] + 0.01, "lon": h0["lon"]})          # her home, set off the spawn
+    cmd(port, "/api/cmd/berth", {"lat": h0["lat"], "lon": h0["lon"], "by": "test"})       # and a launch grant latched
+    pre = state(port)
+    NEW = (h0["lat"] + 1.5, h0["lon"] + 1.0)              # a base ~185 km away: past the 50 km a return is routed
+    r_port = cmd(port, "/api/ports", {"name": "Lab base", "lat": NEW[0], "lon": NEW[1]})
+    st = wait_for(port, lambda s: s.get("home") is not None and dist_m((s["home"]["lat"], s["home"]["lon"]), NEW) < 100,
+                  limit=20)
+    _hp = st.get("home") or {}
+    _sp = st.get("status") or {}
+    check("22b. A PORT SWITCH IS RESET'S POWER-CYCLE: she comes up at the new base and HOME with her (it stayed at the OLD "
+          "base - only reset() cleared it), the launch grant dropped, the behavior a fresh boot's, and the note says so",
+          lambda: r_port.get("ok") is True and pre.get("berth") is not None and pre.get("home") is not None
+          and dist_m((pre["home"]["lat"], pre["home"]["lon"]), NEW) > 150000
+          and dist_m((_hp["lat"], _hp["lon"]), NEW) < 100 and dist_m((_sp["lat_deg"], _sp["lon_deg"]), NEW) < 100
+          and st.get("berth") is None and st.get("home_source") is None and st.get("behavior") == "survey"
+          and "Base changed to Lab base" in (st.get("note") or "") and st.get("boot_id") != pre.get("boot_id"),
+          lambda: "port %s | home before %s, after %s (%s m from the new base) | berth %s -> %s | behavior %s | note %r"
+          % (r_port.get("ok", r_port.get("error")), pre.get("home"), _hp,
+             None if not _hp else round(dist_m((_hp["lat"], _hp["lon"]), NEW)), pre.get("berth") is not None,
+             st.get("berth"), st.get("behavior"), (st.get("note") or "")[:80]))
+    # a vessel switch at that base: her home set off the spawn again, then a different hull
+    cmd(port, "/api/cmd/sethome", {"lat": NEW[0] + 0.01, "lon": NEW[1]})
+    cmd(port, "/api/cmd/berth", {"lat": NEW[0], "lon": NEW[1], "by": "test"})
+    pre = state(port)
+    other = next(v for v in ("zboat_1800hs", "drix08") if v != vessel.get("id"))
+    r_ves = cmd(port, "/api/vessel", {"id": other})
+    st = wait_for(port, lambda s: s.get("home") is not None and dist_m((s["home"]["lat"], s["home"]["lon"]), NEW) < 100,
+                  limit=20)
+    _hv = st.get("home") or {}
+    check("22c. ... and so is a VESSEL switch: the new hull comes up at the base's spawn with home there, not where the "
+          "old one's was set; the grant dropped; the note names the hull",
+          lambda: r_ves.get("ok") is True and pre.get("berth") is not None
+          and dist_m((pre["home"]["lat"], pre["home"]["lon"]), NEW) > 1000
+          and dist_m((_hv["lat"], _hv["lon"]), NEW) < 100 and st.get("berth") is None
+          and "Vessel switched to" in (st.get("note") or "") and st.get("boot_id") != pre.get("boot_id"),
+          lambda: "vessel %s | home before %s, after %s | berth %s | note %r"
+          % (r_ves.get("ok", r_ves.get("error")), pre.get("home"), _hv, st.get("berth"), (st.get("note") or "")[:80]))
+
 finally:
     try:
         proc.terminate()
@@ -1035,13 +1081,13 @@ def _sim():
 
 
 def _hull(vid):
-    _C.apply_vessel(_C.load_vessel(vid))                    # the /api/vessel route's own two lines
-    _sim()
+    _C.apply_vessel(_C.load_vessel(vid))                    # the /api/vessel route's own lines (its note aside)
+    E.power_cycle(None, "Vessel switched to %s - fresh sim boot at the spawn: energy full, SAFE, no plan or home." % vid)
 
 
 def _port_switch():
-    _C.SPAWN_LAT, _C.SPAWN_LON = 43.07, -70.70              # what apply_port() does for a new base; then its connect
-    _sim()
+    _C.SPAWN_LAT, _C.SPAWN_LON = 43.07, -70.70              # what apply_port() does for a new base; then its power-cycle
+    E.power_cycle(None, "Base changed to Lab - fresh sim boot at its spawn: energy full, SAFE, no plan or home.")
 
 
 def _after(reconnect):
@@ -1167,6 +1213,46 @@ check("21e. UNDER THE OVERRIDE THE HOURS AND MILES ARE THE SHOWN TANK'S: a link 
       and _d1.get("range_nm") == round(_d1["endurance_h"] * 8.0, 1) and _d0.get("range_nm") == round(_d0["endurance_h"] * 8.0, 1),
       lambda: "on %s | off %s" % ({k: _d1.get(k) for k in ("fuel_l", "fuel_pct", "endurance_h", "range_nm")},
                                   {k: _d0.get(k) for k in ("fuel_l", "fuel_pct", "endurance_h", "range_nm")}))
+
+# ── 22, 22d. A PORT OR VESSEL SWITCH IS RESET'S POWER-CYCLE (Andy, 2026-11-11: "fix the port switch home next") ──────
+# 22b-22c drive the two routes over HTTP; here the one body they share, with the slate an operator's session leaves -
+# a home off the spawn, a ROC owning it, a launch grant, a Go-To's behavior - and the release of the ROC counted.
+_rel, _slate = [], {}
+_hp0, _hr0 = E.home_provider, E.home_release
+E._run = lambda stop: None                                  # no loop: no first fix re-seeds home under the check
+E.set_home_provider(lambda: None, release=lambda: _rel.append(1))
+try:
+    for _name, _do in (("reset()", E.reset), ("a port switch", _port_switch), ("a vessel switch", lambda: _hull(_hull0))):
+        _sim()
+        with E._lock:
+            E.home, E.home_source = {"lat": 10.0, "lon": 10.0}, "roc-x"
+            E.berth = {"at": {"lat": 10.0, "lon": 10.0}, "t": 1.0, "by": "op"}
+            E.behavior = "goto"
+        _n0 = len(_rel)
+        _do()
+        _slate[_name] = {"home": E.home, "src": E.home_source, "berth": E.berth, "behavior": E.behavior,
+                         "released": len(_rel) - _n0, "note": E.note[:40]}
+finally:
+    del E._run
+    E.set_home_provider(_hp0, release=_hr0)
+    _C.SPAWN_LAT, _C.SPAWN_LON = _spawn0
+    _C.apply_vessel(_C.load_vessel(_hull0))
+    E.disconnect()
+check("22. ONE POWER-CYCLE FOR RESET AND BOTH SWITCHES: from a home off the spawn owned by a ROC, a launch grant and a "
+      "Go-To, each releases the ROC once and leaves no home, no source, no grant and a fresh boot's behavior",
+      lambda: len(_slate) == 3 and all(s["home"] is None and s["src"] is None and s["berth"] is None
+                                       and s["behavior"] == "survey" and s["released"] == 1 for s in _slate.values()),
+      lambda: json.dumps(_slate))
+_routes = _src_all[_src_all.index('        if path == "/api/vessel":'):_src_all.index('        if path == "/api/comms":')]
+_reset_src = inspect.getsource(_C.Engine.reset)
+check("22d. THE WIRING: the vessel and port routes power-cycle (Engine.power_cycle) and neither calls connect() itself; "
+      "reset() is the same body (it calls power_cycle and holds no slate of its own)",
+      lambda: _routes.count("ENGINE.power_cycle(None, ") == 2 and "ENGINE.connect(" not in _routes
+      and "self.power_cycle(spawn, " in _reset_src and "self.home = None" not in _reset_src
+      and "self.connect(" not in _reset_src,
+      lambda: "routes: power_cycle x%d, connect x%d | reset calls power_cycle %s, own slate %s"
+      % (_routes.count("ENGINE.power_cycle(None, "), _routes.count("ENGINE.connect("),
+         "self.power_cycle(spawn, " in _reset_src, "self.home = None" in _reset_src))
 
 print(("\n%d CHECK(S) FAILED (%d ran)" % (fails, ran)) if fails
       else ("\nall checks passed (%d)" % ran))

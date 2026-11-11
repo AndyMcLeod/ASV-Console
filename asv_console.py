@@ -9283,6 +9283,22 @@ class Engine:
             mode = self._mode
         self._require(mode == "sim", "Reset is a simulator-only convenience - a real "
                       "boat can't be teleported to spawn or have its energy refilled.")
+        self.power_cycle(spawn, "Spawned here - fresh sim boot: energy full, SAFE, no plan or home."
+                                if spawn else
+                                "Reset - fresh sim boot: energy full, SAFE, no plan or home.",
+                         event="spawn" if spawn else "reset")
+
+    def power_cycle(self, spawn, note, event=None):
+        """THE SIMULATOR POWER-CYCLE - one body for every caller that brings up a FRESH SimVcu: Reset, Spawn here, and
+        a PORT or VESSEL switch (2026-11-11, Andy: "fix the port switch home next"). The two switches called connect()
+        alone, which brings up the new boat at the new base and leaves everything the OLD one was holding: HOME, its
+        source (a ROC still selected re-planted ITS point every tick), the launch grant and the old behavior. So a
+        switch from one base to another, thousands of kilometers apart, kept HOME at the old base: the RTH was refused
+        ("home is N km away"), the fuel monitor read her out of range, and nothing re-armed it - home is seeded only
+        while empty. Reset had the clean slate all along; it is here now, and Reset, Spawn and both switches ask it.
+        `note` is what the operator is told; `event`, the recording's own record of it (the switches log theirs as a
+        port or vessel record). The caller checks the mode and the switch gate (disarmed, idle, no E-STOP) first.
+        tests/run_link_control.py 22-22c."""
         # ⚠⚠ RELEASE THE ROC THAT OWNS HOME, AND DO IT BEFORE THE NEW LINK'S FIRST FRAME.
         # Nulling `home` below was never enough: _run re-reads home_intent() every tick and a
         # ROC still selected re-planted ITS point on the very next frame - so every spawn Andy
@@ -9309,15 +9325,13 @@ class Engine:
             self.behavior = "survey"
             self.run_completion = "complete"
             self.wp_index = self.wp_total = 0
-            self.note = ("Spawned here - fresh sim boot: energy full, SAFE, no plan or home."
-                         if spawn else
-                         "Reset - fresh sim boot: energy full, SAFE, no plan or home.")
+            self.note = note
             # the override is the console's and outlives the boat it was clicked on (connect): said, not left to the
             # color of a pill
             if self.energy_override:
                 self.note += " The energy override is still ON."
-        if LOG is not None:
-            LOG.event("spawn" if spawn else "reset", **(spawn or {}))
+        if LOG is not None and event:
+            LOG.event(event, **(spawn or {}))
         self._push_state()
 
     def return_home(self, route=None, hold_clear_m=None, coast_from_m=None):
@@ -10628,7 +10642,10 @@ class Handler(BaseHTTPRequestHandler):
             apply_vessel(v)
             log_vessel_record("switch")             # the hull in force from here on, as a record of its own
             if st.get("mode") == "sim":
-                ENGINE.connect("sim", "", DEFAULT_VCU_PORT, "tcp")
+                # a POWER-CYCLE, not a bare reconnect: HOME, its ROC, the launch grant and the behavior go with the old
+                # boat, as at a Reset (Engine.power_cycle)
+                ENGINE.power_cycle(None, "Vessel switched to %s - fresh sim boot at the spawn: energy full, SAFE, no "
+                                         "plan or home." % (VESSEL.get("name") or vid))
             # the new profile may spawn in a completely different sea area - re-point the
             # AIS subscription, or the layer keeps streaming the previous one
             _rescope_ais_service()
@@ -10678,8 +10695,8 @@ class Handler(BaseHTTPRequestHandler):
                 # ⚠⚠ THE GATE ABOVE IS NOW UP TO ~110 s OLD - a geocode (20 s) plus
                 # snap_to_water (90 s) - and the operator had the console for all of it.
                 # RE-TAKE it against the state this mutation will actually meet. Arming and
-                # Starting during the lookup was answered ok:True while ENGINE.connect()
-                # below tore the running SimVcu down and respawned the boat at the new base,
+                # Starting during the lookup was answered ok:True while the respawn below
+                # (Engine.power_cycle) tore the running SimVcu down and put the boat at the new base,
                 # thousands of kilometers away, mid-run.
                 # ⚠ IT HAS TO BE HERE AND NOT LOWER: by the time PORTS is rewritten the
                 # in-memory registry has already changed, so a refusal there would leave the
@@ -10709,7 +10726,11 @@ class Handler(BaseHTTPRequestHandler):
             apply_port()
             log_port_record("switch", found=found)  # the base in force, its spawn and model, as a record of its own
             if st.get("mode") == "sim":
-                ENGINE.connect("sim", "", DEFAULT_VCU_PORT, "tcp")   # respawn at the new base
+                # respawn at the new base - a POWER-CYCLE, not a bare reconnect: HOME stayed at the OLD base (only
+                # reset() cleared it), so the RTH was refused and nothing re-armed it (Engine.power_cycle)
+                _act = next((q for q in PORTS["ports"] if q["id"] == PORTS["active"]), None) or {}
+                ENGINE.power_cycle(None, "Base changed to %s - fresh sim boot at its spawn: energy full, SAFE, no "
+                                         "plan or home." % (_act.get("name") or PORTS["active"]))
             # a different base is a different sea area - re-point the AIS subscription
             _rescope_ais_service()
             out = {"ok": True, "active": PORTS["active"], "ports": PORTS["ports"],

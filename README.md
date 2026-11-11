@@ -108,6 +108,15 @@ Either way the entry is written to `ports.json` and is in the list from then on.
 pickers refuse while armed or running, for the same reason: moving the base under a live
 boat is as incoherent as swapping its physics.
 
+**In the simulator either switch is a power-cycle, the same one as Reset** (2026-11-11). The
+boat comes up fresh at the base's spawn and **Home goes with her**, re-seeded at her first fix
+there; the launch grant and her old behavior go with the old boat. Before, both switches only
+reconnected, and the new boat came up at the new base with everything the old one held: Home
+stayed at the OLD base (a base past the 50 km a return is routed left the RTH refused, and
+nothing re-armed it - Home is seeded only while it is empty), a ROC that owned Home kept
+planting its point there, and the grant stood. A Home you set by hand, or a ROC you chose for
+it, is dropped as at Reset: set it again at the new base. `tests/run_link_control.py` 22-22d.
+
 **Changing base is shown as the journey it is.** A **MOVING BASE** card comes up the moment
 you pick — before the console has even been told where the new base is — and stays up
 through the whole change, naming what is still outstanding: the lookup, the slew, then
