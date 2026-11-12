@@ -899,6 +899,15 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
         () => JSON.stringify({ plan: [oPlan.row, oPlan.cls, oPlan.fuel, oPlan.fuelCls], stale: [oStale.row, oStale.fuel, oStale.fuelCls],
                                none: oNone.fuel, pill: oPlan.pill.slice(0, 70), batt: (oBatt.tip.match(/With the override off[^\n]*/) || [""])[0].slice(0, 200),
                                ctl: [ctl.row, ctl.fuel] }));
+  // 9l (2026-11-12). A PLAN'S END PAST RTH_MAX_M (fuelProjection's homeFar, 9k): the Fuel row says what is LEFT at the end
+  // of the plan - never "at home" off one tank - and the tip says how the way home goes from there
+  const farHome = run({ model, level: 200, rth: inr.level, h: hNear, w: { ...inr, h: hNear, farM: null }, state: "ok" },
+    { legs: 3, used: 20, seconds: 100, levelEnd: 180, turn: null, home: null, homeFar: { m: 110000 } });
+  check("9l. A PLAN'S END PAST " + (RTH_MAX / 1000) + " km FROM HOME: the Fuel row says what is left at the end of the plan, "
+        + "not 'at home' off one tank, and the tip says End of plan RTH goes home along the passage a port at a time, or is refused",
+        () => /left$/.test(farHome.fuel) && !/at home/.test(farHome.fuel)
+              && /home from there is 110\.0 km - past the 50\.0 km a straight return is certified for: End of plan RTH goes home along the passage on the plan, a port at a time, each leg sent only with fuel for its port and 20% - or, with no passage, is refused/.test(farHome.fuelTip),
+        () => JSON.stringify({ fuel: farHome.fuel, tip: farHome.fuelTip.slice(0, 320) }));
   // 9j (2026-11-10 review). THE OVERRIDE'S ROW IN THE STATES 9h DID NOT HAVE: home by the straight line (no "straight
   // line" tag - nothing is measured - and nothing amber off it); home OUT OF RANGE (no "the RTH point here is" - there is
   // no RTH point, only the alert); and a battery hull past the 50 km a return is routed, where turning it off raises the
@@ -1197,6 +1206,31 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
           () => api.MS >= 10000 && w0 === 1 && w1 === 1 && w2 === 1 && w3 === 1 && w4 === 2 && w5 === 3 && w6 === 4
                 && w7 === 5 && w8 === 5 && w9 === 6,
           () => JSON.stringify({ interval_ms: api.MS, walks: [w0, w1, w2, w3, w4, w5, w6, w7, w8, w9] }));
+  }
+
+  // ── 9k. A FAR HOME IS NOT ONE TANK'S WORTH (2026-11-12). From a plan's end past RTH_MAX_M, End of plan RTH goes home along
+  //        the passage a port at a time, or is refused; once the card (rightly) predicted the RTH at a passage's arrival,
+  //        charging the whole way home against her tank read red "at home" on every long passage's last section. The page's
+  //        own fuelProjection and rthTooFar, the rest stubbed: home 11 km from the plan's end is charged; 78 km is not.
+  {
+    const decl = (re) => { const m = H.match(re); if (!m) throw new Error("not found: " + re); return m[0]; };
+    const flat = (a, b) => Math.hypot((b.lat - a.lat) * 111320, (b.lon - a.lon) * 111320 * Math.cos((a.lat + b.lat) / 2 * Math.PI / 180));
+    const model = { kind: "fuel", full: 250, floor: 0 };
+    const mk = new Function("Date", "fuelModel", "asv", "indexedRoute", "window", "S", "energyLevel", "planeFrame", "groundVel",
+      "runLegKeys", "V", "roleSpeed", "speedRole", "projectMission", "fuelWatchAt", "endAction", "fuelHomeNeed", "distTo", "NOGO_RADIUS_M",
+      decl(/^const FUEL_PROJECT_MS = [^;]*;/m) + "\n" + (H.match(/^const FUEL_PROJECT_JUMP = [^;]*;/m) || ["const FUEL_PROJECT_JUMP = 0.01;"])[0] + "\n"
+      + decl(/^let fuelProj = [^;]*;/m) + "\n" + decl(/^const RTH_MAX_M = [^;]*;/m) + "\n" + grab("rthTooFar") + "\n"
+      + grab("fuelProjection") + "\nreturn fuelProjection;");
+    const proj = (home) => mk({ now: () => 0 }, () => model, { lat: 43, lon: -70 }, () => [{ lat: 43, lon: -70 }, { lat: 43.1, lon: -70 }],
+      { _wpIndex: 0 }, { status: {}, home }, () => 200, () => ({ toEN: () => ({ e: 0, n: 0 }), fromEN: () => ({ lat: 43, lon: -70 }) }),
+      () => null, () => () => null, { SPEED_KN: {} }, () => "7", () => "transit", () => ({ used: 5, seconds: 60 }), () => null,
+      () => "rth", (m, ll) => ({ need: 30, m: flat(ll, home), water: true, twKn: 7 }), flat, 5000)();
+    const nearP = proj({ lat: 43.2, lon: -70 }), farP = proj({ lat: 43.8, lon: -70 });
+    check("9k. A FAR HOME IS NOT ONE TANK'S WORTH: the plan's end 11 km from home, the way home is charged on the card; 78 km "
+          + "out - past RTH_MAX_M, where End of plan RTH goes home along the passage a port at a time or is refused - it is "
+          + "not, and the distance is kept for the tip",
+          () => nearP.home && nearP.home.need === 30 && !nearP.homeFar && farP.home === null && farP.homeFar && Math.abs(farP.homeFar.m - 77924) < 300,
+          () => JSON.stringify({ near: [nearP.home, nearP.homeFar], far: [farP.home, farP.homeFar] }));
   }
 
   const C = require(path.join(APP, "static", "js", "coarse.js"));

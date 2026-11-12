@@ -31,13 +31,22 @@
 //         is, at a section's end the whole next section home; turning points reversed; the last ending at home; none
 //         when home is at neither end or she is far off it;
 //   13-13e THE WAY HOME, SAILED (homeRecord, sailHome, doRTH past RTH_MAX_M): the operator's RTH sent home along the
-//         passage as an RTH, the passage on the plan becoming the way home; never the end-of-plan chain's, the low-fuel
-//         monitor's, or to a ROC's home; refused on too little fuel for the first port; each next section sent ahead
-//         of her as an RTH; HOME at the end; a second RTH along the same passage; left and continued;
+//         passage as an RTH, the passage on the plan becoming the way home; never the low-fuel monitor's, or to a
+//         ROC's home; refused on too little fuel for the first port; each next section sent ahead of her as an RTH;
+//         HOME at the end; a second RTH along the same passage; left and continued;
 //   14-14e THE WATER A SECTION IS PLANNED AT (sectionLevel, sectionWater, atWaterLevel, chart.js buildKeepouts'
 //         waterOffsetM): the lowest trusted level along it, chart datum otherwise, a manual level lowering it only;
 //         read along its own points over the hours she is expected in it; planned on the chart built at that level,
 //         the guard's own put back; the wiring.
+// THE ARRIVAL IS THE END OF THE MISSION (Andy, 2026-11-12: "all end of mission should RTH unless over-ridden by user"):
+//   16-16g an overnight passage from Pago Pago held at its arrival 7.5 h: sailOwnsHold owned the arrival, so the chain
+//         stood down, and a chained RTH past RTH_MAX_M was refused rather than sailed home along the passage. Now the
+//         chain's own condition (read out of onState) fires there and the card predicts it, from a reloaded tab too;
+//         home far, she goes home along the passage as the RTH button sends her; in range, a routed RTH; End of plan
+//         LOITER (the operator's word) holds her; a section's end, a fuel stop and the way home's own end stay holds;
+//         a chained RTH refused - no passage, too little fuel - is recorded, so the cards stop promising one. And (the
+//         review): along the passage from the ARRIVAL only - a far chain from a hold no record names is refused as
+//         before; in a view-only tab nothing is planned, sent or claimed; a lost reply is not a refusal.
 //
 //   node tests/passage_sail.js   # exit 0 = pass
 
@@ -76,6 +85,10 @@ function grab(name) {
   return H.slice(start, k + 1);
 }
 const decl = (name) => { const m = new RegExp("const " + name + " = [^;]+;").exec(H); if (!m) throw new Error(name + " gone"); return m[0]; };
+// THE END-OF-PLAN CHAIN'S OWN CONDITION, read out of onState (16): an `if` in the frame handler, not a function, so the
+// world evaluates its text - the gates the page fires on, not a copy of them
+const CHAIN = /if\((s\.run==="running" && st\.holding && s\.completion==="rth"[\s\S]*?)\)\{\s*rthChained=true;/.exec(H);
+if (!CHAIN) throw new Error("test setup: the end-of-plan chain's condition not found in onState (reworded?)");
 const M = 111320;
 const distTo = (a, b) => Math.hypot((b.lat - a.lat) * M, (b.lon - a.lon) * M * Math.cos((a.lat + b.lat) / 2 * Math.PI / 180));
 const east = (p, m) => ({ lat: p.lat, lon: p.lon + m / (M * Math.cos(p.lat * Math.PI / 180)) });
@@ -187,8 +200,10 @@ console.log("The passage, sailed:");
       "const holdTarget = (to) => ({to, heldOff: null, holdClear: 40});",
       "const holdClearWithContacts = (p, m) => m, routeTooLong = () => false, solveCoastFor = () => ({groundM: 55});",
       "const routePlan = (from, line, kr, std, ta, ro) => { w.planned.push({from, line, ow: ro && ro.openWater}); return {route: line.map((p) => ({lat: p.lat, lon: p.lon})), unroutable: Array(w.unroutable).fill(0)}; };",
-      "const routeCmd = async (p, b) => { w.cmds.push([p, b]); return w.refusePost ? {ok: false, error: 'refused'} : {ok: true, state: {status: {}}}; };",
-      "const took = (r) => !!(r && r.ok), notTookSay = (r) => 'REFUSED: ' + r.error, releaseEscapeClaim = () => {};",
+      // (the command's answer is the world's `post` when it sets one - refused, lost, never sent (16g) - and taken otherwise;
+      // took and notTookSay are the page's own, which keep those three apart)
+      "const routeCmd = async (p, b) => { w.cmds.push([p, b]); return w.post || {ok: true, state: {status: {}}}; };",
+      grab("took"), grab("notTookSay"), "const releaseEscapeClaim = () => {};",
       "const setPlanIntent = (k, p, r) => { planGen++; planIntent = {kind: k, why: [], route: r.length}; };",
       "const legStartsHere = () => {}, setTip = (el, t) => { el.tip = t; };",
       // step 6: the water a section is planned at (stubbed here; 14 drives the real ones), and doRTH's way home
@@ -197,7 +212,17 @@ console.log("The passage, sailed:");
       // THE ROUTE WORKER (2026-10-12) is not here: each search runs on this thread as it always did (tests/route_worker.js) - the
       // section's model at its water handed to it (koAtLevel) and the search run here, in atWaterLevel, as it was
       "const koAtLevel = (m) => ({atLevel: m}), planOffThread = async (job, here) => here();",
-      "let rthChainFailed = false; const NOGO_RADIUS_M = 5000, homeSections = w.C.homeSections;",
+      // (RTH_MAX_M is 10 x this: 50 km, or what the world sets - 16f's 15 km, so a fuel stop 40 km out is past it)
+      "let rthChainFailed = false; const NOGO_RADIUS_M = w.nogoR || 5000, homeSections = w.C.homeSections;",
+      // the end of the mission (16): the card's prediction and the chain's condition, both the page's own, and what an
+      // RTH in range plans through (its route straight home here: the planner is not what is judged)
+      decl("CHAINABLE_BEHAVIORS"), grab("chainableRun"), "let pendingHold = null;", grab("heldSplitRun"),
+      grab("runCompletion"), grab("runHolds"), grab("rthPending"),
+      "const chainFires = (s, st, seqMoved, rthChained) => (" + CHAIN[1] + ");",
+      "const planNogoRoute = (from, to) => { w.nogoAsked = (w.nogoAsked || 0) + 1; return {route: [from, to], holdClear: 30}; };",
+      "const setViolation = () => {}, clearViolation = () => {}, unchartedTip = () => '', CHART_FAILED_TIP = '', takeDownBanner = () => {};",
+      "const openWaterNote = () => '', buoyageNote = () => '', offshoreNote = () => '', deepNote = () => '', mooredNote = () => '', heldOffWhy = () => '';",
+      "let fuelNow = null;",
       "let passagePreRead = w.preRead || null;",   // section 1's chart read, begun at planning (4c)
       "const surveyBreakNow = () => w.brk || null, bankBreak = (b) => w.banked.push(b);",
       decl("RTH_MAX_M"),
@@ -213,10 +238,10 @@ console.log("The passage, sailed:");
       "let sailBusy = false, sailTriedAt = 0, sailSaid = null;",
       ["passageEndsSay", "sailRecord", "sailPortName", "sailRefusal", "sailSegM", "sectionRest", "sailOwns", "sailGuardQuiet", "sailLeftM", "sailSend",
        "sailPassage", "sailAppend", "sailAtEnd", "sailBreakOff", "sailRejoinHere", "sailRejoinTick", "passageTick", "sailRestM",
-       "sailFuelShort", "continueRefusal", "continuePassage", "continueSend", "divertPassage", "dropPassage", "renderPassageControls", "sailLine", "sailOwnsHold", "drawSail",
+       "sailFuelShort", "continueRefusal", "continuePassage", "continueSend", "divertPassage", "dropPassage", "renderPassageControls", "sailLine", "sailOwnsHold", "sailArrival", "sailArrived", "drawSail",
        "rthTooFar", "doRTH", "passageHome", "homeRecord", "sailHome"].map(grab).join("\n"),
       "const api = {sailRecord, sailRefusal, sectionRest, sailPassage, passageTick, sailAtEnd, continuePassage, continueRefusal, divertPassage,",
-      "  dropPassage, renderPassageControls, sailOwnsHold, sailLine, drawSail, doRTH, homeRecord,",
+      "  dropPassage, renderPassageControls, sailOwnsHold, sailLine, drawSail, doRTH, homeRecord, rthPending, chainFires,",
       "  st: () => ({mission, runRoute, planIntent, planGen, passage, sailBusy, rthChainFailed}), set: (k, v) => { eval(k + ' = v'); }};",
       "return api;",
     ].join("\n");
@@ -789,16 +814,17 @@ console.log("The passage, sailed:");
   // sailOwnsHold answered from this tab's runRoute, which a reload leaves null: a tab reloaded while she held at a
   // section's end saw no passage hold, and the end-of-plan chain sent her home from it on its second frame.
   const reload = (state, o) => { const w = waiting(state, o); w.api.set("runRoute", null); return w.api.sailOwnsHold(); };
-  const own15 = { holding: reload("holding"), port: reload("at_port"), done: reload("done"), diverting: reload("diverting"),
+  // (the arrival is no hold: the end of the mission, 16)
+  const own15 = { holding: reload("holding"), port: reload("at_port"), diverting: reload("diverting"),
                   running: reload("running"), stopped: reload("stopped"),
                   // a later plan over the record: another route aboard, or her away from the hold - no stand-down
                   other: reload("holding", { S: { armed: true, estop: false, run: "running", status: { holding: true }, wp_total: 9 } }),
                   away: reload("holding", { asv: east(HERE, 2000) }) };
   check("15. ⚠ THE PASSAGE'S HOLD IS THE RECORD'S, NOT THIS TAB'S MEMORY: with no route in memory (a reloaded or a taking-over "
-        + "tab) she holds for Continue at a section's end, a fuel stop, the arrival and while diverting from one; a section under "
+        + "tab) she holds for Continue at a section's end, a fuel stop and while diverting from one; a section under "
         + "way, or a passage left for another command, stands the chain down nowhere - nor does a record whose route is not "
         + "the one aboard, or one she is 2 km from",
-        () => own15.holding && own15.port && own15.done && own15.diverting && !own15.running && !own15.stopped && !own15.other && !own15.away,
+        () => own15.holding && own15.port && own15.diverting && !own15.running && !own15.stopped && !own15.other && !own15.away,
         () => JSON.stringify(own15));
   const W15 = waiting("holding"); W15.S.run_seq = 7;
   await W15.api.dropPassage();
@@ -896,18 +922,19 @@ console.log("The passage, sailed:");
         () => JSON.stringify({ cmd: c13 && c13[0], H: H13 && [H13.kind, H13.state, H13.from], banners: W13.banners.slice(-1) }));
   const refusedHome = async (o, opts) => { const w = outbound(o); await w.api.doRTH(opts || {}); return w; };
   const r13 = {
-    chained: await refusedHome({}, { chained: true }), fuelSent: await refusedHome({}, { why: "LOW FUEL" }),
+    chainedNone: await refusedHome({ mission: { passage: null } }, { chained: true }), fuelSent: await refusedHome({}, { why: "LOW FUEL" }),
     none: await refusedHome({ mission: { passage: null } }), off: await refusedHome({ asv: north(east(HERE, 55000), 25000) }),
     ends: outbound(), roc: outbound(),
   };
   r13.ends.S.home = north(HERE, 9000); await r13.ends.api.doRTH({});
   r13.roc.S.home_source = "roc-1"; await r13.roc.api.doRTH({});
   const refusal = (w) => w.banners.find((b) => /^RTH refused: home is/.test(b)) || "";
-  check("13b. NOT ALONG THE PASSAGE, refused as before - in words where it is the reason: the END-OF-PLAN chain and the "
-        + "LOW-FUEL monitor (an automatic RTH is for home in range: the chain's refusal recorded); no passage; home at "
-        + "neither end of it; a ROC's home (it moves); she far off the passage",
+  check("13b. NOT ALONG THE PASSAGE, refused as before - in words where it is the reason: the LOW-FUEL monitor (its RTH "
+        + "is for home in range); no passage - for the END-OF-PLAN chain too, its refusal recorded (16 sends it home along "
+        + "one); home at neither end of it; a ROC's home (it moves); she far off the passage",
         () => Object.values(r13).every((w) => w.cmds.length === 0 && w.api.st().mission.passage === w.mission.passage)
-              && r13.chained.api.st().rthChainFailed && !/along the passage/.test(refusal(r13.chained)) && !/along the passage/.test(refusal(r13.fuelSent))
+              && r13.chainedNone.api.st().rthChainFailed && /certify a return\. Set Home/.test(refusal(r13.chainedNone))
+              && !/along the passage/.test(refusal(r13.fuelSent)) && !r13.fuelSent.api.st().rthChainFailed
               && /certify a return\. Set Home/.test(refusal(r13.none)) && /home is at neither end of it/.test(refusal(r13.ends))
               && /home is the ROC's/.test(refusal(r13.roc)) && /she is 25\.0 km off it/.test(refusal(r13.off)),
         () => JSON.stringify(Object.fromEntries(Object.entries(r13).map(([k, w]) => [k, refusal(w).slice(30, 150)]))));
@@ -915,7 +942,7 @@ console.log("The passage, sailed:");
   await W13c.api.doRTH({});
   check("13c. REFUSED, AS CONTINUE IS, WHILE WHAT IS ABOARD DOES NOT REACH THE FIRST PORT ON THE WAY HOME WITH 20% - said "
         + "with the numbers; nothing sent, the passage as it was",
-        () => W13c.cmds.length === 0 && W13c.api.st().mission.passage.id === "Pout"
+        () => W13c.cmds.length === 0 && W13c.api.st().mission.passage.id === "Pout" && !W13c.api.st().rthChainFailed
               && /RTH refused: home is 55\.0 km away, along the passage - refuel first: 52\.0 L aboard, and P1 is 15\.0 km on/.test(W13c.banners.join(" ")),
         () => JSON.stringify(W13c.banners));
   // on the way home: the next section sent ahead of her as an RTH; at home, done; a second RTH goes home along the same passage
@@ -950,6 +977,125 @@ console.log("The passage, sailed:");
         () => W13g.mission.passage.kind === "rth" && W13g.cmds.some((c) => c[0] === "/api/cmd/rth") && W13g.mission.passage.state === "running"
               && /^home along the passage: sailing section 1 of 2 · planned at \+0\.35 m/.test(W13g.api.sailLine(W13g.mission.passage)),
         () => JSON.stringify({ cmds: W13g.cmds.map((c) => c[0]), state: W13g.mission.passage.state, line: W13g.api.sailLine(W13g.mission.passage) }));
+
+  // ── 16. THE ARRIVAL IS THE END OF THE MISSION (Andy, 2026-11-12) ────────────────────────────────────────────────
+  // "all end of mission should RTH unless over-ridden by user": an overnight passage from Pago Pago arrived and held 7.5 h -
+  // sailOwnsHold owned the arrival, so the chain stood down; and a chained RTH past RTH_MAX_M was refused, not sailed home.
+  // `endS`: End of plan RTH (the default) on a transit run that holds - all the chain asks but the passage's word
+  const endS = (o) => Object.assign({ armed: true, estop: false, run: "running", behavior: "transit", completion: "rth",
+    run_completion: "loiter", status: { holding: true, fuel_l: 200 }, wp_total: 2, home: { ...HERE }, home_source: null }, o || {});
+  const arrived = (o, so) => { const w = outbound(Object.assign({ asv: { ...P3 }, S: endS(so) }, o || {})); w.api.passageTick(w.S); return w; };
+  const fires = (w) => w.api.chainFires(w.S, w.S.status, false, false);
+  const W16 = arrived();
+  const at16 = { state: W16.mission.passage.state, owned: W16.api.sailOwnsHold(), fires: fires(W16), card: W16.api.rthPending(),
+                 said: W16.banners[0] || "" };
+  await W16.api.doRTH({ chained: true });
+  const H16 = W16.api.st().mission.passage, c16 = W16.cmds[0];
+  const W16u = outbound({ S: endS({ status: { holding: false, fuel_l: 200 } }) });   // under way on the last section
+  const under16 = W16u.api.rthPending();
+  check("16. ⚠ THE ARRIVAL IS THE END OF THE MISSION: arrived, End of plan RTH - the chain's own condition fires there "
+        + "(the passage does not own the hold) and the card says so, under way on the last section too; she is said to be "
+        + "going home; HOME 60 km OFF, BEYOND RTH_MAX_M, she goes home ALONG THE PASSAGE as the RTH button sends her - its "
+        + "first section sent as an RTH, the way home on the plan - the same mission, the chain not marked refused",
+        () => at16.state === "done" && !at16.owned && at16.fires && at16.card && under16
+              && /PASSAGE ARRIVED at P2: all 3 sections sailed\. End of plan RTH sends her home from here\./.test(at16.said)
+              && c16 && c16[0] === "/api/cmd/rth" && W16.cmds.length === 1 && H16.kind === "rth" && H16.from.id === "Pout"
+              && H16.state === "running" && H16.sections[H16.sections.length - 1].end === "home"
+              && distTo(H16.sections[H16.sections.length - 1].to, HERE) < 1
+              && /RTH ALONG THE PASSAGE: home is 60\.0 km away/.test(W16.banners.join(" "))
+              && W16.missions.length === 0 && !W16.api.st().rthChainFailed,
+        () => JSON.stringify({ at16, under16, cmd: c16 && c16[0], H: H16 && [H16.kind, H16.state, H16.from],
+                               failed: W16.api.st().rthChainFailed, missions: W16.missions.length, last: W16.banners.slice(-1) }));
+  const W16b = arrived({}, { home: east(HERE, 30000) });
+  const fires16b = fires(W16b);
+  await W16b.api.doRTH({ chained: true });
+  const c16b = W16b.cmds[0], P16b = W16b.api.st().mission.passage;
+  check("16b. HOME IN RANGE: the arrival chains the routed RTH a plan's end always has - planned to home and sent; the "
+        + "passage left on the plan as it arrived",
+        () => fires16b && c16b && c16b[0] === "/api/cmd/rth" && W16b.nogoAsked === 1
+              && distTo(c16b[1].route[c16b[1].route.length - 1], east(HERE, 30000)) < 1
+              && P16b.state === "done" && P16b.kind !== "rth" && W16b.api.st().planIntent.kind === "rth" && !W16b.api.st().rthChainFailed,
+        () => JSON.stringify({ fires16b, cmd: c16b && c16b[0], nogo: W16b.nogoAsked, P: P16b && P16b.state }));
+  const W16c = arrived({}, { completion: "loiter" });           // End of plan LOITER: the operator's word
+  const loiter16 = { fires: fires(W16c), card: W16c.api.rthPending(), said: W16c.banners[0] || "" };
+  const holdAt = (k) => { const w = running({ S: endS({ wp_total: 4 }) }); w.mission.passage.sent = k; w.api.passageTick(w.S);
+    return { state: w.mission.passage.state, fires: fires(w) }; };
+  const hold16 = holdAt(0), port16 = holdAt(1);
+  const toPort16 = (() => {                                     // under way on section 2, to the fuel stop: no promise
+    const w = running({ S: endS({ wp_total: 2, status: { holding: false, fuel_l: 200 } }), runRoute: [east(HERE, 25000), { ...P2 }] });
+    Object.assign(w.mission.passage, { sent: 1, sec: 1, end: { ...P2 }, route: [east(HERE, 25000), { ...P2 }] });
+    return w.api.rthPending();
+  })();
+  const W16h = homeWorld();                                     // the way home, at home: its own end
+  const Hh = W16h.mission.passage, lastH = Hh.sections.length - 1;
+  Object.assign(Hh, { sent: lastH, sec: lastH, state: "done", end: { ...HERE }, route: [east(HERE, 5000), { ...HERE }] });
+  W16h.api.set("runRoute", null); W16h.api.set("asv", { ...HERE }); Object.assign(W16h.S, endS({ behavior: "rth" }));
+  const home16 = W16h.api.sailOwnsHold();
+  check("16c. NOT AT THE OPERATOR'S WORD, NOR AT A HOLD THE MISSION GOES ON FROM: End of plan LOITER holds her at the "
+        + "arrival (said); a section's end and a fuel stop stay the passage's holds (she waits for Continue), and under "
+        + "way to the fuel stop the card promises no return; the way home's own end is home, and holds",
+        () => !loiter16.fires && !loiter16.card && /PASSAGE ARRIVED at P2: all 3 sections sailed\. She holds there\./.test(loiter16.said)
+              && hold16.state === "holding" && !hold16.fires && port16.state === "at_port" && !port16.fires && !toPort16 && home16,
+        () => JSON.stringify({ loiter16, hold16, port16, toPort16, home16 }));
+  const W16d = arrived(); W16d.api.set("runRoute", null);
+  const d16 = { owned: W16d.api.sailOwnsHold(), fires: fires(W16d), card: W16d.api.rthPending() };
+  check("16d. FROM A RELOADED TAB TOO (no route in memory): the arrival's record is no hold - the chain fires, the card says so",
+        () => !d16.owned && d16.fires && d16.card, () => JSON.stringify(d16));
+  const W16e = arrived({}, { status: { holding: true, fuel_l: 52 } });
+  await W16e.api.doRTH({ chained: true });
+  check("16e. A CHAINED RTH HOME ALONG THE PASSAGE THAT IS REFUSED - too little aboard for the first port with 20% - is "
+        + "said and RECORDED (the cards stop promising a return); nothing sent",
+        () => W16e.cmds.length === 0 && W16e.api.st().rthChainFailed && !W16e.api.rthPending()
+              && /RTH refused: home is 60\.0 km away, along the passage - refuel first/.test(W16e.banners.join(" ")),
+        () => JSON.stringify({ failed: W16e.api.st().rthChainFailed, banners: W16e.banners.slice(-2) }));
+  // ── 16f. FROM THE ARRIVAL ONLY (the 2026-11-12 review). The far refusal is the net under every hold sailOwnsHold does not
+  // know: a Go-To from a fuel stop or from a section's hold ends at a hold no passage record names (passageTick records a
+  // leaving only from a section under way), and the chain fires there. With home past RTH_MAX_M (15 km in these worlds)
+  // the first build sailed her home from the middle of the passage, the passage lost; it is REFUSED there, as before.
+  const midway = (state, sent, at, o) => {
+    const w = outbound(Object.assign({ nogoR: 1500, asv: north(at, 300), runRoute: [north(at, 300)], S: endS({ behavior: "goto", wp_total: 1 }) }, o || {}));
+    Object.assign(w.mission.passage, { state, sent, sec: sent, end: { ...at }, route: [east(HERE, 5000), { ...at }] });
+    return w;
+  };
+  const M16 = { port: midway("at_port", 1, P2), hold: midway("holding", 0, P1), last: midway("running", 2, P2) };
+  Object.assign(M16.last.mission.passage, { end: { ...P3 }, route: [east(HERE, 50000), { ...P3 }] });   // the arrival's record, she not at it
+  for (const w of Object.values(M16)) await w.api.doRTH({ chained: true });
+  const op16 = midway("at_port", 1, P2); await op16.api.doRTH({});                 // the RTH button there: home along the passage
+  const end16 = outbound({ nogoR: 1500, asv: { ...P3 }, S: endS() }); await end16.api.doRTH({ chained: true });   // at the arrival, not yet marked
+  // arrived (done), then a Go-To to a berth 300 m off, End of plan RTH: the mission is over, so that plan's end goes home too
+  const after16 = midway("done", 2, P3); await after16.api.doRTH({ chained: true });
+  check("16f. FROM THE ARRIVAL ONLY: a chained RTH past RTH_MAX_M from a hold no record names - a Go-To's end from a fuel "
+        + "stop, from a section's hold, or on the arrival's record with her not at its end - is REFUSED as before (nothing "
+        + "sent, the passage kept, the chain's refusal recorded); the RTH button there still goes home along the passage, "
+        + "and at the arrival's end, not yet marked done, the chain does - as at the end of a Go-To given after she arrived",
+        () => Object.values(M16).every((w) => w.cmds.length === 0 && w.api.st().mission.passage.kind !== "rth"
+                && w.api.st().rthChainFailed && /^RTH refused: home is/.test(w.banners[w.banners.length - 1] || ""))
+              && op16.cmds.length === 1 && op16.cmds[0][0] === "/api/cmd/rth" && op16.api.st().mission.passage.kind === "rth"
+              && end16.cmds.length === 1 && end16.api.st().mission.passage.kind === "rth" && !end16.api.st().rthChainFailed
+              && after16.cmds.length === 1 && after16.api.st().mission.passage.kind === "rth" && !after16.api.st().rthChainFailed,
+        () => JSON.stringify({ mid: Object.fromEntries(Object.entries(M16).map(([k, w]) => [k, [w.cmds.length, w.api.st().mission.passage.kind || "out",
+                                 w.api.st().rthChainFailed]])), op: [op16.cmds.length, op16.api.st().mission.passage.kind], end: [end16.cmds.length, end16.api.st().mission.passage.kind] }));
+  // ── 16g. THE THREE ANSWERS (the 2026-11-12 review). The chain fires in every tab: a VIEW-ONLY one plans nothing, sends
+  // nothing and claims nothing (the supervising tab is sending her); a reply LOST is said as that - the console cannot tell
+  // whether she took it - and not recorded as a refusal; a REFUSAL is said and recorded; a post never sent claims nothing.
+  const lostAns = { ok: false, error: "no answer from the console after 15 s - it may or may not have been carried out", sent: true, refused: false };
+  const V16 = arrived({ sup: false }), L16 = arrived({ post: lostAns });
+  const R16 = arrived({ post: { ok: false, error: "ARM before commanding the boat", sent: true, refused: true } });
+  const U16 = arrived({ post: { ok: false, error: "this tab is VIEW ONLY", sent: false, refused: false } });
+  for (const w of [V16, L16, R16, U16]) await w.api.doRTH({ chained: true });
+  const saidRefused = (w) => w.banners.some((t) => /RTH refused/.test(t));
+  check("16g. THE THREE ANSWERS: in a VIEW-ONLY tab the chain plans nothing, sends nothing and claims nothing (the card still "
+        + "promises the return); a reply LOST is said as NOT ACKNOWLEDGED, never as refused, and not recorded; a REFUSAL is "
+        + "said and recorded; a post never sent claims nothing",
+        () => V16.cmds.length === 0 && V16.planned.length === 0 && V16.waterAsked.length === 0 && !V16.api.st().rthChainFailed
+              && V16.api.rthPending() && !saidRefused(V16) && V16.api.st().mission.passage.kind !== "rth"
+              && L16.cmds.length === 1 && !L16.api.st().rthChainFailed && !saidRefused(L16)
+              && /RTH NOT ACKNOWLEDGED: no answer from the console after 15 s.* - the way home along the passage, 60\.0 km\./.test(L16.banners.join("\n"))
+              && L16.logs.some((l) => l[0] === "passage_rth" && l[1].why === "unanswered")
+              && R16.api.st().rthChainFailed && /RTH refused: home is 60\.0 km away, and the first section .*RTH REFUSED: ARM before/.test(R16.banners.join("\n"))
+              && !U16.api.st().rthChainFailed && !U16.banners.some((t) => /RTH refused|NOT ACKNOWLEDGED|did not take it|the way home along the passage, 60/.test(t)),
+        () => JSON.stringify({ view: [V16.cmds.length, V16.planned.length, V16.api.st().rthChainFailed], lost: [L16.api.st().rthChainFailed, L16.banners.slice(-1)],
+                               ref: R16.api.st().rthChainFailed, unsent: [U16.api.st().rthChainFailed, saidRefused(U16)] }));
 
   // ── 14. the water a section is planned at ───────────────────────────────────────────────────────────────────────
   const lv = (() => {

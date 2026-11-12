@@ -530,7 +530,8 @@ export function planPassage({ grids, floorDm, airDm = 0, points, sectionM = SECT
 // ── THE SECTIONS SHE SAILS IN (2026-10-12, step 5 of the long-transit plan) ──────────────────────────────────────
 // The passage is sailed a SECTION at a time: each planned in detail by the console's own planner as she comes to it,
 // against the guard's own chart, and sent ahead of her (asv.html "THE PASSAGE, SAILED"). A section ends at every PORT
-// (a fuel stop, the arrival: there she waits for Continue) and otherwise about every SECTION_M - at a point she can be
+// (a fuel stop: there she waits for Continue; the arrival: the end of the mission, End of plan's) and otherwise about
+// every SECTION_M - at a point she can be
 // left HOLDING at safely, because that is where she waits if the next section is not sent in time (Andy, 2026-10-12:
 // "she should hold"): every cell within HOLD_SAFE_M clear water, outside every port's circle. A stretch with no such
 // point makes a longer section; nothing makes one shorter than SECTION_MIN_FRAC of SECTION_M before a port.

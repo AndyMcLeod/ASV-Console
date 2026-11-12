@@ -10604,7 +10604,12 @@ function fuelProjection(){
     const w = fuelWatchAt(model, fr.fromEN(q.e, q.n));
     return !w ? null : w.mode === "rth" ? (w.h ? w.h.need : null) : 0; });
   P.legs = legs.length;
-  P.home = (legs.length && endAction() === "rth") ? fuelHomeNeed(model, end) : null;
+  // ⚠ NOT ONE TANK'S WORTH PAST RTH_MAX_M (2026-11-12): from a plan's end that far out End of plan RTH goes home along
+  // the passage, a port at a time, each leg sent only with fuel for its port - or is refused - so the whole way home
+  // charged against what she has would read red "at home" on every long passage's last section
+  const rthEnd = legs.length && endAction() === "rth", farEnd = rthEnd && S && S.home ? rthTooFar(end, S.home) : null;
+  P.home = rthEnd && !farEnd ? fuelHomeNeed(model, end) : null;
+  P.homeFar = farEnd || null;
   fuelProj = {at: Date.now(), route: rr, idx, level, val: P};
   return P;
 }
@@ -10788,6 +10793,9 @@ function renderFuelRows(){
     t = "~" + f(P.used + (home ? home.need : 0)) + (ovr ? " · override on" : "");
     tip = "To the end of the plan: ~" + f(P.used) + " over ~" + fmtMS(P.seconds)
       + (home ? "; home from there: " + f(home.need) + ", " + fmtDist(home.m) + homeHowSay(home, false) + " at " + home.twKn + " kn" : "")
+      + (!home && P.homeFar ? "; home from there is " + fmtDist(P.homeFar.m) + " - past the " + fmtDist(RTH_MAX_M) + " a straight "
+         + "return is certified for: End of plan RTH goes home along the passage on the plan, a port at a time, each leg "
+         + "sent only with fuel for its port and 20% - or, with no passage, is refused" : "")
       + (ovr ? ". What is left is not shown: her level is not read under the override."
          : P.levelEnd != null ? ". She has " + f(N.level) + " now." : ". The vessel reports no level, so what is left is not known.");
     if(!ovr && P.levelEnd != null){
@@ -14918,10 +14926,22 @@ async function doRTH(opts){
   const far = rthTooFar({lat:asv.lat,lon:asv.lon}, S.home);
   if(far){
     // HOME ALONG THE PASSAGE (step 6, 2026-10-12): from a passage's water, with home at one end of it, the operator's
-    // RTH goes home the way the passage runs. Never the chain's, nor the low-fuel monitor's: an automatic RTH is for a
-    // home in range (Andy, 2026-10-11).
-    const H = chained || why ? null : homeRecord();
-    if(H && !H.why) return sailHome(H, brk, far, missionAt);
+    // RTH goes home the way the passage runs - AND THE END-OF-PLAN CHAIN'S FROM THE PASSAGE'S ARRIVAL (Andy, 2026-11-12:
+    // "all end of mission should RTH unless over-ridden by user"; the arrival held for good). Never the low-fuel
+    // monitor's: its RTH is for a home in range (Andy, 2026-10-11) - it is not an end of mission.
+    // ⚠ FROM THE ARRIVAL ONLY (the 2026-11-12 review): this refusal is the net under every hold sailOwnsHold does not
+    // know - a Go-To from a fuel stop or a section's hold ends at a hold no passage record names - and with it gone for
+    // every chain, the chain sailed her home from the middle of the passage and the passage was lost.
+    const H = why || (chained && !sailArrived(mission && mission.passage)) ? null : homeRecord();
+    if(H && !H.why){
+      // ⚠ A VIEW-ONLY TAB SENDS NOTHING AND CLAIMS NOTHING (the review): the chain fires in every tab and the supervising
+      // one sends her; here a whole section was planned for a post cmd() refuses before the wire, then said as a
+      // refusal of a return that is coming - and the chain marked refused under it
+      if(chained && !supervising()) return;
+      const out = await sailHome(H, brk, far, missionAt);
+      if(chained && out === "refused") rthChainFailed = true;   // said: she holds, and the cards stop promising a return
+      return;
+    }
     if(chained) rthChainFailed = true;
     showBanner("RTH refused: home is " + fmtDist(far.m) + " away, "
       + fmtDist(RTH_MAX_M) + " is as far as the console will certify a return"
@@ -15896,7 +15916,7 @@ async function sailSend(P, k, from, bo, append){
   // THE WAY HOME is sent as an RTH (step 6): she is going home - the cards say so, the fuel monitor sends no second
   // one, and the end-of-plan chain never fires on an RTH's hold.
   const r = await routeCmd(home ? "/api/cmd/rth" : "/api/cmd/transit", {route, hold_clear_m: whole.holdClear, coast_from_m: coast ? coast.groundM : null});
-  if(!took(r)) return {error: notTookSay(r, home ? "RTH" : "PASSAGE") || "the vessel did not take it"};
+  if(!took(r)) return {error: notTookSay(r, home ? "RTH" : "PASSAGE") || "the vessel did not take it", post: r};
   if(planGen === wasGen) releaseEscapeClaim("the passage's section replaced it");
   whole.coast = coast;
   runRoute = route; runUnsafe = []; setPlanIntent(home ? "rth" : "transit", whole, route); updateMissionCard();
@@ -15975,7 +15995,8 @@ function sailAtEnd(P){
   const port = c.port != null ? sailPortName(P, c.port) : null;
   showBanner(P.state === "done" && c.end === "home" ? "HOME ALONG THE PASSAGE: she is home, all " + P.sections.length
       + " sections sailed. She holds there."
-    : P.state === "done" ? "PASSAGE ARRIVED at " + port + ": all " + P.sections.length + " sections sailed. She holds there."
+    : P.state === "done" ? "PASSAGE ARRIVED at " + port + ": all " + P.sections.length + " sections sailed. "
+      + (rthPending() ? "End of plan RTH sends her home from here." : "She holds there.")
     : P.state === "at_port" ? "PASSAGE AT FUEL STOP " + port + " (end of section " + (P.sent + 1) + " of " + P.sections.length
       + "): refuel her, then CONTINUE PASSAGE, beside Start."
     : "PASSAGE HOLDING at the end of section " + (P.sent + 1) + " of " + P.sections.length + ": the next section was not sent"
@@ -16230,6 +16251,8 @@ function sailOwnsHold(){
   const hk = mission && mission.passage_hold;
   if(hk && hk.run_seq != null && S && S.run_seq === hk.run_seq && asv && distTo(asv, hk) <= PASSAGE_HOLD_NEAR_M) return true;
   if(!P) return false;
+  // ⚠ NOT THE ARRIVAL (2026-11-12): the end of the mission - End of plan answers there, as at the end of any plan
+  if(sailArrival(P)) return false;
   // ⚠ THE RECORD, NOT THIS TAB'S MEMORY (the 2026-10-16 review, finding 4). This answered from `runRoute`, which a
   // reload leaves null (passageTick restores it only while a section runs): a tab reloaded while she held at a
   // section's end, a fuel stop or the arrival saw no passage hold, and the end-of-plan chain sent her home from it on
@@ -16248,6 +16271,24 @@ function sailOwnsHold(){
   // chained her home from the port she had been sent to refuel in. There she waits for the refuel and Continue passage.
   return !!(P.state === "diverted" && P.breakoff && P.breakoff.to && distTo(end, P.breakoff.to) <= PASSAGE_END_M);
 }
+/** THE PASSAGE'S ARRIVAL (2026-11-12): its last section sent - the one that ends at the arrival port - and she on it or
+ *  arrived. The END OF THE MISSION, not a hold for Continue passage: End of plan answers there as at the end of any
+ *  plan (Andy: "all end of mission should RTH unless over-ridden by user"; the arrival held for good, and an
+ *  overnight passage from Pago Pago waited there 7.5 h for an RTH that never came). Not the way home's: its last
+ *  section ends at home (coarse.js homeSections), not a port, and she holds there. */
+function sailArrival(P){
+  return !!(P && P.sections && P.sections.length && P.sent === P.sections.length - 1
+            && P.sections[P.sent].end === "port" && (P.state === "running" || P.state === "done"));
+}
+/** SHE IS AT THE ARRIVAL (the 2026-11-12 review): its record is the arrival's (sailArrival) and she has arrived (done)
+ *  or is at the end of the route the last section was sent as. The one place the end-of-plan chain sends her home
+ *  ALONG THE PASSAGE (doRTH): anywhere else a hold no record names may be the middle of the passage. */
+function sailArrived(P){
+  if(!sailArrival(P)) return false;
+  if(P.state === "done") return true;
+  const rt = P.route || [];
+  return !!(rt.length && asv && distTo(asv, rt[rt.length - 1]) <= PASSAGE_HOLD_NEAR_M);
+}
 /** She is AT a hold the record names when she is within this of its point (her hold disc is a few meters). */
 const PASSAGE_HOLD_NEAR_M = 50;
 // ── HOME ALONG THE PASSAGE (2026-10-12, step 6 of the long-transit plan) ─────────────────────────────────────────
@@ -16258,8 +16299,8 @@ const PASSAGE_HOLD_NEAR_M = 50;
 // planned in detail as she comes to it, at its own water, sent ahead of her; she holds at the end of the last one
 // sent, and waits at a port for Continue passage) - but each SENT AS AN RTH. The way home is a passage record of its
 // own (kind "rth": its sections home, the passage it runs along as `path`, home, and where it left it), so a reload,
-// a Go-To, Divert and Continue treat it as they treat any passage. Only the operator's RTH: the end-of-plan chain and
-// the low-fuel monitor send one only with home in range. Never to a ROC's home, which moves: the server drives
+// a Go-To, Divert and Continue treat it as they treat any passage. The operator's RTH and the end-of-plan chain's (2026-11-12);
+// the low-fuel monitor sends one only with home in range. Never to a ROC's home, which moves: the server drives
 // straight at it, whatever route it is sent. Refused, as Continue is, while what is aboard does not reach the first
 // port on the way with 20% of the tank.
 /** THE WAY HOME ALONG THE PASSAGE on the plan from `ll` (coarse.js homeSections, with the passage `P` and the sections it
@@ -16288,21 +16329,31 @@ function homeRecord(){
           from: {id: P.kind === "rth" && P.from ? P.from.id : P.id, sec: h.rejoin.sec},
           state: "ready", sent: -1, sec: 0, base: 0, end: null, route: null, breakoff: null, note: ""};
 }
-/** RTH ALONG THE PASSAGE (doRTH, home beyond RTH_MAX_M): the way home's first section sent from where she is. */
+/** RTH ALONG THE PASSAGE (doRTH, home beyond RTH_MAX_M): the way home's first section sent from where she is. Its
+ *  answer, doRTH's three kept apart (the 2026-11-12 review): "sent"; "refused" - said, and a refused end-of-plan
+ *  chain is recorded; "unsent" - this tab never asked, nothing claimed; "unknown" - the reply was lost, said as that,
+ *  nothing recorded. */
 async function sailHome(H, brk, far, missionAt = null){
-  if(sailBusy){ flashNote("RTH: the passage is sending a section - press RTH again in a moment."); return; }
+  if(sailBusy){ flashNote("RTH: the passage is sending a section - press RTH again in a moment."); return "refused"; }
   const f = sailFuelShort(H, 0, null);
-  if(f){ showBanner("RTH refused: home is " + fmtDist(far.m) + " away, along the passage - " + f + "."); return; }
+  if(f){ showBanner("RTH refused: home is " + fmtDist(far.m) + " away, along the passage - " + f + "."); return "refused"; }
   sailBusy = true; applyCmdState(S); updateTransitPanel();
   showBanner("Routing home along the passage… home is " + fmtDist(far.m) + " away, past the " + fmtDist(RTH_MAX_M)
     + " a straight return is certified for.");
   try{
     const r = await sailSend(H, 0, {lat: asv.lat, lon: asv.lon}, null, false);
     if(r.error || r.soft){
+      const post = r.post || null;             // the command's own answer, when it got as far as one
+      if(post && post.sent === false){ takeDownBanner(/^Routing home along the passage/); return "unsent"; }
+      if(post && !post.refused){                // lost or unreadable: the console cannot tell whether she took it
+        showBanner(r.error + " - the way home along the passage, " + fmtDist(far.m) + ".");
+        logClient("passage_rth", {id: H.id, ok: false, why: "unanswered"});
+        return "unknown";
+      }
       showBanner("RTH refused: home is " + fmtDist(far.m) + " away, and the first section of the way home along the passage "
         + "could not be sent - " + (r.error || "try again") + ".");
       logClient("passage_rth", {id: H.id, ok: false, why: r.error || "soft"});
-      return;
+      return "refused";
     }
     if(brk) bankBreak(brk);                      // the survey she has left: Continue picks it up (as doRTH banks it)
     if(missionAt != null) newMission(missionAt, "RTH along the passage");
@@ -16315,7 +16366,8 @@ async function sailHome(H, brk, far, missionAt = null){
       + "port, or wherever the next could not be sent, she HOLDS for Continue passage.");
     logClient("passage_rth", {id: H.id, ok: true, from: H.from, homeEnd: H.homeEnd, sections: H.sections.length,
                               wpts: r.route.length, water_m: r.water.m});
-  }catch(e){ showBanner("RTH refused: " + ((e && e.message) || e) + "."); }
+    return "sent";
+  }catch(e){ showBanner("RTH refused: " + ((e && e.message) || e) + "."); return "refused"; }
   finally{ sailBusy = false; applyCmdState(S); updateTransitPanel(); render(); }
 }
 // ── THE WATER A SECTION IS PLANNED AT (2026-10-12, step 6 of the long-transit plan) ─────────────────────────────────
@@ -25522,7 +25574,10 @@ function onState(s){
   // the standing plan that was driving at the pier.
   // ⚠ AND NEVER ON THE FRAME THAT STARTED THE RUN (`seqMoved`, 2026-09-27) - see the note where it is read.
   // ⚠ NOT AT A HOLD BEFORE A SURVEY (3b): there she waits for Continue - heldSplitRun.
-  // ⚠ NOR AT A PASSAGE'S HOLD (2026-10-12): the end of a section, a fuel stop, the arrival - she waits for Continue passage.
+  // ⚠ NOR AT A PASSAGE'S HOLD (2026-10-12): the end of a section, a fuel stop - she waits for Continue passage.
+  //   BUT AT ITS ARRIVAL, YES (Andy, 2026-11-12: "all end of mission should RTH unless over-ridden by user"): the arrival
+  //   is the end of the mission, so sailOwnsHold does not own it (sailArrival) and End of plan RTH sends her home from
+  //   it - along the passage when home is beyond RTH_MAX_M (doRTH), a routed RTH when it is not.
   // ⚠ NOR AT A LOCK TRANSIT'S HOLD (the 2026-10-18 review): short of the near gate, or in the chamber, she waits for the operator's word.
   if(s.run==="running" && st.holding && s.completion==="rth" && chainableRun(s.behavior) && !heldSplitRun(s) && !sailOwnsHold()
      && !lockTransit && s.armed && !s.estop && !rthChained && !seqMoved){

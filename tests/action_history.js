@@ -404,12 +404,12 @@ const rowText = (r) => r.lastChild.textContent;
             && /if\(missionAt != null\) newMission\(missionAt, "RTH along the passage"\);/.test(sh)
             && sh.indexOf("newMission(") > sh.indexOf("if(r.error || r.soft)"),
       rth: /const missionAt = chained \|\| \(opts && opts\.breakWhy\) \? null : Date\.now\(\);/.test(rth)
-           && /return sailHome\(H, brk, far, missionAt\);/.test(rth) && atPress(rth),
+           && /const out = await sailHome\(H, brk, far, missionAt\);/.test(rth) && atPress(rth),
       press: atPress(go) && atPress(tr),
     };
     check("16. WHO STARTS ONE: Upload on both of its accepted paths but not Upload from here or the Continue past a hold; "
-          + "Sail passage once its first section is sent; the RTH button's way home along a passage, not the chain's or the "
-          + "low-fuel shift's - each timed at the press, before anything is awaited",
+          + "Sail passage once its first section is sent; the RTH button's way home along a passage, not the chain's (the "
+          + "mission she is on, 2026-11-12) or the low-fuel shift's - each timed at the press, before anything is awaited",
           () => Object.values(pins).every(Boolean),
           () => JSON.stringify(pins));
   }

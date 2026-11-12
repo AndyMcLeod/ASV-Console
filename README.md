@@ -3442,7 +3442,12 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    a Go-To to a port with the leaving recorded. The passage is kept on the plan (`passage` in
    `mission.json`), so a reload or a console restart mid-passage keeps the section she is on and
    where she left it. The end-of-plan RTH chain stands down at a passage's hold, and at the port
-   it was diverted to: there she waits for the refuel and Continue passage. The × beside Continue
+   it was diverted to: there she waits for the refuel and Continue passage. **The arrival is not a
+   hold: it is the end of the mission** (2026-11-12, Andy: "all end of mission should RTH unless
+   over-ridden by user"; an overnight passage from Pago Pago held at its arrival for 7.5 hours). End
+   of plan answers there as at the end of any plan: with RTH she goes home, along the passage when
+   home is more than 50 km away and by a routed RTH when it is closer; with Loiter she holds. The
+   arrival banner says which. The × beside Continue
    passage drops the passage (she is not stopped). Live (scratch console, DriX): New Castle to
    offshore of Portsmouth, 36 km in 2 sections. Section 1 was sent as 314 waypoints with a 295 m
    hold disc at its end. With 10 km left, after a reload of the page, section 2 was sent ahead of
@@ -3460,9 +3465,16 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    as she comes to it, sent ahead of her **as an RTH**, and she holds at the end of the last one
    sent, or waits at a port for Continue passage, exactly as a passage is sailed. The way home is
    kept on the plan as a passage of its own (`kind: "rth"`, with the passage it runs along), so a
-   reload, a Go-To, Divert and Continue treat it as any passage. Only the operator's RTH goes this
-   way. The end-of-plan chain and the low-fuel monitor still send an RTH only with home in range
-   (Andy, 2026-10-11). A ROC's home moves, so it is refused, and so is a way home that does not reach the
+   reload, a Go-To, Divert and Continue treat it as any passage. The operator's RTH goes this way,
+   and so does the end-of-plan chain at the passage's arrival, or at the end of a plan given after
+   it (2026-11-12; before, only the operator's did). Anywhere else on the passage a far end-of-plan
+   RTH is refused as before: a hold the passage does not name, such as the end of a Go-To from a
+   fuel stop, may be the middle of it. The chain fires in every console tab; only the supervising
+   tab sends, and a reply that was lost is said as unanswered, never as a refusal. With home more
+   than 50 km from a plan's end, the Fuel row shows what is left at the end of the plan, not one
+   tank's worth "at home", and its tip says how the way home goes. The low-fuel
+   monitor still sends an RTH only with home in range (Andy, 2026-10-11): it is not an end of
+   mission. A ROC's home moves, so it is refused, and so is a way home that does not reach the
    first port on it with 20% of the tank. **Each section is planned at its own water.** The
    live water level follows the boat: the stations nearest her, now. A section is planned ahead of
    her and sailed over the hours after, often tens of km from those stations. So each section is
