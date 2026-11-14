@@ -779,10 +779,11 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     const routeTooLong = eval("(" + grab("routeTooLong") + ")");
     // eslint-disable-next-line no-eval
     const stagedNote = eval("(" + grab("stagedNote") + ")");
-    // THE TURN doUpload TAKES BETWEEN THE CHART READ AND THE ROUTING (2026-09-29, the routing freeze): the
-    // page's own `inkYield`, its right-hand side only - a `const` declared inside a direct eval stays there.
-    // eslint-disable-next-line no-eval
-    const inkYield = eval("(" + grabDecl("inkYield").replace(/^const\s+inkYield\s*=\s*/, "").replace(/;\s*$/, "") + ")");
+    // THE TURN doUpload TAKES BETWEEN THE CHART READ AND THE ROUTING (2026-09-29, the routing freeze). The page's
+    // `inkYield` is its message turn since 2026-11-14 (`const inkYield = punchYield`, a MessageChannel - which a Node
+    // test would be held open by), so this world takes a turn of its own: one tick of the event loop, as that is.
+    const inkYield = () => new Promise((r) => setImmediate(r)), punchYield = inkYield;   // (doUpload hands the walk punchYield)
+    if (!/^const inkYield = punchYield;$/.test(grabDecl("inkYield"))) throw new Error("test setup: inkYield is not the message turn (changed?)");
     // EACH LATER SURVEY'S APPROACH IS A TRANSIT (2026-10-02): doUpload hands routePlan the page's own surveyEntries -
     // the real one; this world's plan has no survey tags, so it is empty and the routing below is unchanged.
     const { surveyEntries, waypointsFrom, surveyLabel, splitAtHold } = require("../static/js/surveys.js");

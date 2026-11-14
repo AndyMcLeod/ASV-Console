@@ -183,24 +183,36 @@ console.log("Every chart read kept and merged, and a plan too big for one read r
 
 // ── 5-8. the page reads an Upload's plan through them ───────────────────────────────────────────────────────────
 (async () => {
-  const asked = [], banners = [];
+  const asked = [], banners = [], logs = [];
   let mission = { surveys: [] };
+  const CG = require("../static/js/core_geometry.js");
+  const CI = require("../static/js/chartink.js");
+  // the model the Upload's reads are judged against (inkCanFind, 2026-11-14): set per ask
+  const pNogo = { features: [] };
   // eslint-disable-next-line no-new-func
   const page = new Function("worldPx", "TILE", "pathBoxes", "boxAround", "pathThroughSurveys", "surveyPoints",
-    "ensureChartInk", "showBanner", "getMission",
+    "ensureChartInk", "showBanner", "getMission", "INK_PATH_MAX_BOXES", "INK_ATTACH_M", "M_PER_DEG_LAT", "nogo",
+    "eachPath", "eachRing", "eachPoint", "logClient",
     "\"use strict\";\n"
     + decl(/^const CHART_INK_Z = [^;]*;/m) + "\n" + decl(/^const CHART_INK_MIN_Z = [^;]*;/m) + "\n"
     + decl(/^const CHART_INK_MAX_TILES = [^;]*;/m) + "\n" + decl(/^const INK_SURVEY_PAD_M = [^;]*;/m) + "\n"
-    + grab("inkTileGrid") + "\n"
+    + decl(/^const INK_STRUCT_ROLES = [^;]*;/m) + "\n" + decl(/^const featLLBoxes = [^;]*;/m) + "\n"
+    + ["inkTileGrid", "uncutRuns", "featureLLBox", "segMeetsBox", "inkCanFind", "readRouteInk"].map(grab).join("\n") + "\n"
     + grab("readPlanInk").replace(/\bmission\.surveys\b/g, "getMission().surveys")
-    + "\nreturn { readPlanInk, inkTileGrid, INK_SURVEY_PAD_M };")(
+    + "\nreturn { readPlanInk, inkTileGrid, inkCanFind, INK_SURVEY_PAD_M };")(
     G.worldPx, G.TILE, IR.pathBoxes, IR.boxAround, SV.pathThroughSurveys, SV.surveyPoints,
-    async (bb) => { asked.push(bb); }, (t) => banners.push(t), () => mission);
-  const ask = async (pts, opts, m) => {
-    asked.length = 0; banners.length = 0; mission = m || { surveys: [] };
+    async (bb) => { asked.push(bb); }, (t) => banners.push(t), () => mission, IR.INK_PATH_MAX_BOXES, CI.ATTACH_M,
+    G.M_PER_DEG_LAT, pNogo, CG.eachPath, CG.eachRing, CG.eachPoint, (k, d) => logs.push([k, d]));
+  const LLp = (p) => [p.lon, p.lat];
+  // a shoreline drawn through every point of the plan: every box an Upload could read is near it (5-8 are the reads'
+  // shapes, as they were before the read asked whether it could find anything)
+  const alongAll = (pts) => [{ role: "shore_line", geometry: { type: "LineString", coordinates: pts.map(LLp) } }];
+  const ask = async (pts, opts, m, feats) => {
+    asked.length = 0; banners.length = 0; logs.length = 0; mission = m || { surveys: [] };
+    pNogo.features = feats || alongAll(pts);
     const b = IR.boxAround(pts, 300);
     await page.readPlanInk(b, 300, pts, opts);
-    return { b, asked: asked.slice(), banners: banners.slice() };
+    return { b, asked: asked.slice(), banners: banners.slice(), log: (logs.find((l) => l[0] === "plan_ink") || [])[1] };
   };
   // A 300 x 150 m survey's waypoints, tagged: FOUR lines, so it ends back on its start side - its first and last
   // waypoints do not span it, and a path that kept its inside would read a different box (check 7).
@@ -260,15 +272,14 @@ console.log("Every chart read kept and merged, and a plan too big for one read r
   const up8 = await ask(pts8, { plan: true }, { surveys: [{ id: "S1", no: 1 }] });
   check("8. a plan whose transits run past the most an Upload reads SAYS SO - how many stretches were read and how many "
         + "are left to the ENC alone",
-        () => up8.banners.some((t) => /CHART IMAGE NOT COMPARED over the whole route/.test(t) && /the last \d+ are checked/.test(t)),
+        () => up8.banners.some((t) => /CHART IMAGE NOT COMPARED over the whole route — \d+ stretches of this plan's transits lie near charted land or a dock, and the last \d+ past the 16 an Upload reads are checked against the ENC only/.test(t))
+              && up8.asked.length === IR.INK_PATH_MAX_BOXES + 1 && up8.log && up8.log.left > 0 && up8.log.read === up8.asked.length,
         () => (up8.banners[0] || "no banner").slice(0, 140));
 
   // ── 9-13. a ROUTE's chart image - a passage's section - read where the read can find something (2026-10-12) ─────
   // Andy: "fix the chart image warning on long sections". A section's one box is past the budget, so every section
   // said CHART IMAGE NOT COMPARED and read nothing. The page's own inkCanFind / readRouteInk / readPlanInk over its real
-  // inkTileGrid and featureLLBox, ensureChartInk stubbed to record what was asked for and how.
-  const CG = require("../static/js/core_geometry.js");
-  const CI = require("../static/js/chartink.js");
+  // inkTileGrid and featureLLBox, ensureChartInk stubbed to record what was asked for and how. (CG, CI: required above)
   const rAsked = [], rBanners = [], rLogs = [];
   const rNogo = { features: [] };
   // eslint-disable-next-line no-new-func
@@ -365,6 +376,49 @@ console.log("Every chart read kept and merged, and a plan too big for one read r
               && s13.banners.some((t) => /CHART IMAGE NOT COMPARED over the whole route — \d+ stretches of it lie near charted land or a dock, and the last \d+ past the 16 a route reads/.test(t))
               && viaPlan === near10.asked.length && rLogs.length === 1 && rLogs[0][0] === "route_ink",
         () => s13.asked.length + " read, " + s13.r.left + " left; via readPlanInk " + viaPlan);
+
+  // ── 14-15. AN UPLOAD'S CHART IMAGE, ONLY WHERE THE READ CAN FIND SOMETHING (2026-11-14) ──────────────────────────
+  // Andy's Castine survey lay 45 km offshore. Its Upload read the 16 stretches an Upload reads - nearly all of them open
+  // water, nearly all refused while their tiles arrived (240 s in the lab replay) - and read them all again once the
+  // wider extract had drawn the tiles in. A box with no charted structure within its own diagonal (+ATTACH_M) can keep
+  // nothing (9-11), so an Upload asks inkCanFind too: its whole box, each stretch of its transits, each survey's water.
+  const sOff = survey("SO", 0, 45000), home14 = at(0, 300);
+  const pts14 = [boat, ...sOff, home14];
+  const plan14 = { surveys: [{ id: "SO", no: 1 }] };
+  const up14 = await ask(pts14, { plan: true }, plan14, [coast]);
+  const path14 = SV.pathThroughSurveys(boat, pts14.slice(1));
+  const all14 = IR.pathBoxes(path14, 300, (bb) => !page.inkTileGrid(bb).refused, Infinity).boxes;
+  const g14 = all14.map(boxGapM);
+  const read14 = all14.map((bb) => up14.asked.some((a) => a.W === bb.W && a.S === bb.S && a.E === bb.E && a.N === bb.N));
+  const sv14 = IR.boxAround(sOff, page.INK_SURVEY_PAD_M);
+  const svNear = await ask(pts14, { plan: true }, plan14, [coast, { role: "dock_line", geometry: { type: "LineString",
+    coordinates: [LL(at(100, 45050)), LL(at(250, 45050))] } }]);
+  check("14. AN UPLOAD LEAVING A HARBOR FOR A SURVEY 45 km OUT reads only the stretches of its transits the harbor's "
+        + "shoreline is within reach of - out and back - and not the open water between, nor the survey's own water; "
+        + "no warning; logged (plan_ink); with a dock beside the survey, its water - and the stretches the dock is within "
+        + "reach of - are read",
+        () => all14.length >= 6 && up14.asked.length >= 2 && up14.asked.length < 8
+              && up14.asked.every((a) => !page.inkTileGrid(a).refused && all14.some((bb) => bb.W === a.W && bb.S === a.S && bb.E === a.E && bb.N === a.N))
+              && g14.every((g, i) => g.gap <= g.diag + CI.ATTACH_M ? read14[i] : true)
+              && g14.every((g, i) => g.gap > (g.diag + CI.ATTACH_M) * Math.SQRT2 + 1 ? !read14[i] : true)
+              && !up14.banners.length
+              && up14.log && up14.log.read === up14.asked.length && up14.log.open === all14.length - up14.asked.length + 1 && up14.log.left === 0
+              && svNear.asked.length > up14.asked.length + 1 && sameBox(svNear.asked[svNear.asked.length - 1], sv14)
+              && !up14.asked.some((a) => sameBox(a, sv14)),
+        () => JSON.stringify({ all: all14.length, asked: up14.asked.length, log: up14.log, banners: up14.banners.length, svNear: svNear.asked.length }));
+
+  // 15. ... and a plan that fits one box: read whole near a dock, not at all in open water
+  const pts15 = [boat, ...s1];
+  const plan15 = { surveys: [{ id: "S1", no: 1 }] };
+  const open15 = await ask(pts15, { plan: true }, plan15, []);
+  const dock15 = await ask(pts15, { plan: true }, plan15, [{ role: "dock_line", geometry: { type: "LineString",
+    coordinates: [LL(at(50, 20)), LL(at(200, 20))] } }]);
+  check("15. AN UPLOAD IN ONE BOX: in open water nothing is read (the box and the survey both counted open), beside a dock "
+        + "the box and the survey's own water are read, as before",
+        () => !page.inkTileGrid(open15.b).refused && open15.asked.length === 0 && open15.log && open15.log.open === 2
+              && open15.log.read === 0 && !open15.banners.length
+              && dock15.asked.length === 2 && dock15.asked[0] === dock15.b && sameBox(dock15.asked[1], box6(s1)) && dock15.log.read === 2,
+        () => JSON.stringify({ open: [open15.asked.length, open15.log], dock: [dock15.asked.length, dock15.log] }));
 
   __finished = true;
   console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");

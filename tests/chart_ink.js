@@ -960,18 +960,22 @@ check("20e. ... and a SMALL comb is not a footprint either — a keep-out area h
                   declOf(/^const CHART_INK_MAX_TILES = [^;]*;/m),
                   "let chartInk = {key:null, lines:[], areas:[], detached:[], note:null, z:null, ms:0, busy:false};",
                   declOf(/^let chartReads = [^;]*;/m),
-                  fnSrc("inkTileGrid"), fnSrc("refoldInk"), fnSrc("inkNote"), fnSrc("ensureChartInk")].join("\n");
+                  fnSrc("inkTileGrid"), fnSrc("refoldInk"), fnSrc("inkNote"), fnSrc("inkFoldNow"), fnSrc("inkFoldMoved"),
+                  fnSrc("ensureChartInk")].join("\n");
+    // the model's rebuild, stubbed to what this suite needs of it: counted, and recording what it folded as the real
+    // one does (rebuildNogo's `nogo.inkFold = inkFoldNow();`, pinned in 14h)
     const inkWorld = (scan) => {
-      const banners = [];
-      let scans = 0, rebuilt = 0;
+      const banners = [], nogo = { ready: true, band: "enc_harbour" };
+      let scans = 0, rebuilt = 0, inner = null;
       // eslint-disable-next-line no-new-func
       const w = new Function("nogo", "scanChartInk", "inkYield", "rebuildNogo", "updateNogoUI", "render", "showBanner",
         "worldPx", "TILE", "coveringRead", "mergeReads", "INK_READS_MAX", "bboxContains",
-        "\"use strict\";\n" + PAGE + "\nreturn { run: ensureChartInk, ink: () => chartInk, reads: () => chartReads };")(
-        { ready: true, band: "enc_harbour" }, async (bb) => { scans++; return scan(bb); }, async () => {},
-        () => { rebuilt++; }, () => {}, () => {}, (t) => banners.push(t),
+        "\"use strict\";\n" + PAGE + "\nreturn { run: ensureChartInk, ink: () => chartInk, reads: () => chartReads, inkFoldNow };")(
+        nogo, async (bb) => { scans++; return scan(bb); }, async () => {},
+        () => { rebuilt++; nogo.inkFold = inner.inkFoldNow(); }, () => {}, () => {}, (t) => banners.push(t),
         G.worldPx, G.TILE, IR.coveringRead, IR.mergeReads, IR.INK_READS_MAX, bboxContains);
-      return { ...w, banners, scans: () => scans, rebuilt: () => rebuilt };
+      inner = w;
+      return { ...w, banners, nogo, scans: () => scans, rebuilt: () => rebuilt };
     };
     // Boxes small enough to read at the finest zoom, and one only the coarsest will take.
     const box = (lat, lon, d) => ({ W: lon, S: lat, E: lon + d, N: lat + d });
@@ -1091,6 +1095,75 @@ check("20e. ... and a SMALL comb is not a footprint either — a keep-out area h
                 && /The plan is checked against the ENC only; command it again once the chart has drawn in\.$/.test(slow)
                 && /The plan is checked against the ENC only\.$/.test(slowRoute),
           () => JSON.stringify({ tooBig: tooBig.slice(-60), slow: slow.slice(-70), slowRoute: slowRoute.slice(-45), size: gridSays.size }));
+
+    // 14h. A READ THAT CHANGES NOTHING REBUILDS NOTHING (2026-11-14, the Castine Upload: 18 rebuilds of an offshore
+    // model of 11-14 thousand zones, 1-4 s each, nearly every one after a read that kept nothing). A refusal, a read that
+    // threw and a read that found nothing leave the model as built - the readout still saying the water not read - while
+    // a read that finds a structure rebuilds, and so does one that pushes the oldest read, and its pier, out.
+    let cTries = 0;
+    const C = box(43.150, -70.600, 0.003), farPier = pier(43.1505, -70.5995, 30);
+    const w14h = inkWorld((bb) => bb === A ? read(19, [pier(43.081, -70.709, 40)])
+                                : bb === B ? [{ refused: "only 3 of 48 chart tiles arrived in 15 s" }, null, read(19, [])][cTries++]
+                                           || (() => { throw new TypeError("Failed to fetch"); })()
+                                : bb === C ? read(19, [farPier]) : read(19, []));
+    const R = [];
+    const step = async (bb, what) => { await w14h.run(bb); R.push([what, w14h.rebuilt(), w14h.ink().lines.length]); };
+    await step(A, "pier");                       // the first read: a pier - rebuilt
+    await step(B, "refused");                    // nothing kept: not rebuilt
+    const refusedNote = w14h.ink().note || "";
+    await step(B, "no scan answer");             // (a scan that answered nothing: refused as "no chart to read")
+    await step(B, "found nothing");              // read, nothing found: not rebuilt
+    const B2 = box(43.125, -70.645, 0.001);      // apart from B's read, so it is scanned
+    cTries = 99; await step(B2, "threw");        // a read that threw: not rebuilt
+    await step(C, "another pier");               // a new structure: rebuilt
+    const foldsAll = w14h.nogo.inkFold && w14h.nogo.inkFold.lines.length === 2;
+    // empties, till A's read goes (its pier with it: rebuilt) and then B's (it held nothing: not rebuilt)
+    for (let n = 0; n < IR.INK_READS_MAX - 1; n++) await w14h.run(box(43.3 + n * 0.004, -70.5, 0.003));
+    const foldOf = (w) => (w.nogo.inkFold || { lines: [] }).lines;     // (no rebuild at all: no fold recorded)
+    const evicted = { rebuilt: w14h.rebuilt(), lines: w14h.ink().lines.length, fold: foldOf(w14h).length };
+    // the SAME count, another pier: a fine read's version of the pier a coarse read found replaces it - rebuilt
+    const coarseH = pier(43.0810, -70.7090, 42), fineH = pier(43.08103, -70.70903, 40);
+    const w14i = inkWorld((bb) => bb === BIG ? read(17, [coarseH]) : read(19, [fineH]));
+    await w14i.run(BIG);
+    await w14i.run(A);
+    const swapped = { rebuilt: w14i.rebuilt(), lines: w14i.ink().lines, fold: foldOf(w14i) };
+    const rb14h = fnSrc("rebuildNogo"), eci = fnSrc("ensureChartInk");
+    check("14h. A READ THAT CHANGES NOTHING REBUILDS NOTHING: a refusal, a scan with no answer, a read that found nothing "
+          + "and a read that THREW leave the model as built (the readout saying the water not read); a new structure "
+          + "rebuilds, and so does the oldest read - and its pier - leaving past INK_READS_MAX, but not the next, which held "
+          + "nothing; a finer read's version of a pier replacing a coarse read's (the same count) rebuilds; rebuildNogo records what "
+          + "it folded and every rebuild in ensureChartInk asks inkFoldMoved",
+          () => JSON.stringify(R.map((r) => r[1])) === "[1,1,1,1,1,2]" && R[5][2] === 2 && foldsAll
+                && swapped.rebuilt === 2 && swapped.lines.length === 1 && swapped.lines[0] === fineH && swapped.fold[0] === fineH
+                && /the last water asked for was NOT read \(only 3 of 48/.test(refusedNote)
+                && evicted.rebuilt === 3 && evicted.lines === 1 && evicted.fold === 1
+                && /const inkN = foldChartInk\(nogo\.ko, nogo\.frame\);\s*nogo\.inkFold = inkFoldNow\(\);/.test(rb14h)
+                && (eci.match(/rebuildNogo\(\)/g) || []).length === 3 && (eci.match(/if\(inkFoldMoved\(\)\) rebuildNogo\(\);/g) || []).length === 3,
+          () => JSON.stringify({ R, foldsAll, evicted, swapped: [swapped.rebuilt, swapped.lines.length, swapped.lines[0] === fineH],
+                                 note: refusedNote.slice(-80) }));
+  }
+
+  // 14i (2026-11-14, the Castine Upload rehearsed in a hidden tab). THE READ HANDS THE PAGE BACK BY MESSAGE, NOT BY TIMER.
+  // Its turn was setTimeout(0): hidden, a chained timer waited 1 s, then 27-81 s a turn from about two minutes (measured
+  // in the pane) - one read, its tiles all in by its first minute, took 15 minutes more. The page's turn, driven with
+  // every timer frozen (a throttled tab), still
+  // turns; and the read's turn is that one.
+  {
+    const m = /^const punchYield = (\(\(\) => \{[\s\S]*?\n\}\)\(\));/m.exec(H);
+    const made = [], frozen = () => 0;                        // a timer that never fires
+    const MC = function () { const ch = new MessageChannel(); made.push(ch); return ch; };
+    let turned = 0, timedOut = false;
+    if (m) {
+      const turn = new Function("MessageChannel", "setTimeout", "return " + m[1] + ";")(MC, frozen);
+      const done = (async () => { for (let i = 0; i < 5; i++) { await turn(); turned++; } })();
+      await Promise.race([done, new Promise((r) => setTimeout(() => { timedOut = true; r(); }, 2000))]);
+    }
+    made.forEach((ch) => { ch.port1.close(); ch.port2.close(); });
+    check("14i. THE CHART READ'S TURN IS A MESSAGE: the page's turn (punchYield) turns five times with every timer frozen, "
+          + "as a throttled hidden tab's are; inkYield is that turn, and the read and the Upload take it",
+          () => !!m && turned === 5 && !timedOut && /^const inkYield = punchYield;/m.test(H)
+                && /await scanChartSliced\(rgba, W, H, explained, segs, mPerPx, \{\}, inkYield\)/.test(H),   // (in scanChartInk: 22)
+          () => JSON.stringify({ found: !!m, turned, timedOut }));
   }
 
   // ── 23. A DASH THAT ENDS IN A DOT IS A LINE SYMBOL, NOT A STRUCTURE ─────────────────────────────────────────────

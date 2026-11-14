@@ -458,7 +458,7 @@ function boxKo(e0, n0, e1, n1) {
                 && nulls.every((v) => v === null) && nullC.asks === 1
                 && sameAnswers && mixed.asks === new Set(order).size
                 && before.join() === "survey,survey" && after.join() === "transit,survey"
-                && /cornerSlowPlan\(walkRoute,[^;]*memoLegKeys\(routeSpeedKeys\(walkRoute\)\)\);/.test(upSrc)
+                && /cornerSlowPlan\(walkRoute,[^;]*memoLegKeys\(routeSpeedKeys\(walkRoute\)\), punchYield\);/.test(upSrc)
                 && uses === 2
                 && !/memoLegKeys/.test(grabFn("routeSpeedKeys") + grabFn("runLegKeys") + grabFn("leadFor")),
           "walk raw " + JSON.stringify(wRaw) + " vs memo " + JSON.stringify(wMem) + "; inner keyAt asked " + rawC.asks
@@ -1299,6 +1299,22 @@ await (async () => {
     V.VESSEL = vSaved; V.SPEED_KN = kSaved; V.MAX_TURN_RATE_DEG_S = rSaved;
   }
 })();
+
+// 31 (2026-11-14, the Castine Upload rehearsed in a hidden tab). THE TURN IS THE CALLER'S: a timer turn waits a second in a
+// hidden tab, and about a minute once it has been hidden five minutes, so the page hands the walk its message turn
+// (asv.html punchYield). Given one, the walk takes it every CORNERS_PER_SLICE corners and answers as it does on its own.
+{
+  let turns = 0;
+  const zig = Array.from({ length: 100 }, (_, i) => ll(i % 2 ? 30 : 0, i * 40));
+  const koFar = boxKo(5000, 5000, 5100, 5100);
+  const byTurn = await cornerSlowPlan(zig, F, koFar, 5, "survey", "low", undefined, undefined, () => { turns++; return Promise.resolve(); });
+  const byOwn = await cornerSlowPlan(zig, F, koFar, 5, "survey", "low");
+  check("31. the walk hands the page back by the TURN IT IS GIVEN (the page's message turn), every CORNERS_PER_SLICE corners, "
+        + "answering as it does with its own timer turn - which no yield in it takes now",
+        () => turns === 2 && JSON.stringify(byTurn) === JSON.stringify(byOwn)
+              && (SRC.match(/await turn\(\);/g) || []).length === 3 && !/await breathe\(\);/.test(SRC),
+        "turns " + turns + ", answers " + (JSON.stringify(byTurn) === JSON.stringify(byOwn) ? "equal" : "differ"));
+}
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"
                   : "\nall checks passed (" + ran + ")");

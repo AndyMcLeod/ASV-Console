@@ -919,7 +919,10 @@ const CORNERS_PER_SLICE = 40;
  *  unanswered, which is the conservative end. */
 const ITER_CAP = 3;
 const breathe = () => new Promise(r => setTimeout(r, 0));
-export async function cornerSlowPlan(route, ref, ko, buf, planKey, lowKey, fly, keyAt){
+/** `turn` (2026-11-14): how the walk hands the page back every CORNERS_PER_SLICE corners - `breathe` unless the caller
+ *  gives one. The page gives its message turn (asv.html punchYield): a timer turn waits a second in a hidden tab, and
+ *  about a minute once it has been hidden five minutes. A module-level MessageChannel would hold a Node test open. */
+export async function cornerSlowPlan(route, ref, ko, buf, planKey, lowKey, fly, keyAt, turn = breathe){
   const out = {slow: [], unanswered: [], dev: {}};
   if(!route || route.length < 3 || !ko) return out;
   const kn = k => (V.SPEED_KN && V.SPEED_KN[k]) || 3.0;
@@ -948,7 +951,7 @@ export async function cornerSlowPlan(route, ref, ko, buf, planKey, lowKey, fly, 
     const c = pass1.corner[i];
     out.dev[i] = c ? c.dev : 0;
     if(breaches(pass1, i)) slow.add(i);
-    if(i % CORNERS_PER_SLICE === 0) await breathe();
+    if(i % CORNERS_PER_SLICE === 0) await turn();
   }
   if(!slow.size) return out;
 
@@ -992,7 +995,7 @@ export async function cornerSlowPlan(route, ref, ko, buf, planKey, lowKey, fly, 
     const added = [];
     for(let i = 1; i < route.length - 1; i++){
       if(!slow.has(i) && breaches(pass2, i)) added.push(i);
-      if(++yielded % CORNERS_PER_SLICE === 0) await breathe();
+      if(++yielded % CORNERS_PER_SLICE === 0) await turn();
     }
     if(!added.length) break;
     added.forEach(i => slow.add(i));
@@ -1000,7 +1003,7 @@ export async function cornerSlowPlan(route, ref, ko, buf, planKey, lowKey, fly, 
   }
   for(const i of [...slow].sort((a, b) => a - b)){
     if(breaches(pass2, i)) out.unanswered.push(i); else out.slow.push(i);
-    if(++yielded % CORNERS_PER_SLICE === 0) await breathe();
+    if(++yielded % CORNERS_PER_SLICE === 0) await turn();
   }
   return out;
 }

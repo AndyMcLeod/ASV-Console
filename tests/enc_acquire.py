@@ -575,6 +575,62 @@ check("10. EVERY CHART QUERY shares ONE TLS context - the layer list, the id que
       lambda: len(ctxs) == 5 and all(c is not None and c is A._enc_ssl() for c in ctxs) and A._enc_ssl() is A._enc_ssl(),
       lambda: "%d queries, contexts %s" % (len(ctxs), sorted({id(c) for c in ctxs})))
 
+# ── 10b-10c. the chart IMAGE's tiles too, and a cache write that fails is not NOAA down (2026-11-14) ──────────────
+# The Castine Upload's chart-image read: fetch_tile was the one NOAA fetch still building a context per request -
+# measured 9-11 tiles/s against 22-40 shared, 6 at a time as the page asks - and its cache write shared the fetch's
+# `except`, so an os.replace refused on Windows (another request reading the tile) marked NOAA down for 60 s.
+PNG = b"\x89PNG\r\n\x1a\n" + b"t" * 64
+tctx, tcalls = [], []
+
+
+def tile_rec(req, timeout=None, **k):
+    tctx.append(k.get("context")); tcalls.append(getattr(req, "full_url", req))
+    return _Resp(PNG)
+
+
+CHART_WAS, DOWN_WAS, REPLACE = A.CHART_DIR, A._noaa_down_until, A.os.replace
+TILES = tempfile.mkdtemp(prefix="asv_enc_acquire_tiles_")
+try:
+    A.CHART_DIR = TILES
+    A._noaa_down_until = 0.0
+    A.urllib.request.urlopen = tile_rec
+    t1 = A.fetch_tile(17, 40486, 47462)
+    cached = os.path.isfile(A.tile_cache_path(17, 40486, 47462)) and A.tile_cache_path(17, 40486, 47462).startswith(TILES)
+    t1b = A.fetch_tile(17, 40486, 47462)            # from the cache: NOAA not asked again
+    n_after_cache = len(tcalls)
+
+    def refused(src, dst):
+        raise PermissionError(13, "The process cannot access the file because it is being used by another process")
+    A.os.replace = refused
+    t2 = A.fetch_tile(17, 40486, 47463)             # fetched, its cache write refused
+    A.os.replace = REPLACE
+    down_after_write = A._noaa_down_until
+    left_parts = [f for _r, _d, fs in os.walk(TILES) for f in fs if ".part." in f]
+    t3 = A.fetch_tile(17, 40486, 47464)             # the next one is still asked for
+    n_after_refused = len(tcalls)
+
+    def offline(req, timeout=None, **k):
+        raise urllib.error.URLError("no route to host")
+    A.urllib.request.urlopen = offline
+    t4 = A.fetch_tile(17, 40486, 47465)             # a FETCH that fails still marks NOAA down (unchanged)
+    down_after_fetch = A._noaa_down_until
+finally:
+    A.urllib.request.urlopen = _urlopen
+    A.os.replace = REPLACE
+    A.CHART_DIR, A._noaa_down_until = CHART_WAS, DOWN_WAS
+    shutil.rmtree(TILES, ignore_errors=True)
+check("10b. THE CHART IMAGE'S TILES share the ONE TLS context too (fetch_tile: 9-11 tiles/s with one per request, "
+      "22-40 shared), the tile cached in the CHART_DIR it was given and read from there the next time",
+      lambda: t1 == PNG and t1b == PNG and cached and len(tctx) >= 1 and tctx[0] is A._enc_ssl() and n_after_cache == 1,
+      lambda: "ctx shared %s, cached %s, NOAA asked %d" % (bool(tctx) and tctx[0] is A._enc_ssl(), cached, n_after_cache))
+check("10c. A CACHE WRITE THAT FAILS IS NOT NOAA DOWN: os.replace refused (another request reading the tile, as Windows "
+      "refuses it) - the tile still served, its .part removed, NOAA not marked down, the next tile still fetched; a "
+      "fetch that fails still marks it down",
+      lambda: t2 == PNG and down_after_write == 0.0 and not left_parts and t3 == PNG and n_after_refused == 3
+              and t4 is None and down_after_fetch > 0.0,
+      lambda: "served %s, down %s, parts %s, next %s, asked %d, offline %s" % (
+          t2 == PNG, down_after_write, left_parts, t3 == PNG, n_after_refused, down_after_fetch > 0.0))
+
 # ── 11. the band pick never falls to a coarser band (2026-10-19) ───────────────────────────────────────────
 NOAA_FAULT = "Error handling service request :Could not find service. Service may be stopped or it may not be configured."
 Q11 = {"answers": {}}

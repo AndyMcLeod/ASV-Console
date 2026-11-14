@@ -14046,6 +14046,7 @@ function rebuildNogo(){                         // (re)build the keep-out model 
   // keep-out that ignored that would be this module claiming an authority the ENC's own
   // piers do not have.
   const inkN = foldChartInk(nogo.ko, nogo.frame);
+  nogo.inkFold = inkFoldNow();                    // what this model folded: a chart read that leaves it so rebuilds nothing
   const n = nogo.ko.polys.length + nogo.ko.lines.length + nogo.ko.points.length;
   nogo.ready = n>0;
   nogo.note = (n>0 ? `${n} nogo zone(s) · band ${bandWord(nogo.band)}`
@@ -18047,9 +18048,13 @@ const CHART_INK_MIN_COVER = 0.9;
 // the widest mark the explained mask paints (a sounding's 14 px disc; a stroke is 4 px each side).
 const INK_PAINT_REACH_PX = 16;
 /** One turn of the event loop: the telemetry frames that queued behind the step before are handled here.
- *  The same turn turns.js's cornerSlowPlan takes (`breathe`). In a HIDDEN tab a timer is throttled to about
- *  once a second, so a scan there takes a few seconds longer; the frames themselves are not throttled. */
-const inkYield = () => new Promise(r => setTimeout(r, 0));
+ *  ⚠ A MESSAGE, NOT A TIMER (2026-11-14, the Castine Upload rehearsed): this was setTimeout(0), said here to cost "a few
+ *  seconds" in a hidden tab. Measured in one (the lab replays of the Castine Upload): a chained timer waited 1 s from
+ *  the moment it hid, then 27-81 s a turn from about two minutes hidden; one chart-image read, its tiles all in by its
+ *  first minute, took 15 minutes more; the Upload's routing (the corner walk, the same turn) took 1 128 s with a timer
+ *  turn and 22-27 s with a message, the same work. The supervising tab is often hidden (the operator's other window). A
+ *  message turn is not throttled: punchYield, the punch's own (2026-11-07), and the turn the page hands cornerSlowPlan. */
+const inkYield = punchYield;
 /** How long the painting runs before it gives the page a turn. */
 const INK_SLICE_MS = 40;
 /** The charted STRUCTURES a mark read off the chart must be attached to, to be kept: scanChartInk's attachment pool, and
@@ -18272,6 +18277,22 @@ async function scanChartInk(bb){
 /** The reads MERGED into the one read every reader has always looked at - `chartInk`, the same shape: the readout, the
  *  keep-out fold, the drawn layer and the punch's memo key go on reading it. Its KEY names every read in it, so a punch
  *  memo taken before a read landed is never served after it (tests/chart_ink.js 21). */
+// ── A CHART READ THAT CHANGES NOTHING REBUILDS NOTHING (2026-11-14, the Castine Upload) ────────────────────────────
+// ensureChartInk rebuilt the whole keep-out model after EVERY read - a refusal, a read that threw, a read that found
+// nothing - and each rebuild of an offshore Upload's 11-14 thousand zones held the page 1-4 s and handed the home field
+// a new model (a structured copy of it to its worker, ~1 s more, and a fuel tick on it). The lab replay of the Castine
+// Upload: 18 rebuilds and 18 fuel ticks, 38 s of the page's thread, two stalls of 6-7 s, TELEMETRY STALE twice. A
+// rebuild folds the merged read's lines and footprints (foldChartInk reads nothing else of them) - so a read that leaves
+// the merged read holding the SAME ones, in the same order, has nothing to rebuild. rebuildNogo records what it folded
+// (nogo.inkFold); a read rebuilds only when the merged read has moved off it. The readout still says every refusal.
+/** The merged read's lines and footprints, as the model folds them (by identity: mergeReads keeps each read's own). */
+function inkFoldNow(){ return {lines: (chartInk.lines || []).slice(), areas: (chartInk.areas || []).slice()}; }
+/** Has the merged read moved off what the model last folded? (No model built yet: it has.) */
+function inkFoldMoved(){
+  const f = nogo.inkFold, now = inkFoldNow();
+  return !f || f.lines.length !== now.lines.length || f.areas.length !== now.areas.length
+      || now.lines.some((x, i) => x !== f.lines[i]) || now.areas.some((x, i) => x !== f.areas[i]);
+}
 function refoldInk(){
   const m = mergeReads(chartReads);
   const last = chartReads[chartReads.length - 1] || null;
@@ -18317,7 +18338,7 @@ async function ensureChartInk(bb, opts){
       // left the model the planners and the guard use, because THIS water could not be read. Those are as real as
       // they were a moment ago, so they stay, and the readout says this water was not read (inkRefused).
       inkRefused = {bb, why: (r && r.refused) || "no chart to read"};
-      refoldInk(); rebuildNogo(); updateNogoUI();
+      refoldInk(); if(inkFoldMoved()) rebuildNogo(); updateNogoUI();   // the model as built, unless the read moved off it
       // ⚠ THE ADVICE FITS THE REFUSAL (2026-10-12). A box too LARGE to read is as large when it is commanded again, and a
       // route the console sends itself (`again: false` - a passage's section) is not commanded at all: only tiles still
       // arriving are helped by a second try.
@@ -18334,7 +18355,7 @@ async function ensureChartInk(bb, opts){
     if(inkRefused && bboxContains(bb, inkRefused.bb)) inkRefused = null;   // the water that was not read now is
     refoldInk();
     const found = r.lines.length + r.areas.length;
-    rebuildNogo();                     // fold them in through the ONE builder
+    if(inkFoldMoved()) rebuildNogo();  // fold them in through the ONE builder - when there is anything new to fold
     updateNogoUI(); render();
     if(found)
       showBanner("\u26a0 " + found + " STRUCTURE(S) READ OFF THE CHART that the ENC does not "
@@ -18349,10 +18370,10 @@ async function ensureChartInk(bb, opts){
     // ⚠ A READ THAT THREW IS NOT A CLEAN ONE, AND IT IS NOT CACHED AS ONE (2026-09-30, found reviewing this routine).
     // This kept the key, so the same water was never read again that session, and the failure was said only on
     // the readout. The rule a refusal obeys above: nothing kept for this water - and, since 2026-10-02, nothing taken
-    // from the reads of other water - a rebuild, and a banner: "I could not look" must not read as "I looked and found
-    // nothing".
+    // from the reads of other water - a banner (and a rebuild only if the merged read moved, 2026-11-14): "I could not
+    // look" must not read as "I looked and found nothing".
     inkRefused = {bb, why: "chart read failed: " + e};
-    refoldInk(); rebuildNogo(); updateNogoUI();
+    refoldInk(); if(inkFoldMoved()) rebuildNogo(); updateNogoUI();
     showBanner("⚠ CHART IMAGE NOT COMPARED — the chart read failed (" + e + "). "
       + (chartReads.length ? "The structures already read over other water are kept; this water is checked against the "
                              + "ENC only"
@@ -18396,7 +18417,8 @@ const INK_SURVEY_PAD_M = 100;
  *     from the boat through the plan, each survey cut to its first and last waypoint (pathThroughSurveys), in boxes
  *     that can each be read (pathBoxes) - and it SAYS SO if the path ran past the most it will read;
  *   * then EACH SURVEY'S OWN WATER at its own detail (surveyPoints), unless a read already holds it finely enough -
- *     which the punch's own read usually does, so in the common case nothing more is read than before.
+ *     which the punch's own read usually does, so in the common case nothing more is read than before;
+ *   * and each of those only where the read can find something (inkCanFind, 2026-11-14, below).
  */
 // ── A ROUTE'S CHART IMAGE, WHERE THE READ CAN FIND SOMETHING (2026-10-12) ───────────────────────────────────────
 // Andy: "fix the chart image warning on long sections". A passage's section is ~20 km, and its one box is past the
@@ -18456,20 +18478,34 @@ async function readRouteInk(b, pad, pts){
   logClient("route_ink", {boxes: all.length, read: take.length, open: all.length - want.length, left});
   return {read: take.length, open: all.length - want.length, left};
 }
+// ── AN UPLOAD'S CHART IMAGE, ALSO ONLY WHERE THE READ CAN FIND SOMETHING (2026-11-14) ────────────────────────────
+// Andy's Castine survey, 45 km offshore (the lab replay of its Upload: 657 s from the press to Run plan): its transits
+// cut into 32 stretches, 14 in water no charted structure is within reach of and 18 past Penobscot Bay's islands and
+// shores. An Upload read the first 16 whatever their water, nearly every one refused ("only N of ~140 tiles arrived in
+// 15 s") - 240 s - and, a refused read keeping nothing, the SAME 16 read again once the wider extract had drawn the
+// tiles in. A box with no charted structure within its own diagonal (plus ATTACH_M) can add
+// nothing to the model (above), so an Upload asks inkCanFind first, as a route does: its whole box, each stretch of its
+// transits and each survey's own water. The 16 are counted among the stretches that CAN find something, so a plan that
+// leaves a harbor for open water reads every stretch near the shore and is not told it ran past what it will read.
 async function readPlanInk(b, pad, pts, opts){
   if(opts && opts.route){ await readRouteInk(b, pad, pts); return; }
   if(!(opts && opts.plan)){ await ensureChartInk(b); return; }
   const wps = pts.slice(1);
+  let read = 0, open = 0, left = 0;
+  const one = async (bb) => { if(inkCanFind(bb)){ read++; await ensureChartInk(bb); } else open++; };
   if(inkTileGrid(b).refused){
-    const legs = pathBoxes(pathThroughSurveys(pts[0], wps), pad, bb => !inkTileGrid(bb).refused);
-    for(const lb of legs.boxes) await ensureChartInk(lb);
-    if(legs.dropped)
-      showBanner("⚠ CHART IMAGE NOT COMPARED over the whole route — this plan's transits run past the "
-        + legs.boxes.length + " stretches an Upload reads, and the last " + legs.dropped + " are checked against the "
-        + "ENC only. Verify that water visually.");
-  } else await ensureChartInk(b);
+    const all = pathBoxes(pathThroughSurveys(pts[0], wps), pad, bb => !inkTileGrid(bb).refused, Infinity).boxes;
+    const want = all.filter(inkCanFind), take = want.slice(0, INK_PATH_MAX_BOXES);
+    left = want.length - take.length; open += all.length - want.length;
+    for(const lb of take){ read++; await ensureChartInk(lb); }
+    if(left)
+      showBanner("⚠ CHART IMAGE NOT COMPARED over the whole route — " + want.length + " stretches of this plan's "
+        + "transits lie near charted land or a dock, and the last " + left + " past the " + INK_PATH_MAX_BOXES
+        + " an Upload reads are checked against the ENC only. Verify that water visually.");
+  } else await one(b);
   for(const s of surveyPoints({surveys: mission.surveys, waypoints: wps}))
-    if(s.pts.length) await ensureChartInk(boxAround(s.pts, INK_SURVEY_PAD_M));
+    if(s.pts.length) await one(boxAround(s.pts, INK_SURVEY_PAD_M));
+  logClient("plan_ink", {read, open, left});
 }
 // COVERAGE FIX: make sure the nogo model covers a set of lat/lon points (the boat +
 // a Go-To / RTH / Transit target that may lie OUTSIDE the ~5 km operating box)
@@ -23090,7 +23126,7 @@ async function doUpload(opts){
     // the walk asks it every time step, and that was the ~2 s the page froze at Upload).
     const raw = await cornerSlowPlan(walkRoute, nogo.frame, nogo.ko, nogo.buffer || 0, planKey, "low",
                               {approachM: Math.max(0.5, +(mission.approach_radius_m) || 1)},
-                              memoLegKeys(routeSpeedKeys(walkRoute)));
+                              memoLegKeys(routeSpeedKeys(walkRoute)), punchYield);   // (its turn a message: see inkYield)
     cs = {slow: raw.slow.map(i => i - 1).filter(i => i >= 0),
           unanswered: raw.unanswered.map(i => i - 1).filter(i => i >= 0)}
          || cs;

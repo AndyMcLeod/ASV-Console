@@ -416,7 +416,8 @@ eval("const NOGO_QUEUE_MAX_MS = " + NOGO_QUEUE_MAX_MS + ";" + "\n" +
      grab("refoldInk") + "\n" + grab("inkNote") + "\n" +
      // rebuildNogo builds from modelFeatures since 2026-10-18 (less a waived lock's gates - tests/lock_transit.js): the real one
      "var lockWaiver = null; function lockFeatureKey(f){ return String(f); }" + "\n" + grab("modelFeatures") + "\n" +
-     grab("foldChartInk") + "\n" + grab("rebuildNogo") + "\n" + grab("nogoStatus") + "\n" +
+     // (rebuildNogo records what it folded - inkFoldNow, 2026-11-14: a read that changes nothing rebuilds nothing)
+     grab("foldChartInk") + "\n" + grab("inkFoldNow") + "\n" + grab("rebuildNogo") + "\n" + grab("nogoStatus") + "\n" +
      grab("updateNogoUI") + "\n" + grab("refreshNogo") + "\n" +
      "const featLLBoxes = new WeakMap(), eachRingF = _eR;\n" +
      grab("featureLLBox").replace(/eachRing\(/g, "_eR(").replace(/eachPath\(/g, "_eP(").replace(/eachPoint\(/g, "_ePt(") + "\n" +

@@ -3204,8 +3204,10 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    it can, and otherwise its **transits leg by leg** (the boat, then each survey's first and last
    waypoint, in boxes that can each be read, at most 16, and it says so if the route ran past
    them). It then reads **each survey's own water** at its own detail, unless the punch's read
-   already holds it. A Go-To, a Return-to-Home and a drawn transit still read their one box, and a
-   box too big is refused at once, as before. A new extract still drops every read.
+   already holds it. Since 2026-11-14 an Upload reads only the boxes where the read can find
+   something, as a passage section does (below); the 16 are counted among those. A Go-To, a
+   Return-to-Home and a drawn transit still read their one box, and a box too big is refused at
+   once, as before. A new extract still drops every read.
 
    **A route stays inside the water the chart was read over (2026-10-03).** The keep-out model
    holds the features of one box, the extract's, and outside that box it holds nothing, which
@@ -3583,6 +3585,34 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    Castle, section 1 was read in 3 of its 5 stretches (156-207 tiles at z17; 4 small uncharted
    marks found and kept), the 2 offshore not read; the 20 km section home offshore: 4 stretches, all
    open water, nothing read, no warning. `tests/ink_reads.js` 9-13, `tests/chart_ink.js` 14g, 22f.
+
+   **An Upload without the long waits (2026-11-14, the Castine survey).** A survey 45 km off
+   Castine waited minutes on the chart image before its Run plan. In a lab replay, the Upload took
+   657 s from the press, nearly all of it reading the chart image of the transits. Four changes:
+   - *Only where the read can find something.* An Upload asks the same test a section does (above)
+     of its box, each stretch of its transits and each survey's water. Castine's transits cut into
+     32 stretches: 14 in open water are no longer read, 18 pass the bay's islands and shores, and
+     the 16 an Upload reads are counted among those 18 (the last 2 are said).
+   - *A read that changes nothing rebuilds nothing.* Every read rebuilt the keep-out model, 1-4 s
+     each offshore, even a refusal or a read that found nothing. Now only a read that changed the
+     merged read's lines and footprints rebuilds it: 18 rebuilds became 12 in the lab.
+   - *One TLS context for the chart image's tiles.* Each tile built its own, about 7 tiles a
+     second, so nearly every stretch of ~140 tiles missed its 15 s deadline and was refused, then
+     read again after the open-water widen. Shared, 22-40 tiles a second. And a tile cache write
+     that fails (Windows refuses a replace while another request reads the tile) no longer marks
+     NOAA down for a minute.
+   - *The turns are messages.* The read's analysis and the Upload's corner walk hand the page back
+     in slices, and they did it by a timer. A hidden tab holds a timer to a second, then (measured
+     from about two minutes hidden) to 27-81 s. Once every read completed, every read reached the
+     analysis: with the tile fix alone the hidden lab took 1667 s, and the same routing took
+     1128 s hidden with the timer turn against 22-27 s with a message. Both now turn by message
+     (the punch's own turn).
+
+   The lab replay with all four, its tiles fetched from NOAA: 259 s from the press with the page
+   visible through its reads, 363 s with it hidden from 35 s - every read completed, none
+   refused. Still slow: the open-water widen (~75 s), which stalls the page for a few seconds
+   (TELEMETRY STALE once or more), as it did before. `tests/ink_reads.js` 14-15,
+   `tests/chart_ink.js` 14h-14i, `tests/enc_acquire.py` 10b-10c, `tests/corner_slow.js` 31.
 
    **Every layer read, and what each charted thing means to each hull (2026-10-12).** A review of
    how the console reads the chart and what its keep-out model makes of it found charted things that
@@ -4944,8 +4974,9 @@ node tests/ink_reads.js
 **Chart reads kept and merged** — that a pier two chart reads both found counts once, and one
 only a coarse read found is kept; that water already read is recognized; that a plan too big
 for one read is cut into boxes that each fit and between them hold the whole route; and that
-an Upload reads its box (or its transits leg by leg) and then each survey's own water, while a
-Go-To reads its one box as before.
+an Upload reads its box (or its transits leg by leg) and then each survey's own water, only where
+the read can find something, while a Go-To reads its one box as before; that a read that changes
+nothing rebuilds nothing; and that the read hands the page back by message, not by timer.
 
 A pre-commit hook runs all of them automatically whenever anything but Markdown is staged, and
 blocks the commit if an invariant regresses. It used to run only for a list of covered paths, and

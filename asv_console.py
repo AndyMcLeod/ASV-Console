@@ -2572,22 +2572,37 @@ def fetch_tile(z, x, y, timeout=12.0):
         pass
     if time.monotonic() < _noaa_down_until:
         return None
+    # ⚠ ONE TLS CONTEXT, THE CHART QUERIES' OWN (2026-11-14, the Castine Upload). This was the one NOAA fetch left building
+    # a context per request (Windows' certificate store loaded every call): measured 6 at a time, as the page asks,
+    # 9-11 tiles/s and ~85 ms of CPU a tile; shared, 22-40 tiles/s and ~8 ms. An Upload's chart-image read asks ~140
+    # tiles a stretch and waits CHART_INK_DEADLINE_MS (15 s) for them - at ~7 tiles/s nearly every stretch was refused,
+    # and read again after the open-water widen.
     try:
         req = urllib.request.Request(enc_tile_url(z, x, y),
                                      headers={"User-Agent": "ASV-Console/1.0"})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with urllib.request.urlopen(req, timeout=timeout, context=_enc_ssl()) as r:
             data = r.read()
-        if not data.startswith(b"\x89PNG"):
-            return None
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        tmp = path + ".part.%d" % threading.get_ident()
-        with open(tmp, "wb") as f:
-            f.write(data)
-        os.replace(tmp, path)
-        return data
     except (OSError, ValueError):
         _noaa_down_until = time.monotonic() + 60.0
         return None
+    if not data.startswith(b"\x89PNG"):
+        return None
+    # ⚠ A CACHE WRITE THAT FAILS IS NOT NOAA DOWN (2026-11-14). It shared the fetch's `except`, so a write that failed
+    # marked NOAA down for 60 s and every tile in that minute came back None - and on Windows os.replace FAILS while any
+    # other request has the tile open to read it (measured here: 487 of 588 replaces raised PermissionError beside a
+    # reader). The tile is good either way: it is served, and cached when it can be.
+    tmp = path + ".part.%d" % threading.get_ident()
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(tmp, "wb") as f:
+            f.write(data)
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+    return data
 
 
 def prefetch_charts(lat, lon, radius_km, zmin, zmax, max_tiles=6000):

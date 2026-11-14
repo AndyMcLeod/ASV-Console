@@ -469,8 +469,9 @@ async function check18() {
   let PLAN = null;
   const fetch = async () => ({ ok: true, status: 200, json: async () => JSON.parse(JSON.stringify(PLAN)) });
   const plan = (min_depth_m) => ({ waypoints: [], lines: [], buffer_m: 3, min_depth_m, rev: 1 });
+  // (chartInk and inkFoldNow, 2026-11-14: rebuildNogo records what it folded - a read that changes nothing rebuilds nothing)
   const DECL = ["^let missionRev = [^;]*;", "^let missionLoaded = [^;]*;", "^const MISSION_LOAD_RETRY_MS = [^;]*;",
-                "^const NOGO_RETRY_MS = [^;]*;"].map((re) => {
+                "^const NOGO_RETRY_MS = [^;]*;", "^let chartInk = [^;]*;"].map((re) => {
     const m = H.match(new RegExp(re, "m"));
     if (!m) throw new Error("test setup: declaration " + re + " not found (renamed?)");
     return m[0];
@@ -479,7 +480,7 @@ async function check18() {
   const page = eval("(function(){ let patClip = null, patDropped = null, mission = {waypoints: []};"
     + " let boundary = [], boundaryClosed = false, surveyBounded = false;"
     + " var lockWaiver = null; function lockFeatureKey(f){ return String(f); }\n" + DECL + "\n"
-    + [grab(H, "bandWord"), grab(H, "modelFeatures"), grab(H, "rebuildNogo"), grab(H, "floorFollows"),
+    + [grab(H, "bandWord"), grab(H, "modelFeatures"), grab(H, "inkFoldNow"), grab(H, "rebuildNogo"), grab(H, "floorFollows"),
        grab(H, "punchRefusal"), grab(H, "applyVesselToUI"), "async " + grab(H, "loadMission")].join("\n")
     + "\nreturn { loadMission, applyVesselToUI, rebuildNogo, punchRefusal,"
     + " get: () => ({ patClip, patDropped, missionLoaded }), punch: (c) => { patClip = c; patDropped = null; } }; })()");
@@ -644,7 +645,7 @@ async function check19() {
   };
   const settle = async () => { for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r)); };
   const DECL = ["^let vesselBusy = [^;]*;", "^let vesselAskedAt = [^;]*;", "^const VESSEL_ASK_MS = [^;]*;",
-                "^const NOGO_RETRY_MS = [^;]*;"].map((re) => {
+                "^const NOGO_RETRY_MS = [^;]*;", "^let chartInk = [^;]*;"].map((re) => {
     const m = H.match(new RegExp(re, "m"));
     if (!m) throw new Error("test setup: declaration " + re + " not found (renamed?)");
     return m[0];
@@ -653,7 +654,7 @@ async function check19() {
   const page = eval("(function(){ let patClip = null, patDropped = null, mission = {waypoints: []};"
     + " let boundary = [], boundaryClosed = false, surveyBounded = false;"
     + " var lockWaiver = null; function lockFeatureKey(f){ return String(f); }\n" + DECL + "\n"
-    + [grab(H, "bandWord"), grab(H, "modelFeatures"), grab(H, "rebuildNogo"), grab(H, "floorFollows"),
+    + [grab(H, "bandWord"), grab(H, "modelFeatures"), grab(H, "inkFoldNow"), grab(H, "rebuildNogo"), grab(H, "floorFollows"),
        grab(H, "applyVesselToUI"), "async " + grab(H, "loadVessel"), grab(H, "vesselAdopted"),
        grab(H, "vesselFollows"), "async " + grab(H, "switchVessel")].join("\n")
     + "\nreturn { loadVessel, vesselFollows, switchVessel, rebuildNogo, ASK_MS: VESSEL_ASK_MS,"
