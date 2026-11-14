@@ -330,7 +330,9 @@ check("16. ... and a stopped boat does not re-arm anything either",
   // passage.js deepWhy for deep water first's, which says nothing of a plan without a margin layer - tests/deep_first.js)
   // (and openwater.js openWaterWhy for open water first's, 2026-10-14 - tests/open_water.js)
   var deepWhy = () => [], openWaterWhy = () => [], fmtDist = (m) => Math.round(m) + " m";
-  eval(grabDecl("planGen") + "\n" + grab("offshoreWhy") + "\n" + grab("setPlanIntent") + "\n" + grab("wptRole"));
+  // (cmdGen and escapeGen are eval-scoped lets: read through the var below, never re-declared out here - 18b)
+  eval(grabDecl("planGen") + "\n" + grabDecl("cmdGen") + "\n" + grab("offshoreWhy") + "\n" + grab("setPlanIntent") + "\n" + grab("wptRole")
+       + "\nvar gensNow = () => [cmdGen, escapeGen];");
   var planIntent = null;
   // (HOW SHE ARRIVES is arrivalSay's line, 2026-10-08 - it reads the vessel's speeds and laws, none of which this
   // world has; these checks are about the routing lines, and say nothing of the arrival)
@@ -349,6 +351,20 @@ check("16. ... and a stopped boat does not re-arm anything either",
   check("18. a DIRECT plan says the straight line was already clear - it claims no detour",
         pi.why.some(w => /direct/.test(w.s)) && !pi.why.some(w => /routed clear/.test(w.s)),
         pi.why.map(w => w.s.slice(0, 44)).join(" | "));
+
+  // 18b (2026-11-14 review). THE FAR RTH'S TWO COUNTS (rthFence, tests/passage_sail.js 17q): a motion this console commands
+  // counts cmdGen, the guard's escape escapeGen, and the guard's own upkeep of the plan she is on - the routed re-approach to
+  // her hold, its own resume of a leg it held - neither (a way home planned for minutes is not withdrawn by those)
+  const gn0 = gensNow(); setPlanIntent("goto", {routed: false}, R(2)); const gn1 = gensNow();
+  setPlanIntent("escape", null, R(1)); const gn2 = gensNow();
+  setPlanIntent("goto", {routed: false}, R(2), true); const gn3 = gensNow();
+  const ownSites = [/setPlanIntent\(kind, plan, plan\.route, true\);/.test(grab("reapproachIfSetOff")),
+                    /setPlanIntent\(beh, plan, tail, !!auto\);/.test(grab("resumeHeldLeg"))];
+  check("18b. a commanded motion counts cmdGen, the guard's escape escapeGen (not cmdGen), the guard's own upkeep neither - and the "
+        + "re-approach and the guard's own resume of a held leg say they are its upkeep",
+        gn1[0] === gn0[0] + 1 && gn1[1] === gn0[1] && gn2[0] === gn1[0] && gn2[1] === gn1[1] + 1 && gn3[0] === gn2[0] && gn3[1] === gn2[1]
+        && ownSites.every(Boolean),
+        JSON.stringify({gn0, gn1, gn2, gn3, ownSites}));
 
   // 19. A PARTIAL lane must read differently from a full one - the distinction that matters
   // on the water: a route that rode the lane over part of itself and sat on a channel

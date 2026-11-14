@@ -824,6 +824,20 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
         + (BUSY_MS / 1000) + " s), then sent again; a refusal while armed still stands (not sent again)",
         () => BUSY_MS >= 5000 && bzHeld && bzStill && Bz.sent.length === 2 && /LOW FUEL/.test(Bz.sent[1].why) && Bq.sent.length === 1,
         () => JSON.stringify({ busyMs: BUSY_MS, held: bzHeld, still: bzStill, sent: Bz.sent.length, refused: Bq.sent.length }));
+  // 8x (2026-11-14 review). WITHDRAWN BY NO ONE'S WORD AGAINST GOING HOME: a far RTH withdrawn because home moved (a nearer
+  // port set) or by the guard's in-extremis escape kept the latch for good - below her point, nothing sent. Both are asked
+  // again now (the escape's the frame it ends: rthDecision sends nothing in one); another command's withdrawal stands.
+  const Xh = world(); Xh.hang = true; Xh.frame(60);
+  Xh.outcome = { notTaken: { withdrawn: true, by: "home moved" } }; Xh.land(); Xh.frame(59.9);
+  const Xe = world(); Xe.hang = true; Xe.frame(60);
+  Xe.outcome = { notTaken: { withdrawn: true, by: "the guard's escape" } }; Xe.land();
+  Xe.frame(59.9, { behavior: "escape" }); const xeHeld = Xe.sent.length === 1; Xe.frame(59.8, { behavior: "hold" });
+  const Xc = world(); Xc.hang = true; Xc.frame(60);
+  Xc.outcome = { notTaken: { withdrawn: true, by: "another command" } }; Xc.land(); Xc.frame(59.9); Xc.frame(59.8);
+  check("8x. A FAR RTH WITHDRAWN BECAUSE HOME MOVED is sent again (to the new home) the next frame; WITHDRAWN BY THE GUARD'S "
+        + "ESCAPE, sent the frame the escape is over (nothing in it); withdrawn by ANOTHER COMMAND: it stands",
+        () => Xh.sent.length === 2 && xeHeld && Xe.sent.length === 2 && Xc.sent.length === 1,
+        () => JSON.stringify({ home: Xh.sent.length, escape: [xeHeld, Xe.sent.length], other: Xc.sent.length }));
   check("8m. ONE LOW-FUEL RTH IN FLIGHT: while the RTH she was sent is still being routed, a latch re-armed and a point "
         + "reached again send NO second one (no banner, no log either) - it sent 20 in 26 s on 2026-11-08. The crossing it "
         + "holds back is not counted as answered: when the one in flight settles WITHOUT her going home (refused, lost) the "

@@ -2336,6 +2336,12 @@ function holdClearWithContacts(ll, charted){
 // Hold that did not find it may not throw it away. "A new commanded motion is a new
 // decision" is this function's own first sentence.
 let planGen = 0;
+// THE FAR RTH'S FENCE COUNTS TWO THINGS planGen ALONE DOES NOT TELL APART (rthFence, the 2026-11-14 review). A way home
+// planned for minutes is withdrawn when THIS console commands another motion meanwhile - a new survey uploaded keeps the
+// behavior "survey", so only a count sees it - and by the guard's escape; and it is NOT withdrawn by the guard's own
+// upkeep of the plan she is on: the routed re-approach to her hold and the guard's own resume of a leg it held
+// (`guardOwn`). And planGen is put back when a refused escape restores its picture: these two never go back.
+let cmdGen = 0, escapeGen = 0;
 /** The Intent card's lines for a plan's OFFSHORE MARKS (2026-10-12, routing.js offshoreDangerSide): those kept between her
  *  and the danger each marks, and a warning for any that were NOT - asked of every plan, laned or not. */
 function offshoreWhy(plan){
@@ -2352,8 +2358,10 @@ function offshoreWhy(plan){
                         + " NOT kept between her and the danger beside it - check the route against the chart"});
   return out;
 }
-function setPlanIntent(kind, plan, route){
+function setPlanIntent(kind, plan, route, guardOwn){
   planGen++;
+  if(kind === "escape") escapeGen++;
+  else if(!guardOwn) cmdGen++;
   // ⚠ A NEW COMMANDED MOTION IS A NEW DECISION. The operator's "proceed" was about one
   // situation on one track; carrying it into the next run would make a per-episode judgment
   // into a standing permission, which is the one thing that override must never become. The
@@ -10766,9 +10774,11 @@ function fuelTick(s){
       // (the verify round): its refusal carries its state, while the page's S is a frame old - a 409 back before the
       // frame showing her disarmed kept the latch for good. And WITHDRAWN by an E-STOP pressed in THIS window while it
       // routed (planInsideChart) is the E-STOP's case too; withdrawn by a Stop, Pause or Hold it stands, as any command
-      // given after it does.
+      // given after it does. ⚠ AND WITHDRAWN BY NO ONE'S WORD AGAINST GOING HOME (the 2026-11-14 review): home moved (a
+      // nearer port set - the way home is to a new place, not called off) or the guard's in-extremis escape (she is sent
+      // home the frame it ends, as from any escape - rthDecision) kept the latch for good, below her point, nothing sent.
       const nt = out && out.notTaken, ns = nt && nt.state && typeof nt.state === "object" ? nt.state : S;
-      if(nt && fuelBoot === bootAt && (nt.sent === false || (nt.withdrawn && nt.by === "E-STOP")
+      if(nt && fuelBoot === bootAt && (nt.sent === false || (nt.withdrawn && ["E-STOP", "home moved", "the guard's escape"].includes(nt.by))
                                        || (nt.refused && (!ns.armed || ns.estop)))) fuelRth.acted = false;
       // BUSY (far: one passage plan at a time) - asked again RTH_BUSY_RETRY_MS on, not answered (above, at RTH_BUSY_RETRY_MS)
       if(nt && nt.busy && fuelBoot === bootAt){ fuelRth.acted = false; fuelRetryAt = Date.now() + RTH_BUSY_RETRY_MS; }
@@ -14961,7 +14971,8 @@ async function doRTH(opts){
       // one sends her; here a whole section was planned for a post cmd() refuses before the wire, then said as a
       // refusal of a return that is coming - and the chain marked refused under it
       if(chained && !supervising()) return;
-      const out = await sailHome(H, brk, far, missionAt, {fence: rthFence(chained)});
+      const out = await sailHome(H, brk, far, missionAt, {fence: rthFence(chained), chained});
+      if(chained && out === "busy"){ rthChainRetry(); return; }   // (a section being sent: the chain fires again shortly)
       if(chained && (out === "refused" || out === "withdrawn")) rthChainFailed = true;   // said: she holds, and the cards stop promising a return
       return;
     }
@@ -16396,11 +16407,13 @@ function homeRecord(){
   if(!h || h.why) return h;
   const P = h.P, G = h.G;
   // (a way home the low-fuel monitor sent keeps its rule - home on what is aboard, not with 20% - when it is sent again
-  // along itself: sailFuelShort, the 2026-11-13 review)
+  // along itself: sailFuelShort, the 2026-11-13 review. ⚠ ONLY WHILE THAT TRIP IS UNDER WAY (the 2026-11-14 review): a
+  // record of one sailed and DONE - she came home, refueled, went out again - passed its rule to the operator's next RTH,
+  // which was sent home with under 20% of the tank)
   return {id: "H" + Date.now().toString(36), t: Date.now(), kind: "rth", kn: P.kn, floor_m: P.floor_m, points: P.points,
           sections: h.sections, path: G, home: {lat: S.home.lat, lon: S.home.lon}, homeEnd: h.homeEnd,
           from: {id: P.kind === "rth" && P.from ? P.from.id : P.id, sec: h.rejoin.sec},
-          ...(P.kind === "rth" && P.lowFuel === true ? {lowFuel: true} : {}),
+          ...(P.kind === "rth" && P.lowFuel === true && PASSAGE_ONGOING.includes(P.state) ? {lowFuel: true} : {}),
           state: "ready", sent: -1, sec: 0, base: 0, end: null, route: null, breakoff: null, note: ""};
 }
 /** RTH ALONG THE PASSAGE (doRTH, home beyond RTH_MAX_M): the way home's first section sent from where she is. Its
@@ -16411,10 +16424,16 @@ function homeRecord(){
  *  "withdrawn" (`how.by` naming why) when it no longer stands. And handed back on `how`: the console's own answer when it
  *  refused (`how.post`, for the monitor - fuelTick reads the state it carries). THE FUEL is judged here for every way
  *  home, at the send (sailFuelShort: with 20% of the tank on arrival, or - the low-fuel monitor's, `H.lowFuel` - home at
- *  all; the 2026-11-13 review: the monitor's skipped it, so its level was judged only at the plan, minutes before). */
+ *  all; the 2026-11-13 review: the monitor's skipped it, so its level was judged only at the plan, minutes before).
+ *  "busy" (the 2026-11-14 review): a section is being sent - it was "refused", final for the end-of-plan chain and the
+ *  monitor under a note telling the OPERATOR to press again; both ask again now (doRTH, fuelTick), and the press is told. */
 async function sailHome(H, brk, far, missionAt = null, how = null){
   const fresh = !!(how && how.fromHere);
-  if(sailBusy){ flashNote("RTH: the passage is sending a section - press RTH again in a moment."); return "refused"; }
+  if(sailBusy){
+    flashNote("RTH: the passage is sending a section - " + (how && (how.chained || how.lowFuel)
+      ? "it is asked again in " + Math.round(RTH_BUSY_RETRY_MS / 1000) + " s." : "press RTH again in a moment."));
+    return "busy";
+  }
   const f = sailFuelShort(H, 0, null);
   if(f){ showBanner("RTH refused: home is " + fmtDist(far.m) + " away, " + (fresh ? "as a passage" : "along the passage") + " - " + f + ".");
          logClient("passage_rth", {id: H.id, ok: false, from_here: fresh, why: String(f).slice(0, 300)}); return "refused"; }
@@ -16526,19 +16545,31 @@ function homePassageRefusal(plan, lowFuel){
  *  was asked against is taken at the press and asked again before anything is sent - a function answering null while
  *  the press stands, or {by, say} when it does not: a Stop, Pause, Hold or E-STOP (routeStopGen); a new link (a Spawn, a
  *  vessel or port switch, a reconnect: boot_id - she is not the boat it was planned for); home moved, or a ROC's now;
- *  and another command - her behavior changed (a Go-To, an Upload, an RTH from another window, a passage sailed). The
- *  guard's own rungs (a hold, the in-extremis escape) are waited through, as the boxed RTH's are - except for the end-of-
- *  plan chain (`chained`), which never sends her home off the guard's own maneuver (CHAINABLE_BEHAVIORS). NOT SEEN: a new
- *  command of the same behavior (a Go-To over a Go-To's hold) - the banner says Stop withdraws it. */
+ *  the guard's in-extremis ESCAPE (escapeGen); another motion THIS console commanded (cmdGen - a new survey uploaded
+ *  over a survey, a Go-To over a Go-To's hold); and another command from elsewhere - her behavior changed (a Go-To, an
+ *  RTH from another window). A HOLD is waited through, at either end (the guard's hold rung, its own resume of the plan,
+ *  a hold from elsewhere: the press is about going home, and Stop withdraws it) - except for the end-of-plan chain
+ *  (`chained`), which never sends her home off a maneuver it did not see her end on (CHAINABLE_BEHAVIORS), and is
+ *  withdrawn too when End of plan is no longer RTH (the operator's over-ride of the end-of-mission return).
+ *  ⚠ THE ESCAPE WAS WAITED THROUGH (the 2026-11-14 review): the press's fence let the far RTH be posted off the guard's
+ *  own escape - the one maneuver the monitor itself never sends her home from (fuel.js rthDecision) - and a new survey
+ *  uploaded meanwhile, or End of plan switched to LOITER, left the way home to be sent over the operator's word. */
 function rthFence(chained){
-  const stop = routeStopGen, boot = S.boot_id, src = S.home_source, beh = S.behavior,
+  const stop = routeStopGen, boot = S.boot_id, src = S.home_source, beh = S.behavior, cg = cmdGen, eg = escapeGen,
         home = S.home ? {lat: S.home.lat, lon: S.home.lon} : null;
   return () => routeStopGen !== stop ? {by: routeStopName || "a stop", say: (routeStopName || "a stop") + " was pressed"}
     : S.boot_id !== boot ? {by: "a new link", say: "a new link came up (a Spawn, a vessel or port switch, a reconnect)"}
     : !S.home || !home || S.home.lat !== home.lat || S.home.lon !== home.lon || S.home_source != src
       ? {by: "home moved", say: "home was moved"}
-    : S.behavior !== beh && (chained || !["hold", "escape"].includes(S.behavior))
-      ? {by: "another command", say: "she was commanded elsewhere (" + (S.behavior || "a new plan") + " now)"}
+    : escapeGen !== eg || (S.behavior === "escape" && beh !== "escape")
+      ? {by: "the guard's escape", say: "the guard steered her clear in extremis (an escape)"}
+    : cmdGen !== cg ? {by: "another command", say: "this console commanded her elsewhere ("
+                                                   + ((planIntent && planIntent.kind) || "a new plan") + ")"}
+    : chained && S.completion !== "rth"
+      ? {by: "End of plan", say: "End of plan was changed to " + String(S.completion || "none").toUpperCase()}
+    : S.behavior !== beh && (chained || (S.behavior !== "hold" && beh !== "hold"))
+      ? (S.behavior === "hold" ? {by: "a hold", say: "she was put on station-keeping"}
+                               : {by: "another command", say: "she was commanded elsewhere (" + (S.behavior || "a new plan") + " now)"})
     : null;
 }
 /** THE END-OF-PLAN CHAIN, ASKED AGAIN: its RTH answered "busy" (one passage plan at a time - sailHomeFresh), so the one-shot
@@ -16561,7 +16592,14 @@ let homeFlight = null;
  *  ⚠ ONE AT A TIME, AND JOINED (the 2026-11-13 review): a second far RTH - the chain at the survey's end while the monitor's
  *  plans, the monitor's past FUEL_FLIGHT_MS, the button pressed twice - was "refused" because the first held passageBusy,
  *  with a banner blaming the Passage tab: final for the chain and the monitor. It takes the first one's answer now, and the
- *  monitor's rule goes with it (home at all, not with 20%) if the first one has not yet been judged. */
+ *  monitor's rule goes with it (home at all, not with 20%) if the first one has not yet been judged.
+ *  ⚠ BUT ONLY AN ANSWER ABOUT THE WAY HOME IS THE JOINER'S (the 2026-11-14 review). Sent, not sent from this tab, lost,
+ *  busy, refused: the way home itself, and the joiner's too. WITHDRAWN and OVERRIDDEN are the first press's own reasons:
+ *  the chain that joined the monitor's took "overridden" when the energy override came on - an answer its caller has no
+ *  branch for, so the end-of-mission return was lost with the card still promising it; the monitor that joined the
+ *  chain's took the chain's strict withdrawal on a guard hold its own press waits through; and an RTH pressed after a
+ *  Stop, or for a home just moved, was withdrawn by the very event that came before it. So the joiner asks its OWN press
+ *  (`how.fence`): withdrawn by what it names, or - still standing - its way home planned again, as its own. */
 async function sailHomeFresh(brk, far, missionAt, how){
   how = how || {};
   if(homeFlight){
@@ -16569,6 +16607,20 @@ async function sailHomeFresh(brk, far, missionAt, how){
     if(how.lowFuel && !fl.judged) fl.lowFuel = true;
     flashNote("RTH: the way home is already being planned as a passage - it is sent when it is ready.");
     const ans = await fl.done;
+    if(homeFlight === fl) homeFlight = null;    // (the first press's own finally clears it first; never joined twice)
+    if(ans === "withdrawn" || (ans === "overridden" && !(how.lowFuel && !how.lockWas))){   // (the override is a low-fuel one's too)
+      const g = how.fence ? how.fence() : null;
+      if(g){
+        how.by = g.by;
+        if(g.by !== fl.how.by){
+          showBanner("RTH withdrawn: " + g.say + " while the way home was being planned. Nothing was sent.");
+          logClient("plan_withdrawn", {what: "RTH", by: g.by});
+        }
+        return "withdrawn";
+      }
+      logClient("passage_rth", {state: "planned again", by: fl.how.by || ans, low_fuel: !!how.lowFuel, chained: !!how.chained});
+      return sailHomeFresh(brk, far, missionAt, how);
+    }
     how.by = fl.how.by; how.post = fl.how.post;
     // (judged by the 20% rule before the monitor joined, and refused by it: the monitor's own, by its rule)
     if(how.lowFuel && ans === "refused" && !fl.lowFuelJudged && !fl.how.post) return sailHomeFresh(brk, far, missionAt, how);
@@ -16625,8 +16677,11 @@ async function sailHomeFreshRun(brk, far, missionAt, fl){
     return "refused";
   }
   // THE SURVEY'S BREAK-OFF, TAKEN AGAIN AT THE SEND (the review): she surveyed on while it planned, and the one taken at the
-  // press would have Continue fly those minutes again. The press's is kept where none can be taken now (she holds).
-  const brkNow = brk && how.brkAgain ? (how.brkAgain() || brk) : brk;
+  // press would have Continue fly those minutes again. The press's is kept where none can be taken now because she is HELD
+  // (the guard's hold, a pause) - and NOT where the survey ran to its end while it planned (the 2026-11-14 review: she holds
+  // at its last waypoint, nothing is left to fly, and the press's would have Continue fly all of it again).
+  const ended = S && S.behavior === "survey" && !!(S.status && S.status.holding);
+  const brkNow = brk && how.brkAgain ? (how.brkAgain() || (ended ? null : brk)) : brk;
   how.fromHere = true;
   return sailHome(homePassageRecord(out.plan, fl.lowFuel), brkNow, far, missionAt, how);
 }
@@ -21055,7 +21110,7 @@ async function reapproachIfSetOff(s, st){
     // A committed route captures its reasoning (end_action 23b): the re-approach is one,
     // under the run's own kind, and it says why it exists.
     const kind = (planIntent && planIntent.kind) || S.behavior || "goto";
-    runRoute = plan.route; runUnsafe = []; setPlanIntent(kind, plan, plan.route);
+    runRoute = plan.route; runUnsafe = []; setPlanIntent(kind, plan, plan.route, true);   // (the guard's own upkeep: cmdGen)
     legStartsHere(0, r);                           // see doGoTo
     planIntent.why.unshift({t:"warn", s:"set "+fmtDist(st.off_station_m||0)
       +" off station, beyond the "+fmtDist(st.hold_clear_m||0)+" certified clear — re-approaching on a routed path of "
@@ -24786,7 +24841,7 @@ async function resumeHeldLeg(opts){
   releaseEscapeClaim(auto ? "the console resumed the " + name : "you resumed the " + name);
   runRoute = tail; runUnsafe = [];
   const plan = {route: tail, holdClear: hc, coast, routed: tail.length > 1};
-  setPlanIntent(beh, plan, tail);
+  setPlanIntent(beh, plan, tail, !!auto);             // (the console's own resume is the guard's upkeep: cmdGen)
   if(ov) guardOverride = ov;
   const ep = aisAvoid; aisAvoid = null;               // the contact's episode, if one was open, is answered
   guardHeld = null;
