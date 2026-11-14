@@ -838,6 +838,29 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
         + "ESCAPE, sent the frame the escape is over (nothing in it); withdrawn by ANOTHER COMMAND: it stands",
         () => Xh.sent.length === 2 && xeHeld && Xe.sent.length === 2 && Xc.sent.length === 1,
         () => JSON.stringify({ home: Xh.sent.length, escape: [xeHeld, Xe.sent.length], other: Xc.sent.length }));
+  // 8y (2026-11-14). LATE IS ASKED AGAIN: past RTH_MAX_M the chart read along the way home that did not finish in
+  // CORRIDOR_WAIT_MAX_MS is given up (passagePlanFor) and doRTH answers LATE (passage_sail 17v). Taken as a refusal, the
+  // latch was kept for good - below her point, a server stall away from never being sent home. Now as BUSY: nothing sent
+  // for RTH_BUSY_RETRY_MS, then asked again; a refusal while armed still stands (8w's Bq)
+  const Ly = world(); Ly.hang = true; Ly.S.armed = true; Ly.frame(60);
+  Ly.outcome = notTaken({ late: true, sent: true }); Ly.land();
+  Ly.frame(59.9); const lyHeld = Ly.sent.length === 1;
+  Ly.clock += BUSY_MS - 1000; Ly.frame(59.8); const lyStill = Ly.sent.length === 1;
+  Ly.clock += 2000; Ly.frame(59.7);
+  check("8y. A FAR RTH ANSWERED LATE (the chart read along the way home did not finish in 30 min) IS ASKED AGAIN: nothing "
+        + "more sent for RTH_BUSY_RETRY_MS, then sent again - not kept as answered",
+        () => lyHeld && lyStill && Ly.sent.length === 2 && /LOW FUEL/.test(Ly.sent[1].why),
+        () => JSON.stringify({ held: lyHeld, still: lyStill, sent: Ly.sent.length }));
+  // 8y2 (the 2026-11-14 review). A LATE FROM AN OLD LINK IS NOT THE NEW BOAT'S: a far RTH sent on one link (boot_id a) and
+  // answered late after a new one (b) came up holds the new watch back for nothing - its own crossing is sent the frame
+  // the old one lands, not RTH_BUSY_RETRY_MS on (the gate fuelBoot === bootAt, which busy shares)
+  const Lo = world(); Lo.hang = true; Lo.frame(60, { boot_id: "a" });
+  Lo.frame(59.9, { boot_id: "b" }); const loHeld = Lo.sent.length === 1;      // (the one in flight holds a second: 8m)
+  Lo.outcome = notTaken({ late: true, sent: true }); Lo.land();
+  Lo.hang = false; Lo.frame(59.8, { boot_id: "b" });
+  check("8y2. A LATE ANSWER FROM AN OLD LINK (boot_id) does not hold the new link's watch: its crossing is sent the next frame",
+        () => loHeld && Lo.sent.length === 2 && /LOW FUEL/.test(Lo.sent[1].why),
+        () => JSON.stringify({ held: loHeld, sent: Lo.sent.length }));
   check("8m. ONE LOW-FUEL RTH IN FLIGHT: while the RTH she was sent is still being routed, a latch re-armed and a point "
         + "reached again send NO second one (no banner, no log either) - it sent 20 in 26 s on 2026-11-08. The crossing it "
         + "holds back is not counted as answered: when the one in flight settles WITHOUT her going home (refused, lost) the "
@@ -1438,9 +1461,21 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
     const src = [
       "const S = {home: w.home || HOME}, V = w.V || {};",
       "let coarseHome = w.coarse;",
-      "const postCorridor = async (b) => { w.posts.push(b); return w.st0; };",
-      "const getCorridor = async (id) => { w.gets++; return w.stDone; };",
+      // (`postHang`: the console never answers the ask - 11k; `sigs`: each ask's abort signal)
+      "const postCorridor = async (b, sig) => { w.posts.push(b); (w.sigs = w.sigs || []).push(sig); if (w.postHang) return new Promise(() => {}); return w.st0; };",
+      // (`stillRunning`: the read never leaves "running" - 11j - until 400 polls, so a build that never gives up FAILS, not hangs)
+      "const getCorridor = async (id) => { w.gets++; return w.stillRunning && w.gets <= 400 ? w.st0 : w.stDone; };",
       "const CORRIDOR_POLL_MS = 0, passageGrids = async (tiles) => ({grids: tiles.map((t) => ({tile: t})), missing: 0});",
+      // (11j: the page's wait limit and its helpers; the world's own clock once a check sets `w.clock`, each poll's wait
+      // moving it `w.step` on)
+      d(/const CORRIDOR_WAIT_MAX_MS = [^;]+;/), d(/const CORRIDOR_ASK_MS = [^;]+;/), d(/const CORRIDOR_MUTE_MS = [^;]+;/),
+      "const Date = class extends globalThis.Date { static now(){ return w.clock != null ? w.clock : globalThis.Date.now(); } };",
+      // (with the world's clock, any timer but the poll's - an ask's bound - is kept for the check to fire: 11k)
+      "const setTimeout = (fn, ms) => { if (w.clock == null) return globalThis.setTimeout(fn, ms);"
+        + " if (ms === 0){ w.polls = (w.polls || 0) + 1; w.clock += w.step; return globalThis.setTimeout(fn, 0); }"
+        + " const t = {fn, ms, cleared: false}; (w.races = w.races || []).push(t); return t; };",
+      "const clearTimeout = (t) => { if (t && t.fn) t.cleared = true; else globalThis.clearTimeout(t); };",
+      grab("corridorFailure"), grab("corridorLate"), "async " + grab("corridorAsk"), "async " + grab("corridorStart"), "async " + grab("corridorWait"),
       "const coarseHomeInWorker = async (m) => { w.workerMsgs.push(m); return w.res || {tiles: [{tx: 1, ty: 2, len: new Float32Array(4)}], reached: 3, ms: 5}; };",
       "const nogoDR = () => ({min: 3.15}), airNeedM = () => 4.85, logClient = (k, dd) => w.logs.push([k, dd]);",
       ["COARSE_HOME_HALF_MIN_KM", "COARSE_HOME_HALF_FRAC", "COARSE_HOME_HALF_MAX_KM", "COARSE_HOME_MAX_TILES"].map((n) => d(new RegExp("const " + n + " = [^;]*;"))).join("\n"),
@@ -1479,6 +1514,34 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
               && bBig.posts.length === 2 && bBig.posts[1].cancel === "c" && bErr.posts.length === 1
               && /canceled/.test(failed[2].note) && /home's own chart tile could not be read/.test(failed[3].note),
         () => JSON.stringify(failed.map((c) => c.note)));
+  // 11j. THE WAIT HAS AN END (2026-11-14): a read along the way home that never left "running" held the build's `busy` for
+  // good - the monitor measuring home in a straight line from then on, past RTH_MAX_M too. Polled a minute apart, it is
+  // given up at CORRIDOR_WAIT_MAX_MS of wall clock: said why, the field it had kept, and tried again later (`at`)
+  const bLate = buildWorld({ stillRunning: true, clock: 1.8e12, step: 60000 }); await bLate.api.build("K3", mid);
+  const cLate = bLate.api.now();
+  check("11j. A READ ALONG THE WAY HOME THAT NEVER FINISHES is given up at 30 min of wall clock, polled a minute apart: the "
+        + "build free (tried again later), the field it had kept, the note naming the cause, logged; the worker never asked",
+        () => bLate.polls === 30 && cLate.busy === false && cLate.at === 1.8e12 + 30 * 60000 && cLate.tried === "K3" && cLate.key === "old" && cLate.hf
+              && cLate.note === "the chart read along the way did not finish in 30 min (0 of 8 tile(s) read)" && bLate.workerMsgs.length === 0
+              && bLate.logs.some((l) => l[0] === "coarse_home" && l[1].ok === false && l[1].note === cLate.note),
+        () => JSON.stringify({ polls: bLate.polls, busy: cLate.busy, at: cLate.at - 1.8e12, note: cLate.note, worker: bLate.workerMsgs.length }));
+  // 11k. AN ASK THE CONSOLE NEVER ANSWERS: bounded by CORRIDOR_ASK_MS and aborted (the 2026-11-14 review), and past the
+  // 30 min given up - the build free. Given 2 s of real time after the bound, a build that waited on the request itself is
+  // said HUNG here, and fails
+  const bHang = buildWorld({ postHang: true, clock: 1.8e12, step: 60000 });
+  const pHang = bHang.api.build("K4", mid);
+  await new Promise((r) => setTimeout(r, 0));          // (a turn: the ask is made, and hangs)
+  const raceHang = (bHang.races || [])[0];
+  bHang.clock += 30 * 60000; (bHang.races || []).filter((t) => !t.cleared).forEach((t) => t.fn());
+  const endHang = await Promise.race([pHang.then(() => "settled"), new Promise((r) => setTimeout(() => r("HUNG"), 2000))]);
+  const cHang = bHang.api.now();
+  check("11k. AN ASK ALONG THE WAY HOME THE CONSOLE NEVER ANSWERS is bounded by CORRIDOR_ASK_MS and aborted, and past the 30 "
+        + "min given up: the build free, the note naming the cause, the worker never asked",
+        () => endHang === "settled" && raceHang && raceHang.ms === 30000 && bHang.posts.length === 1 && bHang.sigs[0] && bHang.sigs[0].aborted === true
+              && cHang.busy === false && cHang.key === "old"
+              && cHang.note === "the chart along the way could not be read (the read had no answer it could use from the console for 30 min (the last ask: unanswered in 30 s))"
+              && bHang.gets === 0 && bHang.workerMsgs.length === 0,
+        () => JSON.stringify({ end: endHang, race: raceHang && raceHang.ms, posts: bHang.posts.length, aborted: (bHang.sigs || []).map((x) => x && x.aborted), busy: cHang.busy, note: cHang.note }));
 
   // 11g. the order: the field round home, the coarse grid, the passage, the straight line - and said
   const HOME = { lat: 43.07, lon: -70.71 };

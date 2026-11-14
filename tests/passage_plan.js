@@ -513,9 +513,16 @@ const FLOOR = 30;
     const w = Object.assign({ posts: [], gets: [], fetches: [], banners: [], notes: [], logs: [], renders: 0, workerMsgs: [],
                               asv: { lat: 43.07, lon: -70.71 }, transit: [], seq: [], model, kn: 7, status: { fuel_l: 200 },
                               ends: { dep: { ok: true, km: 2.5, wpts: 40 }, arr: { ok: true, km: 3.1, wpts: 55 } },
-                              grid404: [], worker: null, ops: [], preReads: [] }, o || {});
+                              grid404: [], worker: null, ops: [], preReads: [], sigs: [] }, o || {});
+    // (16j-16o: the page's wait limit and its ask's bound, its four helpers, and a clock and timers of the world's own once a
+    // check sets them - `clockOf` - the real ones otherwise; read when asked, so a check sets them on the world it has made)
     const src = "let passage = null, passageBusy = false, passageStatus = \"\", passageGen = 0, corridorRead = null;\n"
       + "const PASSAGE_HALF_KM = 5, PASSAGE_HALF_MAX_KM = 25, PASSAGE_GRID_FETCHES = 6, CORRIDOR_POLL_MS = 0;\n"
+      + /const CORRIDOR_WAIT_MAX_MS = [^;]+;/.exec(H)[0] + "\n" + /const CORRIDOR_ASK_MS = [^;]+;/.exec(H)[0] + "\n" + /const CORRIDOR_MUTE_MS = [^;]+;/.exec(H)[0] + "\n"
+      + "const Date = class extends globalThis.Date { static now(){ return w.clock != null ? w.clock : globalThis.Date.now(); } };\n"
+      + "const setTimeout = (fn, ms) => w.timer ? w.timer(fn, ms) : globalThis.setTimeout(fn, ms);\n"
+      + "const clearTimeout = (t) => w.untimer ? w.untimer(t) : globalThis.clearTimeout(t);\n"
+      + ["corridorFailure", "corridorLate", "corridorGivenUp", "corridorAsk", "corridorStart", "corridorWait"].map(grab).join("\n") + "\n"
       + "const PASSAGE_LEG_WHY = " + /const PASSAGE_LEG_WHY = (\{[\s\S]*?\});/.exec(H)[1] + ";\n"
       + fuelSrc + "\n"
       + /const PASSAGE_CASING = [^;]*;/.exec(H)[0] + "\n"
@@ -524,18 +531,22 @@ const FLOOR = 30;
          "drawPassage", "preReadFirstSection"].map(grab).join("\n")
       + "\nlet passagePreRead = null;"
       + "\nreturn {passageEdited, passagePointAt, toggleFuelStop, passageRefusal, passagePoints, passageFuelLegs, passageAlong,"
-      + " passageSummary, passageLine, passageHalfKm, passageEndsSay, planPassageNow, drawPassage,"
-      + " state: () => ({passage, passageBusy, passageGen}), setPassage: (p) => { passage = p; }, bump: () => { passageGen++; },"
+      + " passageSummary, passageLine, passageHalfKm, passageEndsSay, planPassageNow, drawPassage, passagePlanFor, MAX: CORRIDOR_WAIT_MAX_MS, ASK: CORRIDOR_ASK_MS, MUTE: CORRIDOR_MUTE_MS,"
+      + " state: () => ({passage, passageBusy, passageGen, corridorRead}), setCorridorRead: (c) => { corridorRead = c; }, setPassage: (p) => { passage = p; }, bump: () => { passageGen++; },"
       + " preRead: () => passagePreRead};";
     const ctx = new Proxy({}, { get: (t, k) => (k in t ? t[k] : (...a) => { w.ops.push([k, ...a]); }), set: (t, k, v) => { t[k] = v; return true; } });
-    w.api = new Function("asv", "passageWps", "planPassageEnds", "fuelModel", "V", "roleSpeed", "S", "energyLevel", "passageFuel", "FUEL_RESERVE_FRAC",
+    w.api = new Function("w", "asv", "passageWps", "planPassageEnds", "fuelModel", "V", "roleSpeed", "S", "energyLevel", "passageFuel", "FUEL_RESERVE_FRAC",
       "fmtDist", "fmtDur", "fmtMS", "distTo", "PASSAGE_PORT_R_M", "M_PER_DEG_LAT", "nogoDR", "postCorridor", "getCorridor",
       "corridorSummary", "toCorridor", "fetch", "passageInWorker", "showBanner", "flashNote", "logClient", "updateTransitPanel",
       "render", "worldPx", "zoom", "ctx", "airNeedM", "ensureNogoCovers", "fmtVol", src)(
-      w.asv, w.transit, async () => { w.endsAsked = (w.endsAsked || 0) + 1; return w.ends; }, () => w.model, { SPEED_KN: { transit: w.kn } }, () => "transit", { status: w.status }, F.energyLevel,
+      w, w.asv, w.transit, async () => { w.endsAsked = (w.endsAsked || 0) + 1; return w.ends; }, () => w.model, { SPEED_KN: { transit: w.kn } }, () => "transit", { status: w.status }, F.energyLevel,
       F.passageFuel, F.FUEL_RESERVE_FRAC, fmtDist, fmtDur, (s) => s + "s", flat, C.PORT_R_M, 111320, () => ({ min: 3.15 }),
-      async (b) => { w.posts.push(b); return w.seq.length ? w.seq.shift() : { id: "j", state: "done", total: 0, done: 0, tiles: [] }; },
-      async (id) => { w.gets.push(id); return w.seq.shift(); }, (st) => "SUMMARY " + JSON.stringify(st), (st) => st,
+      // (`postAnswer` / `getAnswer`: the world's own answers to the post and to each poll - a read that never leaves
+      // "running", a request never answered or failed, one answered late - 16j-16o; `sigs` each ask's abort signal. A poll
+      // past the world's answers is a refusal in words, never undefined: a page that asks again on no answer would ask for good)
+      async (b, sig) => { w.posts.push(b); w.sigs.push(sig); if (w.postAnswer) return w.postAnswer(b); return w.seq.length ? w.seq.shift() : { id: "j", state: "done", total: 0, done: 0, tiles: [] }; },
+      async (id, sig) => { w.gets.push(id); w.sigs.push(sig); if (w.getAnswer) return w.getAnswer(id); return w.seq.length ? w.seq.shift() : { error: "the world has no more answers" }; },
+      (st) => "SUMMARY " + JSON.stringify(st), (st) => st,
       async (url) => { w.fetches.push(url); const bad = w.grid404.some((t) => url.endsWith(t)); return { ok: !bad, arrayBuffer: async () => new ArrayBuffer(8) }; },
       async (msg) => { w.workerMsgs.push(msg); if (w.duringWorker) w.duringWorker(w); return w.worker; },
       (t) => w.banners.push(t), (t) => w.notes.push(t), (k, d) => w.logs.push([k, d]), () => {}, () => { w.renders++; },
@@ -696,6 +707,284 @@ const FLOOR = 30;
         () => pl16e && pl16e.fuel[0] === null && pl16e.reserveAt[0] === null && pl16e.fuel[1] && pl16e.fuel[1].ok === true
               && /Her position to P2: its fuel is NOT checked/.test(W16e.banners.pop() || ""),
         () => JSON.stringify(pl16e && pl16e.fuel));
+
+  // ── 16j-16o. THE WAIT FOR THE CHART READ HAS AN END (2026-11-14) ────────────────────────────────────────────────
+  // passagePlanFor polled the corridor job while it ran, with no end: a read the console never finished held Plan passage
+  // (passageBusy: every far RTH "busy") and the far RTH's one flight home (every RTH joined it) for good. Now
+  // CORRIDOR_WAIT_MAX_MS of WALL CLOCK from the ask (corridorWait), judged on a poll asked once it has passed, then refused
+  // in words (corridorLate); and each ask - the post, each poll - bounded by CORRIDOR_ASK_MS and aborted, a failed or
+  // unanswered one asked again (corridorAsk, corridorStart: the 2026-11-14 review). The world's own clock here: each
+  // poll's wait moves it `stepMs` on (a hidden tab's waits are long, a visible one's short); any other timer - an ask's
+  // bound - is kept, for the check to fire (`drive`: the clock moved CORRIDOR_ASK_MS on as it fires). A wait with no end
+  // is capped by the world (after 400 polls the read answers done), so a page that never gives up FAILS here rather than
+  // hanging the suite.
+  const MAXW = W16.api.MAX, MIN = Math.round(MAXW / 60000), ASK = W16.api.ASK;
+  const tiles16j = [tiles16[0]];
+  const clockOf = (w, stepMs, runFor, cap) => {
+    w.clock = 1.8e12; w.t0 = w.clock; w.polls = 0; w.races = []; w.hung = 0;
+    w.timer = (fn, ms) => {
+      if (ms === 0) { w.polls++; w.clock += stepMs; return setTimeout(fn, 0); }     // (CORRIDOR_POLL_MS is 0 in this world)
+      const t = { fn, ms, set: w.clock, cleared: false, fired: false }; w.races.push(t); return t;
+    };
+    w.untimer = (t) => { if (t && t.fn) t.cleared = true; else clearTimeout(t); };
+    w.over = () => w.polls > (cap || 400) || (runFor != null && w.clock - w.t0 >= runFor);
+    w.done = (id) => ({ id, state: "done", total: 9, done: 9, tiles: tiles16j, failed: [] });
+    w.getAnswer = (id) => w.over() ? w.done(id) : { id, state: "running", total: 9, done: 2, tiles: [] };
+    w.seq = [{ id: "g", state: "running", total: 9, done: 0, tiles: [] }];          // the post's answer
+    w.worker = W16.worker;
+    return w;
+  };
+  const hang = (w) => new Promise(() => { w.hung++; });                               // an ask the console never answers
+  const fireRaces = (w) => w.races.filter((t) => !t.cleared && !t.fired).forEach((t) => { t.fired = true; t.fn(); });
+  const until = async (f) => { for (let i = 0; i < 5000 && !f(); i++) await new Promise((r) => setTimeout(r, 0)); };
+  // (a page that waits on a hung ask for good: given 2 s of real time, it is said HUNG and fails here)
+  const within = (p, ms) => Promise.race([p.then(() => "settled", () => "threw"), new Promise((r) => setTimeout(() => r("HUNG"), ms))]);
+  // THE CONSOLE NOT ANSWERING, DRIVEN: each time the page waits on an ask's bound with the ask hung, the clock moves
+  // CORRIDOR_ASK_MS on and the bound fires - to `p`'s end, or 200 bounds (a page that never gives up: HUNG)
+  const drive = async (w, p, onHang) => {
+    let end = null; p.then(() => { end = "settled"; }, () => { end = "threw"; });
+    const open = () => w.races.find((t) => !t.cleared && !t.fired && t.ms === ASK);
+    for (let n = 0; n < 200 && !end; n++) {
+      // (a turn first: an ask the world has answered settles in it, so a bound still open after it is a HUNG ask's)
+      await new Promise((r) => setTimeout(r, 0));
+      await until(() => end || open());
+      if (end || !open()) break;
+      if (onHang) onHang(w, n);
+      w.clock += ASK; const t = open(); t.fired = true; t.fn();
+    }
+    return end || await within(p, 2000);
+  };
+  const lateSay = "the chart read along it did not finish in " + MIN + " min (2 of 9 tile(s) read)";
+  const keptSay = " - the tiles read are kept: press Plan passage again to go on from them.";
+  const W16j = clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 60000);
+  await W16j.api.planPassageNow();
+  const W16j2 = clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 60000, MAXW - 60000);     // done at 29 min
+  await W16j2.api.planPassageNow();
+  const W16j3 = clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 60000, MAXW);             // done in the wait that crosses 30
+  await W16j3.api.planPassageNow();
+  const W16jd = clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 60000);
+  const out16j = await W16jd.api.passagePlanFor(W16jd.api.passagePoints(), () => {}, () => false);
+  const log16j = W16j.logs.find((l) => l[0] === "passage_plan" && l[1].state === "late");
+  const W16jg = clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 60000);              // a far Go-To's (goToOrPassage)
+  await W16jg.api.planPassageNow("give the Go-To again");
+  const goSaid16j = W16jg.banners[W16jg.banners.length - 1] || "";
+  check("16j. A CHART READ THAT NEVER FINISHES IS GIVEN UP AT " + MIN + " MIN OF WALL CLOCK (CORRIDOR_WAIT_MAX_MS): polled a minute "
+        + "apart, it is refused on the first poll asked past it - said with how much was read and that the tiles are kept, "
+        + "logged, nothing planned, the worker never asked, the Passage tab free; the planner's answer {error, late, kept} (the "
+        + "far RTH asks again on it); every ask's bound cleared; and the same read DONE at 29 min, or in the wait that crosses "
+        + "30 (the last poll's answer taken - the 2026-11-14 review), is planned",
+        () => MIN === 30 && W16j.polls === 30 && W16j.gets.length === 30 && W16j.api.state().passage === null && !W16j.api.state().passageBusy
+              && W16j.workerMsgs.length === 0
+              && (W16j.banners[W16j.banners.length - 1] || "") === "Passage NOT planned: " + lateSay + keptSay
+              && log16j && log16j[1].done === 2 && log16j[1].tiles === 9 && log16j[1].min === 30 && log16j[1].mute === false
+              && W16j.api.state().corridorRead && W16j.api.state().corridorRead.state === "given up" && W16j.api.state().corridorRead.id === "g"
+              && out16j && out16j.late === true && out16j.kept === true && out16j.error === lateSay && !out16j.plan
+              && W16j.races.length === W16j.gets.length + 1 && W16j.races.every((t) => t.cleared && !t.fired && t.ms === ASK)
+              && W16j2.api.state().passage && W16j2.workerMsgs.length === 1 && W16j2.polls === 29
+              && !W16j2.logs.some((l) => l[1] && l[1].state === "late")
+              && W16j3.api.state().passage && W16j3.workerMsgs.length === 1 && W16j3.polls === 30
+              && !W16j3.logs.some((l) => l[1] && l[1].state === "late")
+              && goSaid16j === "Passage NOT planned: " + lateSay + " - the tiles read are kept: give the Go-To again to go on from them.",
+        () => JSON.stringify({ polls: [W16j.polls, W16j2.polls, W16j3.polls], gets: W16j.gets.length, banner: (W16j.banners[W16j.banners.length - 1] || "").slice(0, 200),
+                               log: log16j && log16j[1], out: out16j, races: [W16j.races.length, W16j.gets.length, W16j.races.filter((t) => !t.cleared).length],
+                               planned: [!!W16j2.api.state().passage, !!W16j3.api.state().passage, (W16j3.banners[W16j3.banners.length - 1] || "").slice(0, 80)] }));
+  // 16k. THE CLOCK, NOT THE POLLS: a hidden tab stretches the poll's 2 s wait to a minute and more (measured 2026-11-14) -
+  // waits of 11 min are given up at the third (33 min), said as 30; a visible tab polling every half second for 1,980
+  // polls (16.5 min) is not given up
+  const W16k = clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 11 * 60000);
+  await W16k.api.planPassageNow();
+  const W16k2 = clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 500, 1980 * 500, 5000);
+  await W16k2.api.planPassageNow();
+  check("16k. MEASURED BY THE CLOCK, NOT BY POLLS: waits of 11 min (a hidden tab) given up at the third, said as " + MIN + " min; "
+        + "1,980 polls half a second apart (16.5 min) waited out and planned",
+        () => W16k.polls === 3 && W16k.api.state().passage === null && W16k.workerMsgs.length === 0
+              && (W16k.banners[W16k.banners.length - 1] || "").indexOf("Passage NOT planned: " + lateSay) === 0
+              && W16k2.polls === 1980 && !!W16k2.api.state().passage && W16k2.workerMsgs.length === 1,
+        () => JSON.stringify({ hidden: [W16k.polls, (W16k.banners[W16k.banners.length - 1] || "").slice(0, 120)], quick: [W16k2.polls, !!W16k2.api.state().passage] }));
+  // 16l. AN ASK THE CONSOLE NEVER ANSWERS (a rejoined job once hung its request for good: tests/enc_corridor.py 4; the
+  // 2026-11-14 review: one hung poll took the whole limit). Each ask is bounded by CORRIDOR_ASK_MS and ABORTED (a hung
+  // fetch holds one of the browser's few connections to the console), and the read polled again: one poll hung while
+  // the read finishes is planned; polls hung for good are given up once the console has answered nothing for
+  // CORRIDOR_MUTE_MS and 3 asks (the second 2026-11-14 review) - polls a minute apart, at the 5th, 4 min unheard - with
+  // the last progress heard and what the last ask got; a post never answered is posted again, then given up the same at
+  // the 3rd - NOT said as tiles kept; and the clock runs from the ASK - a post answered 20 min in leaves the read 10 polls
+  const W16l = clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 60000, 5 * 60000);
+  W16l.getAnswer = ((g) => (id) => W16l.polls === 3 ? hang(W16l) : g(id))(W16l.getAnswer);
+  const end16l = await drive(W16l, W16l.api.planPassageNow());
+  const hung16l = W16l.races.filter((t) => t.fired);
+  const W16l2 = clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 60000);
+  W16l2.getAnswer = ((g) => (id) => W16l2.polls >= 3 && !W16l2.over() ? hang(W16l2) : g(id))(W16l2.getAnswer);
+  const end16l2 = await drive(W16l2, W16l2.api.planPassageNow());
+  const W16l3 = clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 60000);
+  W16l3.postAnswer = () => W16l3.posts.length > 400 ? { id: "g", state: "running", total: 9, done: 0, tiles: [] } : hang(W16l3);
+  const end16l3 = await drive(W16l3, W16l3.api.planPassageNow());
+  const W16l4 = clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 60000);
+  W16l4.postAnswer = async () => { W16l4.clock += 20 * 60000; return { id: "g", state: "running", total: 9, done: 0, tiles: [] }; };
+  await W16l4.api.planPassageNow();
+  const last = (w) => w.banners[w.banners.length - 1] || "";
+  check("16l. AN ASK NEVER ANSWERED: bounded by CORRIDOR_ASK_MS (" + ASK / 1000 + " s) and aborted, and asked again - one poll hung "
+        + "while the read finishes is planned; polls hung for good given up at the 5th (4 min unheard) with the progress last "
+        + "heard and what the last ask got; a post never answered posted again, then given up at the 3rd, the tiles NOT said "
+        + "kept; nothing planned in those; and the 30 min run from the ASK - a post answered 20 min in leaves the read 10 polls",
+        () => ASK === 30000 && end16l === "settled" && end16l2 === "settled" && end16l3 === "settled"
+              && W16l.hung === 1 && hung16l.length === 1 && hung16l[0].ms === ASK && W16l.sigs[3] && W16l.sigs[3].aborted === true
+              && W16l.sigs.filter((s) => s && s.aborted).length === 1 && !!W16l.api.state().passage && W16l.workerMsgs.length === 1
+              && W16l2.hung === 3 && W16l2.api.state().passage === null && !W16l2.api.state().passageBusy && W16l2.workerMsgs.length === 0
+              && last(W16l2) === "Passage NOT planned: the chart read along it had no answer it could use from the console for 4 min (2 of 9 "
+                                 + "tile(s) read when it last answered; the last ask: unanswered in 30 s)" + keptSay
+              && W16l2.sigs.filter((s) => s && s.aborted).length === W16l2.hung && W16l2.clock - W16l2.t0 === 6.5 * 60000
+              && W16l3.posts.length === 3 && W16l3.posts.length === W16l3.hung && W16l3.gets.length === 0
+              && W16l3.sigs.every((s) => s && s.aborted)
+              && last(W16l3) === "Passage NOT planned: the chart read along it had no answer it could use from the console for 3 min (the last "
+                                 + "ask: unanswered in 30 s) - press Plan passage again to ask again."
+              && !W16l3.api.state().passageBusy && W16l3.workerMsgs.length === 0
+              && W16l4.polls === 10 && W16l4.api.state().passage === null && W16l4.workerMsgs.length === 0,
+        () => JSON.stringify({ ends: [end16l, end16l2, end16l3], one: [W16l.hung, hung16l.map((t) => t.ms), W16l.sigs.map((s) => s && s.aborted), !!W16l.api.state().passage],
+                               forGood: [W16l2.hung, (W16l2.clock - W16l2.t0) / 60000, last(W16l2).slice(0, 140)],
+                               post: [W16l3.posts.length, W16l3.hung, W16l3.gets.length, last(W16l3).slice(0, 160)], fromAsk: W16l4.polls }));
+  // 16m. A WITHDRAWAL OUTRANKS THE CLOCK: the line edited during the wait that crosses 30 min - said as the edit (gone),
+  // not as a read too slow; and (the third 2026-11-14 review) edited DURING the poll that decides it - the one asked past
+  // 30 min, or the 3rd unanswered past the 2 min - the same: the planner asks again after the wait. The read's line on
+  // the Passage tab is no longer "reading" after it
+  const W16m = clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 60000);
+  W16m.getAnswer = ((g) => (id) => { if (W16m.polls === 29) W16m.api.bump(); return g(id); })(W16m.getAnswer);
+  await W16m.api.planPassageNow();
+  const W16m2 = clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 60000);
+  W16m2.getAnswer = ((g) => (id) => { if (W16m2.polls === 30) W16m2.api.bump(); return g(id); })(W16m2.getAnswer);
+  await W16m2.api.planPassageNow();
+  const W16m3 = clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 60000);
+  W16m3.getAnswer = ((g) => (id) => { if (W16m3.polls === 5) W16m3.api.bump(); return W16m3.polls >= 3 ? Promise.reject(new TypeError("Failed to fetch")) : g(id); })(W16m3.getAnswer);
+  await W16m3.api.planPassageNow();
+  const notLate = (w) => /edited while it was being planned/.test(last(w)) && !w.logs.some((l) => l[1] && l[1].state === "late");
+  check("16m. A WITHDRAWAL OUTRANKS THE CLOCK: the line edited in the poll that crosses " + MIN + " min, or during the poll that "
+        + "decides it - asked past " + MIN + " min, or the 3rd unanswered - refused as edited, not as late; the read's line no longer 'reading'",
+        () => W16m.polls === 30 && notLate(W16m)
+              && W16m2.polls === 30 && W16m2.gets.length === 30 && notLate(W16m2)
+              && W16m2.api.state().corridorRead && W16m2.api.state().corridorRead.state === "given up"
+              && W16m3.gets.length === 5 && notLate(W16m3),
+        () => JSON.stringify({ polls: [W16m.polls, W16m2.polls, W16m3.gets.length], banner: [last(W16m), last(W16m2).slice(0, 90), last(W16m3).slice(0, 90)],
+                               read: W16m2.api.state().corridorRead && W16m2.api.state().corridorRead.state }));
+  // 16n. A FAILED ASK IS NOT AN ANSWER (the 2026-11-14 review: one lost poll threw out of the planner, and the far RTH
+  // took it as a FINAL refusal - the chain's rthChainFailed, the monitor's latch kept): a poll that fails (the network,
+  // a reply that is not JSON) or answers no status is polled again - polls 3 and 4 fail, 5 answers, 6 and 7 answer no
+  // status, 8 is done; failing for good, it is given up as LATE (asked again) once the console has answered nothing for
+  // 2 min and 3 polls (the 5th, a minute apart), never thrown; a post that fails is posted again
+  const fails16n = { 3: new TypeError("Failed to fetch"), 4: new SyntaxError("Unexpected token < in JSON at position 0"), 6: null, 7: "<html>" };
+  const W16n = clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 60000);
+  W16n.getAnswer = ((g) => (id) => {
+    if (W16n.polls in fails16n) { const f = fails16n[W16n.polls]; return f instanceof Error ? Promise.reject(f) : f; }
+    return W16n.polls >= 8 ? W16n.done(id) : g(id);
+  })(W16n.getAnswer);
+  const out16n = await W16n.api.passagePlanFor(W16n.api.passagePoints(), () => {}, () => false).catch((e) => ({ threw: String(e) }));
+  const W16n2 = clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 60000);
+  W16n2.getAnswer = ((g) => (id) => W16n2.polls >= 3 && !W16n2.over() ? Promise.reject(new TypeError("Failed to fetch")) : g(id))(W16n2.getAnswer);
+  const out16n2 = await W16n2.api.passagePlanFor(W16n2.api.passagePoints(), () => {}, () => false).catch((e) => ({ threw: String(e) }));
+  const W16n3 = clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 60000, 3 * 60000);
+  W16n3.postAnswer = () => W16n3.posts.length <= 2 ? Promise.reject(new TypeError("Failed to fetch")) : { id: "g", state: "running", total: 9, done: 0, tiles: [] };
+  const out16n3 = await W16n3.api.passagePlanFor(W16n3.api.passagePoints(), () => {}, () => false).catch((e) => ({ threw: String(e) }));
+  check("16n. A FAILED ASK IS NOT AN ANSWER: polls that fail (the network; a reply not JSON) or answer no status (null, a page "
+        + "of HTML) are polled again and the read, done, planned; failing for good, given up as late at the 5th poll (3 min "
+        + "unheard), kept, the failure named - never thrown (the far RTH would refuse for good); a post that fails twice is "
+        + "posted again and the read planned",
+        () => out16n && !!out16n.plan && W16n.gets.length === 8 && W16n.races.every((t) => t.cleared)
+              && out16n2 && !out16n2.threw && out16n2.late === true && out16n2.kept === true && W16n2.gets.length === 5
+              && out16n2.error === "the chart read along it had no answer it could use from the console for 3 min (2 of 9 tile(s) read "
+                                   + "when it last answered; the last ask: the console could not be reached)"
+              && out16n3 && !!out16n3.plan && W16n3.posts.length === 3,
+        () => JSON.stringify({ blips: [out16n && (out16n.threw || !!out16n.plan), W16n.gets.length], forGood: [out16n2, W16n2.gets.length],
+                               post: [out16n3 && (out16n3.threw || !!out16n3.plan), W16n3.posts.length] }));
+  // 16o. A WITHDRAWAL SEEN THROUGH A HUNG ASK (the 2026-11-14 review: a Stop pressed during a hung request waited the
+  // whole limit, every RTH in it joining a flight already withdrawn): the line edited while a poll hangs is said as the
+  // edit at the next poll, one bound later; while the post hangs, the same - not posted again; and a post that hangs past
+  // the clock with the line edited is said as the edit, not late
+  const W16o = clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 60000);
+  W16o.getAnswer = ((g) => (id) => W16o.polls >= 3 && !W16o.over() ? hang(W16o) : g(id))(W16o.getAnswer);
+  const end16o = await drive(W16o, W16o.api.planPassageNow(), (w, n) => { if (n === 0) w.api.bump(); });
+  const W16o2 = clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 60000);
+  W16o2.postAnswer = () => W16o2.posts.length > 400 ? { id: "g", state: "running", total: 9, done: 0, tiles: [] } : hang(W16o2);
+  const end16o2 = await drive(W16o2, W16o2.api.planPassageNow(), (w, n) => { if (n === 0) w.api.bump(); });
+  const W16o3 = clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 60000);
+  W16o3.postAnswer = () => W16o3.posts.length > 400 ? { id: "g", state: "running", total: 9, done: 0, tiles: [] } : hang(W16o3);
+  const end16o3 = await drive(W16o3, W16o3.api.planPassageNow(), (w, n) => { if (n === 0){ w.api.bump(); w.clock = w.t0 + MAXW; } });
+  const edited = (w) => /^Passage NOT planned: the line was edited while it was being planned/.test(last(w)) && !w.logs.some((l) => l[1] && l[1].state === "late");
+  check("16o. A WITHDRAWAL SEEN THROUGH A HUNG ASK: the line edited while a poll hangs - said as the edit after that one bound, "
+        + "no poll more; while the post hangs, the same, not posted again; and a post hung past the clock with the line "
+        + "edited said as the edit, not late",
+        () => end16o === "settled" && edited(W16o) && W16o.hung === 1 && W16o.gets.length === 3 && W16o.races.filter((t) => t.fired).length === 1
+              && end16o2 === "settled" && edited(W16o2) && W16o2.posts.length === 1 && W16o2.gets.length === 0
+              && end16o3 === "settled" && edited(W16o3) && W16o3.posts.length === 1,
+        () => JSON.stringify({ poll: [end16o, W16o.hung, W16o.gets.length, last(W16o).slice(0, 90)], post: [end16o2, W16o2.posts.length, last(W16o2).slice(0, 90)],
+                               pastClock: [end16o3, W16o3.posts.length, last(W16o3).slice(0, 90)] }));
+  // 16p. A CONSOLE THAT HAS STOPPED ANSWERING IS GIVEN UP SOONER (the second 2026-11-14 review: asked again on every
+  // failure, a console down held Read chart and Plan passage grayed for the whole 30 min, where it had been said at
+  // once): nothing answered for CORRIDOR_MUTE_MS (2 min) AND 3 asks - a visible tab's polls 2 s apart are given up at the
+  // 62nd, its posts at the 61st; a hidden tab's posts a minute apart at the 3rd; said with what the last ask got (the
+  // console's own HTTP 500 named), and NOT said as tiles kept when none was read
+  const MUTE = W16.api.MUTE;
+  const down = () => Promise.reject(new TypeError("Failed to fetch"));
+  const W16p = clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 2000);
+  W16p.getAnswer = ((g) => (id) => W16p.polls >= 3 ? down() : g(id))(W16p.getAnswer);
+  const out16p = await W16p.api.passagePlanFor(W16p.api.passagePoints(), () => {}, () => false).catch((e) => ({ threw: String(e) }));
+  const W16p2 = clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 2000);
+  W16p2.postAnswer = down;
+  const other16p = { id: "another read", state: "running", total: 4, done: 1 };     // (Read chart's, still being read)
+  W16p2.api.setCorridorRead(other16p);
+  await W16p2.api.planPassageNow();
+  const W16p3 = clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 60000);
+  W16p3.postAnswer = down;
+  const out16p3 = await W16p3.api.passagePlanFor(W16p3.api.passagePoints(), () => {}, () => false).catch((e) => ({ threw: String(e) }));
+  const e500 = Object.assign(new Error("HTTP 500 - the console failed handling /api/enc/corridor: OSError: disk full"), { corridor: true });
+  const W16p4 = clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 60000);
+  W16p4.getAnswer = () => Promise.reject(e500);
+  await W16p4.api.planPassageNow();
+  const late16p = (w) => w.logs.find((l) => l[0] === "passage_plan" && l[1].state === "late");
+  check("16p. A CONSOLE THAT HAS STOPPED ANSWERING IS GIVEN UP AT " + MUTE / 60000 + " MIN AND 3 ASKS (CORRIDOR_MUTE_MS): polls 2 s "
+        + "apart at the 62nd, posts 2 s apart at the 61st, posts a minute apart at the 3rd - said as no answer it could use, with "
+        + "the progress last heard and what the last ask got (an HTTP 500 named), late (asked again), logged; nothing read: "
+        + "NOT said kept; another read's line left as it is",
+        () => MUTE === 120000 && out16p && !out16p.threw && out16p.late === true && out16p.kept === true && W16p.gets.length === 62
+              && out16p.error === "the chart read along it had no answer it could use from the console for 2 min (2 of 9 tile(s) read "
+                                  + "when it last answered; the last ask: the console could not be reached)"
+              && W16p2.posts.length === 61 && W16p2.gets.length === 0 && !W16p2.api.state().passageBusy && W16p2.workerMsgs.length === 0
+              && W16p2.api.state().corridorRead === other16p
+              && last(W16p2) === "Passage NOT planned: the chart read along it had no answer it could use from the console for 2 min (the "
+                                 + "last ask: the console could not be reached) - press Plan passage again to ask again."
+              && out16p3 && out16p3.late === true && out16p3.kept === false && W16p3.posts.length === 3
+              && out16p3.error === "the chart read along it had no answer it could use from the console for 2 min (the last ask: the console could not be reached)"
+              && W16p4.gets.length === 3 && W16p4.api.state().passage === null
+              && last(W16p4) === "Passage NOT planned: the chart read along it had no answer it could use from the console for 3 min (0 of 9 "
+                                 + "tile(s) read when it last answered; the last ask: HTTP 500 - the console failed handling /api/enc/corridor: "
+                                 + "OSError: disk full) - press Plan passage again to ask again."
+              && late16p(W16p4) && late16p(W16p4)[1].mute === true && late16p(W16p4)[1].done === 0 && late16p(W16p4)[1].min === 3,
+        () => JSON.stringify({ polls: [out16p, W16p.gets.length], posts: [W16p2.posts.length, last(W16p2).slice(0, 200)], hidden: [out16p3, W16p3.posts.length],
+                               none: [W16p4.gets.length, last(W16p4).slice(0, 260), late16p(W16p4) && late16p(W16p4)[1]] }));
+  // 16q. THE CLOCK IS READ BEFORE THE POLL (the 2026-11-14 review): a poll asked at 29 min 50 s that hangs its 30 s bound
+  // across the 30 min is not the last - the next poll, asked past it, is, and the read it finds done is planned
+  const W16q = clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 60000);
+  W16q.postAnswer = async () => { W16q.clock += 50000; return { id: "g", state: "running", total: 9, done: 0, tiles: [] }; };
+  W16q.getAnswer = ((g) => (id) => W16q.polls === 29 ? hang(W16q) : W16q.polls >= 30 ? W16q.done(id) : g(id))(W16q.getAnswer);
+  const end16q = await drive(W16q, W16q.api.planPassageNow());
+  check("16q. THE CLOCK IS READ BEFORE THE POLL: a poll asked at 29 min 50 s hung across the " + MIN + " min is not the last - the "
+        + "next, asked past it, finds the read done, and it is planned",
+        () => end16q === "settled" && W16q.hung === 1 && W16q.polls === 30 && !!W16q.api.state().passage && W16q.workerMsgs.length === 1
+              && !W16q.logs.some((l) => l[1] && l[1].state === "late"),
+        () => JSON.stringify({ end: end16q, hung: W16q.hung, polls: W16q.polls, planned: !!W16q.api.state().passage, banner: last(W16q).slice(0, 120) }));
+  // 16r. A TILE THAT FAILED IS NOT READ (the third 2026-11-14 review): the console counts a tile `done` read or failed -
+  // two builds cut at their limit were said "2 of 9 read" and the tiles kept. The read count leaves them out and says them
+  const runF16r = (nf) => (id) => ({ id, state: "running", total: 9, done: 2, tiles: [], failed: Array.from({ length: nf }, (_, k) => ({ tile: [k], note: "build cut" })) });
+  const W16r = clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 60000);
+  W16r.getAnswer = runF16r(1);
+  const out16r = await W16r.api.passagePlanFor(W16r.api.passagePoints(), () => {}, () => false);
+  const W16r2 = clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 60000);
+  W16r2.getAnswer = runF16r(2);
+  await W16r2.api.planPassageNow();
+  check("16r. A TILE THAT FAILED IS NOT READ: 2 done, 1 failed, said '1 of 9 read, 1 could not be', kept; 2 done, both failed, "
+        + "said '0 of 9 read, 2 could not be', NOT said kept",
+        () => out16r && out16r.late === true && out16r.kept === true
+              && out16r.error === "the chart read along it did not finish in " + MIN + " min (1 of 9 tile(s) read, 1 could not be)"
+              && last(W16r2) === "Passage NOT planned: the chart read along it did not finish in " + MIN + " min (0 of 9 tile(s) read, 2 could not "
+                                 + "be) - press Plan passage again to ask again.",
+        () => JSON.stringify({ one: out16r, none: last(W16r2) }));
 
   // ── 17. the words ───────────────────────────────────────────────────────────────────────────────────────────────
   const plan17 = { points: P12, legs: [mkLeg(0, P12[0], P12[1], 20000), mkLeg(1, P12[1], P12[2], 0, { error: "blocked", pts: [] }),

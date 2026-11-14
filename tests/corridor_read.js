@@ -72,16 +72,34 @@ console.log("The chart along a route, on the page:");
 const world = (o) => {
   const w = Object.assign({ posts: [], gets: [], banners: [], notes: [], logs: [], renders: 0, sup: true,
                             asv: { lat: 43.07, lon: -70.70 }, passageWps: [], seq: [] }, o || {});
+  // (1c-1e: the page's wait limit, its ask's bound and its helpers, and the world's own clock once a check sets it -
+  // `w.clock`, each poll's wait moving it `w.step` on)
   const src = "let corridorRead = null, corridorBusy = false, corridorAhead = {at: null, route: null};\n"
     + "const CORRIDOR_HALF_KM = " + constOf("CORRIDOR_HALF_KM") + ", CORRIDOR_POLL_MS = 0, CORRIDOR_AHEAD_M = " + AHEAD
     + ", CORRIDOR_AHEAD_EVERY_M = " + EVERY + ";\n"
+    + /const CORRIDOR_WAIT_MAX_MS = [^;]+;/.exec(H)[0] + "\n" + /const CORRIDOR_ASK_MS = [^;]+;/.exec(H)[0] + "\n" + /const CORRIDOR_MUTE_MS = [^;]+;/.exec(H)[0] + "\n"
+    + "const Date = class extends globalThis.Date { static now(){ return w.clock != null ? w.clock : globalThis.Date.now(); } };\n"
+    // (with the world's clock, any timer but the poll's - an ask's bound - is kept for the check to fire: 1d)
+    + "const setTimeout = (fn, ms) => { if (w.clock == null) return globalThis.setTimeout(fn, ms);"
+    + " if (ms === 0){ w.polls = (w.polls || 0) + 1; w.clock += w.step; return globalThis.setTimeout(fn, 0); }"
+    + " const t = {fn, ms, cleared: false}; (w.races = w.races || []).push(t); return t; };\n"
+    + "const clearTimeout = (t) => { if (t && t.fn) t.cleared = true; else globalThis.clearTimeout(t); };\n"
     + "const CORRIDOR_SCALES = [\"harbour\", \"approach\", \"coastal\", \"general\"];\n"
-    + [grab("bandWord"), grab("toCorridor"), grab("corridorSummary"), grab("readCorridor"), grab("routeAhead"), grab("corridorAheadTick")].join("\n")
-    + "\nreturn {readCorridor, corridorSummary, routeAhead, corridorAheadTick, toCorridor, state: () => ({corridorRead, corridorBusy, corridorAhead})};";
-  w.api = new Function("asv", "passageWps", "postCorridor", "getCorridor", "updateTransitPanel", "render", "showBanner", "flashNote",
+    + [grab("corridorFailure"), grab("corridorLate"), grab("corridorAsk"), grab("corridorStart"), grab("corridorWait"),
+       grab("bandWord"), grab("toCorridor"), grab("corridorGivenUp"), grab("corridorReadLine"), grab("corridorSummary"), grab("readCorridor"), grab("routeAhead"), grab("corridorAheadTick")].join("\n")
+    + "\nreturn {readCorridor, corridorReadLine, corridorSummary, routeAhead, corridorAheadTick, toCorridor, ASK: CORRIDOR_ASK_MS, MUTE: CORRIDOR_MUTE_MS, state: () => ({corridorRead, corridorBusy, corridorAhead})};";
+  w.api = new Function("w", "asv", "passageWps", "postCorridor", "getCorridor", "updateTransitPanel", "render", "showBanner", "flashNote",
     "logClient", "fmtMS", "distTo", "supervising", "indexedRoute", "window", "NOGO_RADIUS_M", src)(
-    w.asv, w.passageWps, async (b) => { w.posts.push(b); return w.seq.length ? w.seq.shift() : { id: "j1", state: "done", total: 1, done: 1 }; },
-    async (id) => { w.gets.push(id); return w.seq.shift(); }, () => {}, () => { w.renders++; }, (t) => w.banners.push(t),
+    // (`postHang`: the console never answers the ask - 1d; `sigs`: each ask's abort signal)
+    w, w.asv, w.passageWps, async (b, sig) => { w.posts.push(b); (w.sigs = w.sigs || []).push(sig); if (w.postHang) return new Promise(() => {}); return w.seq.length ? w.seq.shift() : { id: "j1", state: "done", total: 1, done: 1 }; },
+    // (`running`: the world's read never leaves "running" - until 400 polls, so a page that never gives up FAILS 1c, not
+    // hangs; `getFail`: the polls that fail, by number - 1e; past the world's answers a refusal in words, never undefined:
+    // a page that asks again on no answer would ask for good)
+    async (id, sig) => { w.gets.push(id); (w.sigs = w.sigs || []).push(sig);
+      if (w.getFail && w.getFail.indexOf(w.gets.length) >= 0) throw new TypeError("Failed to fetch");
+      if (w.running) return w.polls > 400 ? { id, state: "done", total: 4, done: 4, failed: [], bands: {}, unread: [], unread_n: 0, half_km: 5, seconds: 9 } : w.running;
+      return w.seq.length ? w.seq.shift() : { error: "the world has no more answers" }; },
+    () => {}, () => { w.renders++; }, (t) => w.banners.push(t),
     (t) => w.notes.push(t), (k, d) => w.logs.push([k, d]), fmtMS, distTo, () => w.sup, () => w.route, w.win || { _wpIndex: 0 }, NOGO_R);
   return w;
 };
@@ -112,6 +130,126 @@ const world = (o) => {
               && /^Chart NOT read along the line: that corridor reaches 900 chart tiles/.test(R.banners[0] || "")
               && R.api.state().corridorRead === null && R.api.state().corridorBusy === false,
         () => JSON.stringify({ n: N.notes, r: R.banners }).slice(0, 200));
+  // 1c. THE WAIT HAS AN END (2026-11-14): a read that never leaves "running" held Read chart (and Plan passage, which it
+  // greys) for good. Polled a minute apart, it is given up at CORRIDOR_WAIT_MAX_MS of wall clock - said with how much
+  // was read and that the tiles are kept, logged, and the button free
+  const MAXW = +new Function("return " + /const CORRIDOR_WAIT_MAX_MS = ([^;]+);/.exec(H)[1])();
+  const L = world({ passageWps: [{ lat: 43, lon: -70 }] });
+  L.clock = 1.8e12; L.step = 60000; L.polls = 0;
+  L.seq = [{ id: "j9", state: "running", total: 4, done: 0, failed: [], bands: {}, unread: [], unread_n: 0, half_km: 5, seconds: 0 }];
+  L.running = { id: "j9", state: "running", total: 4, done: 1, failed: [], bands: {}, unread: [], unread_n: 0, half_km: 5, seconds: 60 };
+  await L.api.readCorridor();
+  const lLog = L.logs.find((l) => l[1] && l[1].state === "late");
+  check("1c. A READ THAT NEVER FINISHES IS GIVEN UP at " + MAXW / 60000 + " min of wall clock, polled a minute apart: said with how "
+        + "much was read and that the tiles are kept, logged, Read chart free again, and the Passage tab's line no longer 'reading'",
+        () => MAXW === 1800000 && L.polls === 30
+              && (L.banners[L.banners.length - 1] || "") === "Chart NOT read along the line: the read did not finish in 30 min (1 of 4 tile(s) read)"
+                 + " - the tiles read are kept: press Read chart again to go on from them."
+              && lLog && lLog[1].done === 1 && lLog[1].tiles === 4 && lLog[1].min === 30 && lLog[1].mute === false
+              && L.api.state().corridorBusy === false && L.api.state().corridorRead.state === "given up"
+              && L.api.corridorReadLine(L.api.state().corridorRead) === "chart read given up at 1 of 4 tiles",
+        () => JSON.stringify({ polls: L.polls, last: L.banners[L.banners.length - 1], log: lLog && lLog[1], busy: L.api.state().corridorBusy,
+                               line: L.api.corridorReadLine(L.api.state().corridorRead) }));
+  // 1d. AN ASK THE CONSOLE NEVER ANSWERS (a stalled server's request can hang for good: tests/enc_corridor.py 4) - bounded
+  // by CORRIDOR_ASK_MS and aborted (the 2026-11-14 review), and once past the 30 min given up with nothing read said so -
+  // NOT said as tiles kept, since nothing is known to be read - the button free. Given 2 s of real time after the bound, a
+  // page that waited on the request itself is said HUNG here, and fails
+  const Hn = world({ passageWps: [{ lat: 43, lon: -70 }] });
+  Hn.clock = 1.8e12; Hn.step = 60000; Hn.polls = 0; Hn.postHang = true;
+  const pHn = Hn.api.readCorridor();
+  for (let i = 0; i < 100 && !Hn.posts.length; i++) await new Promise((r) => setTimeout(r, 0));
+  const raceHn = (Hn.races || [])[0];
+  Hn.clock += MAXW; (Hn.races || []).filter((t) => !t.cleared).forEach((t) => t.fn());
+  const endHn = await Promise.race([pHn.then(() => "settled"), new Promise((r) => setTimeout(() => r("HUNG"), 2000))]);
+  check("1d. AN ASK THE CONSOLE NEVER ANSWERS is bounded by CORRIDOR_ASK_MS and aborted, and past the " + MAXW / 60000 + " min given up, "
+        + "said so - the tiles NOT said kept; Read chart free again",
+        () => endHn === "settled" && raceHn && raceHn.ms === Hn.api.ASK && Hn.api.ASK === 30000 && Hn.gets.length === 0
+              && Hn.sigs.length === 1 && Hn.sigs[0] && Hn.sigs[0].aborted === true
+              && (Hn.banners[Hn.banners.length - 1] || "") === "Chart NOT read along the line: the read had no answer it could use from the console for 30 min"
+                 + " (the last ask: unanswered in 30 s) - press Read chart again to ask again."
+              && Hn.api.state().corridorBusy === false,
+        () => JSON.stringify({ end: endHn, race: raceHn && raceHn.ms, aborted: (Hn.sigs || []).map((x) => x && x.aborted), last: Hn.banners[Hn.banners.length - 1], busy: Hn.api.state().corridorBusy }));
+  // 1e. A POLL THAT FAILS IS NOT THE END (the 2026-11-14 review): one lost poll - the network, a reply not JSON - threw
+  // out of the read, said "Chart NOT read"; now it is polled again, and the read, done, is said and kept
+  const E = world({ passageWps: [{ lat: 43.0, lon: -70.6 }] });
+  E.seq = [run(0), run(1), run(3), { id: "j1", state: "done", total: 4, done: 4, failed: [], bands: { coastal: 4 }, unread: [], unread_n: 0, half_km: 5, seconds: 12 }];
+  E.getFail = [2];
+  await E.api.readCorridor();
+  check("1e. A POLL THAT FAILS IS POLLED AGAIN: the read goes on to its end, said and kept, not 'Chart NOT read'",
+        () => E.gets.length === 4 && E.api.state().corridorRead && E.api.state().corridorRead.state === "done"
+              && /^Chart read along the line: 4 tile/.test(E.banners[E.banners.length - 1] || "") && E.api.state().corridorBusy === false,
+        () => JSON.stringify({ gets: E.gets.length, last: E.banners[E.banners.length - 1], read: E.api.state().corridorRead && E.api.state().corridorRead.state }));
+
+  // 1f. THE CONSOLE'S OWN FAILURE IS NO ANSWER (the second 2026-11-14 review): an HTTP 500 - do_POST's catch, with an
+  // {error} - was taken as the console's refusal, and a single one ended the end-of-plan chain for good. corridorReply
+  // throws it, named (asked again: corridorAsk, which says what the ask got); a refusal (4xx) and a status (200) stay
+  // answers, and the signal goes with each request. And an ask aborted at its bound is said as unanswered - not as the
+  // abort's own rejection, which a real fetch makes on the abort (here the bound fires in 5 ms of real time)
+  const Fx = { calls: [], next: null };
+  const reply = (status, body) => ({ status, json: async () => { if (body instanceof Error) throw body; return body; } });
+  const fapi = new Function("fetch", "setTimeout", /const CORRIDOR_ASK_MS = [^;]+;/.exec(H)[0] + "\n"
+    + [grab("corridorReply"), grab("corridorFailure"), grab("postCorridor"), grab("getCorridor"), grab("corridorAsk")].join("\n")
+    + "\nreturn {postCorridor, getCorridor, corridorAsk};")(async (url, opts) => { Fx.calls.push({ url, opts }); return Fx.next; },
+                                                           (fn, ms) => setTimeout(fn, Math.min(ms, 5)));
+  const outcome = async (p) => { try { return { ok: await p }; } catch (e) { return { threw: e.message, corridor: !!e.corridor }; } };
+  const sig = { tag: "the caller's signal" };
+  const SAID500 = "the console failed handling /api/enc/corridor: OSError: disk full";
+  Fx.next = reply(500, { error: SAID500 });
+  const f500 = await outcome(fapi.postCorridor({ route: [1, 2] }, sig));
+  const n500 = {}, a500 = await fapi.corridorAsk((s) => fapi.postCorridor({ route: [1, 2] }, s), n500);
+  Fx.next = reply(502, new SyntaxError("Unexpected token <"));
+  const f502 = await outcome(fapi.getCorridor("j 1", sig));
+  Fx.next = reply(400, { error: "a route needs two points" });
+  const f400 = await outcome(fapi.postCorridor({ route: [] }, sig));
+  Fx.next = reply(404, { error: "no such corridor read" });
+  const f404 = await outcome(fapi.getCorridor("j1", sig));
+  Fx.next = reply(200, { id: "j1", state: "running", total: 3, done: 1 });
+  const f200 = await outcome(fapi.getCorridor("j1", sig));
+  const whyOf = async (ask) => { const n = {}; const st = await fapi.corridorAsk(ask, n); return st === null ? n.why : "ANSWERED"; };
+  const wNet = await whyOf(async () => { throw new TypeError("Failed to fetch"); });
+  const wJson = await whyOf(async () => { throw new SyntaxError("Unexpected token <"); });
+  const wStr = await whyOf(async () => "<html>");
+  const wAbort = await whyOf((signal) => new Promise((_, rej) => signal.addEventListener("abort",
+    () => rej(Object.assign(new Error("This operation was aborted"), { name: "AbortError" })))));
+  const c0 = Fx.calls[0], c1 = Fx.calls[1], c2 = Fx.calls[2];
+  check("1f. THE CONSOLE'S OWN FAILURE IS NO ANSWER: HTTP 500 and 502 thrown, named (and the ask says it got that); a "
+        + "refusal (400, 404) and a status (200) answers; the signal sent with each; the words for an unreachable console, "
+        + "a reply not JSON, a reply not a status; an ask aborted at its bound said unanswered, not by the abort",
+        () => f500.threw === "HTTP 500 - " + SAID500 && f500.corridor && a500 === null && n500.why === "HTTP 500 - " + SAID500
+              && f502.threw === "HTTP 502" && f502.corridor
+              && f400.ok && f400.ok.error === "a route needs two points" && f404.ok && f404.ok.error === "no such corridor read"
+              && f200.ok && f200.ok.state === "running"
+              && c0.url === "/api/enc/corridor" && c0.opts.method === "POST" && c0.opts.signal === sig && JSON.parse(c0.opts.body).route.length === 2
+              && c1.opts.signal && c1.opts.signal !== sig && c1.opts.signal.aborted === false
+              && c2.url === "/api/enc/corridor?id=j%201" && c2.opts.signal === sig
+              && wNet === "the console could not be reached" && wJson === "a reply that was not JSON" && wStr === "a reply that was not a status"
+              && wAbort === "unanswered in 30 s",
+        () => JSON.stringify({ f500, why500: n500.why, f502, f400, f404, f200: f200.ok && f200.ok.state, urls: Fx.calls.map((c) => c.url), wNet, wJson, wStr, wAbort }));
+
+  // 1g. A TILE THAT FAILED IS NOT READ (the third 2026-11-14 review): the console counts a tile `done` when it is finished
+  // with it, read or failed - two builds cut at their limit were said "2 of 4 read" and kept. The read count leaves the
+  // failed out and says them; nothing read, nothing said kept. And the Passage tab's line (corridorReadLine), each state
+  const runF = (done, nf) => ({ id: "jf", state: "running", total: 4, done, failed: Array.from({ length: nf }, (_, k) => ({ tile: [k], note: "build cut" })),
+                                bands: {}, unread: [], unread_n: 0, half_km: 5, seconds: 60 });
+  const G = world({ passageWps: [{ lat: 43, lon: -70 }] });
+  G.clock = 1.8e12; G.step = 60000; G.polls = 0; G.seq = [runF(0, 0)]; G.running = runF(2, 2);
+  await G.api.readCorridor();
+  const G2 = world({ passageWps: [{ lat: 43, lon: -70 }] });
+  G2.clock = 1.8e12; G2.step = 60000; G2.polls = 0; G2.seq = [runF(0, 0)]; G2.running = runF(2, 1);
+  await G2.api.readCorridor();
+  const rl = A.api.corridorReadLine;
+  const lines1g = [rl(null), rl(run(1)), rl({ ...run(1), eta_s: null }), rl(G.api.state().corridorRead),
+                   rl({ state: "done", total: 4, done: 4, failed: [{}], unread_n: 2 }), rl({ state: "canceled", total: 4, done: 2, failed: [], unread_n: 0 })];
+  check("1g. A TILE THAT FAILED IS NOT READ: 2 done of which 2 failed said '0 of 4 read, 2 could not be', NOT kept; 2 done, 1 failed "
+        + "said '1 of 4 read, 1 could not be', kept; and the Passage tab's line for no read, a read running (with and without its "
+        + "time left), given up, done, stopped",
+        () => (G.banners[G.banners.length - 1] || "") === "Chart NOT read along the line: the read did not finish in 30 min (0 of 4 tile(s) read, "
+                 + "2 could not be) - press Read chart again to ask again."
+              && (G2.banners[G2.banners.length - 1] || "") === "Chart NOT read along the line: the read did not finish in 30 min (1 of 4 tile(s) read, "
+                 + "1 could not be) - the tiles read are kept: press Read chart again to go on from them."
+              && JSON.stringify(lines1g) === JSON.stringify(["", "reading chart: 1 of 4 tiles · ~" + fmtMS(3) + " left", "reading chart: 1 of 4 tiles",
+                 "chart read given up at 2 of 4 tiles · 2 NOT read", "chart read: 4 tiles · 2 unread · 1 NOT read", "chart read: 4 tiles · stopped"]),
+        () => JSON.stringify({ none: G.banners[G.banners.length - 1], one: G2.banners[G2.banners.length - 1], lines: lines1g }));
 
   // ── 2. the words ────────────────────────────────────────────────────────────────────────────────────────────────
   const say = A.api.corridorSummary;

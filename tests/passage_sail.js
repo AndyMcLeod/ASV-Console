@@ -1573,14 +1573,21 @@ console.log("The passage, sailed:");
 
   // 17o. THE WIRING of the review: the monitor's busy answer (fuelTick); the chain's busy retry cleared by a run commanded;
   // Plan passage says why it does nothing; the planner asks `gone` while the chart is read, not only after it
-  const ft = grab("fuelTick"), pf = grab("passagePlanFor");
+  // (since 2026-11-14 the wait itself is corridorWait's, with its end: `gone` asked there after each wait, before the clock
+  // is read and the poll asked, the clock judged on that poll's answer; and after the ask itself, before its late - passage_plan
+  // 16m and 16o drive the order)
+  const ft = grab("fuelTick"), pf = grab("passagePlanFor"), cw = grab("corridorWait");
   const wiring17o = {
-    monitor: /if\(nt && nt\.busy && fuelBoot === bootAt\)\{ fuelRth\.acted = false; fuelRetryAt = Date\.now\(\) \+ RTH_BUSY_RETRY_MS; \}/.test(ft)
+    monitor: /if\(nt && \(nt\.busy \|\| nt\.late\) && fuelBoot === bootAt\)\{ fuelRth\.acted = false; fuelRetryAt = Date\.now\(\) \+ RTH_BUSY_RETRY_MS; \}/.test(ft)
              && /\|\| Date\.now\(\) < fuelRetryAt;/.test(ft),
     rearm: /rthChained=false; rthChainFailed=false; rthChainBusyAt=0;/.test(grab("rearmRthChain"))
            && /if\(s\.behavior!=="rth"\)\{ rthChained=false; rthChainFailed=false; rthChainBusyAt=0; \}/.test(H),
     planNow: /if\(passageBusy\)\{ flashNote\("Plan passage: "/.test(grab("planPassageNow")),
-    corridor: pf.indexOf("if(gone()) return {gone: true};") > 0 && pf.indexOf("if(gone()) return {gone: true};") < pf.indexOf("st = await getCorridor(st.id);"),
+    corridor: [cw.indexOf("if(gone && gone()) return {gone: true};"), cw.indexOf("const over = Date.now() >= until"),
+               cw.indexOf("await corridorAsk((signal) => getCorridor(id, signal), note);"),
+               cw.indexOf("if(over && st && !st.error && st.state === \"running\") return corridorLate(st);")].every((k, i, a) => k > 0 && (i === 0 || k > a[i - 1]))
+              && /st = await corridorStart\(\{[\s\S]*?\}, until, gone\);\s*if\(\(st && st\.gone\) \|\| gone\(\)\) return \{gone: true\};[^\n]*\s*if\(st && st\.late\) return late\(st\);/.test(pf)
+              && /st = await corridorWait\(st, until, \(s\) => \{[\s\S]*?\}, gone\);\s*\/\/[^\n]*\s*if\(\(st && st\.gone\) \|\| gone\(\)\)\{ corridorGivenUp\(readId\); return \{gone: true\}; \}\s*if\(st && st\.late\) return late\(st\);/.test(pf),
   };
   check("17o. THE WIRING of the review: the monitor asks a busy RTH again after RTH_BUSY_RETRY_MS (fuelTick); a run commanded "
         + "takes the chain's busy retry with it; Plan passage says why it does nothing; the planner asks `gone` while the chart "
@@ -1761,6 +1768,103 @@ console.log("The passage, sailed:");
         () => JSON.stringify({ bad: Object.entries(t17).filter(([, v]) => !v).map(([k]) => k),
                                chain: [tb1.out, tb1.w.cmds.length, tb1.w.api.st().rthChainFailed, (tb1.w.later || []).length, tb1.w.notes],
                                mon: tb2.out, op: [tb3.out, tb3.w.notes], along: [tb4.out, tb4.w.cmds.length, tb4.w.api.st().rthChainFailed, (tb4.w.later || []).length] }));
+
+  // 17v. THE CHART READ ALONG THE WAY HOME DID NOT FINISH (2026-11-14): passagePlanFor gives the read up at
+  // CORRIDOR_WAIT_MAX_MS (passage_plan 16j-16m) - it waited for good before, and held the ONE flight home that every later
+  // RTH joins. Its answer {error, late} is a refusal SAID naming the cause, but not final: the operator told to press
+  // again - and a press after it plans and sends; the chain asked again 15 s on, not recorded refused; the monitor told
+  // late (fuelTick asks again: fuel_rth 8y); a chain that JOINED the button's flight takes "late" and is asked again, said
+  // so; and a corridor ERROR, not late, still ends the chain, recorded - the pair. And (the 2026-11-14 review) when the
+  // console never answered the ask (`kept` false) nothing is said kept: the operator told to press again, the chain told
+  // it is asked again. And (the second 2026-11-14 review) it is said WAITING, not refused, where it IS asked again - the
+  // chain's, the monitor's, a flight a chain joined; and a press that no longer stands when the read is given up is
+  // WITHDRAWN by what it names, not asked again: a Stop pressed while it planned (the fence asked before the late answer),
+  // and a chain that joined the button's flight with End of plan switched away meanwhile (its own fence, on "late" too)
+  const LATE17 = "the chart read along it did not finish in 30 min (2 of 9 tile(s) read)";
+  const late17 = () => ({ error: LATE17, late: true, kept: true });
+  const NOANS17 = "the chart read along it had no answer it could use from the console for 2 min (the last ask: the console could not be reached)";
+  const noAns17 = () => ({ error: NOANS17, late: true, kept: false });
+  const BODY17 = "home is 55.0 km away, past the 50.0 km a boxed return is planned for, and the way home could not be "
+    + "planned as a passage - ";
+  const REF17 = "RTH refused: " + BODY17 + LATE17, WAIT17 = "RTH WAITING: " + BODY17 + LATE17;
+  const vOp = farWorld17({ homePlan: late17 });
+  const oOp = await vOp.api.doRTH({});
+  const opSaid = vOp.banners[vOp.banners.length - 1] || "", opSt = vOp.api.st(), opCmds = vOp.cmds.length;
+  vOp.homePlan = homePlanFor17();
+  const oOp2 = await vOp.api.doRTH({});
+  const vCh = farWorld17({ S: S17q(HOLDING), homePlan: late17 }); vCh.api.set("rthChained", true);
+  const oCh = await vCh.api.doRTH({ chained: true });
+  const chSt = vCh.api.st(), chLater = (vCh.later || []).slice(), chSaid = vCh.banners[vCh.banners.length - 1] || "";
+  chLater.forEach((t) => t.fn());
+  const chRe = vCh.api.st().rthChained;
+  const vMon = lowWorld17({ homePlan: late17 });
+  const oMon = await vMon.api.doRTH({ why: LOWF, breakWhy: "fuel" });
+  let openV; const gateV = new Promise((r) => { openV = r; });
+  const vJ = farWorld17({ S: S17q(HOLDING), homePlan: () => gateV.then(late17) });
+  const jFirst = vJ.api.doRTH({});
+  await settle();
+  vJ.api.set("rthChained", true);
+  const jSecond = vJ.api.doRTH({ chained: true });
+  await settle();
+  openV();
+  const [jo1, jo2] = await Promise.all([jFirst, jSecond]);
+  const vErr = farWorld17({ S: S17q(HOLDING), homePlan: () => ({ error: "the chart read along it failed: no answer" }) });
+  vErr.api.set("rthChained", true);
+  await vErr.api.doRTH({ chained: true });
+  const vNo = farWorld17({ homePlan: noAns17 });
+  const oNo = await vNo.api.doRTH({});
+  const vNoC = farWorld17({ S: S17q(HOLDING), homePlan: noAns17 }); vNoC.api.set("rthChained", true);
+  await vNoC.api.doRTH({ chained: true });
+  const vFL = farWorld17({ homePlan: () => { vFL.api.stop("STOP"); return late17(); } });
+  const oFL = await vFL.api.doRTH({});
+  let openJF; const gateJF = new Promise((r) => { openJF = r; });
+  const vJF = farWorld17({ S: S17q(HOLDING), homePlan: () => gateJF.then(late17) });
+  const jfFirst = vJF.api.doRTH({});
+  await settle();
+  vJF.api.set("rthChained", true);
+  const jfSecond = vJF.api.doRTH({ chained: true });
+  await settle();
+  vJF.S.completion = "loiter";
+  openJF();
+  const [jf1, jf2] = await Promise.all([jfFirst, jfSecond]);
+  const said17 = (w) => w.banners[w.banners.length - 1] || "";
+  const v17 = {
+    notKept: nt17(oNo).late === true && said17(vNo) === "RTH refused: " + BODY17 + NOANS17 + ". Press RTH again to ask again."
+             && said17(vNoC) === "RTH WAITING: " + BODY17 + NOANS17 + "; the way home is asked again in 15 s."
+             && !vNoC.api.st().rthChainFailed && (vNoC.later || []).length === 1,
+    fenceFirst: nt17(oFL).withdrawn === true && nt17(oFL).by === "STOP" && !nt17(oFL).late && vFL.cmds.length === 0
+                && /^RTH withdrawn: STOP was pressed while the way home was being planned\. Nothing was sent\.$/.test(said17(vFL))
+                && !vFL.logs.some((l) => l[0] === "passage_rth" && l[1].late === true),
+    joinedFence: nt17(jf1).late === true && nt17(jf2).withdrawn === true && nt17(jf2).by === "End of plan" && vJF.api.st().rthChainFailed === true && (vJF.later || []).length === 0
+                 && vJF.cmds.length === 0 && (vJF.homeAsked || []).length === 1
+                 && /^RTH withdrawn: End of plan was changed to LOITER while the way home was being planned\. Nothing was sent\.$/.test(said17(vJF)),
+    operator: nt17(oOp).late === true && !nt17(oOp).refused && opCmds === 0 && opSt.homeFlight === null && !opSt.passageBusy
+              && opSaid === REF17 + ". The tiles read are kept: press RTH again to go on from them."
+              && vOp.logs.some((l) => l[0] === "passage_rth" && l[1].late === true && l[1].ok === false),
+    again: oOp2 === undefined && vOp.cmds.length === 1 && vOp.cmds[0][0] === "/api/cmd/rth" && (vOp.homeAsked || []).length === 2,
+    chain: oCh === undefined && vCh.cmds.length === 0 && !chSt.rthChainFailed && chSt.rthChained === true
+           && chLater.length === 1 && chLater[0].ms === 15000 && chRe === false
+           && chSaid === WAIT17 + "; the tiles read are kept, and the way home is asked again in 15 s.",
+    monitor: nt17(oMon).late === true && !nt17(oMon).refused && vMon.cmds.length === 0
+             && said17(vMon).indexOf("RTH WAITING: ") === 0
+             && /; the tiles read are kept, and the way home is asked again in 15 s\.$/.test(said17(vMon)),
+    joined: nt17(jo1).late === true && jo2 === undefined && (vJ.homeAsked || []).length === 1 && vJ.cmds.length === 0
+            && !vJ.api.st().rthChainFailed && (vJ.later || []).length === 1 && vJ.api.st().homeFlight === null
+            && said17(vJ).indexOf("RTH WAITING: ") === 0 && /asked again in 15 s\.$/.test(said17(vJ)),
+    errorEnds: vErr.api.st().rthChainFailed === true && (vErr.later || []).length === 0 && vErr.cmds.length === 0,
+  };
+  check("17v. THE CHART READ ALONG THE WAY HOME NOT FINISHED IN 30 min (passagePlanFor's {error, late}): refused IN WORDS naming "
+        + "the cause, nothing sent, the flight home and the Passage tab free - and NOT final: the operator told to press again "
+        + "(a press after it plans and sends), the end-of-plan chain asked again 15 s on and not recorded refused, the "
+        + "low-fuel monitor told late, a chain that joined the button's flight asked again and said so - each said WAITING, "
+        + "the operator's refused; a Stop pressed while it planned, and a joined chain's End of plan switched away, withdrawn "
+        + "by what they name, not asked again; a corridor error that is not late still ends the chain, recorded",
+        () => Object.values(v17).every(Boolean),
+        () => JSON.stringify({ bad: Object.entries(v17).filter(([, v]) => !v).map(([k]) => k), op: [oOp, opCmds, opSaid.slice(-140)],
+                               again: [oOp2, vOp.cmds.length, (vOp.homeAsked || []).length], chain: [oCh, chSt.rthChainFailed, chLater.map((t) => t.ms), chRe, chSaid.slice(-90)],
+                               mon: oMon, joined: [jo1, jo2, (vJ.homeAsked || []).length, (vJ.later || []).length, (vJ.banners[vJ.banners.length - 1] || "").slice(-60)],
+                               err: [vErr.api.st().rthChainFailed, (vErr.later || []).length],
+                               fenceFirst: [oFL, said17(vFL).slice(0, 90)], joinedFence: [jf1, jf2, vJF.api.st().rthChainFailed, (vJF.later || []).length, said17(vJF).slice(0, 90)] }));
 
   console.log("\n" + (fails ? fails + " CHECK(S) FAILED (" + ran + " ran)" : "all checks passed (" + ran + ")"));
   process.exit(fails ? 1 : 0);

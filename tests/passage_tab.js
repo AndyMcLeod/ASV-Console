@@ -149,7 +149,8 @@ function gotoWorld(o) {
     const doGoTo = async (ll) => { w.log.push("goto"); }, passageEdited = () => { w.log.push("edited"); };
     const pathSelect = (t) => w.log.push("tab " + t), showBanner = (t) => w.banners.push(t), flashNote = (t) => w.notes.push(t);
     const logClient = (k) => w.log.push("log " + k);
-    const planPassageNow = async () => { w.log.push("plan " + JSON.stringify(passageWps)); passage = w.plan; };
+    // (\`again\`: what its refusal says asks again - the Go-To's own, 2026-11-14)
+    const planPassageNow = async (again) => { w.log.push("plan " + JSON.stringify(passageWps)); w.again = again; passage = w.plan; };
     const sailRefusal = () => w.sailWhy, sailPassage = async () => { w.log.push("sail"); };
     ${grab("goToOrPassage")}
     return {goToOrPassage, line: () => passageWps};`)(w);
@@ -168,11 +169,12 @@ function gotoWorld(o) {
         () => JSON.stringify({ log: un.log, notes: un.notes }));
   const far = gotoWorld(); await far.api.goToOrPassage(FAR);
   check("3c. ... ARMED: the Passage tab's line becomes the point, the tab shows, it is said (how far, and that it is a "
-        + "passage) and logged, planned - and SAILED",
+        + "passage) and logged, planned - and SAILED; a refusal of its plan asks for the Go-To again, not Plan passage (2026-11-14)",
         () => JSON.stringify(far.api.line()) === JSON.stringify([FAR]) && far.log[0] === "edited" && far.log[1] === "tab passage"
               && far.log[2] === "log goto_passage" && far.log[3] === "plan " + JSON.stringify([FAR]) && far.log[4] === "sail"
-              && /^Go-To 1\d\d\.\d km away - past 50\.0 km, so planned as a PASSAGE/.test(far.banners[0] || ""),
-        () => JSON.stringify({ log: far.log, banner: (far.banners[0] || "").slice(0, 90) }));
+              && /^Go-To 1\d\d\.\d km away - past 50\.0 km, so planned as a PASSAGE/.test(far.banners[0] || "")
+              && far.again === "give the Go-To again",
+        () => JSON.stringify({ log: far.log, again: far.again, banner: (far.banners[0] || "").slice(0, 90) }));
   const notPlanned = gotoWorld({ plan: null }); await notPlanned.api.goToOrPassage(FAR);
   const notSail = gotoWorld({ sailWhy: "its ends could not be planned in detail - arriving: no plan" }); await notSail.api.goToOrPassage(FAR);
   check("3d. ... a passage NOT planned is not sailed (Plan passage said why); one planned but not sailable is said - why, and "
