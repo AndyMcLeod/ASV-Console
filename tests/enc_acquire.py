@@ -631,6 +631,92 @@ check("10c. A CACHE WRITE THAT FAILS IS NOT NOAA DOWN: os.replace refused (anoth
       lambda: "served %s, down %s, parts %s, next %s, asked %d, offline %s" % (
           t2 == PNG, down_after_write, left_parts, t3 == PNG, n_after_refused, down_after_fetch > 0.0))
 
+# ── 10d-10e. EVERY urlopen of the console's own, on a shared context (2026-11-14) ──────────────────────────────────
+# After the chart queries (10) and the tiles (10b), 18 more urlopen calls still built a context per request - each one
+# Windows' certificate store loaded again, ~40 ms of CPU measured. The one that mattered was ofs_s3's range reads (440 a
+# dbofs cycle: 35-36 s of CPU with a context each, 5.2-5.4 s shared); the console's own NOAA readers are 2-8 requests a
+# pass (under half a second of CPU saved a pass, small). Fixed site by site, they drifted back site by site, so 10d reads
+# EVERY module the console is made of (BUILD_PY): an urlopen passes context= a shared helper - _enc_ssl() here, _tls() in
+# ofs_s3, stofs and stream_fusion - or a parameter it was handed (speed_zones' ssl_ctx); never none, None, or one made at
+# the call. A copy VENDORED from asv_core is named, not judged: it is changed there and synced, never edited here.
+import ast                                                      # noqa: E402
+VENDOR_MARK = "VENDORED FROM asv_core -- DO NOT EDIT THIS COPY."
+unshared, vendored, judged, n_urlopen = [], {}, set(), 0
+for _name in A.BUILD_PY:
+    with open(os.path.join(APP, _name), encoding="utf-8") as _f:
+        _src = _f.read()
+    _tree = ast.parse(_src)
+    _params = {}                                    # an urlopen call -> the parameters of every function round it
+    for _fn in ast.walk(_tree):
+        if isinstance(_fn, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            _names = {a.arg for a in _fn.args.args + _fn.args.kwonlyargs}
+            for _c in ast.walk(_fn):
+                if isinstance(_c, ast.Call):
+                    _params.setdefault(id(_c), set()).update(_names)
+    _calls = [c for c in ast.walk(_tree) if isinstance(c, ast.Call)
+              and getattr(c.func, "attr", getattr(c.func, "id", None)) == "urlopen"]
+    if VENDOR_MARK in "\n".join(_src.splitlines()[:100]):     # the vendor header, not a mention further down
+        vendored[_name] = sum(1 for c in _calls if not any(k.arg == "context" for k in c.keywords))
+        continue
+    judged.add(_name)
+    for _c in _calls:
+        n_urlopen += 1
+        _v = next((k.value for k in _c.keywords if k.arg == "context"), None)
+        if not ((isinstance(_v, ast.Call) and isinstance(_v.func, ast.Name) and _v.func.id in ("_enc_ssl", "_tls")
+                 and not _v.args) or (isinstance(_v, ast.Name) and _v.id in _params.get(id(_c), ()))):
+            unshared.append("%s:%d" % (_name, _c.lineno))
+check("10d. EVERY urlopen OF THE CONSOLE'S OWN MODULES passes a SHARED TLS context (_enc_ssl(), a module's _tls(), or one "
+      "handed in) - never none, None or one made at the call; the copies vendored from asv_core named, not judged",
+      lambda: not unshared and n_urlopen >= 20
+              and {"asv_console.py", "ofs_s3.py", "stofs.py", "stream_fusion.py", "speed_zones.py"} <= judged,
+      lambda: "%d calls in %s, unshared %s; vendored, per request (asv_core's to change): %s"
+              % (n_urlopen, sorted(judged), unshared or "none",
+                 ", ".join("%s %d" % kv for kv in sorted(vendored.items()) if kv[1]) or "none"))
+
+# 10e. ... and the readers RUN on it: each hands urlopen the console's one context - NOAA's water level and its series,
+# a station's datums, a buoy's report, a density station, the geocoder, the model server's probe, the AIS proxy.
+rctx = {}
+
+
+def reader_rec(req, timeout=None, **k):
+    url = getattr(req, "full_url", req)
+    rctx[url] = k.get("context")
+    if "nominatim" in url:
+        return _Resp(b"[]")
+    if "/vessels?" in url:
+        return _Resp(json.dumps({"vessels": []}).encode())
+    if "ndbc" in url or "thredds" in url:
+        return _Resp(b"#YY  MM DD hh mm\n")
+    return _Resp(json.dumps({"data": [], "predictions": [], "datums": []}).encode())
+
+
+GEO_KEY = "enc_acquire 10e harbor"
+try:
+    A.urllib.request.urlopen = reader_rec
+    A._coops_get("8418150", "MLLW", "water_level", timeout=1.0)
+    A._coops_series("8418150", "MLLW", "predictions", "20261114 00:00", "20261115 00:00", timeout=1.0)
+    A._stofs_datums("8418150")
+    A._env_http_get(A.NDBC_OBS_URL % "44007", 1.0)
+    A._coops_physocean_latest("8418150", "water_temperature", timeout=1.0)
+    A.geocode_place(GEO_KEY, timeout=1.0)
+    _mon = A.CurrentsMonitor.__new__(A.CurrentsMonitor)
+    _mon._ofs = "wcofs"
+    _mon._why_no_cycle()
+    A.ais_traffic(43.66, -70.25)
+finally:
+    A.urllib.request.urlopen = _urlopen
+    A._GEO_CACHE.pop(GEO_KEY.lower(), None)
+_kinds = {"datagetter": 0, "datums.json": 0, "ndbc": 0, "nominatim": 0, "thredds": 0, "/vessels?": 0}
+for _u in rctx:
+    for _k in _kinds:
+        if _k in _u:
+            _kinds[_k] += 1
+check("10e. THE READERS RUN ON IT: NOAA's water level, its series and a density station (datagetter), a station's "
+      "datums, a buoy's report, the geocoder, the model server's probe and the AIS proxy each hand urlopen A._enc_ssl()",
+      lambda: len(rctx) == 8 and all(c is A._enc_ssl() for c in rctx.values()) and _kinds["datagetter"] == 3
+              and all(_kinds[k] == 1 for k in _kinds if k != "datagetter"),
+      lambda: "%d requests %s, shared %s" % (len(rctx), _kinds, sorted({c is A._enc_ssl() for c in rctx.values()})))
+
 # ── 11. the band pick never falls to a coarser band (2026-10-19) ───────────────────────────────────────────
 NOAA_FAULT = "Error handling service request :Could not find service. Service may be stopped or it may not be configured."
 Q11 = {"answers": {}}

@@ -42,6 +42,7 @@ import calendar
 import json
 import math
 import os
+import ssl
 import threading
 import time
 import urllib.parse
@@ -106,9 +107,25 @@ def speed_set(u, v):
     return math.hypot(u, v) / KN, (math.degrees(math.atan2(u, v)) + 360.0) % 360.0
 
 
+# ONE TLS CONTEXT, as ofs_s3's (2026-11-14): urlopen without context= builds a default context per request, and on
+# Windows each one loads the certificate store. Measured on a cold table pass at the mouth of Delaware Bay, 23 requests:
+# 1.5-1.7 s of CPU with a context each, 0.7-0.8 s on this one (the wall, 5-8 s, is mostly NOAA's). A table is read again
+# only every few days, so the saving is small. An SSLContext is safe to share.
+_tls_lock = threading.Lock()
+_tls_ctx = None
+
+
+def _tls():
+    global _tls_ctx
+    with _tls_lock:
+        if _tls_ctx is None:
+            _tls_ctx = ssl.create_default_context()
+        return _tls_ctx
+
+
 def fetch_json(url, timeout=FETCH_TIMEOUT_S):
     req = urllib.request.Request(url, headers={"User-Agent": "asv-console (stream_fusion)"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    with urllib.request.urlopen(req, timeout=timeout, context=_tls()) as r:
         return json.loads(r.read().decode("utf-8", "replace"))
 
 

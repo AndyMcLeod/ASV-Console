@@ -559,7 +559,7 @@ TP_BODY = json.dumps({"stations": [{"id": "8423898", "name": "Fort Point", "lat"
                                    {"id": "8423899", "name": "a subordinate", "lat": 43.08, "lng": -70.72, "type": "S"}]}).encode()
 
 
-def fake_open(req, timeout=None):
+def fake_open(req, timeout=None, **_k):              # **_k: the console's readers pass context= (enc_acquire 10d)
     opened.append(getattr(req, "full_url", str(req)))
     if FAIL["on"]:
         raise OSError("NOAA unreachable")
@@ -593,6 +593,44 @@ check("10g. NOAA'S PREDICTION STATIONS: read once, the harmonic ones only (a sub
       lambda: first == [{"id": "8423898", "name": "Fort Point", "lat": 43.0717, "lng": -70.7117}] and n1 == 1
       and second == first and n2 == 1 and third == first and n3 == 2 and fourth is None and fifth is None and n4 == 3,
       lambda: "first %s; NOAA asked %s; failing %s/%s" % (first, [n1, n2, n3, n4], fourth, fifth))
+
+# 11. ONE TLS CONTEXT (2026-11-14): urlopen without context= built a default context per request (Windows' certificate
+# store loaded each time, ~40 ms of CPU measured). A cycle here is two ~16 MB files, so the saving is small; the forecast
+# read passes the module's one context for the same rule as every reader of the console's - made once, still verifying.
+import ssl as _ssl                                             # noqa: E402
+hctx = []
+
+
+class _FileResp:
+    headers = {"Content-Length": "4"}
+
+    def read(self, n=-1):
+        return b"CDF\x01"
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def file_rec(req, timeout=None, **k):
+    hctx.append(k.get("context"))
+    return _FileResp()
+
+
+keep_open = S.urllib.request.urlopen
+try:
+    S.urllib.request.urlopen = file_rec
+    got_body = S._http_get(S.BUCKET + "STOFS-3D-Atl/stofs_3d_atl.t12z.points.cwl.nc")
+finally:
+    S.urllib.request.urlopen = keep_open
+sh = S._tls()
+check("11. ONE TLS CONTEXT: the forecast read passes the module's one context, made once and still verifying",
+      lambda: got_body == b"CDF\x01" and len(hctx) == 1 and hctx[0] is sh and S._tls() is sh
+      and isinstance(sh, _ssl.SSLContext) and sh.verify_mode == _ssl.CERT_REQUIRED and sh.check_hostname,
+      lambda: "%d reads, shared %s, verifies %s" % (len(hctx), [c is sh for c in hctx],
+                                                     sh.verify_mode == _ssl.CERT_REQUIRED and sh.check_hostname))
 
 shutil.rmtree(TMP, ignore_errors=True)
 print(("\n%d CHECK(S) FAILED (%d ran)" % (fails, ran)) if fails else ("\nall checks passed (%d)" % ran))

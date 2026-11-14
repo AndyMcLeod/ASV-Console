@@ -693,7 +693,7 @@ def _probe_with(behaviour):
     real_ecc, real_open = C.currents.ensure_cycle_covering, C.urllib.request.urlopen
     C.currents.ensure_cycle_covering = lambda *a, **k: (None, False)
 
-    def fake_open(req, timeout=None):
+    def fake_open(req, timeout=None, **_k):         # **_k: the console's readers pass context= (enc_acquire 10d)
         url = getattr(req, "full_url", str(req))
         seen.append(url)
         if behaviour == 503:
@@ -728,6 +728,45 @@ check("20. with no cycle to be had the readout says why in NOAA's terms: a serve
       and seen and "/thredds/catalog/NOAA/WCOFS/MODELS/" in seen[0],
       lambda: "503: %r | refused: %r | 404: %r | 200: %r | asked %s" % (
           r503.get("note"), rref.get("note"), r404.get("note"), r200.get("note"), seen[:1]))
+
+# 21. ONE TLS CONTEXT (2026-11-14): fetch_json - the station list, every station's table, the ERDDAP patch - passes the
+# module's one context, made once and still verifying. urlopen without context= built a default context per request
+# (Windows' certificate store loaded each time): a cold table pass at the mouth of Delaware Bay, 23 requests, measured
+# 1.5-1.7 s of CPU that way and 0.7-0.8 s shared.
+import ssl as _ssl                                             # noqa: E402
+fctx = []
+
+
+class _JsonResp:
+    def read(self, n=-1):
+        return b'{"stations": []}'
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def json_rec(req, timeout=None, **k):
+    fctx.append(k.get("context"))
+    return _JsonResp()
+
+
+keep_open = SF.urllib.request.urlopen
+try:
+    SF.urllib.request.urlopen = json_rec
+    got_list = SF.fetch_json(SF.COOPS_STATIONS_URL)
+    got_table = SF.fetch_json(SF.COOPS_DATA_URL + "?product=currents_predictions&station=x")
+finally:
+    SF.urllib.request.urlopen = keep_open
+sh = SF._tls()
+check("21. ONE TLS CONTEXT: every fetch passes the module's one context, made once and still verifying",
+      lambda: got_list == {"stations": []} and got_table == got_list and len(fctx) == 2 and all(c is sh for c in fctx)
+      and SF._tls() is sh and isinstance(sh, _ssl.SSLContext) and sh.verify_mode == _ssl.CERT_REQUIRED
+      and sh.check_hostname,
+      lambda: "%d fetches, shared %s, verifies %s" % (len(fctx), [c is sh for c in fctx],
+                                                       sh.verify_mode == _ssl.CERT_REQUIRED and sh.check_hostname))
 
 shutil.rmtree(TMP, ignore_errors=True)
 print("\n%s (%d ran)" % ("%d CHECK(S) FAILED" % fails if fails else "all checks passed", ran))

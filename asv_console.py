@@ -488,7 +488,7 @@ def geocode_place(name, timeout=20.0):
         "User-Agent": "asv-console/1.0 (survey ASV shore station; operating-port lookup)",
         "Accept": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with urllib.request.urlopen(req, timeout=timeout, context=_enc_ssl()) as r:
             hits = json.loads(r.read().decode("utf-8", "replace"))
     except Exception as e:
         print("[ports] geocoder unreachable: %s: %s" % (type(e).__name__, e),
@@ -2951,6 +2951,12 @@ _enc_down_until = 0.0        # circuit breaker (monotonic deadline)
 # building a TLS context per request - urlopen without one makes a fresh default context each call, and on Windows
 # that loads the certificate store twice (load_verify_locations 13.2 s, enum_certificates 9.3 s, 1,232 calls). One
 # context, made once and shared (an SSLContext is safe across threads), is the same verification, loaded once.
+# ⇒ AND EVERY OTHER urlopen OF THE CONSOLE'S (2026-11-14): the name is its first use. The chart image's tiles came
+# next (fetch_tile), then NOAA's water, tide, buoy and density readers, the geocoder, the model-server probe and the
+# AIS proxy - each a few requests a pass (2-8 measured, under half a second of CPU saved a pass: small), but one
+# rule is one test (tests/enc_acquire.py 10d: no urlopen in the console's own modules without context=). ofs_s3,
+# stofs and stream_fusion keep one each (`_tls()`, they cannot import this); currents.py and ais_service.py are
+# VENDORED from asv_core and are changed there, not here.
 _enc_ssl_lock = threading.Lock()
 _enc_ssl_ctx = None
 
@@ -5028,7 +5034,7 @@ def _load_water_stations(timeout=30.0):
     if data is None:
         try:
             req = urllib.request.Request(COOPS_STATIONS_URL, headers={"User-Agent": "ASV-Console/1.0"})
-            with urllib.request.urlopen(req, timeout=timeout) as r:
+            with urllib.request.urlopen(req, timeout=timeout, context=_enc_ssl()) as r:
                 raw = json.loads(r.read())
             data = [{"id": s["id"], "name": s.get("name"),
                      "lat": float(s["lat"]), "lng": float(s["lng"]),
@@ -5060,7 +5066,7 @@ def _coops_get(station_id, datum, product, timeout=15.0):
     try:
         req = urllib.request.Request(COOPS_DATA_URL + "?" + urllib.parse.urlencode(params),
                                      headers={"User-Agent": "ASV-Console/1.0"})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with urllib.request.urlopen(req, timeout=timeout, context=_enc_ssl()) as r:
             d = json.loads(r.read())
     except (OSError, ValueError, http.client.HTTPException) as e:
         # HTTPException too: a connection cut mid-body (IncompleteRead - ordinary on a satellite link)
@@ -5090,7 +5096,7 @@ def _coops_series(station_id, datum, product, begin, end, interval=None, timeout
     try:
         req = urllib.request.Request(COOPS_DATA_URL + "?" + urllib.parse.urlencode(params),
                                      headers={"User-Agent": "ASV-Console/1.0"})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with urllib.request.urlopen(req, timeout=timeout, context=_enc_ssl()) as r:
             d = json.loads(r.read())
     except (OSError, ValueError, http.client.HTTPException) as e:
         return {"ok": False, "note": "fetch failed: %s: %s" % (type(e).__name__, e)}
@@ -5345,7 +5351,7 @@ def _tidepred_stations(timeout=30.0):
         data = None
         try:
             req = urllib.request.Request(COOPS_TIDEPRED_URL, headers={"User-Agent": "ASV-Console/1.0"})
-            with urllib.request.urlopen(req, timeout=timeout) as r:
+            with urllib.request.urlopen(req, timeout=timeout, context=_enc_ssl()) as r:
                 raw = json.loads(r.read())
             data = [{"id": str(s["id"]), "name": s.get("name"), "lat": float(s["lat"]), "lng": float(s["lng"])}
                     for s in raw.get("stations", []) if s.get("type") == "R" and s.get("lat") and s.get("lng")]
@@ -5395,7 +5401,7 @@ def _stofs_datums(sid):
     """NOAA's datums at a station, {name: m} on its own station datum, or None."""
     req = urllib.request.Request(COOPS_DATUMS_URL % urllib.parse.quote(str(sid)), headers={"User-Agent": "ASV-Console/1.0"})
     try:
-        with urllib.request.urlopen(req, timeout=8.0) as r:
+        with urllib.request.urlopen(req, timeout=8.0, context=_enc_ssl()) as r:
             d = json.loads(r.read())
     except (OSError, ValueError, http.client.HTTPException):
         return None
@@ -5871,7 +5877,7 @@ def gust_multiplier(t, gust_factor=None):
 
 def _env_http_get(url, timeout=15.0):
     req = urllib.request.Request(url, headers=_ENV_UA)
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    with urllib.request.urlopen(req, timeout=timeout, context=_enc_ssl()) as r:
         return r.read().decode("utf-8", "replace")
 
 
@@ -6329,7 +6335,7 @@ def _load_physocean_stations(timeout=30.0):
     else:
         try:
             req = urllib.request.Request(PHYSOCEAN_STATIONS_URL, headers={"User-Agent": "ASV-Console/1.0"})
-            with urllib.request.urlopen(req, timeout=timeout) as r:
+            with urllib.request.urlopen(req, timeout=timeout, context=_enc_ssl()) as r:
                 raw = json.loads(r.read())
             stations = [{"id": s["id"], "name": s.get("name"), "lat": float(s["lat"]), "lng": float(s["lng"])}
                         for s in raw.get("stations", []) if s.get("lat") and s.get("lng")]
@@ -6351,7 +6357,7 @@ def _coops_physocean_latest(station_id, product, timeout=15.0):
     try:
         req = urllib.request.Request(COOPS_DATA_URL + "?" + urllib.parse.urlencode(params),
                                      headers={"User-Agent": "ASV-Console/1.0"})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with urllib.request.urlopen(req, timeout=timeout, context=_enc_ssl()) as r:
             d = json.loads(r.read())
     except (OSError, ValueError, http.client.HTTPException):
         return None
@@ -6922,7 +6928,7 @@ class CurrentsMonitor:
         host = urllib.parse.urlparse(currents.THREDDS).netloc
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "ASV-Console/1.0"})
-            with urllib.request.urlopen(req, timeout=self.PROBE_TIMEOUT_S) as r:
+            with urllib.request.urlopen(req, timeout=self.PROBE_TIMEOUT_S, context=_enc_ssl()) as r:
                 r.read(1)
         except urllib.error.HTTPError as e:
             if e.code >= 500:
@@ -12909,7 +12915,9 @@ def ais_traffic(lat, lon, held=(), floor_km=0.0):
         AIS_BASE.rstrip("/"), bbox[0], bbox[1], bbox[2], bbox[3])
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "asv-console/ais-proxy"})
-        with urllib.request.urlopen(req, timeout=6) as r:
+        # plain HTTP to 127.0.0.1 by default, where a context does nothing (it costs ~0.7 ms an opener); it is the
+        # shared one for an --ais that names an https:// service, polled as often as the page polls
+        with urllib.request.urlopen(req, timeout=6, context=_enc_ssl()) as r:
             data = json.loads(r.read().decode("utf-8", "replace"))
         # FILTER TO THE OPERATOR'S RADIUS - at sea only. A true great-circle range
         # from the boat, not the collect BOX, so "50 km" means a 50 km circle and the

@@ -205,7 +205,7 @@ class _Resp:
 _C.WATER_STATIONS_CACHE = os.path.join(TMP, "coops_stations.json")
 _C._water_stations = None
 coops = json.dumps({"stations": [{"id": "8410140", "name": "Eastport", "lat": 44.9046, "lng": -66.9829}]}).encode()
-_C.urllib.request.urlopen = lambda req, timeout=None: _Resp(coops)
+_C.urllib.request.urlopen = lambda req, timeout=None, **_k: _Resp(coops)   # **_k: every reader passes context=
 replaced.clear()
 water = _C._load_water_stations()
 water_writes = [r for r in replaced if r[1] == _C.WATER_STATIONS_CACHE]

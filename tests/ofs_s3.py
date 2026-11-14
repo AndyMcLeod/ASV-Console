@@ -234,7 +234,7 @@ tree = ast.parse((Path(APP) / "ofs_s3.py").read_text(encoding="utf-8"))
 mods = {n.names[0].name.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.Import)} | \
        {n.module.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.module}
 check("8. ofs_s3 imports nothing outside the standard library and the console's own currents.py (README: no pip)",
-      lambda: mods <= {"gzip", "json", "math", "re", "struct", "threading", "urllib", "concurrent", "datetime",
+      lambda: mods <= {"gzip", "json", "math", "re", "ssl", "struct", "threading", "urllib", "concurrent", "datetime",
                        "currents"} and not ({"h5py", "numpy", "netCDF4", "xarray", "fsspec"} & mods),
       lambda: sorted(mods))
 
@@ -306,6 +306,52 @@ check("9. the console reads the S3 copy ONLY when NOAA's model server is down - 
       and "its S3 copy holds no TSTOFS cycle covering now" in res["s3_none"]
       and res["outside"] == "tstofs does not cover this position" and res["reading"].get("via") == "s3",
       lambda: "%r" % res)
+
+# 10. ONE TLS CONTEXT FOR EVERY REQUEST (2026-11-14). A cycle read is hundreds of range requests - one dbofs cycle, 440 -
+# and urlopen without context= built a default context for each (Windows' certificate store loaded per request):
+# measured 35-36 s of the read's CPU with one per request, 5.2-5.4 s shared. The range reads and the bucket listing both
+# pass the module's one context, made once - and it still verifies.
+import ssl                                                     # noqa: E402
+import urllib.request                                          # noqa: E402
+ctxs = []
+
+
+class _Body:
+    def __init__(self, b):
+        self.b = b
+
+    def read(self):
+        return self.b
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def rec_open(req, timeout=None, **k):
+    ctxs.append(k.get("context"))
+    if "list-type=2" in getattr(req, "full_url", str(req)):
+        return _Body(b"<ListBucketResult><Key>tstofs/netcdf/x.nc</Key></ListBucketResult>")
+    return _Body(b"\0" * 16)
+
+
+real_open = urllib.request.urlopen
+try:
+    urllib.request.urlopen = rec_open
+    got_raw = ofs_s3.HttpRange(ofs_s3.BUCKET + "tstofs/netcdf/x.nc").read_raw(0, 16)
+    listed = ofs_s3._list("tstofs/netcdf/")
+finally:
+    urllib.request.urlopen = real_open
+shared = ofs_s3._tls()
+check("10. ONE TLS CONTEXT: the range reads and the bucket listing pass the module's one context, made once and still "
+      "verifying (a context per request was 35-36 s of a dbofs cycle read's CPU, 5.2-5.4 s shared)",
+      lambda: len(ctxs) == 2 and all(c is shared for c in ctxs) and ofs_s3._tls() is shared
+      and isinstance(shared, ssl.SSLContext) and shared.verify_mode == ssl.CERT_REQUIRED and shared.check_hostname
+      and got_raw == b"\0" * 16 and listed == ["tstofs/netcdf/x.nc"],
+      lambda: "%d requests, contexts %s, verifies %s" % (len(ctxs), [c is shared for c in ctxs],
+                                                         shared.verify_mode == ssl.CERT_REQUIRED and shared.check_hostname))
 
 shutil.rmtree(TMP_DIR, ignore_errors=True)
 print("\n%s (%d ran)" % ("%d CHECK(S) FAILED" % fails if fails else "all checks passed", ran))

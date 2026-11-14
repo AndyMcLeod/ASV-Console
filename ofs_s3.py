@@ -27,6 +27,7 @@ import gzip
 import json
 import math
 import re
+import ssl
 import struct
 import threading
 import urllib.parse
@@ -48,6 +49,22 @@ class H5Error(RuntimeError):
     """An HDF5 structure this reader was not written for, or a file that is not what it should be."""
 
 
+# ONE TLS CONTEXT FOR EVERY REQUEST (2026-11-14). urlopen without context= builds a default context per request, and on
+# Windows each one loads the certificate store. A cycle read is hundreds of range requests: one dbofs cycle, 440 of
+# them, measured 35-36 s of CPU and 42-44 s of wall with a context each, 5.2-5.4 s and 15-18 s on this one (two reads
+# each way). An SSLContext is safe to share across the reader's threads.
+_tls_lock = threading.Lock()
+_tls_ctx = None
+
+
+def _tls():
+    global _tls_ctx
+    with _tls_lock:
+        if _tls_ctx is None:
+            _tls_ctx = ssl.create_default_context()
+        return _tls_ctx
+
+
 # --------------------------------------------------------------------------- #
 #  Byte sources
 # --------------------------------------------------------------------------- #
@@ -62,7 +79,7 @@ class HttpRange:
 
     def _get(self, off, n):
         req = urllib.request.Request(self.url, headers=dict(UA, Range="bytes=%d-%d" % (off, off + n - 1)))
-        with urllib.request.urlopen(req, timeout=self.timeout) as r:
+        with urllib.request.urlopen(req, timeout=self.timeout, context=_tls()) as r:
             data = r.read()
         with self._lock:
             self.requests += 1
@@ -441,7 +458,7 @@ def _list(prefix, opener=None):
         if opener:
             xml = opener(url)
         else:
-            with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=TIMEOUT) as r:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=TIMEOUT, context=_tls()) as r:
                 xml = r.read().decode("utf-8", "replace")
         keys += re.findall(r"<Key>([^<]+)</Key>", xml)
         m = re.search(r"<NextContinuationToken>([^<]+)</NextContinuationToken>", xml)

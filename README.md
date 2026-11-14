@@ -355,7 +355,10 @@ console reads the same files from NOAA's open-data S3 bucket** (`ofs_s3.py`, 202
 still the standard library only: a small reader for exactly the HDF5 structures those
 netCDF-4 files use, range-reading only the surface rows in the box round the boat (tens of
 kilobytes a frame; a WCOFS cycle in about 15 s, LEOFS's 127 hourly frames in about 70 s),
-written into the same cache so everything downstream is unchanged. The tooltip says when a
+written into the same cache so everything downstream is unchanged. Its range reads share one
+TLS context (2026-11-14): one built per request, as before, loaded Windows' certificate store
+for each of a cycle's hundreds of reads, and a Delaware Bay cycle (440 reads) took 42-44 s;
+shared, 15-18 s (`tests/ofs_s3.py` 10). The tooltip says when a
 cycle came from there. It reads each file's own time units, which differ by model (LEOFS
 counts from 2015, SSCOFS from 2018, the rest from 2016) - **and since the same evening so
 does the model-server path**: the vendored `currents.py` (fixed in `asv_core`) took every
@@ -3680,7 +3683,12 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
      whole is held two minutes before it is read again.
    - **Speed.** Every request built its own TLS context, and on Windows that loads the certificate
      store each time: 22 s of a tile's 36 s of CPU. One shared context read the same tile in 21 s
-     instead of 45 (616 requests to NOAA).
+     instead of 45 (616 requests to NOAA). Since 2026-11-14 every request the console's own code
+     makes shares one: the chart image's tiles, the model reads from NOAA's bucket (above), and the
+     tide, water-level, buoy, density and current-station readers. Those last are a few requests a
+     pass, so the saving there is small. `tests/enc_acquire.py` 10d reads every module for an
+     `urlopen` without one; 10e runs the readers. The two copies vendored from `asv_core`
+     (`currents.py`, `ais_service.py`) still build one a request, to be changed there.
    - **Plan passage** judges the same things: its grid (`grid_v2`) holds dredged channels by their
      depth, unsurveyed water under every floor, islets, and a third layer of overhead clearance, so a
      coarse passage goes round a bridge too low for the hull.

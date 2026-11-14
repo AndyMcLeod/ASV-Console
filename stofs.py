@@ -43,6 +43,7 @@ import calendar
 import math
 import os
 import re
+import ssl
 import struct
 import threading
 import time
@@ -376,11 +377,26 @@ def region_of(lat, lon):
 # --------------------------------------------------------------------------- #
 #  The forecast, kept
 # --------------------------------------------------------------------------- #
+# ONE TLS CONTEXT, as ofs_s3's (2026-11-14): urlopen without context= builds a default context per request, and on
+# Windows each one loads the certificate store (~40 ms of CPU measured). A cycle here is two ~16 MB files, so the saving
+# is small; it is shared for the same rule as every other reader of the console's.
+_tls_lock = threading.Lock()
+_tls_ctx = None
+
+
+def _tls():
+    global _tls_ctx
+    with _tls_lock:
+        if _tls_ctx is None:
+            _tls_ctx = ssl.create_default_context()
+        return _tls_ctx
+
+
 def _http_get(url, timeout=FETCH_TIMEOUT_S, limit=MAX_FILE_BYTES):
     """The body at `url` (bytes), None when it is not there (404/403), raises on anything else."""
     req = urllib.request.Request(url, headers=UA)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with urllib.request.urlopen(req, timeout=timeout, context=_tls()) as r:
             n = r.headers.get("Content-Length")
             if n is not None and int(n) > limit:
                 raise CdfError("%s is %s bytes" % (url, n))
