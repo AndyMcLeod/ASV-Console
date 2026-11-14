@@ -100,7 +100,7 @@ function grab(name) {
   return H.slice(start, k + 1);
 }
 
-var S = null, rthChained = false, rthChainFailed = false, mission = { completion: "rth" };
+var S = null, rthChained = false, rthChainFailed = false, rthChainBusyAt = 0, mission = { completion: "rth" };   // (rthChainBusyAt: a busy far RTH's retry, which re-arming clears - passage_sail 17h)
 // eslint-disable-next-line no-eval
 // CHAINABLE_BEHAVIORS comes across VERBATIM with its helper - the real list, so a behaviour
 // added to the page is tested here rather than in a copy of it that can drift.

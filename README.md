@@ -3492,13 +3492,23 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    not at a port: she holds there, and End of plan does not send her home again from home. Until
    the first section is sent she carries on as she was. The Passage tab shows the planning and
    its own plan is left alone. Refused, and said, when: its ends cannot be planned in detail, part
-   of it cannot be planned, a Stop, Pause, Hold or E-STOP is pressed while it plans (withdrawn,
-   nothing sent), a passage is being planned on the Passage tab, home is a ROC's (it moves), the
-   hull runs on a battery, or the fuel is short. The operator's RTH and End of plan need 20% of
-   the tank on arrival, as Continue passage does. The low-fuel RTH goes if she reaches home at
-   all: the 20% she is turned at is what the RTH point is for, and the planned way home can come
-   out a little longer than the monitor's estimate. A survey broken off for low fuel is banked as
-   before, so after the refuel Continue picks it up 100 m back. **The 50 km stays as the line
+   of it cannot be planned, home is a ROC's (it moves), the hull runs on a battery, or the fuel is
+   short. The operator's RTH and End of plan need 20% of the tank on arrival, as Continue passage
+   does. The low-fuel RTH goes if she reaches home at all: the 20% she is turned at is what the
+   RTH point is for, and the planned way home can come out a little longer than the monitor's
+   estimate. That way home keeps its rule wherever its fuel is asked again: its first section's
+   send, Continue after a Stop, and RTH pressed again along it. A survey broken off for low fuel
+   is banked as before, taken again when the first section is sent (she surveyed on while it
+   planned), so after the refuel Continue picks it up 100 m back. **The press is kept** (the
+   review, the same day): the way home is planned for minutes, so it is withdrawn, said, with
+   nothing sent, when before its first section goes a Stop, Pause, Hold or E-STOP is pressed, a
+   new link comes up, home moves, or she is commanded elsewhere. The guard's own hold or escape is
+   waited through, except by End of plan, which never sends her home off the guard's maneuver. A
+   low-fuel RTH is withdrawn too when the energy override is turned on while it plans, as the
+   boxed one is. **One way home is planned at a time.** A second far RTH while one plans takes
+   its answer, and the low-fuel rule goes with it. While the Passage tab plans a passage, End of
+   plan and the low-fuel monitor wait and ask again 15 s later; the RTH button says to press again.
+   **The 50 km stays as the line
    between the two planners, not as a refusal.** Within it the return is planned in one chart box,
    as before. A box of the water between stalls the page from not far past it: the Castine plan's
    1.0° × 0.7° Upload read took about 15 minutes, with the telemetry stale 47 times. While a
@@ -3507,7 +3517,7 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    where a passage home can be planned and a full tank reaches it with the 20% reserve. The coarse
    water distance home is built past 50 km there too, so the RTH point is measured by water. The
    Fuel row charges the way home from a far plan end when no passage is being sailed.
-   `tests/passage_sail.js` 13b, 17-17g, `tests/fuel_rth.js` 8v, 9m, 11d, `tests/passage_plan.js` 16b. **Each section is planned at its own water.** The
+   `tests/passage_sail.js` 13b, 17-17o, `tests/fuel_rth.js` 8v, 8w, 9m, 11d, `tests/passage_plan.js` 16b. **Each section is planned at its own water.** The
    live water level follows the boat: the stations nearest her, now. A section is planned ahead of
    her and sailed over the hours after, often tens of km from those stations. So each section is
    planned at the **lowest level predicted along it over the hours she is expected in it**, from

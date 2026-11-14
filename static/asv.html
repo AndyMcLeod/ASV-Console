@@ -10683,6 +10683,12 @@ function fuelOutOfRangeSay(model, w){
 // A crossing it holds back is NOT counted as answered: if the one in flight lands, she is going home and that answers
 // it; if it is refused or lost, the frame after it settles sends - the retry the re-armed crossing was always given.
 const FUEL_FLIGHT_MS = 120000;
+// ⚠ A FAR RTH ANSWERED "BUSY" IS ASKED AGAIN (the 2026-11-13 review): past RTH_MAX_M the way home is planned as a passage
+// (sailHomeFresh), one plan at a time - while the Passage tab plans one, or a passage's section is being sent, it cannot
+// start. That answer was "refused": final for the end-of-plan chain (she held for good, the card saying REFUSED) and for
+// the monitor (the latch kept, so she was never sent). Now it is "busy": the chain fires again, and the monitor decides
+// again, RTH_BUSY_RETRY_MS later (`fuelRetryAt`: until then nothing is sent, as while one is in flight).
+const RTH_BUSY_RETRY_MS = 15000;
 // ⚠ TWO MORE WAYS THE LATCH OUTLIVED WHAT IT ANSWERED (2026-11-10, the review of the above). (1) A NEW LINK IS A NEW
 // WATCH: the latch is this page's, and a page that is not reloaded carried it through a Spawn, a vessel or port switch
 // and a reconnect - a new boat (`boot_id`) below her point was neither said nor sent where a fresh page did both.
@@ -10690,7 +10696,7 @@ const FUEL_FLIGHT_MS = 120000;
 // window" - so a view-only window counted the crossing as answered, and after TAKE OVER (the reason for one is often
 // that the supervising tab has died) nobody sent her home. It latches there only once she IS going home.
 let fuelRth = {acted: false, alerted: false};
-let fuelNow = null, fuelErrSaid = false, fuelFlight = 0, fuelBoot;
+let fuelNow = null, fuelErrSaid = false, fuelFlight = 0, fuelBoot, fuelRetryAt = 0;
 function fuelTick(s){
   homeFieldTick();
   coarseHomeTick();
@@ -10718,7 +10724,7 @@ function fuelTick(s){
   // RTH's own banner - "LOW FUEL, at the RTH point ... RTH: routed" - is a fact about a command she took, and stays
   if(dec.state === "override") takeDownBanner(/^⚠ LOW FUEL — (THE RTH POINT|AT THE \d+% RESERVE): /);
   if(dec.state !== "reached") return;
-  const flying = !!(fuelFlight && Date.now() - fuelFlight < FUEL_FLIGHT_MS);
+  const flying = !!(fuelFlight && Date.now() - fuelFlight < FUEL_FLIGHT_MS) || Date.now() < fuelRetryAt;
   if(dec.latch && (!dec.send || (supervising() && !flying))) fuelRth.acted = true;
   // OUT OF RANGE: said once, in every window, and NOTHING commanded - "an alert at 20% with no automatic action".
   if(alertOnly){
@@ -10764,6 +10770,8 @@ function fuelTick(s){
       const nt = out && out.notTaken, ns = nt && nt.state && typeof nt.state === "object" ? nt.state : S;
       if(nt && fuelBoot === bootAt && (nt.sent === false || (nt.withdrawn && nt.by === "E-STOP")
                                        || (nt.refused && (!ns.armed || ns.estop)))) fuelRth.acted = false;
+      // BUSY (far: one passage plan at a time) - asked again RTH_BUSY_RETRY_MS on, not answered (above, at RTH_BUSY_RETRY_MS)
+      if(nt && nt.busy && fuelBoot === bootAt){ fuelRth.acted = false; fuelRetryAt = Date.now() + RTH_BUSY_RETRY_MS; }
     }).finally(() => { if(fuelFlight === sentAt) fuelFlight = 0; });
     return;
   }
@@ -14953,8 +14961,8 @@ async function doRTH(opts){
       // one sends her; here a whole section was planned for a post cmd() refuses before the wire, then said as a
       // refusal of a return that is coming - and the chain marked refused under it
       if(chained && !supervising()) return;
-      const out = await sailHome(H, brk, far, missionAt);
-      if(chained && out === "refused") rthChainFailed = true;   // said: she holds, and the cards stop promising a return
+      const out = await sailHome(H, brk, far, missionAt, {fence: rthFence(chained)});
+      if(chained && (out === "refused" || out === "withdrawn")) rthChainFailed = true;   // said: she holds, and the cards stop promising a return
       return;
     }
     // A PASSAGE HOME, PLANNED FROM HERE (Andy, 2026-11-13: "Plan a passage home"): no way home along a passage - none on
@@ -14963,12 +14971,18 @@ async function doRTH(opts){
     const no = passageHomeRefusal();
     if(!no){
       if(chained && !supervising()) return;      // (as above: the supervising tab plans it and sends her)
-      const out = await sailHomeFresh(brk, far, missionAt, !!why);
-      if(chained && out === "refused") rthChainFailed = true;
-      // (the low-fuel monitor asks why it was not taken - fuelTick: never sent, refused, withdrawn by which stop)
-      return out === "sent" ? undefined
-        : {notTaken: out === "withdrawn" ? {withdrawn: true, by: routeStopName} : out === "unsent" ? {sent: false}
-                   : out === "refused" ? {refused: true, state: S} : {}};
+      // THE PRESS, KEPT (the 2026-11-13 review): planning takes minutes, and its send is judged against what was asked
+      // (rthFence); the low-fuel rule, the lock transit this press ended, and how to take the survey's break-off again
+      const how = {lowFuel: !!why, chained, fence: rthFence(chained), lockWas, brkAgain: () => surveyBreakNow(opts && opts.breakWhy)};
+      const out = await sailHomeFresh(brk, far, missionAt, how);
+      if(chained && out === "busy"){ rthChainRetry(); return; }   // (one plan at a time: the chain fires again shortly)
+      if(chained && (out === "refused" || out === "withdrawn")) rthChainFailed = true;
+      // (the low-fuel monitor asks why it was not taken - fuelTick: never sent, refused - with the console's own state
+      // when it was the console that refused - withdrawn by which stop, or busy; the override's withdrawal is an answer)
+      return out === "sent" || out === "overridden" ? undefined
+        : {notTaken: out === "withdrawn" ? {withdrawn: true, by: how.by || routeStopName} : out === "unsent" ? {sent: false}
+                   : out === "busy" ? {busy: true}
+                   : out === "refused" ? (how.post && how.post.refused ? how.post : {refused: true, state: S}) : {}};
     }
     if(chained) rthChainFailed = true;
     showBanner("RTH refused: home is " + fmtDist(far.m) + " away, past the "
@@ -15574,6 +15588,9 @@ async function passagePlanFor(points, say, gone){
     say("reading chart: " + st.done + " of " + st.total + " tiles" + (st.eta_s != null ? " · ~" + fmtMS(st.eta_s) + " left" : ""));
     corridorRead = toCorridor(st); updateTransitPanel(); render();
     await new Promise(r => setTimeout(r, CORRIDOR_POLL_MS));
+    // (asked while the chart is read too - the 2026-11-13 review: a read of new tiles takes minutes, and the withdrawal waited
+    // them out. The read itself goes on: the server shares a read of the same tiles with any other asking - corridor_start)
+    if(gone()) return {gone: true};
     st = await getCorridor(st.id);
   }
   if(!st || st.error || st.state !== "done")
@@ -15607,7 +15624,9 @@ async function passagePlanFor(points, say, gone){
 }
 /** PLAN PASSAGE: the chart along the line with its grids, the coarse plan in the worker, the fuel leg by leg (passagePlanFor). */
 async function planPassageNow(){
-  if(passageBusy) return;
+  // (said, not silent - the 2026-11-13 review: the way home planned as a passage holds the planner for minutes)
+  if(passageBusy){ flashNote("Plan passage: " + (homeFlight ? "the way home is being planned as a passage - plan this when it is done."
+                                                                  : "a passage is being planned already.")); return; }
   const why = passageRefusal();
   if(why){ showBanner("Passage NOT planned: " + why + "."); return; }
   if(!passageWps.length){ flashNote("Draw the passage on the Passage tab first - the last point is the arrival. Then Plan passage."); return; }
@@ -15901,18 +15920,23 @@ function sailLeftM(){
  * ONE SECTION, PLANNED IN DETAIL AND SENT: section k from `from` (her position, or the end of the route she flies when
  * `append`), through its turning points - or from where she left it (`bo`) through the rest of it - to its end, held
  * at clear water there. Appended, it goes after what she has left of the route she flies, and only to the route it
- * was planned after. {ok, route} or {error} - or {soft} when it should simply be tried on the next frame.
+ * was planned after. {ok, route} or {error} - or {soft} when it should simply be tried on the next frame; {error,
+ * withdrawn, by} when a Stop was pressed while it planned (`said`: planInsideChart said so) or `fence` - the far RTH's
+ * press, kept (rthFence) - no longer stands: asked after the chart read and again before the post (the 2026-11-13 review:
+ * a Stop pressed during the read, before planInsideChart took its own mark, was not seen).
  */
-async function sailSend(P, k, from, bo, append){
+async function sailSend(P, k, from, bo, append, fence){
   const c = P.sections[k], home = P.kind === "rth";
   const pts = bo ? [bo.at, ...sectionRest(c, bo.at), c.to] : [...c.via, c.to];
   const wasGen = planGen, rrWas = runRoute;
+  const fenced = () => { const g = fence ? fence() : null; return g ? {error: g.say, withdrawn: true, by: g.by} : null; };
   // ITS CHART IMAGE READ ALONG IT, where the read can find something (`route`: readRouteInk) - its one box is past the
   // read's budget, and the console, not the operator, sends it - and so is any wider read the planning makes.
   await ensureNogoCovers([from, ...pts], null, {route: true});
   // AT THE WATER IT WILL HAVE (step 6): the lowest predicted along it while she sails it - not the boat's level now,
   // which the guard's own chart keeps (sectionWater, atWaterLevel).
   const lv = await sectionWater(P, from, pts, append);
+  const f0 = fenced(); if(f0) return f0;
   // (a section at a port: the harbor as a Go-To is, the passage line from its join point - portSectionLine, on the chart
   // just read. `pts` stays the line the chart is read along and its water judged on.)
   const {line, ow} = portSectionLine(P, c, bo, pts, nogo.ready ? nogo : null);
@@ -15929,7 +15953,7 @@ async function sailSend(P, k, from, bo, append){
       }, koLv),
       (r) => { ht = r.ht; return r.plan; });
   }, (home ? "Home along the passage, section " : "Passage section ") + (k + 1));
-  if(plan && plan.withdrawn) return {error: plan.error};
+  if(plan && plan.withdrawn) return {error: plan.error, withdrawn: true, by: routeStopName, said: true};
   // (a hold point refused because the CHART could not be read names that, not the water - 2026-10-18 review)
   if(ht !== null && ht.error) return {error: (ht.reason && ht.reason.mode === "chart_failed") ? ht.error
                                                : "the end of section " + (k + 1) + " is not clear water to hold at"};
@@ -15954,6 +15978,7 @@ async function sailSend(P, k, from, bo, append){
   const mgWas = append && planIntent && planIntent.margin && planIntent.margin.route === rrWas ? planIntent.margin.runs : [];
   if(plan.deep) whole.deep = {...plan.deep, runs: marginRunsAfter(mgWas, cut, plan.deep.runs, prefix.length)};
   const coast = solveCoastFor(whole);
+  const f1 = fenced(); if(f1) return f1;          // (the far RTH's press, asked again at the post)
   // THE WAY HOME is sent as an RTH (step 6): she is going home - the cards say so, the fuel monitor sends no second
   // one, and the end-of-plan chain never fires on an RTH's hold.
   const r = await routeCmd(home ? "/api/cmd/rth" : "/api/cmd/transit", {route, hold_clear_m: whole.holdClear, coast_from_m: coast ? coast.groundM : null});
@@ -16130,7 +16155,10 @@ function sailRestM(c, at){
   let m = 0; for(let k = 1; k < line.length; k++) m += distTo(line[k - 1], line[k]);
   return m;
 }
-/** The fuel to the next port from here, against what is aboard: null when it reaches it with 20%, else why not. */
+/** The fuel to the next port from here, against what is aboard: null when it reaches it with 20%, else why not. A WAY
+ *  HOME THE LOW-FUEL MONITOR SENT (`P.lowFuel`, homePassageRecord) is judged by the monitor's rule instead - it reaches
+ *  home at all (homePassageRefusal): the 20% she was turned at is what the point is for. Without it (the 2026-11-13
+ *  review) its Continue after a Stop, its re-send by the RTH button and its own send were held to 20% and refused. */
 function sailFuelShort(P, k, bo){
   // UNDER THE ENERGY OVERRIDE judged from a FULL tank - what Plan passage assumes - not "no level, not held" (2026-11-10
   // review: the forced-full gauge had kept this refusal; reading no level under the override had dropped it, so the
@@ -16142,12 +16170,14 @@ function sailFuelShort(P, k, bo){
   let j = k;
   while(P.sections[j].end !== "port" && j + 1 < P.sections.length){ j++; L += P.sections[j].lengthM; }
   const x = passageFuel(model, [{lengthM: L}], P.kn || V.SPEED_KN[roleSpeed("transit")], lv);
-  if(!x || x[0].ok) return null;
+  const low = P.lowFuel === true;
+  if(!x || (low ? x[0].arrive >= model.floor : x[0].ok)) return null;
   const to = P.sections[j].port != null ? sailPortName(P, P.sections[j].port) : P.sections[j].end === "home" ? "home" : "the end";
   return (ovr ? "too far for even a full " + (model.kind === "fuel" ? "tank" : "pack") + " (" + fuelFmt(model, lv)
                 + " - the energy override is on, so her level is not read): "
               : "refuel first: " + fuelFmt(model, lv) + " aboard, and ") + to + " is " + fmtDist(L) + " on - she needs "
-    + fuelFmt(model, x[0].used + model.floor + model.reserve) + " to arrive with " + Math.round(FUEL_RESERVE_FRAC * 100) + "% of the tank";
+    + fuelFmt(model, x[0].used + model.floor + (low ? 0 : model.reserve))
+    + (low ? " just to get there" : " to arrive with " + Math.round(FUEL_RESERVE_FRAC * 100) + "% of the tank");
 }
 /** Why Continue passage cannot go now, or null. */
 function continueRefusal(P){
@@ -16365,29 +16395,45 @@ function homeRecord(){
   const h = passageHome({lat: asv.lat, lon: asv.lon});
   if(!h || h.why) return h;
   const P = h.P, G = h.G;
+  // (a way home the low-fuel monitor sent keeps its rule - home on what is aboard, not with 20% - when it is sent again
+  // along itself: sailFuelShort, the 2026-11-13 review)
   return {id: "H" + Date.now().toString(36), t: Date.now(), kind: "rth", kn: P.kn, floor_m: P.floor_m, points: P.points,
           sections: h.sections, path: G, home: {lat: S.home.lat, lon: S.home.lon}, homeEnd: h.homeEnd,
           from: {id: P.kind === "rth" && P.from ? P.from.id : P.id, sec: h.rejoin.sec},
+          ...(P.kind === "rth" && P.lowFuel === true ? {lowFuel: true} : {}),
           state: "ready", sent: -1, sec: 0, base: 0, end: null, route: null, breakoff: null, note: ""};
 }
 /** RTH ALONG THE PASSAGE (doRTH, home beyond RTH_MAX_M): the way home's first section sent from where she is. Its
  *  answer, doRTH's three kept apart (the 2026-11-12 review): "sent"; "refused" - said, and a refused end-of-plan
  *  chain is recorded; "unsent" - this tab never asked, nothing claimed; "unknown" - the reply was lost, said as that,
  *  nothing recorded. `how` (2026-11-13): {fromHere} - the way home was PLANNED as a passage from here (sailHomeFresh), not
- *  taken along one on the plan; {lowFuel} - the monitor's RTH, whose fuel sailHomeFresh has judged already (to home at all,
- *  not with 20%: homePassageRefusal). */
+ *  taken along one on the plan; {fence} - the press, kept (rthFence): asked again before the section is sent, and
+ *  "withdrawn" (`how.by` naming why) when it no longer stands. And handed back on `how`: the console's own answer when it
+ *  refused (`how.post`, for the monitor - fuelTick reads the state it carries). THE FUEL is judged here for every way
+ *  home, at the send (sailFuelShort: with 20% of the tank on arrival, or - the low-fuel monitor's, `H.lowFuel` - home at
+ *  all; the 2026-11-13 review: the monitor's skipped it, so its level was judged only at the plan, minutes before). */
 async function sailHome(H, brk, far, missionAt = null, how = null){
   const fresh = !!(how && how.fromHere);
   if(sailBusy){ flashNote("RTH: the passage is sending a section - press RTH again in a moment."); return "refused"; }
-  const f = how && how.lowFuel ? null : sailFuelShort(H, 0, null);
-  if(f){ showBanner("RTH refused: home is " + fmtDist(far.m) + " away, along the passage - " + f + "."); return "refused"; }
+  const f = sailFuelShort(H, 0, null);
+  if(f){ showBanner("RTH refused: home is " + fmtDist(far.m) + " away, " + (fresh ? "as a passage" : "along the passage") + " - " + f + ".");
+         logClient("passage_rth", {id: H.id, ok: false, from_here: fresh, why: String(f).slice(0, 300)}); return "refused"; }
   sailBusy = true; applyCmdState(S); updateTransitPanel();
   showBanner((fresh ? "Routing home as a passage… " : "Routing home along the passage… ") + "home is " + fmtDist(far.m)
     + " away, past the " + fmtDist(RTH_MAX_M) + " a straight return is certified for.");
   try{
-    const r = await sailSend(H, 0, {lat: asv.lat, lon: asv.lon}, null, false);
+    const r = await sailSend(H, 0, {lat: asv.lat, lon: asv.lon}, null, false, how && how.fence);
+    if(r.withdrawn){                           // (a Stop planInsideChart saw has said itself)
+      if(how) how.by = r.by;
+      if(!r.said){
+        showBanner("RTH withdrawn: " + r.error + " while the way home was being routed. Nothing was sent.");
+        logClient("plan_withdrawn", {what: "RTH", by: r.by});
+      }
+      return "withdrawn";
+    }
     if(r.error || r.soft){
       const post = r.post || null;             // the command's own answer, when it got as far as one
+      if(how) how.post = post;
       if(post && post.sent === false){ takeDownBanner(/^Routing home (along|as) (the|a) passage/); return "unsent"; }
       if(post && !post.refused){                // lost or unreadable: the console cannot tell whether she took it
         showBanner(r.error + " - the way home " + (fresh ? "as a passage" : "along the passage") + ", " + fmtDist(far.m) + ".");
@@ -16444,17 +16490,20 @@ function passageHomeRefusal(){
 }
 /** THE WAY HOME PLANNED AS A PASSAGE, as the passage record she sails it from: homeRecord's shape, kind "rth" - the plan's
  *  sections with the last ending at HOME (not a port: she holds there, and End of plan does not send her home from home -
- *  sailArrival), and the passage it runs along its own sections (`path`: a second RTH on the way goes home along it). */
-function homePassageRecord(plan){
+ *  sailArrival), and the passage it runs along its own sections (`path`: a second RTH on the way goes home along it).
+ *  HOME IS THE PLAN'S OWN END (the 2026-11-13 review: S.home read again here was whatever home had become while it planned;
+ *  rthFence now withdraws the RTH if home moves, and the record names the home it was planned to). `lowFuel`: the
+ *  low-fuel monitor's way home, judged by its rule wherever its fuel is asked again (sailFuelShort). */
+function homePassageRecord(plan, lowFuel){
   const P = sailRecord(plan);
   // ⚠ THE PATH IS THE PASSAGE AS PLANNED, ITS LAST SECTION A PORT, AND `from` NAMES ONE IN TEXT: the server refuses to save a
   // way home whose path ends at "home" or whose `from.id` is not text (asv_console.py _check_passage) - and then every
   // save of the plan while she sails it is refused (found reading the server, 2026-11-13; passage_sail 17 runs its check)
   const path = P.sections.map(c => ({...c, via: c.via.map(p => ({lat: p.lat, lon: p.lon}))}));
-  const last = P.sections[P.sections.length - 1];
+  const last = P.sections[P.sections.length - 1], end = plan.points[plan.points.length - 1];
   last.end = "home"; last.port = null;
-  return {...P, id: "H" + P.id.slice(1), kind: "rth", fromHere: true, path,
-          home: {lat: S.home.lat, lon: S.home.lon}, homeEnd: "end", from: {id: "her position", sec: 0}};
+  return {...P, id: "H" + P.id.slice(1), kind: "rth", fromHere: true, path, ...(lowFuel ? {lowFuel: true} : {}),
+          home: {lat: end.lat, lon: end.lon}, homeEnd: "end", from: {id: "her position", sec: 0}};
 }
 /** Why the way home planned as a passage cannot be sailed, or null. Its ends planned in detail, all of it planned, cut
  *  into sections; and the fuel: the low-fuel monitor's RTH (`lowFuel`) goes home on what is aboard if it gets her there
@@ -16473,39 +16522,113 @@ function homePassageRefusal(plan, lowFuel){
       + fuelFmt(model, x.start) + " aboard" + (lowFuel ? " - find a port to refuel" : "");
   return null;
 }
+/** THE PRESS OF A FAR RTH, KEPT (the 2026-11-13 review): the way home is planned for minutes and sent after, so what it
+ *  was asked against is taken at the press and asked again before anything is sent - a function answering null while
+ *  the press stands, or {by, say} when it does not: a Stop, Pause, Hold or E-STOP (routeStopGen); a new link (a Spawn, a
+ *  vessel or port switch, a reconnect: boot_id - she is not the boat it was planned for); home moved, or a ROC's now;
+ *  and another command - her behavior changed (a Go-To, an Upload, an RTH from another window, a passage sailed). The
+ *  guard's own rungs (a hold, the in-extremis escape) are waited through, as the boxed RTH's are - except for the end-of-
+ *  plan chain (`chained`), which never sends her home off the guard's own maneuver (CHAINABLE_BEHAVIORS). NOT SEEN: a new
+ *  command of the same behavior (a Go-To over a Go-To's hold) - the banner says Stop withdraws it. */
+function rthFence(chained){
+  const stop = routeStopGen, boot = S.boot_id, src = S.home_source, beh = S.behavior,
+        home = S.home ? {lat: S.home.lat, lon: S.home.lon} : null;
+  return () => routeStopGen !== stop ? {by: routeStopName || "a stop", say: (routeStopName || "a stop") + " was pressed"}
+    : S.boot_id !== boot ? {by: "a new link", say: "a new link came up (a Spawn, a vessel or port switch, a reconnect)"}
+    : !S.home || !home || S.home.lat !== home.lat || S.home.lon !== home.lon || S.home_source != src
+      ? {by: "home moved", say: "home was moved"}
+    : S.behavior !== beh && (chained || !["hold", "escape"].includes(S.behavior))
+      ? {by: "another command", say: "she was commanded elsewhere (" + (S.behavior || "a new plan") + " now)"}
+    : null;
+}
+/** THE END-OF-PLAN CHAIN, ASKED AGAIN: its RTH answered "busy" (one passage plan at a time - sailHomeFresh), so the one-shot
+ *  is re-armed RTH_BUSY_RETRY_MS on and the chain's own condition (onState) fires it again if it still holds. A run
+ *  commanded meanwhile re-arms the chain itself (rearmRthChain), and takes this retry with it (`rthChainBusyAt`). */
+let rthChainBusyAt = 0;
+function rthChainRetry(){
+  const at = rthChainBusyAt = Date.now();
+  setTimeout(() => { if(rthChainBusyAt === at){ rthChainBusyAt = 0; if(!rthChainFailed) rthChained = false; } }, RTH_BUSY_RETRY_MS);
+}
+/** THE WAY HOME BEING PLANNED: {lowFuel, how, done} - one at a time, and a far RTH asked meanwhile JOINS it (sailHomeFresh). */
+let homeFlight = null;
 /** RTH AS A PASSAGE HOME (doRTH, past RTH_MAX_M, no way home along a passage): planned from where she is, then sailed by
- *  sailHome. doRTH's answers, and "withdrawn" - a Stop, Pause, Hold or E-STOP pressed while it planned (routeStopGen), said;
- *  nothing sent. Until the first section is sent she carries on as she was: a survey, or her hold at the end of the plan. */
-async function sailHomeFresh(brk, far, missionAt, lowFuel){
-  if(sailBusy || passageBusy){
-    showBanner("RTH refused: home is " + fmtDist(far.m) + " away, and " + (sailBusy ? "a passage is sending a section"
-      : "a passage is being planned on the Passage tab") + " - press RTH again in a moment.");
-    return "refused";
+ *  sailHome. doRTH's answers, and: "withdrawn" - the press no longer stands (`how.fence`, rthFence: a stop, a new link,
+ *  home moved, another command; `how.by` names it), said, nothing sent; "busy" - a passage is being planned on the Passage
+ *  tab, or a section sent, and this one cannot start (said; doRTH and the monitor ask again); "overridden" - the low-fuel
+ *  monitor's, withdrawn because the energy override was turned on while it planned (as the boxed RTH's is). `how`:
+ *  {lowFuel, fence, lockWas, brkAgain}, and handed back on it `by` and `post` (sailHome). Until the first section is sent
+ *  she carries on as she was: a survey, or her hold at the end of the plan.
+ *  ⚠ ONE AT A TIME, AND JOINED (the 2026-11-13 review): a second far RTH - the chain at the survey's end while the monitor's
+ *  plans, the monitor's past FUEL_FLIGHT_MS, the button pressed twice - was "refused" because the first held passageBusy,
+ *  with a banner blaming the Passage tab: final for the chain and the monitor. It takes the first one's answer now, and the
+ *  monitor's rule goes with it (home at all, not with 20%) if the first one has not yet been judged. */
+async function sailHomeFresh(brk, far, missionAt, how){
+  how = how || {};
+  if(homeFlight){
+    const fl = homeFlight;
+    if(how.lowFuel && !fl.judged) fl.lowFuel = true;
+    flashNote("RTH: the way home is already being planned as a passage - it is sent when it is ready.");
+    const ans = await fl.done;
+    how.by = fl.how.by; how.post = fl.how.post;
+    // (judged by the 20% rule before the monitor joined, and refused by it: the monitor's own, by its rule)
+    if(how.lowFuel && ans === "refused" && !fl.lowFuelJudged && !fl.how.post) return sailHomeFresh(brk, far, missionAt, how);
+    return ans;
   }
-  const stopWas = routeStopGen;
+  if(sailBusy || passageBusy){
+    const what = sailBusy ? "a passage is sending a section" : "a passage is being planned on the Passage tab";
+    if(how.lowFuel || how.chained)
+      showBanner((how.lowFuel ? "Low-fuel" : "End of plan") + " RTH WAITING: home is " + fmtDist(far.m) + " away, and " + what
+        + " - the way home is planned as a passage, one at a time; it is asked again in " + Math.round(RTH_BUSY_RETRY_MS / 1000) + " s.");
+    else showBanner("RTH not started: home is " + fmtDist(far.m) + " away, and " + what + " - press RTH again in a moment.");
+    return "busy";
+  }
+  const fl = homeFlight = {lowFuel: !!how.lowFuel, how, judged: false, lowFuelJudged: false, done: null};
+  fl.done = sailHomeFreshRun(brk, far, missionAt, fl);
+  try{ return await fl.done; }
+  finally{ if(homeFlight === fl) homeFlight = null; }
+}
+/** sailHomeFresh's one plan, and its send. */
+async function sailHomeFreshRun(brk, far, missionAt, fl){
+  const how = fl.how, fence = how.fence || (() => null);
   const points = [{lat: asv.lat, lon: asv.lon, port: true, t: 0}, {lat: S.home.lat, lon: S.home.lon, port: true, t: 1}];
   passageBusy = true; passageStatus = "the way home: reading the chart along it…"; updateTransitPanel();
   showBanner("Planning the way home as a PASSAGE… home is " + fmtDist(far.m) + " away, past the " + fmtDist(RTH_MAX_M)
     + " a boxed return is planned for: the chart is read along the way home, the passage planned coarse and its two ends in "
-    + "detail, then sailed a section at a time. Until the first section is sent she carries on as she was.");
-  logClient("passage_rth", {state: "planning", from_here: true, km: +(far.m / 1000).toFixed(1), low_fuel: !!lowFuel});
+    + "detail, then sailed a section at a time. Until the first section is sent she carries on as she was - Stop withdraws it.");
+  logClient("passage_rth", {state: "planning", from_here: true, km: +(far.m / 1000).toFixed(1), low_fuel: fl.lowFuel});
   let out;
-  try{ out = await passagePlanFor(points, (t) => { passageStatus = "the way home: " + t; updateTransitPanel(); }, () => routeStopGen !== stopWas); }
+  try{ out = await passagePlanFor(points, (t) => { passageStatus = "the way home: " + t; updateTransitPanel(); }, () => !!fence()); }
   catch(e){ out = {error: (e && e.message) || String(e)}; }
   finally{ passageBusy = false; passageStatus = ""; updateTransitPanel(); render(); }
-  if(out.gone || routeStopGen !== stopWas){
-    showBanner("RTH withdrawn: " + (routeStopName || "a stop") + " was pressed while the way home was being planned. Nothing was sent.");
-    logClient("plan_withdrawn", {what: "RTH", by: routeStopName});
+  const g = fence() || (out.gone ? {by: routeStopName || "a stop", say: (routeStopName || "a stop") + " was pressed"} : null);
+  if(g){
+    how.by = g.by;
+    showBanner("RTH withdrawn: " + g.say + " while the way home was being planned. Nothing was sent.");
+    logClient("plan_withdrawn", {what: "RTH", by: g.by});
     return "withdrawn";
   }
-  const why = out.error || homePassageRefusal(out.plan, lowFuel);
+  // ⚠ THE ENERGY OVERRIDE TURNED ON WHILE IT PLANNED (the 2026-11-13 review): the boxed RTH withdraws the low-fuel monitor's
+  // then - under the override nothing is monitored, and the one reason it was planned for is gone (doRTH, 2026-11-10) - and
+  // this one, minutes in the planning, did not. Not where the press ended a lock transit (`lockWas`: she goes home).
+  if(how.lowFuel && !how.lockWas && fuelNow && fuelNow.override){
+    showBanner("Low-fuel RTH WITHDRAWN — the energy override was turned on while the way home was being planned, and under it "
+      + "nothing is monitored. She carries on as she was.");
+    logClient("plan_withdrawn", {what: "RTH", by: "the energy override"});
+    return "overridden";
+  }
+  fl.judged = true; fl.lowFuelJudged = fl.lowFuel;
+  const why = out.error || homePassageRefusal(out.plan, fl.lowFuel);
   if(why){
     showBanner("RTH refused: home is " + fmtDist(far.m) + " away, past the " + fmtDist(RTH_MAX_M) + " a boxed return is planned "
       + "for, and the way home could not be planned as a passage - " + why + ".");
     logClient("passage_rth", {ok: false, from_here: true, why: String(why).slice(0, 300)});
     return "refused";
   }
-  return sailHome(homePassageRecord(out.plan), brk, far, missionAt, {fromHere: true, lowFuel: !!lowFuel});
+  // THE SURVEY'S BREAK-OFF, TAKEN AGAIN AT THE SEND (the review): she surveyed on while it planned, and the one taken at the
+  // press would have Continue fly those minutes again. The press's is kept where none can be taken now (she holds).
+  const brkNow = brk && how.brkAgain ? (how.brkAgain() || brk) : brk;
+  how.fromHere = true;
+  return sailHome(homePassageRecord(out.plan, fl.lowFuel), brkNow, far, missionAt, how);
 }
 // ── THE WATER A SECTION IS PLANNED AT (2026-10-12, step 6 of the long-transit plan) ─────────────────────────────────
 // The guard's chart (nogo.ko) is built at the level at the BOAT, NOW (applyWaterOffset: the stations nearest her). A
@@ -20888,7 +21011,7 @@ function endAction(){
 // HOLDING - including the seconds doRTH spends routing - nothing is cleared, so the
 // one-shot still does its job.
 function rearmRthChain(s, st){
-  if(s.run==="running" && !(st||{}).holding){ rthChained=false; rthChainFailed=false; }
+  if(s.run==="running" && !(st||{}).holding){ rthChained=false; rthChainFailed=false; rthChainBusyAt=0; }   // (and a busy retry with it: rthChainRetry)
 }
 // THE ROUTED RE-APPROACH. A station-keeping vessel that has been set beyond the water the
 // console certified clear round its hold point takes the way off and says so
@@ -25662,7 +25785,7 @@ function onState(s){
   vesselFollows(s.vessel_id);                    // the hull the console flies, followed if switched elsewhere (2026-11-09)
   const freshRun = prevRun!=="running" && prevRun!=="paused" && s.run==="running";
   if(freshRun){ resetLineStats(); resetRunTimer();
-    if(s.behavior!=="rth"){ rthChained=false; rthChainFailed=false; } }  // fresh run re-arms the RTH chain (but not the chained RTH itself)
+    if(s.behavior!=="rth"){ rthChained=false; rthChainFailed=false; rthChainBusyAt=0; } }  // fresh run re-arms the RTH chain (but not the chained RTH itself)
   // A command given while the boat is already running never makes that transition, so the MOTION is taken from the
   // console's own counter (review #23). A page that opened mid-run adopts the number it finds without resetting.
   // A FRAME THAT STARTS A MOTION CANNOT ALSO END IT (2026-09-27): read here, asked by the end-of-plan

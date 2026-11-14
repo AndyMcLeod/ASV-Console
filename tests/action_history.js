@@ -404,10 +404,12 @@ const rowText = (r) => r.lastChild.textContent;
             && /if\(missionAt != null\) newMission\(missionAt, fresh \? "RTH as a passage home" : "RTH along the passage"\);/.test(sh)
             && sh.indexOf("newMission(") > sh.indexOf("if(r.error || r.soft)"),
       // (2026-11-13) the way home planned as a passage from where she is: the press's time handed through to sailHome
-      fresh: /const out = await sailHomeFresh\(brk, far, missionAt, !!why\);/.test(rth)
-             && /return sailHome\(homePassageRecord\(out\.plan\), brk, far, missionAt, \{fromHere: true, lowFuel: !!lowFuel\}\);/.test(grab("sailHomeFresh")),
+      // (the review, 2026-11-13: the press's fence and the monitor's rule handed through on `how`; the one plan in sailHomeFreshRun)
+      fresh: /const out = await sailHomeFresh\(brk, far, missionAt, how\);/.test(rth)
+             && /fl\.done = sailHomeFreshRun\(brk, far, missionAt, fl\);/.test(grab("sailHomeFresh"))
+             && /return sailHome\(homePassageRecord\(out\.plan, fl\.lowFuel\), brkNow, far, missionAt, how\);/.test(grab("sailHomeFreshRun")),
       rth: /const missionAt = chained \|\| \(opts && opts\.breakWhy\) \? null : Date\.now\(\);/.test(rth)
-           && /const out = await sailHome\(H, brk, far, missionAt\);/.test(rth) && atPress(rth),
+           && /const out = await sailHome\(H, brk, far, missionAt, \{fence: rthFence\(chained\)\}\);/.test(rth) && atPress(rth),
       press: atPress(go) && atPress(tr),
     };
     check("16. WHO STARTS ONE: Upload on both of its accepted paths but not Upload from here or the Continue past a hold; "

@@ -195,7 +195,8 @@ console.log("The passage, sailed:");
       "const newMission = (t0, what) => w.missions.push({t0, what});",
       "const showBanner = (t) => w.banners.push(t), flashNote = (t) => w.notes.push(t), render = () => {}, applyCmdState = () => {}, updateTransitPanel = () => {}, updateMissionCard = () => {};",
       // (asked counted, and refused when the world says so: the rejoin at a Go-To's end asks nothing, 7d)
-      "const guiConfirm = async () => { w.confirms = (w.confirms || 0) + 1; return w.confirm !== false; }, ensureNogoCovers = async () => true, holdOpts = () => ({}), transitStandoffM = () => 20;",
+      // (`duringCover`: run while a section's chart is read - a Stop pressed there, 17l)
+      "const guiConfirm = async () => { w.confirms = (w.confirms || 0) + 1; return w.confirm !== false; }, ensureNogoCovers = async () => { if (w.duringCover) w.duringCover(w, api); return true; }, holdOpts = () => ({}), transitStandoffM = () => 20;",
       "const planInsideChart = async (pts, opts, plan) => { if (w.duringPlan) w.duringPlan(w, api); return plan(); };",
       "const holdTarget = (to) => ({to, heldOff: null, holdClear: 40});",
       "const holdClearWithContacts = (p, m) => m, routeTooLong = () => false, solveCoastFor = () => ({groundM: 55});",
@@ -240,6 +241,10 @@ console.log("The passage, sailed:");
       // (none: refused, as no chart in this world), `duringHomePlan` run while it plans (a Stop pressed, 17d) - and a Stop
       // is the page's routeStopGen; the Passage tab's busy flag and its status line are the page's own names
       "let passageBusy = !!w.passageBusy, passageStatus = '', routeStopGen = 0, routeStopName = null;",
+      // (the review, 2026-11-13: one way home planned at a time and joined; the chain asked again after "busy" - its timer the
+      // world's `later`, run by the check; the monitor's rule at the send; the press kept)
+      "let homeFlight = null, rthChainBusyAt = 0, rthChained = !!w.rthChained;", decl("RTH_BUSY_RETRY_MS"),
+      "const setTimeout = (fn, ms) => { if (ms !== RTH_BUSY_RETRY_MS) return globalThis.setTimeout(fn, ms); w.later = (w.later || []).concat([{fn, ms}]); };",
       "const passagePlanFor = async (points, say, gone) => { w.homeAsked = (w.homeAsked || []).concat([{points, busy: passageBusy}]); say('reading');"
         + " if (w.duringHomePlan) w.duringHomePlan(w, api); if (gone()) return {gone: true};"
         + " return w.homePlan ? (typeof w.homePlan === 'function' ? w.homePlan(points) : {plan: w.homePlan}) : {error: 'no chart in this world'}; };",
@@ -247,11 +252,11 @@ console.log("The passage, sailed:");
        "sailPassage", "sailAppend", "sailAtEnd", "sailBreakOff", "sailRejoinHere", "sailRejoinTick", "passageTick", "sailRestM",
        "sailFuelShort", "continueRefusal", "continuePassage", "continueSend", "divertPassage", "dropPassage", "renderPassageControls", "sailLine", "sailOwnsHold", "sailArrival", "sailArrived", "drawSail",
        "rthTooFar", "doRTH", "passageHome", "homeRecord", "sailHome",
-       "passageHomeRefusal", "homePassageRecord", "homePassageRefusal", "sailHomeFresh"].map(grab).join("\n"),
+       "passageHomeRefusal", "homePassageRecord", "homePassageRefusal", "sailHomeFresh", "sailHomeFreshRun", "rthFence", "rthChainRetry"].map(grab).join("\n"),
       "const api = {sailRecord, sailRefusal, sectionRest, sailPassage, passageTick, sailAtEnd, continuePassage, continueRefusal, divertPassage,",
       "  dropPassage, renderPassageControls, sailOwnsHold, sailLine, drawSail, doRTH, homeRecord, rthPending, chainFires,",
       "  passageHomeRefusal, homePassageRecord, stop: (name) => { routeStopGen++; routeStopName = name; },",
-      "  st: () => ({mission, runRoute, planIntent, planGen, passage, sailBusy, passageBusy, rthChainFailed}), set: (k, v) => { eval(k + ' = v'); }};",
+      "  st: () => ({mission, runRoute, planIntent, planGen, passage, sailBusy, passageBusy, rthChainFailed, rthChained, rthChainBusyAt, homeFlight}), set: (k, v) => { eval(k + ' = v'); }};",
       "return api;",
     ].join("\n");
     w.dom = {}; w.F = F; w.C = C; w.model = model; w.distTo = distTo;
@@ -1404,12 +1409,12 @@ console.log("The passage, sailed:");
   // 17g. THE WIRING: one answer to "can a passage home be planned from far" for doRTH, the monitor's range and its water
   // distance home; one planner for Plan passage and the way home; Plan passage's own wording kept
   const wiring17 = {
-    rth: /const no = passageHomeRefusal\(\);/.test(grab("doRTH")) && /await sailHomeFresh\(brk, far, missionAt, !!why\)/.test(grab("doRTH")),
+    rth: /const no = passageHomeRefusal\(\);/.test(grab("doRTH")) && /await sailHomeFresh\(brk, far, missionAt, how\)/.test(grab("doRTH")),
     watch: /passageHomeRefusal\(\)/.test(grab("fuelWatchAt")),
     coarse: /distTo\(here, S\.home\) > RTH_MAX_M && passageHomeRefusal\(\)/.test(grab("coarseHomeTick")),
     projection: /passageHomeRefusal\(\) \? rthTooFar\(end, S\.home\)/.test(grab("fuelProjection")),
-    planner: /await passagePlanFor\(points,/.test(grab("planPassageNow")) && /await passagePlanFor\(points,/.test(grab("sailHomeFresh")),
-    busy: /passageBusy = true;/.test(grab("sailHomeFresh")) && /finally\{ passageBusy = false;/.test(grab("sailHomeFresh")),
+    planner: /await passagePlanFor\(points,/.test(grab("planPassageNow")) && /await passagePlanFor\(points,/.test(grab("sailHomeFreshRun")),
+    busy: /passageBusy = true;/.test(grab("sailHomeFreshRun")) && /finally\{ passageBusy = false;/.test(grab("sailHomeFreshRun")),
     sailed: /PASSAGE_ONGOING\.includes\(P\.state\) && !sailArrived\(P\)/.test(grab("passageHomeRefusal")),
   };
   check("17g. THE WIRING: doRTH, the monitor's range, its coarse water distance home and the card's charge from the plan's end "
@@ -1417,6 +1422,165 @@ console.log("The passage, sailed:");
         + "a passage being sailed (and not arrived) is the reason",
         () => Object.values(wiring17).every(Boolean),
         () => Object.entries(wiring17).filter(([, v]) => !v).map(([k]) => k).join(", ") || "all wired");
+
+  // ── THE REVIEW OF 17 (2026-11-13): each of these was wrong in the first build ───────────────────────────────────────
+  const LOWF = "⚠ LOW FUEL, at the RTH point (60 L aboard)";
+  const lowWorld17 = (o) => farWorld17(Object.assign({ homePlan: homePlanFor17({ fuel: under17 }),
+    S: { armed: true, estop: false, run: "running", behavior: "survey", boot_id: "b1", status: { holding: false, fuel_l: 60 }, wp_total: 9, home: { ...HERE }, home_source: null } }, o || {}));
+  const said = (w) => w.banners.join(" | ");
+
+  // 17h. BUSY IS ASKED AGAIN, NOT REFUSED: the Passage tab planning a passage (the planner answers one at a time). The first
+  // build said "refused" - the chain marked refused for good (she held, the card said so), the monitor's latch kept
+  const ch17h = farWorld17({ passageBusy: true, rthChained: true,
+    S: { armed: true, estop: false, run: "running", status: { holding: true, fuel_l: 200 }, wp_total: 9, home: { ...HERE }, home_source: null } });
+  const outCh17h = await ch17h.api.doRTH({ chained: true });
+  const later17h = (ch17h.later || []).slice(), st17h0 = ch17h.api.st();
+  later17h.forEach((t) => t.fn());
+  const re17h = ch17h.api.st().rthChained;
+  const sup17h = farWorld17({ passageBusy: true, rthChained: true, S: ch17h.S });        // a run commanded meanwhile: its retry superseded
+  await sup17h.api.doRTH({ chained: true });
+  sup17h.api.set("rthChainBusyAt", 0); (sup17h.later || []).forEach((t) => t.fn());
+  const mon17h = lowWorld17({ passageBusy: true }), outMon17h = await mon17h.api.doRTH({ why: LOWF, breakWhy: "fuel" });
+  const op17h = farWorld17({ passageBusy: true }), outOp17h = await op17h.api.doRTH({});
+  check("17h. BUSY - THE PASSAGE TAB PLANNING ONE - IS ASKED AGAIN, NOT REFUSED: the end-of-plan chain NOT marked refused, its "
+        + "one-shot re-armed RTH_BUSY_RETRY_MS on (and not when a run commanded meanwhile has taken the retry); the low-fuel "
+        + "monitor told BUSY (fuelTick asks again); the operator told to press again; nothing planned or sent, each said",
+        () => outCh17h === undefined && ch17h.cmds.length === 0 && !st17h0.rthChainFailed && st17h0.rthChained === true
+              && later17h.length === 1 && later17h[0].ms === 15000 && re17h === false
+              && /^End of plan RTH WAITING: home is 55\.0 km away, and a passage is being planned on the Passage tab .* asked again in 15 s\./.test(said(ch17h))
+              && sup17h.api.st().rthChained === true
+              && outMon17h && outMon17h.notTaken && outMon17h.notTaken.busy === true && !outMon17h.notTaken.refused && mon17h.cmds.length === 0
+              && /^Low-fuel RTH WAITING/.test(said(mon17h))
+              && outOp17h && outOp17h.notTaken && outOp17h.notTaken.busy === true && /^RTH not started: .* press RTH again in a moment\./.test(said(op17h))
+              && [ch17h, mon17h, op17h].every((w) => !(w.homeAsked || []).length),
+        () => JSON.stringify({ chain: [outCh17h, st17h0.rthChainFailed, later17h.map((t) => t.ms), re17h, sup17h.api.st().rthChained],
+                               mon: outMon17h, op: outOp17h, said: [said(ch17h), said(mon17h), said(op17h)].map((t) => t.slice(0, 90)) }));
+
+  // 17i. ONE WAY HOME AT A TIME, JOINED: the operator's RTH planning (55 km, too little fuel for 20% on arrival) and the low-
+  // fuel monitor's asked meanwhile - the first build refused the second ("a passage is being planned on the Passage tab")
+  // and the first was refused by the 20% rule: nothing sent, the monitor latched. Now ONE plan, judged by the monitor's rule
+  let open17i; const gate17i = new Promise((r) => { open17i = r; });
+  const J17 = lowWorld17({ homePlan: (pts) => gate17i.then(() => homePlanFor17({ fuel: under17 })(pts)) });
+  const first17i = J17.api.doRTH({});
+  await settle();
+  const busy17i = !!J17.api.st().homeFlight;
+  const second17i = J17.api.doRTH({ why: LOWF, breakWhy: "fuel" });
+  await settle();
+  open17i();
+  const [o1_17i, o2_17i] = await Promise.all([first17i, second17i]);
+  const R17i = J17.api.st().mission.passage;
+  check("17i. ONE WAY HOME AT A TIME, JOINED: a far RTH asked while one is being planned takes ITS answer - one plan, one "
+        + "section sent - and the low-fuel monitor's rule goes with it (home at all, not with 20%), the record keeping it",
+        () => busy17i && (J17.homeAsked || []).length === 1 && J17.cmds.length === 1 && J17.cmds[0][0] === "/api/cmd/rth"
+              && o1_17i === undefined && o2_17i === undefined && R17i && R17i.kind === "rth" && R17i.lowFuel === true
+              && J17.notes.some((t) => /already being planned as a passage/.test(t)) && !J17.api.st().homeFlight,
+        () => JSON.stringify({ busy: busy17i, asked: (J17.homeAsked || []).length, cmds: J17.cmds.map((c) => c[0]), o1_17i, o2_17i,
+                               low: R17i && R17i.lowFuel, said: said(J17).slice(-200) }));
+
+  // 17j. THE LOW-FUEL WAY HOME KEEPS ITS RULE: Continue after a Stop, and the RTH button along it, were held to 20% and
+  // refused on the fuel the monitor sent her home on; and the operator's own way home keeps the 20% rule
+  const rec17j = W17c.api.st().mission.passage;
+  const stopped = (rec, fuel) => world({ mission: { passage: { ...rec, state: "stopped" } }, asv: { ...HER17 },
+    S: { armed: true, estop: false, run: "idle", status: { holding: true, fuel_l: fuel }, wp_total: 0, home: { ...HERE }, home_source: null } });
+  const cont17j = stopped(rec17j, 60).api.continueRefusal(stopped(rec17j, 60).api.st().mission.passage);
+  const cont20 = (() => { const w = stopped({ ...rec17j, lowFuel: undefined }, 60); return w.api.continueRefusal(w.api.st().mission.passage); })();
+  const dry17j = (() => { const w = stopped(rec17j, 8); return w.api.continueRefusal(w.api.st().mission.passage); })();
+  const btn17j = world({ mission: { passage: { ...rec17j, state: "stopped" } }, asv: { ...HER17 },
+    S: { armed: true, estop: false, run: "idle", status: { holding: true, fuel_l: 60 }, wp_total: 0, home: { ...HERE }, home_source: null } });
+  const hr17j = btn17j.api.homeRecord();
+  await btn17j.api.doRTH({});
+  check("17j. THE LOW-FUEL WAY HOME KEEPS ITS RULE (the record's lowFuel): Continue after a Stop goes on 60 L (held to 20% it is "
+        + "refused - the operator's own way home), the RTH button's way home along it carries the rule and is SENT; on too little "
+        + "to get there at all Continue is refused, said 'just to get there'",
+        () => rec17j.lowFuel === true && cont17j === null && /^refuel first: 60\.0 L aboard, and home is .* to arrive with 20% of the tank$/.test(cont20 || "")
+              && /just to get there$/.test(dry17j || "") && hr17j && hr17j.lowFuel === true
+              && btn17j.cmds.length === 1 && btn17j.cmds[0][0] === "/api/cmd/rth" && btn17j.api.st().mission.passage.lowFuel === true,
+        () => JSON.stringify({ low: rec17j.lowFuel, cont17j, cont20, dry17j, hr: hr17j && hr17j.lowFuel, btn: btn17j.cmds.map((c) => c[0]), said: said(btn17j).slice(-160) }));
+
+  // 17k. THE ENERGY OVERRIDE TURNED ON WHILE IT PLANNED: the boxed RTH withdraws the monitor's then (2026-11-10); this one sent it
+  const ov17k = lowWorld17({ duringHomePlan: (w, api) => api.set("fuelNow", { override: true }) });
+  const outOv17k = await ov17k.api.doRTH({ why: LOWF, breakWhy: "fuel" });
+  const opOv17k = farWorld17({ duringHomePlan: (w, api) => api.set("fuelNow", { override: true }) });
+  await opOv17k.api.doRTH({});
+  check("17k. THE ENERGY OVERRIDE TURNED ON WHILE THE MONITOR'S WAY HOME PLANNED: withdrawn - nothing sent, said, an answer (the "
+        + "monitor does not ask again: under the override nothing is monitored); the operator's own RTH is sent",
+        () => ov17k.cmds.length === 0 && outOv17k === undefined && /Low-fuel RTH WITHDRAWN — the energy override was turned on while the way home was being planned/.test(said(ov17k))
+              && !ov17k.api.st().mission.passage && opOv17k.cmds.length === 1,
+        () => JSON.stringify({ cmds: ov17k.cmds.length, out: outOv17k, said: said(ov17k).slice(-160), op: opOv17k.cmds.length }));
+
+  // 17l. THE PRESS, KEPT: home moved, a new link, another command - while it planned; a Stop while the first section's chart
+  // was read (before the route's own planning took its mark); the guard's hold waited through - but not by the chain
+  const fence17 = (o, during, opts) => { const w = lowWorld17(Object.assign({ duringHomePlan: during }, o)); return w.api.doRTH(opts || {}).then((out) => ({ w, out })); };
+  const hm = await fence17({ homePlan: homePlanFor17() }, (w) => { w.S.home = east(HERE, 800); }, { why: LOWF, breakWhy: "fuel" });
+  const bt = await fence17({ homePlan: homePlanFor17() }, (w) => { w.S.boot_id = "b2"; }, { why: LOWF, breakWhy: "fuel" });
+  const cm = await fence17({ homePlan: homePlanFor17() }, (w) => { w.S.behavior = "goto"; }, { why: LOWF, breakWhy: "fuel" });
+  const gd = await fence17({}, (w) => { w.S.behavior = "hold"; }, { why: LOWF, breakWhy: "fuel" });
+  const cg = await fence17({ homePlan: homePlanFor17(), S: { armed: true, estop: false, run: "running", behavior: "survey", boot_id: "b1",
+    status: { holding: true, fuel_l: 200 }, wp_total: 9, home: { ...HERE }, home_source: null } }, (w) => { w.S.behavior = "hold"; }, { chained: true });
+  const sc = (() => { const w = lowWorld17({ duringCover: (w2, api) => api.stop("Stop") }); return w.api.doRTH({ why: LOWF, breakWhy: "fuel" }).then((out) => ({ w, out })); })();
+  const sc17 = await sc;
+  // (and one pressed while the route itself planned - after the chart read: only the check at the post sees it here)
+  const sp17 = await (() => { const w = lowWorld17({ duringPlan: (w2, api) => api.stop("Stop") }); return w.api.doRTH({ why: LOWF, breakWhy: "fuel" }).then((out) => ({ w, out })); })();
+  const recEnd = (() => { const w = farWorld17(); const p = homePlanFor17()([{ ...HER17, port: true, t: 0 }, { ...east(HERE, -500), port: true, t: 1 }]).plan;
+    return w.api.homePassageRecord(p).home; })();
+  check("17l. THE PRESS, KEPT: home moved, a new link, she commanded elsewhere while it planned - WITHDRAWN, said, nothing sent, "
+        + "named back (the monitor stands on another command, as on a Stop); a Stop pressed while the first section's chart "
+        + "was read - withdrawn before its route is planned, and one pressed while that route planned - withdrawn at the send; the guard's hold waited through (sent) but the chain never sends her home off it; the record's "
+        + "home the one it was planned to",
+        () => [hm, bt, cm, cg].every((x) => x.w.cmds.length === 0 && /RTH withdrawn: /.test(said(x.w)))
+              && /RTH withdrawn: home was moved while the way home was being planned\. Nothing was sent\./.test(said(hm.w))
+              && hm.out.notTaken.withdrawn && hm.out.notTaken.by === "home moved"
+              && /a new link came up/.test(said(bt.w)) && bt.out.notTaken.by === "a new link"
+              && /she was commanded elsewhere \(goto now\)/.test(said(cm.w)) && cm.out.notTaken.by === "another command"
+              && gd.w.cmds.length === 1 && cg.w.api.st().rthChainFailed === true
+              && sc17.w.cmds.length === 0 && sc17.out.notTaken.withdrawn && sc17.out.notTaken.by === "Stop"
+              && sc17.w.planned.length === 0 && sp17.w.planned.length === 1     // withdrawn before its route was planned
+              && sp17.w.cmds.length === 0 && sp17.out && sp17.out.notTaken && sp17.out.notTaken.by === "Stop"
+              && /RTH withdrawn: Stop was pressed while the way home was being routed/.test(said(sc17.w))
+              && distTo(recEnd, east(HERE, -500)) < 1,
+        () => JSON.stringify({ hm: [hm.w.cmds.length, hm.out], bt: bt.out, cm: cm.out, gd: gd.w.cmds.length, cg: [cg.w.cmds.length, cg.w.api.st().rthChainFailed],
+                               sc: [sc17.w.cmds.length, sc17.out], recEnd, said: said(sc17.w).slice(-160) }));
+
+  // 17m. THE CONSOLE'S OWN ANSWER for the monitor: refused because she was disarmed as the console saw it - the first build
+  // handed back the page's frame-old state (armed), so the monitor kept its latch; and a chained withdrawal is recorded
+  const cs17 = lowWorld17({ post: { ok: false, refused: true, status: 409, error: "ARM before commanding the boat", state: { armed: false, estop: false } } });
+  const outCs17 = await cs17.api.doRTH({ why: LOWF, breakWhy: "fuel" });
+  const cw17 = farWorld17({ duringHomePlan: (w, api) => api.stop("Stop"),
+    S: { armed: true, estop: false, run: "running", status: { holding: true, fuel_l: 200 }, wp_total: 9, home: { ...HERE }, home_source: null } });
+  await cw17.api.doRTH({ chained: true });
+  check("17m. THE CONSOLE'S OWN ANSWER handed back to the monitor (its state: disarmed - fuelTick asks again the frame she can be "
+        + "sent); and the end-of-plan chain's way home withdrawn by a Stop is recorded, as the boxed RTH's is",
+        () => cs17.cmds.length === 1 && outCs17 && outCs17.notTaken && outCs17.notTaken.refused && outCs17.notTaken.state && outCs17.notTaken.state.armed === false
+              && cw17.cmds.length === 0 && cw17.api.st().rthChainFailed === true,
+        () => JSON.stringify({ out: outCs17, chain: cw17.api.st().rthChainFailed }));
+
+  // 17n. THE SURVEY'S BREAK-OFF TAKEN AGAIN AT THE SEND: she surveyed on while it planned; the first build banked where she was
+  // at the press, so Continue would fly those minutes again. Where none can be taken at the send (she holds), the press's
+  const bk1 = lowWorld17({ brk: brk17, duringHomePlan: (w) => { w.brk = { ...brk17, id: "B2" }; } });
+  await bk1.api.doRTH({ why: LOWF, breakWhy: "fuel" });
+  const bk2 = lowWorld17({ brk: brk17, duringHomePlan: (w) => { w.brk = null; } });
+  await bk2.api.doRTH({ why: LOWF, breakWhy: "fuel" });
+  check("17n. THE SURVEY'S BREAK-OFF, TAKEN AGAIN AT THE SEND (she surveyed on while it planned) - the press's where none can be "
+        + "taken then",
+        () => bk1.cmds.length === 1 && bk1.banked.length === 1 && bk1.banked[0].id === "B2" && bk2.banked.length === 1 && bk2.banked[0].id === "B1",
+        () => JSON.stringify({ b1: bk1.banked.map((b) => b.id), b2: bk2.banked.map((b) => b.id) }));
+
+  // 17o. THE WIRING of the review: the monitor's busy answer (fuelTick); the chain's busy retry cleared by a run commanded;
+  // Plan passage says why it does nothing; the planner asks `gone` while the chart is read, not only after it
+  const ft = grab("fuelTick"), pf = grab("passagePlanFor");
+  const wiring17o = {
+    monitor: /if\(nt && nt\.busy && fuelBoot === bootAt\)\{ fuelRth\.acted = false; fuelRetryAt = Date\.now\(\) \+ RTH_BUSY_RETRY_MS; \}/.test(ft)
+             && /\|\| Date\.now\(\) < fuelRetryAt;/.test(ft),
+    rearm: /rthChained=false; rthChainFailed=false; rthChainBusyAt=0;/.test(grab("rearmRthChain"))
+           && /if\(s\.behavior!=="rth"\)\{ rthChained=false; rthChainFailed=false; rthChainBusyAt=0; \}/.test(H),
+    planNow: /if\(passageBusy\)\{ flashNote\("Plan passage: "/.test(grab("planPassageNow")),
+    corridor: pf.indexOf("if(gone()) return {gone: true};") > 0 && pf.indexOf("if(gone()) return {gone: true};") < pf.indexOf("st = await getCorridor(st.id);"),
+  };
+  check("17o. THE WIRING of the review: the monitor asks a busy RTH again after RTH_BUSY_RETRY_MS (fuelTick); a run commanded "
+        + "takes the chain's busy retry with it; Plan passage says why it does nothing; the planner asks `gone` while the chart "
+        + "is read",
+        () => Object.values(wiring17o).every(Boolean),
+        () => Object.entries(wiring17o).filter(([, v]) => !v).map(([k]) => k).join(", ") || "all wired");
 
   console.log("\n" + (fails ? fails + " CHECK(S) FAILED (" + ran + " ran)" : "all checks passed (" + ran + ")"));
   process.exit(fails ? 1 : 0);

@@ -452,6 +452,7 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
   // (its finally run before the next frame, as every check before 8m assumes) unless the world holds it IN FLIGHT
   // (`hang`), when the check lands it itself (w.land()).
   const FLIGHT_MS = +(/^const FUEL_FLIGHT_MS = (\d+);/m.exec(H) || [])[1];
+  const BUSY_MS = +(/^const RTH_BUSY_RETRY_MS = (\d+);/m.exec(H) || [])[1];     // (8w)
   const world = (mdl) => {
     const m0 = mdl || model;
     // `up` is the banner standing on the page (showBanner puts one up; the page's takeDownBanner lifts it by its text)
@@ -459,9 +460,9 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
                 fields: 0, clock: 1000000, hang: false, land: null, up: null };
     const mk = new Function("S", "asv0", "fuelModel", "energyLevel", "fuelHomeNeed", "rthTooFar", "fuelWatch", "rthLevel", "rthDecision",
       "homeFieldTick", "coarseHomeTick", "supervising", "showBanner", "logClient", "doRTH", "fuelSay", "fuelFmt", "fmtDist", "FUEL_AT_HOME_M",
-      "FUEL_RESERVE_FRAC", "RTH_MAX_M", "fmtVol", "FUEL_FLIGHT_MS", "Date", "takeDownBanner", "passageHomeRefusal",
+      "FUEL_RESERVE_FRAC", "RTH_MAX_M", "fmtVol", "FUEL_FLIGHT_MS", "Date", "takeDownBanner", "passageHomeRefusal", "RTH_BUSY_RETRY_MS",
       // `asv` a binding the world can set (8t: a page's first frame, before it has a position of its own)
-      "let asv = asv0;\nlet fuelRth = {acted: false, alerted: false};\nlet fuelNow = null, fuelErrSaid = false, fuelFlight = 0, fuelBoot;\n" + grab("fuelTick")
+      "let asv = asv0;\nlet fuelRth = {acted: false, alerted: false};\nlet fuelNow = null, fuelErrSaid = false, fuelFlight = 0, fuelBoot, fuelRetryAt = 0;\n" + grab("fuelTick")
       + "\n" + grab("fuelWatchAt") + "\n" + grab("fuelOutOfRangeSay") + "\n" + grab("fuelReserveOf") + "\n" + grab("homeHowSay")
       + "\nreturn {tick: fuelTick, latch: () => ({...fuelRth}), now: () => fuelNow, flight: () => fuelFlight, setAsv: (v) => { asv = v; }};");
     // (2026-11-10 review) .then is handed `w.outcome` when it settles - what became of the post, as doRTH answers it
@@ -479,7 +480,8 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
       FLIGHT_MS, { now: () => w.clock }, (re) => { if (w.up != null && re.test(w.up)) w.up = null; },
       // (2026-11-13) why no passage home can be planned past RTH_MAX_M - a reason unless the world says none (8u), so `far`
       // is out of range as every check before 8u has it
-      () => (w.passageNo === undefined ? "a passage is being sailed - it goes home along itself, or not at all" : w.passageNo));
+      () => (w.passageNo === undefined ? "a passage is being sailed - it goes home along itself, or not at all" : w.passageNo),
+      BUSY_MS);
     w.frame = (fuel, o) => w.api.tick({ armed: true, estop: false, behavior: "survey",
       status: m0.kind === "fuel" ? { fuel_l: fuel } : { battery_v: fuel }, ...(o || {}) });
     return w;
@@ -807,6 +809,21 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
               && Ps.sent.length === 0 && Ps.banners.length === 1 && /AT THE 20% RESERVE/.test(Ps.banners[0])
               && /50\.5 km away, further than the 50\.0 km the console will route a return in one box, and the way home cannot be planned as a passage: a passage is being sailed/.test(Ps.banners[0]),
         () => JSON.stringify({ sent: Pv.sent.length, w: pvW && [pvW.mode, pvW.farM], sailed: [Ps.sent.length, (Ps.banners[0] || "").slice(0, 220)] }));
+  // 8w (2026-11-13 review). BUSY IS ASKED AGAIN: past RTH_MAX_M the way home is planned as a passage, one at a time - while
+  // the Passage tab plans one, doRTH answers BUSY (passage_sail 17h). It was a refusal while armed: the latch kept, never
+  // sent. Now: nothing sent for RTH_BUSY_RETRY_MS (no banner storm every frame), then asked again; a refusal still stands.
+  const Bz = world(); Bz.hang = true; Bz.S.armed = true; Bz.frame(60);
+  Bz.outcome = notTaken({ busy: true, sent: true }); Bz.land();
+  Bz.frame(59.9); const bzHeld = Bz.sent.length === 1;
+  Bz.clock += BUSY_MS - 1000; Bz.frame(59.8); const bzStill = Bz.sent.length === 1;
+  Bz.clock += 2000; Bz.frame(59.7);
+  const Bq = world(); Bq.hang = true; Bq.S.armed = true; Bq.frame(60);
+  Bq.outcome = notTaken({ refused: true, state: { armed: true, estop: false } }); Bq.land();
+  Bq.clock += BUSY_MS + 1000; Bq.frame(59.9);
+  check("8w. A FAR RTH ANSWERED BUSY (one passage plan at a time) IS ASKED AGAIN: nothing more sent for RTH_BUSY_RETRY_MS ("
+        + (BUSY_MS / 1000) + " s), then sent again; a refusal while armed still stands (not sent again)",
+        () => BUSY_MS >= 5000 && bzHeld && bzStill && Bz.sent.length === 2 && /LOW FUEL/.test(Bz.sent[1].why) && Bq.sent.length === 1,
+        () => JSON.stringify({ busyMs: BUSY_MS, held: bzHeld, still: bzStill, sent: Bz.sent.length, refused: Bq.sent.length }));
   check("8m. ONE LOW-FUEL RTH IN FLIGHT: while the RTH she was sent is still being routed, a latch re-armed and a point "
         + "reached again send NO second one (no banner, no log either) - it sent 20 in 26 s on 2026-11-08. The crossing it "
         + "holds back is not counted as answered: when the one in flight settles WITHOUT her going home (refused, lost) the "
