@@ -236,13 +236,22 @@ console.log("The passage, sailed:");
       "const passageJoinVia = (line, ends, frame, ko, std) => { w.joins = (w.joins || []).concat([{line, ends, frame, ko, std}]); return w.joinVia === undefined ? null : w.joinVia; };",
       decl("PASSAGE_RETRY_MS"), decl("PASSAGE_END_M"), decl("PASSAGE_HOLD_NEAR_M"), decl("PASSAGE_ONGOING"),
       "let sailBusy = false, sailTriedAt = 0, sailSaid = null;",
+      // THE PASSAGE HOME FROM HERE (17, 2026-11-13): Plan passage's planner is the world's - `homePlan(points)` its answer
+      // (none: refused, as no chart in this world), `duringHomePlan` run while it plans (a Stop pressed, 17d) - and a Stop
+      // is the page's routeStopGen; the Passage tab's busy flag and its status line are the page's own names
+      "let passageBusy = !!w.passageBusy, passageStatus = '', routeStopGen = 0, routeStopName = null;",
+      "const passagePlanFor = async (points, say, gone) => { w.homeAsked = (w.homeAsked || []).concat([{points, busy: passageBusy}]); say('reading');"
+        + " if (w.duringHomePlan) w.duringHomePlan(w, api); if (gone()) return {gone: true};"
+        + " return w.homePlan ? (typeof w.homePlan === 'function' ? w.homePlan(points) : {plan: w.homePlan}) : {error: 'no chart in this world'}; };",
       ["passageEndsSay", "sailRecord", "sailPortName", "sailRefusal", "sailSegM", "sectionRest", "sailOwns", "sailGuardQuiet", "sailLeftM", "sailSend",
        "sailPassage", "sailAppend", "sailAtEnd", "sailBreakOff", "sailRejoinHere", "sailRejoinTick", "passageTick", "sailRestM",
        "sailFuelShort", "continueRefusal", "continuePassage", "continueSend", "divertPassage", "dropPassage", "renderPassageControls", "sailLine", "sailOwnsHold", "sailArrival", "sailArrived", "drawSail",
-       "rthTooFar", "doRTH", "passageHome", "homeRecord", "sailHome"].map(grab).join("\n"),
+       "rthTooFar", "doRTH", "passageHome", "homeRecord", "sailHome",
+       "passageHomeRefusal", "homePassageRecord", "homePassageRefusal", "sailHomeFresh"].map(grab).join("\n"),
       "const api = {sailRecord, sailRefusal, sectionRest, sailPassage, passageTick, sailAtEnd, continuePassage, continueRefusal, divertPassage,",
       "  dropPassage, renderPassageControls, sailOwnsHold, sailLine, drawSail, doRTH, homeRecord, rthPending, chainFires,",
-      "  st: () => ({mission, runRoute, planIntent, planGen, passage, sailBusy, rthChainFailed}), set: (k, v) => { eval(k + ' = v'); }};",
+      "  passageHomeRefusal, homePassageRecord, stop: (name) => { routeStopGen++; routeStopName = name; },",
+      "  st: () => ({mission, runRoute, planIntent, planGen, passage, sailBusy, passageBusy, rthChainFailed}), set: (k, v) => { eval(k + ' = v'); }};",
       "return api;",
     ].join("\n");
     w.dom = {}; w.F = F; w.C = C; w.model = model; w.distTo = distTo;
@@ -929,15 +938,23 @@ console.log("The passage, sailed:");
   r13.ends.S.home = north(HERE, 9000); await r13.ends.api.doRTH({});
   r13.roc.S.home_source = "roc-1"; await r13.roc.api.doRTH({});
   const refusal = (w) => w.banners.find((b) => /^RTH refused: home is/.test(b)) || "";
-  check("13b. NOT ALONG THE PASSAGE, refused as before - in words where it is the reason: the LOW-FUEL monitor (its RTH "
-        + "is for home in range); no passage - for the END-OF-PLAN chain too, its refusal recorded (16 sends it home along "
-        + "one); home at neither end of it; a ROC's home (it moves); she far off the passage",
+  const asked13 = (w) => (w.homeAsked || []).length;
+  const sailed13 = /a passage is being sailed - it goes home along itself, or not at all/;
+  check("13b. NOT ALONG THE PASSAGE, refused - in words where it is the reason: the LOW-FUEL monitor, and a ROC's home, home "
+        + "at neither end of it or she far off it while the passage is being sailed (no passage home is planned from there: "
+        + "it goes home along itself or not at all); with NO PASSAGE on the plan the way home is planned as a passage from "
+        + "her position (17) - here with no chart to plan it on, refused in those words, the END-OF-PLAN chain's recorded",
         () => Object.values(r13).every((w) => w.cmds.length === 0 && w.api.st().mission.passage === w.mission.passage)
-              && r13.chainedNone.api.st().rthChainFailed && /certify a return\. Set Home/.test(refusal(r13.chainedNone))
-              && !/along the passage/.test(refusal(r13.fuelSent)) && !r13.fuelSent.api.st().rthChainFailed
-              && /certify a return\. Set Home/.test(refusal(r13.none)) && /home is at neither end of it/.test(refusal(r13.ends))
-              && /home is the ROC's/.test(refusal(r13.roc)) && /she is 25\.0 km off it/.test(refusal(r13.off)),
-        () => JSON.stringify(Object.fromEntries(Object.entries(r13).map(([k, w]) => [k, refusal(w).slice(30, 150)]))));
+              && r13.chainedNone.api.st().rthChainFailed && /could not be planned as a passage - no chart in this world\./.test(refusal(r13.chainedNone))
+              && !r13.none.api.st().rthChainFailed && /could not be planned as a passage - no chart in this world\./.test(refusal(r13.none))
+              && asked13(r13.none) === 1 && asked13(r13.chainedNone) === 1
+              && distTo(r13.none.homeAsked[0].points[0], east(HERE, 55000)) < 1 && distTo(r13.none.homeAsked[0].points[1], HERE) < 1
+              && r13.none.homeAsked[0].points.every((p) => p.port) && r13.none.homeAsked[0].busy === true && !r13.none.api.st().passageBusy
+              && !/along the passage/.test(refusal(r13.fuelSent)) && sailed13.test(refusal(r13.fuelSent)) && !r13.fuelSent.api.st().rthChainFailed
+              && /home is at neither end of it/.test(refusal(r13.ends)) && sailed13.test(refusal(r13.ends))
+              && /home is the ROC's/.test(refusal(r13.roc)) && /she is 25\.0 km off it/.test(refusal(r13.off)) && sailed13.test(refusal(r13.off))
+              && [r13.fuelSent, r13.ends, r13.roc, r13.off].every((w) => asked13(w) === 0),
+        () => JSON.stringify(Object.fromEntries(Object.entries(r13).map(([k, w]) => [k, [asked13(w), refusal(w).slice(30, 200)]]))));
   const W13c = outbound({ S: { armed: true, estop: false, run: "running", status: { holding: false, fuel_l: 52 }, wp_total: 2, home: { ...HERE }, home_source: null } });
   await W13c.api.doRTH({});
   check("13c. REFUSED, AS CONTINUE IS, WHILE WHAT IS ABOARD DOES NOT REACH THE FIRST PORT ON THE WAY HOME WITH 20% - said "
@@ -1233,6 +1250,173 @@ console.log("The passage, sailed:");
         + "its one writer",
         () => Object.values(wiring14).every(Boolean),
         () => Object.entries(wiring14).filter(([, v]) => !v).map(([k]) => k).join(", ") || "all wired");
+
+  // ── 17. A PASSAGE HOME, PLANNED FROM WHERE SHE IS (Andy, 2026-11-13: "Plan a passage home") ───────────────────────
+  // His Castine survey ran 87 lines of 45 km offshore with End of plan RTH; its low-fuel RTH point lay 50.5 km from home and
+  // its end 71.5 km - past RTH_MAX_M with no passage on the plan, so the monitor only alerted and End of plan was refused.
+  // Past RTH_MAX_M with no way home along a passage, and none being sailed, the RTH is planned as a passage from her position
+  // (Plan passage's planner - the world's here) and sailed home as the way home along a passage is.
+  const HER17 = east(HERE, 55000), HOME17A = east(HERE, 37000), HOME17B = east(HERE, 18000);
+  const homePlanFor17 = (o) => (points) => {
+    const sections = [sec({ ...points[0] }, HOME17A), sec(HOME17A, HOME17B, [east(HERE, 27000)]), sec(HOME17B, { ...HERE }, [], "port", 1)];
+    const len = sections.reduce((a, c) => a + c.lengthM, 0);
+    const legs = [{ lengthM: len, ...(o && o.legErr ? { error: "blocked" } : {}) }];
+    return { plan: { points: points.map((p) => ({ ...p })), legs, lengthM: len, sections, model, twKn: 7, floorM: 3.15,
+                     fuelLegs: [{ from: { t: 0 }, to: { t: 1 }, lengthM: len, whole: true }],
+                     fuel: [(o && o.fuel) || { ok: true, start: 200, used: 20, arrive: 180 }],
+                     ends: (o && o.ends) || { dep: { ok: true, km: 3, wpts: 20 }, arr: { ok: true, km: 4, wpts: 30 } } } };
+  };
+  const farWorld17 = (o) => world(Object.assign({ mission: { passage: null }, asv: { ...HER17 }, homePlan: homePlanFor17(),
+    S: { armed: true, estop: false, run: "running", status: { holding: false, fuel_l: 200 }, wp_total: 9, home: { ...HERE }, home_source: null } }, o || {}));
+  const tabPlan17 = PLAN();
+  const W17 = farWorld17({ passage: tabPlan17 });
+  const out17 = await W17.api.doRTH({});
+  const H17 = W17.api.st().mission.passage, c17 = W17.cmds[0], last17 = H17 && H17.sections[H17.sections.length - 1];
+  check("17. RTH, NO PASSAGE ON THE PLAN, HOME 55 km OFF: the way home PLANNED AS A PASSAGE from her position (her position "
+        + "and home, both ports), the Passage tab busy while it plans and its own plan left alone; its first section planned "
+        + "from her and SENT AS AN RTH; the plan's passage is the way home - kind rth, from here, its last section ending at "
+        + "HOME (not a port), the passage it runs along its own - running; a new mission at the press; said and logged",
+        () => out17 === undefined && W17.homeAsked && W17.homeAsked.length === 1 && W17.homeAsked[0].busy === true
+              && distTo(W17.homeAsked[0].points[0], HER17) < 1 && distTo(W17.homeAsked[0].points[1], HERE) < 1
+              && W17.homeAsked[0].points.map((p) => (p.port ? "p" : "") + p.t).join(" ") === "p0 p1"
+              && c17 && c17[0] === "/api/cmd/rth" && c17[1].hold_clear_m === 40 && distTo(W17.planned[0].from, HER17) < 1
+              && distTo(c17[1].route[c17[1].route.length - 1], HOME17A) < 1
+              && H17.kind === "rth" && H17.fromHere === true && H17.state === "running" && H17.sent === 0 && H17.homeEnd === "end"
+              && last17.end === "home" && last17.port === null && distTo(last17.to, HERE) < 1 && H17.path.length === 3
+              && H17.path[2].end === "port" && distTo(H17.home, HERE) < 1 && W17.api.st().passage === tabPlan17 && !W17.api.st().passageBusy
+              && W17.missions.length === 1 && W17.missions[0].what === "RTH as a passage home"
+              && W17.api.st().planIntent.kind === "rth" && W17.banners.some((t) => /^Planning the way home as a PASSAGE… home is 55\.0 km away/.test(t))
+              && /^RTH AS A PASSAGE HOME: home is 55\.0 km away, past the 50\.0 km a boxed return is planned for/.test(W17.banners[W17.banners.length - 1] || "")
+              && W17.logs.some((l) => l[0] === "passage_rth" && l[1].ok && l[1].from_here === true),
+        () => JSON.stringify({ asked: W17.homeAsked && W17.homeAsked.length, cmd: c17 && c17[0], H: H17 && [H17.kind, H17.state, last17 && last17.end],
+                               missions: W17.missions, banner: (W17.banners[W17.banners.length - 1] || "").slice(0, 120) }));
+
+  // 17s. THE SERVER TAKES IT: the record as the page saves it, through asv_console.py's own _check_passage (the plan's save
+  // runs it). The first build's path ended at "home" and its `from.id` was null - the server refused both, and every save of
+  // the plan while she sailed it would have been refused; the stubbed saveMission here could not see that.
+  const srvCheck = (rec) => {
+    const py = ["import importlib.util as u, json, sys", "app = sys.argv[1]; sys.path.insert(0, app)",
+      "spec = u.spec_from_file_location('asv_console_under_test', app + '/asv_console.py'); C = u.module_from_spec(spec); spec.loader.exec_module(C)",
+      "try:", "    C._check_passage({'passage': json.loads(sys.argv[2])}); print('ok')",
+      "except Exception as e:", "    print('REFUSED: ' + str(e))"].join("\n");
+    const r = require("child_process").spawnSync(process.env.PYTHON || "python", ["-c", py, APP.replace(/\\/g, "/"), JSON.stringify(rec)], { encoding: "utf8" });
+    return ((r.stdout || "").trim().split("\n").pop() || "") || ("no answer: " + (r.stderr || r.error || "").toString().slice(-200));
+  };
+  const saved17 = srvCheck(H17), oldPath = srvCheck({ ...H17, path: H17.sections }), oldFrom = srvCheck({ ...H17, from: { id: null, sec: 0 } });
+  check("17s. THE SERVER TAKES THE RECORD (asv_console.py's own _check_passage, which every save of the plan runs): the way "
+        + "home planned from here is saved as it is - and the first build's two faults are refused, so the check has teeth: a "
+        + "path ending at home, a `from` with no passage named",
+        () => saved17 === "ok" && /^REFUSED: .*passage section 3 must end at a hold or a port/.test(oldPath) && /^REFUSED: .*its from must name/.test(oldFrom),
+        () => JSON.stringify({ saved: saved17, oldPath, oldFrom }));
+
+  // 17b. the END-OF-PLAN chain (his plan's end, 71.5 km out): sent home the same way; in a tab that does not supervise -
+  // nothing planned, sent or claimed (the supervising one plans it)
+  const W17b = farWorld17({ asv: east(HERE, 71500), S: { armed: true, estop: false, run: "running", status: { holding: true, fuel_l: 200 }, wp_total: 9, home: { ...HERE }, home_source: null } });
+  await W17b.api.doRTH({ chained: true });
+  const V17b = farWorld17({ sup: false });
+  await V17b.api.doRTH({ chained: true });
+  check("17b. THE END-OF-PLAN CHAIN, home 71.5 km off and no passage on the plan: the way home planned as a passage and its "
+        + "first section sent as an RTH, the chain NOT marked refused, no new mission (it is the one she is on); a view-only "
+        + "tab plans, sends and claims nothing",
+        () => W17b.cmds.length === 1 && W17b.cmds[0][0] === "/api/cmd/rth" && W17b.api.st().mission.passage.kind === "rth"
+              && !W17b.api.st().rthChainFailed && W17b.missions.length === 0
+              && !(V17b.homeAsked || []).length && V17b.cmds.length === 0 && !V17b.api.st().rthChainFailed && V17b.banners.length === 0,
+        () => JSON.stringify({ sent: W17b.cmds.map((c) => c[0]), failed: W17b.api.st().rthChainFailed, viewOnly: [(V17b.homeAsked || []).length, V17b.cmds.length, V17b.banners] }));
+
+  // 17c. THE LOW-FUEL RTH (his intent: "let the fuel low trigger a RTH. It will refuel in Castine and then resume the survey"):
+  // planned the same way and sent if what is aboard gets her home at all - the 20% she is turned at is what the point is
+  // for - with the survey's break-off banked for Continue; the operator's RTH on the same fuel refused below 20%, said with
+  // the numbers; one that would run dry refused for the monitor too
+  const res17 = model.floor + model.reserve;
+  const under17 = { ok: false, start: 60, used: 60 - (model.floor + 5), arrive: model.floor + 5 };
+  const dry17 = { ok: false, start: 30, used: 40, arrive: -10 };
+  const brk17 = { id: "B1", why: "fuel", sv: "S1", route: [{ lat: 1, lon: 1 }] };
+  const W17c = farWorld17({ homePlan: homePlanFor17({ fuel: under17 }), brk: brk17, S: { armed: true, estop: false, run: "running", status: { holding: false, fuel_l: 60 }, wp_total: 9, home: { ...HERE }, home_source: null } });
+  const out17c = await W17c.api.doRTH({ why: "⚠ LOW FUEL, at the RTH point (60 L aboard)", breakWhy: "fuel" });
+  const B17c = farWorld17({ homePlan: homePlanFor17({ fuel: under17 }), S: { armed: true, estop: false, run: "running", status: { holding: false, fuel_l: 60 }, wp_total: 9, home: { ...HERE }, home_source: null } });
+  const outB17c = await B17c.api.doRTH({});
+  const D17c = farWorld17({ homePlan: homePlanFor17({ fuel: dry17 }), brk: brk17 });
+  const outD17c = await D17c.api.doRTH({ why: "⚠ LOW FUEL", breakWhy: "fuel" });
+  check("17c. THE LOW-FUEL RTH, past RTH_MAX_M with no passage on the plan: planned as a passage home and SENT on fuel that "
+        + "gets her home under the 20% (not the operator's: refused, with the numbers), the survey's break-off banked for "
+        + "Continue; one that would run dry refused for the monitor too - nothing sent, the break-off not banked, the refusal "
+        + "handed back for the monitor (fuelTick)",
+        () => out17c === undefined && W17c.cmds.length === 1 && W17c.cmds[0][0] === "/api/cmd/rth" && W17c.banked.length === 1 && W17c.banked[0].id === "B1"
+              && W17c.missions.length === 0 && W17c.api.st().mission.passage.kind === "rth"
+              && B17c.cmds.length === 0 && outB17c && outB17c.notTaken && outB17c.notTaken.refused
+              && /could not be planned as a passage - the way home is 55\.0 km and needs [\d.]+ L to arrive with 20% of the tank; she has 60\.0 L aboard\./.test(B17c.banners.join(" "))
+              && D17c.cmds.length === 0 && D17c.banked.length === 0 && outD17c && outD17c.notTaken && outD17c.notTaken.refused === true
+              && /needs [\d.]+ L just to get there; she has 30\.0 L aboard - find a port to refuel\./.test(D17c.banners.join(" ")),
+        () => JSON.stringify({ fuel: [W17c.cmds.length, W17c.banked.length], button: [B17c.cmds.length, B17c.banners.slice(-1)], dry: [D17c.cmds.length, D17c.banners.slice(-1)] }));
+
+  // 17d. REFUSED, SAID, NOTHING SENT: its ends not planned in detail; part of it not planned; a Stop pressed while it was
+  // planned (withdrawn, and the stop named back for the monitor); a passage being planned on the Passage tab (the worker
+  // answers one plan at a time - not asked); a battery hull (long passages are the diesel hulls')
+  const E17 = farWorld17({ homePlan: homePlanFor17({ ends: { dep: { ok: true, km: 3, wpts: 20 }, arr: { ok: false, why: "no route clear of the chart's keep-outs on 1 leg(s)" } } }) });
+  await E17.api.doRTH({});
+  const L17 = farWorld17({ homePlan: homePlanFor17({ legErr: true }) }); await L17.api.doRTH({});
+  const S17 = farWorld17({ duringHomePlan: (w, api) => api.stop("Stop") });
+  const outS17 = await S17.api.doRTH({});
+  const T17 = farWorld17({ passageBusy: true }); await T17.api.doRTH({});
+  const Bt17 = farWorld17({ refuse: "long passages are for the diesel hulls - this one runs on a battery" }); await Bt17.api.doRTH({});
+  const Rc17 = farWorld17(); Rc17.S.home_source = "roc-1"; await Rc17.api.doRTH({});     // a ROC's home, no passage on the plan
+  const said17s = (w) => w.banners.join(" ");
+  check("17d. REFUSED, SAID, NOTHING SENT: its ends not planned in detail; part of it not planned; a Stop pressed while it "
+        + "planned (withdrawn, the stop handed back); a passage being planned on the Passage tab (not asked); a battery hull "
+        + "and a ROC's home, which moves (not asked) - and the plan's passage left as it was each time",
+        () => [E17, L17, S17, T17, Bt17, Rc17].every((w) => w.cmds.length === 0 && w.api.st().mission.passage === null)
+              && /cannot be planned as a passage: home is the ROC's, and it moves/.test(said17s(Rc17)) && !(Rc17.homeAsked || []).length
+              && [E17, L17, S17, Bt17].every((w) => !w.api.st().passageBusy) && T17.api.st().passageBusy   // (the tab's own plan still holds it)
+              && /its ends could not be planned in detail - arriving: no route clear/.test(said17s(E17))
+              && /part of it could not be planned/.test(said17s(L17))
+              && /RTH withdrawn: Stop was pressed while the way home was being planned\. Nothing was sent\./.test(said17s(S17))
+              && outS17 && outS17.notTaken && outS17.notTaken.withdrawn === true && outS17.notTaken.by === "Stop"
+              && /a passage is being planned on the Passage tab - press RTH again in a moment/.test(said17s(T17)) && !(T17.homeAsked || []).length
+              && /cannot be planned as a passage: long passages are for the diesel hulls/.test(said17s(Bt17)) && !(Bt17.homeAsked || []).length,
+        () => JSON.stringify([E17, L17, S17, T17, Bt17, Rc17].map((w) => [(w.homeAsked || []).length, w.cmds.length, said17s(w).slice(-140)])));
+
+  // 17e. A PASSAGE THAT HAS ARRIVED, she far off it (home not along it from there): the chain plans a passage home from her
+  // - the arrival is the end of the mission, not a passage being sailed; one still being sailed is 13b's (refused)
+  const arrived17 = { ...world().api.sailRecord(PLAN()), id: "Pdone", state: "done", sent: 2, sec: 2, end: { ...P3 }, route: [east(HERE, 50000), { ...P3 }] };
+  const W17e = farWorld17({ mission: { passage: arrived17 }, asv: north(east(HERE, 55000), 25000) });
+  await W17e.api.doRTH({ chained: true });
+  check("17e. FROM A PASSAGE THAT HAS ARRIVED, she 25 km off it: the end-of-plan chain plans a passage home from her position "
+        + "and sails it (no passage is being sailed), the arrived passage replaced by the way home",
+        () => (W17e.homeAsked || []).length === 1 && W17e.cmds.length === 1 && W17e.cmds[0][0] === "/api/cmd/rth"
+              && W17e.api.st().mission.passage.kind === "rth" && W17e.api.st().mission.passage.fromHere && !W17e.api.st().rthChainFailed,
+        () => JSON.stringify({ asked: (W17e.homeAsked || []).length, cmds: W17e.cmds.map((c) => c[0]), banners: W17e.banners.slice(-1) }));
+
+  // 17f. HOME: the last section sailed, she holds at home - the record done, said "she is home"; not an arrival (End of plan
+  // does not send her home from home) and the hold the passage's own (the chain stands down there); no passage being sailed
+  // now, so the next far RTH - a Continued survey's End of plan - plans a passage home afresh
+  const H17f = W17.api.st().mission.passage, route17f = [HOME17B, { ...HERE }];
+  Object.assign(H17f, { sent: 2, sec: 2, state: "running", end: { ...HERE }, route: route17f });
+  const W17f = world({ mission: { passage: H17f }, runRoute: route17f, asv: { ...HERE },
+    S: { armed: true, estop: false, run: "running", status: { holding: true, fuel_l: 150 }, wp_total: 2, home: { ...HERE }, home_source: null } });
+  W17f.api.sailAtEnd(H17f);
+  check("17f. HOME: the last section sailed, the record done and 'she is home' said; NOT an arrival (End of plan does not "
+        + "send her home from home) and her hold the passage's own (the chain stands down); with nothing being sailed, a "
+        + "passage home from far can be planned again",
+        () => H17f.state === "done" && /^HOME ALONG THE PASSAGE: she is home, all 3 sections sailed\. She holds there\./.test(W17f.banners[W17f.banners.length - 1] || "")
+              && W17f.api.sailOwnsHold() === true && W17f.api.passageHomeRefusal() === null,
+        () => JSON.stringify({ state: H17f.state, owns: W17f.api.sailOwnsHold(), no: W17f.api.passageHomeRefusal(), banner: W17f.banners.slice(-1) }));
+
+  // 17g. THE WIRING: one answer to "can a passage home be planned from far" for doRTH, the monitor's range and its water
+  // distance home; one planner for Plan passage and the way home; Plan passage's own wording kept
+  const wiring17 = {
+    rth: /const no = passageHomeRefusal\(\);/.test(grab("doRTH")) && /await sailHomeFresh\(brk, far, missionAt, !!why\)/.test(grab("doRTH")),
+    watch: /passageHomeRefusal\(\)/.test(grab("fuelWatchAt")),
+    coarse: /distTo\(here, S\.home\) > RTH_MAX_M && passageHomeRefusal\(\)/.test(grab("coarseHomeTick")),
+    projection: /passageHomeRefusal\(\) \? rthTooFar\(end, S\.home\)/.test(grab("fuelProjection")),
+    planner: /await passagePlanFor\(points,/.test(grab("planPassageNow")) && /await passagePlanFor\(points,/.test(grab("sailHomeFresh")),
+    busy: /passageBusy = true;/.test(grab("sailHomeFresh")) && /finally\{ passageBusy = false;/.test(grab("sailHomeFresh")),
+    sailed: /PASSAGE_ONGOING\.includes\(P\.state\) && !sailArrived\(P\)/.test(grab("passageHomeRefusal")),
+  };
+  check("17g. THE WIRING: doRTH, the monitor's range, its coarse water distance home and the card's charge from the plan's end "
+        + "all ask passageHomeRefusal; Plan passage and the way home plan through passagePlanFor, the Passage tab busy meanwhile; "
+        + "a passage being sailed (and not arrived) is the reason",
+        () => Object.values(wiring17).every(Boolean),
+        () => Object.entries(wiring17).filter(([, v]) => !v).map(([k]) => k).join(", ") || "all wired");
 
   console.log("\n" + (fails ? fails + " CHECK(S) FAILED (" + ran + " ran)" : "all checks passed (" + ran + ")"));
   process.exit(fails ? 1 : 0);

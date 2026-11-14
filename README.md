@@ -3473,9 +3473,41 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    tab sends, and a reply that was lost is said as unanswered, never as a refusal. With home more
    than 50 km from a plan's end, the Fuel row shows what is left at the end of the plan, not one
    tank's worth "at home", and its tip says how the way home goes. The low-fuel
-   monitor still sends an RTH only with home in range (Andy, 2026-10-11): it is not an end of
-   mission. A ROC's home moves, so it is refused, and so is a way home that does not reach the
-   first port on it with 20% of the tank. **Each section is planned at its own water.** The
+   monitor does not send her home along a passage: while one is being sailed it only alerts at
+   20% (Andy, 2026-10-11), because the passage's fuel is planned port to port. A ROC's home moves,
+   so it is refused, and so is a way home that does not reach the first port on it with 20% of the
+   tank.
+
+   **A passage home, planned from where she is (2026-11-13, diesel hulls).** Andy's Castine
+   survey ran 87 lines of 45 km offshore with End of plan RTH. His intent: "let the fuel low
+   trigger a RTH. It will refuel in Castine and then resume the survey". The low-fuel RTH point
+   fell 50.5 km from home and the plan's end 71.5 km. Past 50 km with no passage on the plan, the
+   monitor only alerted and End of plan was refused, so the run could not work. Asked, he chose
+   "Plan a passage home". Past 50 km, with no way home along a passage and no passage being
+   sailed, **every RTH is planned as a passage from her position**: the operator's, the
+   end-of-plan chain's and the low-fuel monitor's. It is planned by Plan passage's own planner
+   (the chart read along the way as a corridor, the passage planned coarse, its two ends planned
+   in detail) and sailed as the way home along a passage is: a passage record of kind `rth`, each
+   section planned in detail as she comes to it and sent as an RTH. The last section ends at home,
+   not at a port: she holds there, and End of plan does not send her home again from home. Until
+   the first section is sent she carries on as she was. The Passage tab shows the planning and
+   its own plan is left alone. Refused, and said, when: its ends cannot be planned in detail, part
+   of it cannot be planned, a Stop, Pause, Hold or E-STOP is pressed while it plans (withdrawn,
+   nothing sent), a passage is being planned on the Passage tab, home is a ROC's (it moves), the
+   hull runs on a battery, or the fuel is short. The operator's RTH and End of plan need 20% of
+   the tank on arrival, as Continue passage does. The low-fuel RTH goes if she reaches home at
+   all: the 20% she is turned at is what the RTH point is for, and the planned way home can come
+   out a little longer than the monitor's estimate. A survey broken off for low fuel is banked as
+   before, so after the refuel Continue picks it up 100 m back. **The 50 km stays as the line
+   between the two planners, not as a refusal.** Within it the return is planned in one chart box,
+   as before. A box of the water between stalls the page from not far past it: the Castine plan's
+   1.0° × 0.7° Upload read took about 15 minutes, with the telemetry stale 47 times. While a
+   passage is being sailed nothing changes: it goes home along itself or not at all. The fuel
+   monitor's range follows the same test (`passageHomeRefusal`). Past 50 km home is in range
+   where a passage home can be planned and a full tank reaches it with the 20% reserve. The coarse
+   water distance home is built past 50 km there too, so the RTH point is measured by water. The
+   Fuel row charges the way home from a far plan end when no passage is being sailed.
+   `tests/passage_sail.js` 13b, 17-17g, `tests/fuel_rth.js` 8v, 9m, 11d, `tests/passage_plan.js` 16b. **Each section is planned at its own water.** The
    live water level follows the boat: the stations nearest her, now. A section is planned ahead of
    her and sailed over the hours after, often tens of km from those stations. So each section is
    planned at the **lowest level predicted along it over the hours she is expected in it**, from
@@ -4220,15 +4252,16 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    button). Its fuel is summed stretch by stretch, each in the set along its own direction
    (`fuel.js pathEnergy`). The rows, the pill and the alert say "along the passage". The straight
    line is left only where nothing better is known (no passage, she far off it, a ROC's home, home
-   at neither end), and it says why. The 50 km in-range test is the straight line still: it is the
-   test the automatic RTH is refused by. Live (scratch console, DriX): from the end of section 1
+   at neither end), and it says why. The 50 km test is the straight line still: past it the RTH
+   is planned as a passage home, or refused where none can be (2026-11-13). Live (scratch console, DriX): from the end of section 1
    of a passage offshore of New Castle, "home 19.99 km along the passage" against a 19.25 km
    straight line (the harbor approach's turning points). `tests/fuel_rth.js` 10-10e.
 
    **The coarse home field: by water past the chart box, passage or none (2026-10-12).** With no
    passage leading home, the distance past the field was still the straight line - an RTH point too
    late wherever land stands between. Now, while she is within the 50 km the monitor sends her home
-   in and the field round home does not reach her, the console reads the chart along the way between
+   in (or past it where a passage home can be planned, since 2026-11-13) and the field round home
+   does not reach her, the console reads the chart along the way between
    home and her (the corridor read, with each tile's planning grid; tiles already read answer at
    once) and searches outward from home over those grids in the coarse worker, at the coarse
    planner's own costs (~100 m cells, a blocked cell crossed only in home's own 4 km circle, unread
@@ -4244,8 +4277,9 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
 
    **Home out of range: an alert at 20%, nothing commanded (2026-10-11, diesel hulls only).** On a
    diesel hull the automatic RTH applies only while home is **in range**: within the 50 km the console
-   will route a return, and near enough that a full tank gets her there with the 20% reserve.
-   Otherwise (a passage, work from a visiting harbor with home the far end of one, or no home set)
+   will route a return in one box, or past it where a passage home can be planned (2026-11-13), and
+   near enough that a full tank gets her there with the 20% reserve. Otherwise (a passage being
+   sailed, work from a visiting harbor with home the far end of one, a ROC's home, or no home set)
    the second row is labeled **Low fuel** and watches 20% of the tank itself: when she comes down to
    it the console alerts once (banner, alerts card, history, `fuel_rth` with `watch: "alert"`) so you
    can find a port to refuel, and commands nothing; she carries on with what she was doing. The rule

@@ -10475,7 +10475,8 @@ function homeHowSay(h, withWhy){
 // ── HOME, COARSE: HER WATER DISTANCE HOME PAST THE CHART BOX (2026-10-12) ───────────────────────────────────────────
 // Andy: "build the coarse home field". The field above covers the chart box round her (~10 km); past it, with no
 // passage leading home, the distance home was the straight line - short wherever land is in the way, so the RTH point
-// came LATE. While she is within RTH_MAX_M of home (the range the monitor sends her home in) and the field round home
+// came LATE. While she is within RTH_MAX_M of home - or past it where a passage home can be planned (2026-11-13), the
+// range the monitor sends her home in - and the field round home
 // does not reach her, the chart is read along the way between them with each tile's planning grid (the corridor read,
 // `grids`: tiles already read answer at once), and coarse.js coarseHomeField searches outward from home over those
 // grids in the coarse worker - at the coarse planner's own costs, ~100 m cells - for her length home from every cell.
@@ -10498,7 +10499,10 @@ function coarseHomeKey(){
 function coarseHomeTick(){
   if(!S || !S.home || !asv || coarseHome.busy || homeFldBuild) return;
   const here = {lat: asv.lat, lon: asv.lon};
-  if(fineHomeDist(here).m != null || distTo(here, S.home) > RTH_MAX_M) return;   // the field round home answers; or out of range
+  // the field round home answers; or out of range - past RTH_MAX_M only where no passage home can be planned (2026-11-13:
+  // where one can, the monitor sends her home from there, at an RTH point that must be measured by water; the read past
+  // COARSE_HOME_MAX_TILES is still not made)
+  if(fineHomeDist(here).m != null || (distTo(here, S.home) > RTH_MAX_M && passageHomeRefusal())) return;
   const key = coarseHomeKey();
   if(coarseHome.key === key && coarseHome.hf && coarseHomeDistM(coarseHome.hf, here) != null) return;   // built, and holds her
   // tried for THIS home within the minute: not again yet - a new home (or floor) is built at once
@@ -10559,13 +10563,17 @@ function fuelHomeNeed(model, ll){
   return {need: homeEnergy(model, hd.m, twKn, drift, u), m: hd.m, water: hd.water, along: hd.along || null, why: hd.why, twKn};
 }
 // IS HOME IN RANGE FROM A POINT, and so which level she is watched against there (fuel.js fuelWatch): the energy home
-// (fuelHomeNeed) and the distance doRTH refuses a return by (rthTooFar) - the one test, so the monitor can never send an
-// RTH that doRTH would refuse. {mode, level, why, h, farM}, or null with no model.
+// (fuelHomeNeed) and the distance doRTH refuses a return by - the one test, so the monitor can never send an RTH that
+// doRTH would refuse. {mode, level, why, h, farM, farWhy}, or null with no model.
+// ⚠ PAST RTH_MAX_M IS IN RANGE WHERE A PASSAGE HOME CAN BE PLANNED (2026-11-13): doRTH plans one there (sailHomeFresh), so
+// the distance alone no longer puts home out of range - a full tank still has to get her there with the reserve. Out of
+// range by distance only where it cannot (passageHomeRefusal: a passage being sailed, a ROC's home, a battery hull).
 function fuelWatchAt(model, ll){
   const home = !!(ll && S && S.home);
-  const h = home ? fuelHomeNeed(model, ll) : null, far = home ? rthTooFar(ll, S.home) : null;
+  const h = home ? fuelHomeNeed(model, ll) : null, past = home ? rthTooFar(ll, S.home) : null;
+  const farWhy = past ? passageHomeRefusal() : null, far = farWhy ? past : null;
   const w = fuelWatch(model, h ? h.need : null, far ? far.m : null);
-  return w && {...w, h, farM: far ? far.m : null};
+  return w && {...w, h, farM: far ? far.m : null, farWhy};
 }
 // THE MISSION AHEAD, WALKED (fuel.js projectMission): from her position along the route the index counts into, each leg
 // at the key the governor will command on it, in the set; and home from its end when the run ends in an RTH.
@@ -10606,8 +10614,11 @@ function fuelProjection(){
   P.legs = legs.length;
   // ⚠ NOT ONE TANK'S WORTH PAST RTH_MAX_M (2026-11-12): from a plan's end that far out End of plan RTH goes home along
   // the passage, a port at a time, each leg sent only with fuel for its port - or is refused - so the whole way home
-  // charged against what she has would read red "at home" on every long passage's last section
-  const rthEnd = legs.length && endAction() === "rth", farEnd = rthEnd && S && S.home ? rthTooFar(end, S.home) : null;
+  // charged against what she has would read red "at home" on every long passage's last section. ... BUT WITH NO PASSAGE
+  // BEING SAILED IT IS ONE LEG (2026-11-13): End of plan plans a passage home from the plan's end (sailHomeFresh), sent
+  // only with the fuel to get there with 20% - so it is charged, as a return in range is (passageHomeRefusal).
+  const rthEnd = legs.length && endAction() === "rth";
+  const farEnd = rthEnd && S && S.home && passageHomeRefusal() ? rthTooFar(end, S.home) : null;
   P.home = rthEnd && !farEnd ? fuelHomeNeed(model, end) : null;
   P.homeFar = farEnd || null;
   fuelProj = {at: Date.now(), route: rr, idx, level, val: P};
@@ -10649,6 +10660,7 @@ function fuelReserveOf(model){
 function fuelOutOfRangeSay(model, w){
   const h = w.h;
   return w.why === "far" ? "home is " + fmtDist(w.farM) + " away, further than the " + fmtDist(RTH_MAX_M) + " the console will route a return"
+                           + (w.farWhy ? " in one box, and the way home cannot be planned as a passage: " + w.farWhy : "")
     : w.why === "fuel" ? "home is " + fmtDist(h.m) + homeHowSay(h, false).toLowerCase() + " and takes " + fuelFmt(model, h.need)
                          + ", so even a full " + (model.kind === "fuel" ? "tank" : "pack") + " does not get her there with the "
                          + Math.round(FUEL_RESERVE_FRAC * 100) + "% reserve"
@@ -10795,7 +10807,7 @@ function renderFuelRows(){
       + (home ? "; home from there: " + f(home.need) + ", " + fmtDist(home.m) + homeHowSay(home, false) + " at " + home.twKn + " kn" : "")
       + (!home && P.homeFar ? "; home from there is " + fmtDist(P.homeFar.m) + " - past the " + fmtDist(RTH_MAX_M) + " a straight "
          + "return is certified for: End of plan RTH goes home along the passage on the plan, a port at a time, each leg "
-         + "sent only with fuel for its port and 20% - or, with no passage, is refused" : "")
+         + "sent only with fuel for its port and 20% - or, where no passage home can be planned, is refused" : "")
       + (ovr ? ". What is left is not shown: her level is not read under the override."
          : P.levelEnd != null ? ". She has " + f(N.level) + " now." : ". The vessel reports no level, so what is left is not known.");
     if(!ovr && P.levelEnd != null){
@@ -10839,7 +10851,8 @@ function renderFuelRows(){
           + (N.rth >= model.full ? " - ABOVE a full " + (model.kind === "fuel" ? "tank" : "pack")
              + ": turning the override off here raises the low-" + what + " alert at once, and "
              + (N.w && N.w.farM != null ? "the RTH is REFUSED - home is " + fmtDist(N.w.farM) + " away, past the " + fmtDist(RTH_MAX_M)
-                  + " the console will route a return: Set Home where she is." : "sends her home if she is armed.") : "."))
+                  + " the console will route a return in one box" + (N.w.farWhy ? ", and no passage home can be planned (" + N.w.farWhy + ")" : "")
+                  + ": Set Home where she is." : "sends her home if she is armed.") : "."))
       + "\n" + lawTip
     : alertOnly && N.level != null
     ? "THE LOW-" + what.toUpperCase() + " ALERT: " + fuelOutOfRangeSay(model, N.w) + ", so the console will NOT send her home. "
@@ -10847,7 +10860,8 @@ function renderFuelRows(){
       + "refuel. She has " + f(N.level) + " now."
       + (P && P.turn ? "\nON THIS PLAN SHE REACHES IT " + fmtDist(P.turn.alongM) + " AHEAD, before waypoint " + (P.turn.idx + 1)
         + ": the console will alert there." : "")
-      + "\nWith home in range (within " + fmtDist(RTH_MAX_M) + ", and a full " + (model.kind === "fuel" ? "tank" : "pack")
+      + "\nWith home in range (within " + fmtDist(RTH_MAX_M) + ", or past it where a passage home can be planned, and a full "
+      + (model.kind === "fuel" ? "tank" : "pack")
       + " reaching it with the reserve) this row is the RTH point, and the console sends her home at it.\n" + lawTip
     : N.h && N.level != null && N.rth != null
     ? "THE RTH POINT: " + fuelSay(model, N.rth, N.rth, N.h) + " She has " + f(N.level) + " now."
@@ -14928,7 +14942,8 @@ async function doRTH(opts){
     // HOME ALONG THE PASSAGE (step 6, 2026-10-12): from a passage's water, with home at one end of it, the operator's
     // RTH goes home the way the passage runs - AND THE END-OF-PLAN CHAIN'S FROM THE PASSAGE'S ARRIVAL (Andy, 2026-11-12:
     // "all end of mission should RTH unless over-ridden by user"; the arrival held for good). Never the low-fuel
-    // monitor's: its RTH is for a home in range (Andy, 2026-10-11) - it is not an end of mission.
+    // monitor's: it is not an end of mission, and it sends her home only with no passage being sailed (fuelWatchAt,
+    // passageHomeRefusal) - past RTH_MAX_M as a passage planned from where she is (below, 2026-11-13).
     // ⚠ FROM THE ARRIVAL ONLY (the 2026-11-12 review): this refusal is the net under every hold sailOwnsHold does not
     // know - a Go-To from a fuel stop or a section's hold ends at a hold no passage record names - and with it gone for
     // every chain, the chain sailed her home from the middle of the passage and the passage was lost.
@@ -14942,10 +14957,24 @@ async function doRTH(opts){
       if(chained && out === "refused") rthChainFailed = true;   // said: she holds, and the cards stop promising a return
       return;
     }
+    // A PASSAGE HOME, PLANNED FROM HERE (Andy, 2026-11-13: "Plan a passage home"): no way home along a passage - none on
+    // the plan, or none from where she is - and none being sailed. The operator's RTH, the end-of-plan chain's and the
+    // low-fuel monitor's alike (sailHomeFresh; passageHomeRefusal says when it cannot be).
+    const no = passageHomeRefusal();
+    if(!no){
+      if(chained && !supervising()) return;      // (as above: the supervising tab plans it and sends her)
+      const out = await sailHomeFresh(brk, far, missionAt, !!why);
+      if(chained && out === "refused") rthChainFailed = true;
+      // (the low-fuel monitor asks why it was not taken - fuelTick: never sent, refused, withdrawn by which stop)
+      return out === "sent" ? undefined
+        : {notTaken: out === "withdrawn" ? {withdrawn: true, by: routeStopName} : out === "unsent" ? {sent: false}
+                   : out === "refused" ? {refused: true, state: S} : {}};
+    }
     if(chained) rthChainFailed = true;
-    showBanner("RTH refused: home is " + fmtDist(far.m) + " away, "
-      + fmtDist(RTH_MAX_M) + " is as far as the console will certify a return"
-      + (H && H.why ? ", and she cannot go home along the passage: " + H.why : "") + ". "
+    showBanner("RTH refused: home is " + fmtDist(far.m) + " away, past the "
+      + fmtDist(RTH_MAX_M) + " a boxed return is planned for"
+      + (H && H.why ? "; she cannot go home along the passage (" + H.why + ")" : "")
+      + ", and the way home cannot be planned as a passage: " + no + ". "
       + "Set Home where she is, or pick a home within range.");
     flashNote("RTH refused: home is " + fmtDist(far.m) + " away.");
     updateMissionCard(); render(); return;
@@ -15530,7 +15559,53 @@ async function passageGrids(tiles){
   }
   return {grids, missing};
 }
-/** PLAN PASSAGE: the chart along the line with its grids, the coarse plan in the worker, the fuel leg by leg. */
+/** THE PASSAGE PLANNED for `points` (passagePoints' shape: her position first, a port; the last the arrival): the chart
+ *  along it with its grids, the coarse plan in the worker, the fuel leg by leg, and its two ends in detail. `say(text)` is
+ *  told where it has got to; `gone()` is asked after each long wait whether the caller still wants it. {plan, id} -
+ *  `id` the chart read's - or {error} in words, or {gone: true}. ONE planner for Plan passage (planPassageNow) and the way
+ *  home past RTH_MAX_M with no passage to go home along (sailHomeFresh, 2026-11-13), so the two cannot plan differently.
+ *  The caller holds `passageBusy`: the worker answers one plan at a time (passageInWorker). */
+async function passagePlanFor(points, say, gone){
+  const model = fuelModel(), twKn = V.SPEED_KN[roleSpeed("transit")], floorM = nogoDR().min, gen = passageGen;
+  let st = await postCorridor({route: points.map(p => ({lat: p.lat, lon: p.lon})), half_km: passageHalfKm(points), grids: true});
+  if(!st || st.error) return {error: corridorSummary(st).replace(/\.$/, "")};   // (the caller ends the sentence)
+  logClient("passage_plan", {state: "reading", id: st.id, tiles: st.total, points: points.length});
+  while(st && !st.error && st.state === "running"){
+    say("reading chart: " + st.done + " of " + st.total + " tiles" + (st.eta_s != null ? " · ~" + fmtMS(st.eta_s) + " left" : ""));
+    corridorRead = toCorridor(st); updateTransitPanel(); render();
+    await new Promise(r => setTimeout(r, CORRIDOR_POLL_MS));
+    st = await getCorridor(st.id);
+  }
+  if(!st || st.error || st.state !== "done")
+    return {error: "the chart read along it " + (st && st.state === "canceled" ? "was stopped" : "failed: " + ((st && st.error) || "no answer"))};
+  corridorRead = toCorridor(st);
+  say("planning the passage…");
+  const g = await passageGrids(st.tiles || []);
+  const res = await passageInWorker({grids: g.grids, floorDm: Math.round(floorM * 10), airDm: Math.round(airNeedM() * 10), points,
+                                     openWater: V.OPEN_WATER !== false});
+  if(gone()) return {gone: true};
+  if(res.error) return {error: res.error};
+  const fuelLegs = passageFuelLegs(points, res.legs);
+  const level0 = asv ? energyLevel(model, S && S.status) : null;
+  // a fuel leg part of which could not be planned has no length to judge its fuel by: not checked, and said so
+  const fuel = (passageFuel(model, fuelLegs, twKn, level0) || []).map((x, k) => fuelLegs[k].whole ? x : null);
+  const plan = {points, legs: res.legs, lengthM: res.lengthM, fuelLegs, model, twKn, floorM, level0, fuel,
+                tiles: (st.tiles || []).length, missing: g.missing, failedTiles: (st.failed || []).length, ms: res.ms,
+                at: Date.now(), gen, sections: res.sections || null};
+  plan.reserveAt = fuel.map((x, k) => !x || x.ok ? null : passageAlong(plan, fuelLegs[k], x.reachM));
+  // ENDS FIRST: the harbor she leaves and the one she makes for, in detail, before the passage is offered to sail
+  say("planning its two ends in detail…");
+  plan.ends = await planPassageEnds(plan);
+  if(gone()) return {gone: true};
+  logClient("passage_plan", {state: "planned", id: st.id, nm: +(plan.lengthM / 1852).toFixed(1), kn: twKn, floor_m: floorM,
+    points: points.map(p => [+p.lat.toFixed(5), +p.lon.toFixed(5), p.port ? 1 : 0]),
+    legs: res.legs.length, not_planned: res.legs.filter(x => x.error).map(x => ({i: x.i, why: x.error})),
+    fuel: fuel.map((x, k) => ({from: passageName(fuelLegs[k].from), to: passageName(fuelLegs[k].to),
+      nm: +(fuelLegs[k].lengthM / 1852).toFixed(1), arrive: x ? +x.arrive.toFixed(1) : null, ok: x ? x.ok : null})),
+    narrow: res.legs.reduce((s, x) => s + (x.narrow ? x.narrow.length : 0), 0), tiles: plan.tiles, ms: res.ms});
+  return {plan, id: st.id};
+}
+/** PLAN PASSAGE: the chart along the line with its grids, the coarse plan in the worker, the fuel leg by leg (passagePlanFor). */
 async function planPassageNow(){
   if(passageBusy) return;
   const why = passageRefusal();
@@ -15538,53 +15613,19 @@ async function planPassageNow(){
   if(!passageWps.length){ flashNote("Draw the passage on the Passage tab first - the last point is the arrival. Then Plan passage."); return; }
   const points = passagePoints();
   if(points.length < 2){ flashNote("A passage needs somewhere to go: add a point, or wait for her position."); return; }
-  const model = fuelModel(), twKn = V.SPEED_KN[roleSpeed("transit")], floorM = nogoDR().min, gen = passageGen;
+  const gen = passageGen;
   passageBusy = true; passage = null; passageStatus = "reading the chart along the passage…";
   updateTransitPanel(); render();
   try{
-    let st = await postCorridor({route: points.map(p => ({lat: p.lat, lon: p.lon})), half_km: passageHalfKm(points), grids: true});
-    if(!st || st.error){ showBanner("Passage NOT planned: " + corridorSummary(st)); return; }
-    logClient("passage_plan", {state: "reading", id: st.id, tiles: st.total, points: points.length});
-    while(st && !st.error && st.state === "running"){
-      passageStatus = "reading chart: " + st.done + " of " + st.total + " tiles" + (st.eta_s != null ? " · ~" + fmtMS(st.eta_s) + " left" : "");
-      corridorRead = toCorridor(st); updateTransitPanel(); render();
-      await new Promise(r => setTimeout(r, CORRIDOR_POLL_MS));
-      st = await getCorridor(st.id);
-    }
-    if(!st || st.error || st.state !== "done"){
-      showBanner("Passage NOT planned: the chart read along it " + (st && st.state === "canceled" ? "was stopped" : "failed: " + ((st && st.error) || "no answer")) + ".");
-      return;
-    }
-    corridorRead = toCorridor(st);
-    passageStatus = "planning the passage…"; updateTransitPanel();
-    const g = await passageGrids(st.tiles || []);
-    const res = await passageInWorker({grids: g.grids, floorDm: Math.round(floorM * 10), airDm: Math.round(airNeedM() * 10), points,
-                                       openWater: V.OPEN_WATER !== false});
-    if(gen !== passageGen){ showBanner("Passage NOT planned: the line was edited while it was being planned - plan it again."); return; }
-    if(res.error){ showBanner("Passage NOT planned: " + res.error + "."); return; }
-    const fuelLegs = passageFuelLegs(points, res.legs);
-    const level0 = asv ? energyLevel(model, S && S.status) : null;
-    // a fuel leg part of which could not be planned has no length to judge its fuel by: not checked, and said so
-    const fuel = (passageFuel(model, fuelLegs, twKn, level0) || []).map((x, k) => fuelLegs[k].whole ? x : null);
-    const plan = {points, legs: res.legs, lengthM: res.lengthM, fuelLegs, model, twKn, floorM, level0, fuel,
-                  tiles: (st.tiles || []).length, missing: g.missing, failedTiles: (st.failed || []).length, ms: res.ms,
-                  at: Date.now(), gen, sections: res.sections || null};
-    plan.reserveAt = fuel.map((x, k) => !x || x.ok ? null : passageAlong(plan, fuelLegs[k], x.reachM));
-    // ENDS FIRST: the harbor she leaves and the one she makes for, in detail, before the passage is offered to sail
-    passageStatus = "planning its two ends in detail…"; updateTransitPanel();
-    plan.ends = await planPassageEnds(plan);
-    if(gen !== passageGen){ showBanner("Passage NOT planned: the line was edited while it was being planned - plan it again."); return; }
+    const out = await passagePlanFor(points, (t) => { passageStatus = t; updateTransitPanel(); }, () => gen !== passageGen);
+    if(out.gone){ showBanner("Passage NOT planned: the line was edited while it was being planned - plan it again."); return; }
+    if(out.error){ showBanner("Passage NOT planned: " + out.error + "."); return; }
+    const plan = out.plan;
     passage = plan;
     const endsBad = passageEndsSay(plan.ends);
     showBanner(passageSummary(plan) + (endsBad ? " ⚠ NOT SAILABLE - its ends could not be planned in detail: " + endsBad + "."
       : plan.ends ? " Both ends planned in detail (leaving " + fmtDist(plan.ends.dep.km * 1000, 1)
                      + (plan.ends.arr ? ", arriving " + fmtDist(plan.ends.arr.km * 1000, 1) : "") + ")." : ""));
-    logClient("passage_plan", {state: "planned", id: st.id, nm: +(plan.lengthM / 1852).toFixed(1), kn: twKn, floor_m: floorM,
-      points: points.map(p => [+p.lat.toFixed(5), +p.lon.toFixed(5), p.port ? 1 : 0]),
-      legs: res.legs.length, not_planned: res.legs.filter(x => x.error).map(x => ({i: x.i, why: x.error})),
-      fuel: fuel.map((x, k) => ({from: passageName(fuelLegs[k].from), to: passageName(fuelLegs[k].to),
-        nm: +(fuelLegs[k].lengthM / 1852).toFixed(1), arrive: x ? +x.arrive.toFixed(1) : null, ok: x ? x.ok : null})),
-      narrow: res.legs.reduce((s, x) => s + (x.narrow ? x.narrow.length : 0), 0), tiles: plan.tiles, ms: res.ms});
     if(!endsBad) passagePreRead = preReadFirstSection(plan);
   }catch(e){ showBanner("Passage NOT planned: " + ((e && e.message) || e) + "."); }
   finally{ passageBusy = false; passageStatus = ""; updateTransitPanel(); render(); }
@@ -16332,43 +16373,139 @@ function homeRecord(){
 /** RTH ALONG THE PASSAGE (doRTH, home beyond RTH_MAX_M): the way home's first section sent from where she is. Its
  *  answer, doRTH's three kept apart (the 2026-11-12 review): "sent"; "refused" - said, and a refused end-of-plan
  *  chain is recorded; "unsent" - this tab never asked, nothing claimed; "unknown" - the reply was lost, said as that,
- *  nothing recorded. */
-async function sailHome(H, brk, far, missionAt = null){
+ *  nothing recorded. `how` (2026-11-13): {fromHere} - the way home was PLANNED as a passage from here (sailHomeFresh), not
+ *  taken along one on the plan; {lowFuel} - the monitor's RTH, whose fuel sailHomeFresh has judged already (to home at all,
+ *  not with 20%: homePassageRefusal). */
+async function sailHome(H, brk, far, missionAt = null, how = null){
+  const fresh = !!(how && how.fromHere);
   if(sailBusy){ flashNote("RTH: the passage is sending a section - press RTH again in a moment."); return "refused"; }
-  const f = sailFuelShort(H, 0, null);
+  const f = how && how.lowFuel ? null : sailFuelShort(H, 0, null);
   if(f){ showBanner("RTH refused: home is " + fmtDist(far.m) + " away, along the passage - " + f + "."); return "refused"; }
   sailBusy = true; applyCmdState(S); updateTransitPanel();
-  showBanner("Routing home along the passage… home is " + fmtDist(far.m) + " away, past the " + fmtDist(RTH_MAX_M)
-    + " a straight return is certified for.");
+  showBanner((fresh ? "Routing home as a passage… " : "Routing home along the passage… ") + "home is " + fmtDist(far.m)
+    + " away, past the " + fmtDist(RTH_MAX_M) + " a straight return is certified for.");
   try{
     const r = await sailSend(H, 0, {lat: asv.lat, lon: asv.lon}, null, false);
     if(r.error || r.soft){
       const post = r.post || null;             // the command's own answer, when it got as far as one
-      if(post && post.sent === false){ takeDownBanner(/^Routing home along the passage/); return "unsent"; }
+      if(post && post.sent === false){ takeDownBanner(/^Routing home (along|as) (the|a) passage/); return "unsent"; }
       if(post && !post.refused){                // lost or unreadable: the console cannot tell whether she took it
-        showBanner(r.error + " - the way home along the passage, " + fmtDist(far.m) + ".");
-        logClient("passage_rth", {id: H.id, ok: false, why: "unanswered"});
+        showBanner(r.error + " - the way home " + (fresh ? "as a passage" : "along the passage") + ", " + fmtDist(far.m) + ".");
+        logClient("passage_rth", {id: H.id, ok: false, from_here: fresh, why: "unanswered"});
         return "unknown";
       }
-      showBanner("RTH refused: home is " + fmtDist(far.m) + " away, and the first section of the way home along the passage "
-        + "could not be sent - " + (r.error || "try again") + ".");
-      logClient("passage_rth", {id: H.id, ok: false, why: r.error || "soft"});
+      showBanner("RTH refused: home is " + fmtDist(far.m) + " away, and the first section of the way home "
+        + (fresh ? "as a passage" : "along the passage") + " could not be sent - " + (r.error || "try again") + ".");
+      logClient("passage_rth", {id: H.id, ok: false, from_here: fresh, why: r.error || "soft"});
       return "refused";
     }
     if(brk) bankBreak(brk);                      // the survey she has left: Continue picks it up (as doRTH banks it)
-    if(missionAt != null) newMission(missionAt, "RTH along the passage");
+    if(missionAt != null) newMission(missionAt, fresh ? "RTH as a passage home" : "RTH along the passage");
     H.state = "running";
     mission.passage = H; saveMission();          // the passage she was on is the way home now: Continue sails THIS
-    passage = null;
-    showBanner("RTH ALONG THE PASSAGE: home is " + fmtDist(far.m) + " away, so she goes home the way the passage runs - "
+    if(!fresh) passage = null;                   // (a passage planned on the Passage tab is the operator's: not this one)
+    showBanner((fresh ? "RTH AS A PASSAGE HOME: home is " + fmtDist(far.m) + " away, past the " + fmtDist(RTH_MAX_M) + " a "
+                        + "boxed return is planned for, so the way home was read along its way and planned as a passage - "
+                      : "RTH ALONG THE PASSAGE: home is " + fmtDist(far.m) + " away, so she goes home the way the passage runs - ")
       + H.sections.length + " section" + (H.sections.length === 1 ? "" : "s") + ", the first sent (" + r.route.length
-      + " waypoints, planned at " + r.water.say + "). Each next is planned and sent as she nears the end of the last; at a "
-      + "port, or wherever the next could not be sent, she HOLDS for Continue passage.");
-    logClient("passage_rth", {id: H.id, ok: true, from: H.from, homeEnd: H.homeEnd, sections: H.sections.length,
+      + " waypoints, planned at " + r.water.say + "). Each next is planned and sent as she nears the end of the last; "
+      + (fresh ? "wherever" : "at a port, or wherever") + " the next could not be sent, she HOLDS for Continue passage.");
+    logClient("passage_rth", {id: H.id, ok: true, from_here: fresh, from: H.from, homeEnd: H.homeEnd, sections: H.sections.length,
                               wpts: r.route.length, water_m: r.water.m});
     return "sent";
   }catch(e){ showBanner("RTH refused: " + ((e && e.message) || e) + "."); return "refused"; }
   finally{ sailBusy = false; applyCmdState(S); updateTransitPanel(); render(); }
+}
+// ── A PASSAGE HOME, PLANNED FROM WHERE SHE IS (Andy, 2026-11-13) ────────────────────────────────────────────────────
+// His Castine survey: 87 lines of 45 km offshore, End of plan RTH, and his intent "let the fuel low trigger a RTH. It will
+// refuel in Castine and then resume the survey". The low-fuel RTH point fell 50.5 km from home and the plan's end 71.5
+// km - past RTH_MAX_M with no passage on the plan, so the monitor only alerted (fuelWatchAt) and End of plan was refused
+// (doRTH): the flow did not work at all. Asked, he chose "Plan a passage home": past RTH_MAX_M, with no way home along a
+// passage, the RTH - the operator's, the end-of-plan chain's and the low-fuel monitor's alike - is planned as a passage
+// from where she is (passagePlanFor, Plan passage's own planner: the chart read along the way as a corridor, the passage
+// planned coarse and its two ends in detail) and sailed home as the way home along a passage is (sailHome: a passage
+// record of kind "rth", each section planned in detail as she comes to it and sent as an RTH, she holds at home).
+// RTH_MAX_M stays - the line between the boxed return and the passage home, not a refusal: a box of the water between
+// stalls the page from not far past it (his Upload's 1.0 x 0.7 deg read took ~15 min, the telemetry stale 47 times).
+// ⚠ NOT WHILE A PASSAGE IS BEING SAILED: its fuel is reckoned port to port at its planning, and it goes home ALONG itself
+// (homeRecord) or not at all - there the refusal stays the net under every hold sailOwnsHold does not know (the 2026-11-12
+// review), and the low-fuel monitor only alerts (Andy, 2026-10-11), as before. Nor to a ROC's home, which moves, nor on a
+// battery hull (passageRefusal: long passages are the diesel hulls').
+/** Why an RTH past RTH_MAX_M cannot be planned as a passage home from here, or null when it can. ONE answer for doRTH and
+ *  the low-fuel monitor's range (fuelWatchAt) and its water distance home (coarseHomeTick), so the monitor never sends
+ *  an RTH doRTH would refuse, nor alerts where it would go. */
+function passageHomeRefusal(){
+  if(!S || !S.home) return "no home is set";
+  if(S.home_source != null) return "home is the ROC's, and it moves";
+  const P = mission && mission.passage;
+  if(P && PASSAGE_ONGOING.includes(P.state) && !sailArrived(P))
+    return "a passage is being sailed - it goes home along itself, or not at all";
+  return passageRefusal();
+}
+/** THE WAY HOME PLANNED AS A PASSAGE, as the passage record she sails it from: homeRecord's shape, kind "rth" - the plan's
+ *  sections with the last ending at HOME (not a port: she holds there, and End of plan does not send her home from home -
+ *  sailArrival), and the passage it runs along its own sections (`path`: a second RTH on the way goes home along it). */
+function homePassageRecord(plan){
+  const P = sailRecord(plan);
+  // ⚠ THE PATH IS THE PASSAGE AS PLANNED, ITS LAST SECTION A PORT, AND `from` NAMES ONE IN TEXT: the server refuses to save a
+  // way home whose path ends at "home" or whose `from.id` is not text (asv_console.py _check_passage) - and then every
+  // save of the plan while she sails it is refused (found reading the server, 2026-11-13; passage_sail 17 runs its check)
+  const path = P.sections.map(c => ({...c, via: c.via.map(p => ({lat: p.lat, lon: p.lon}))}));
+  const last = P.sections[P.sections.length - 1];
+  last.end = "home"; last.port = null;
+  return {...P, id: "H" + P.id.slice(1), kind: "rth", fromHere: true, path,
+          home: {lat: S.home.lat, lon: S.home.lon}, homeEnd: "end", from: {id: "her position", sec: 0}};
+}
+/** Why the way home planned as a passage cannot be sailed, or null. Its ends planned in detail, all of it planned, cut
+ *  into sections; and the fuel: the low-fuel monitor's RTH (`lowFuel`) goes home on what is aboard if it gets her there
+ *  at all - the 20% she is turned at is what the point is for, and the way home measured on the chart can come out a
+ *  little past the monitor's reckoning - every other only with 20% of the tank on arrival, as Continue and the way home
+ *  along a passage are (sailFuelShort). */
+function homePassageRefusal(plan, lowFuel){
+  const ends = passageEndsSay(plan.ends);
+  if(ends) return "its ends could not be planned in detail - " + ends;
+  if(!plan.legs || plan.legs.some(g => g.error)) return "part of it could not be planned";
+  if(!plan.sections || !plan.sections.length) return "it could not be cut into sections";
+  const x = (plan.fuel || [])[0], model = plan.model;
+  if(x && model && (lowFuel ? x.arrive < model.floor : !x.ok))
+    return "the way home is " + fmtDist(plan.lengthM) + " and needs " + fuelFmt(model, x.used + model.floor + (lowFuel ? 0 : model.reserve))
+      + (lowFuel ? " just to get there" : " to arrive with " + Math.round(FUEL_RESERVE_FRAC * 100) + "% of the tank") + "; she has "
+      + fuelFmt(model, x.start) + " aboard" + (lowFuel ? " - find a port to refuel" : "");
+  return null;
+}
+/** RTH AS A PASSAGE HOME (doRTH, past RTH_MAX_M, no way home along a passage): planned from where she is, then sailed by
+ *  sailHome. doRTH's answers, and "withdrawn" - a Stop, Pause, Hold or E-STOP pressed while it planned (routeStopGen), said;
+ *  nothing sent. Until the first section is sent she carries on as she was: a survey, or her hold at the end of the plan. */
+async function sailHomeFresh(brk, far, missionAt, lowFuel){
+  if(sailBusy || passageBusy){
+    showBanner("RTH refused: home is " + fmtDist(far.m) + " away, and " + (sailBusy ? "a passage is sending a section"
+      : "a passage is being planned on the Passage tab") + " - press RTH again in a moment.");
+    return "refused";
+  }
+  const stopWas = routeStopGen;
+  const points = [{lat: asv.lat, lon: asv.lon, port: true, t: 0}, {lat: S.home.lat, lon: S.home.lon, port: true, t: 1}];
+  passageBusy = true; passageStatus = "the way home: reading the chart along it…"; updateTransitPanel();
+  showBanner("Planning the way home as a PASSAGE… home is " + fmtDist(far.m) + " away, past the " + fmtDist(RTH_MAX_M)
+    + " a boxed return is planned for: the chart is read along the way home, the passage planned coarse and its two ends in "
+    + "detail, then sailed a section at a time. Until the first section is sent she carries on as she was.");
+  logClient("passage_rth", {state: "planning", from_here: true, km: +(far.m / 1000).toFixed(1), low_fuel: !!lowFuel});
+  let out;
+  try{ out = await passagePlanFor(points, (t) => { passageStatus = "the way home: " + t; updateTransitPanel(); }, () => routeStopGen !== stopWas); }
+  catch(e){ out = {error: (e && e.message) || String(e)}; }
+  finally{ passageBusy = false; passageStatus = ""; updateTransitPanel(); render(); }
+  if(out.gone || routeStopGen !== stopWas){
+    showBanner("RTH withdrawn: " + (routeStopName || "a stop") + " was pressed while the way home was being planned. Nothing was sent.");
+    logClient("plan_withdrawn", {what: "RTH", by: routeStopName});
+    return "withdrawn";
+  }
+  const why = out.error || homePassageRefusal(out.plan, lowFuel);
+  if(why){
+    showBanner("RTH refused: home is " + fmtDist(far.m) + " away, past the " + fmtDist(RTH_MAX_M) + " a boxed return is planned "
+      + "for, and the way home could not be planned as a passage - " + why + ".");
+    logClient("passage_rth", {ok: false, from_here: true, why: String(why).slice(0, 300)});
+    return "refused";
+  }
+  return sailHome(homePassageRecord(out.plan), brk, far, missionAt, {fromHere: true, lowFuel: !!lowFuel});
 }
 // ── THE WATER A SECTION IS PLANNED AT (2026-10-12, step 6 of the long-transit plan) ─────────────────────────────────
 // The guard's chart (nogo.ko) is built at the level at the BOAT, NOW (applyWaterOffset: the stations nearest her). A

@@ -459,7 +459,7 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
                 fields: 0, clock: 1000000, hang: false, land: null, up: null };
     const mk = new Function("S", "asv0", "fuelModel", "energyLevel", "fuelHomeNeed", "rthTooFar", "fuelWatch", "rthLevel", "rthDecision",
       "homeFieldTick", "coarseHomeTick", "supervising", "showBanner", "logClient", "doRTH", "fuelSay", "fuelFmt", "fmtDist", "FUEL_AT_HOME_M",
-      "FUEL_RESERVE_FRAC", "RTH_MAX_M", "fmtVol", "FUEL_FLIGHT_MS", "Date", "takeDownBanner",
+      "FUEL_RESERVE_FRAC", "RTH_MAX_M", "fmtVol", "FUEL_FLIGHT_MS", "Date", "takeDownBanner", "passageHomeRefusal",
       // `asv` a binding the world can set (8t: a page's first frame, before it has a position of its own)
       "let asv = asv0;\nlet fuelRth = {acted: false, alerted: false};\nlet fuelNow = null, fuelErrSaid = false, fuelFlight = 0, fuelBoot;\n" + grab("fuelTick")
       + "\n" + grab("fuelWatchAt") + "\n" + grab("fuelOutOfRangeSay") + "\n" + grab("fuelReserveOf") + "\n" + grab("homeHowSay")
@@ -476,7 +476,10 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
       (o) => { w.sent.push(o); return flown(); }, () => "the sentence", (m, x) => x.toFixed(1) + " L",
       (m) => (m / 1000).toFixed(1) + " km", AT_HOME, F.FUEL_RESERVE_FRAC, RTH_MAX,
       require("../static/js/units.js").fmtVol,   // the alert's tenths in the operator's units (2026-10-17)
-      FLIGHT_MS, { now: () => w.clock }, (re) => { if (w.up != null && re.test(w.up)) w.up = null; });
+      FLIGHT_MS, { now: () => w.clock }, (re) => { if (w.up != null && re.test(w.up)) w.up = null; },
+      // (2026-11-13) why no passage home can be planned past RTH_MAX_M - a reason unless the world says none (8u), so `far`
+      // is out of range as every check before 8u has it
+      () => (w.passageNo === undefined ? "a passage is being sailed - it goes home along itself, or not at all" : w.passageNo));
     w.frame = (fuel, o) => w.api.tick({ armed: true, estop: false, behavior: "survey",
       status: m0.kind === "fuel" ? { fuel_l: fuel } : { battery_v: fuel }, ...(o || {}) });
     return w;
@@ -786,6 +789,24 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
   // ... and the first, landing late, does not take down the mark of the one sent after it
   const second = Fh.api.flight(); landFirst();
   const secondStands = second === Fh.clock && Fh.api.flight() === second;
+  // 8v (2026-11-13). PAST RTH_MAX_M IS IN RANGE WHERE A PASSAGE HOME CAN BE PLANNED. His Castine survey's RTH point lay
+  // 50.5 km from home: the monitor alerted at 20% and sent nothing, so the low-fuel RTH, the refuel at Castine and Continue
+  // never came. doRTH now plans a passage home from there (sailHomeFresh), so the monitor watches her against the RTH point
+  // there and sends her; with a passage being sailed - its fuel reckoned port to port - the alert alone, as before.
+  const Pv = world(); Pv.far = 50500; Pv.passageNo = null;
+  Pv.frame(70); Pv.frame(61.5); const pvQuiet = Pv.sent.length === 0 && Pv.banners.length === 0;
+  Pv.frame(60.9);
+  const pvW = Pv.api.now() && Pv.api.now().w;
+  const Ps = world(); Ps.far = 50500;            // a passage being sailed: no passage home from here, the reason kept
+  Ps.frame(60.9); Ps.frame(55); Ps.frame(49.9);
+  check("8v. HOME 50.5 km OFF, PAST RTH_MAX_M, WITH A PASSAGE HOME TO BE PLANNED (his Castine survey's RTH point): IN RANGE - "
+        + "quiet above the RTH point (61 L), sent home at it with the reason, watched in rth mode with no far distance; with "
+        + "a passage being sailed, out of range as before - nothing sent, the one alert at the reserve, saying why no passage "
+        + "home can be planned",
+        () => pvQuiet && Pv.sent.length === 1 && /LOW FUEL/.test(Pv.sent[0].why) && pvW && pvW.mode === "rth" && pvW.farM === null
+              && Ps.sent.length === 0 && Ps.banners.length === 1 && /AT THE 20% RESERVE/.test(Ps.banners[0])
+              && /50\.5 km away, further than the 50\.0 km the console will route a return in one box, and the way home cannot be planned as a passage: a passage is being sailed/.test(Ps.banners[0]),
+        () => JSON.stringify({ sent: Pv.sent.length, w: pvW && [pvW.mode, pvW.farM], sailed: [Ps.sent.length, (Ps.banners[0] || "").slice(0, 220)] }));
   check("8m. ONE LOW-FUEL RTH IN FLIGHT: while the RTH she was sent is still being routed, a latch re-armed and a point "
         + "reached again send NO second one (no banner, no log either) - it sent 20 in 26 s on 2026-11-08. The crossing it "
         + "holds back is not counted as answered: when the one in flight settles WITHOUT her going home (refused, lost) the "
@@ -904,9 +925,10 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
   const farHome = run({ model, level: 200, rth: inr.level, h: hNear, w: { ...inr, h: hNear, farM: null }, state: "ok" },
     { legs: 3, used: 20, seconds: 100, levelEnd: 180, turn: null, home: null, homeFar: { m: 110000 } });
   check("9l. A PLAN'S END PAST " + (RTH_MAX / 1000) + " km FROM HOME: the Fuel row says what is left at the end of the plan, "
-        + "not 'at home' off one tank, and the tip says End of plan RTH goes home along the passage a port at a time, or is refused",
+        + "not 'at home' off one tank, and the tip says End of plan RTH goes home along the passage a port at a time, or - where "
+        + "no passage home can be planned (2026-11-13) - is refused",
         () => /left$/.test(farHome.fuel) && !/at home/.test(farHome.fuel)
-              && /home from there is 110\.0 km - past the 50\.0 km a straight return is certified for: End of plan RTH goes home along the passage on the plan, a port at a time, each leg sent only with fuel for its port and 20% - or, with no passage, is refused/.test(farHome.fuelTip),
+              && /home from there is 110\.0 km - past the 50\.0 km a straight return is certified for: End of plan RTH goes home along the passage on the plan, a port at a time, each leg sent only with fuel for its port and 20% - or, where no passage home can be planned, is refused/.test(farHome.fuelTip),
         () => JSON.stringify({ fuel: farHome.fuel, tip: farHome.fuelTip.slice(0, 320) }));
   // 9j (2026-11-10 review). THE OVERRIDE'S ROW IN THE STATES 9h DID NOT HAVE: home by the straight line (no "straight
   // line" tag - nothing is measured - and nothing amber off it); home OUT OF RANGE (no "the RTH point here is" - there is
@@ -922,7 +944,7 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
         () => oLine.row === "NOT MONITORED · override on" && oLine.cls === "vv warn"
               && oFar.row === "NOT MONITORED · override on" && /^THE ENERGY OVERRIDE IS ON: /.test(oFar.tip) && !/RTH point here is/.test(oFar.tip)
               && zf.mode === "rth" && zf.level >= zm.full
-              && /turning the override off here raises the low-battery alert at once, and the RTH is REFUSED - home is 80\.0 km away, past the 50\.0 km the console will route a return: Set Home where she is\./.test(oBfar.tip)
+              && /turning the override off here raises the low-battery alert at once, and the RTH is REFUSED - home is 80\.0 km away, past the 50\.0 km the console will route a return in one box(, and no passage home can be planned \([^)]*\))?: Set Home where she is\./.test(oBfar.tip)
               && !/sends her home/.test(oBfar.tip) && /alert at once, and sends her home if she is armed\./.test(oBatt.tip),
         () => JSON.stringify({ line: [oLine.row, oLine.cls], far: (oFar.tip.match(/RTH point here[^\n]*/) || ["(none)"])[0].slice(0, 80),
                                bfar: (oBfar.tip.match(/turning the override off[^\n]*/) || [""])[0].slice(0, 200) }));
@@ -1218,19 +1240,31 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
     const model = { kind: "fuel", full: 250, floor: 0 };
     const mk = new Function("Date", "fuelModel", "asv", "indexedRoute", "window", "S", "energyLevel", "planeFrame", "groundVel",
       "runLegKeys", "V", "roleSpeed", "speedRole", "projectMission", "fuelWatchAt", "endAction", "fuelHomeNeed", "distTo", "NOGO_RADIUS_M",
+      "passageHomeRefusal",
       decl(/^const FUEL_PROJECT_MS = [^;]*;/m) + "\n" + (H.match(/^const FUEL_PROJECT_JUMP = [^;]*;/m) || ["const FUEL_PROJECT_JUMP = 0.01;"])[0] + "\n"
       + decl(/^let fuelProj = [^;]*;/m) + "\n" + decl(/^const RTH_MAX_M = [^;]*;/m) + "\n" + grab("rthTooFar") + "\n"
       + grab("fuelProjection") + "\nreturn fuelProjection;");
-    const proj = (home) => mk({ now: () => 0 }, () => model, { lat: 43, lon: -70 }, () => [{ lat: 43, lon: -70 }, { lat: 43.1, lon: -70 }],
+    const proj = (home, no) => mk({ now: () => 0 }, () => model, { lat: 43, lon: -70 }, () => [{ lat: 43, lon: -70 }, { lat: 43.1, lon: -70 }],
       { _wpIndex: 0 }, { status: {}, home }, () => 200, () => ({ toEN: () => ({ e: 0, n: 0 }), fromEN: () => ({ lat: 43, lon: -70 }) }),
       () => null, () => () => null, { SPEED_KN: {} }, () => "7", () => "transit", () => ({ used: 5, seconds: 60 }), () => null,
-      () => "rth", (m, ll) => ({ need: 30, m: flat(ll, home), water: true, twKn: 7 }), flat, 5000)();
+      () => "rth", (m, ll) => ({ need: 30, m: flat(ll, home), water: true, twKn: 7 }), flat, 5000,
+      () => (no === undefined ? "a passage is being sailed - it goes home along itself, or not at all" : no))();
     const nearP = proj({ lat: 43.2, lon: -70 }), farP = proj({ lat: 43.8, lon: -70 });
     check("9k. A FAR HOME IS NOT ONE TANK'S WORTH: the plan's end 11 km from home, the way home is charged on the card; 78 km "
           + "out - past RTH_MAX_M, where End of plan RTH goes home along the passage a port at a time or is refused - it is "
           + "not, and the distance is kept for the tip",
           () => nearP.home && nearP.home.need === 30 && !nearP.homeFar && farP.home === null && farP.homeFar && Math.abs(farP.homeFar.m - 77924) < 300,
           () => JSON.stringify({ near: [nearP.home, nearP.homeFar], far: [farP.home, farP.homeFar] }));
+    // 9m (2026-11-13). WITH NO PASSAGE BEING SAILED THE WAY HOME FROM A FAR END IS ONE LEG: End of plan plans a passage
+    // home from there (sailHomeFresh) and sends it only with the fuel to get home with 20% - so the card charges it, as a
+    // return in range is charged; past RTH_MAX_M where no passage home can be planned (a passage sailed, a ROC's home, a
+    // battery hull) it is not, as 9k
+    const farNo = proj({ lat: 43.8, lon: -70 }, null), farRoc = proj({ lat: 43.8, lon: -70 }, "home is the ROC's, and it moves");
+    check("9m. A FAR HOME WITH NO PASSAGE BEING SAILED IS CHARGED (2026-11-13: End of plan plans a passage home from the plan's "
+          + "end, sent only with the fuel to arrive with 20%): 78 km out, the way home on the card and no far note; where no "
+          + "passage home can be planned (a ROC's home), not charged and the distance kept, as 9k",
+          () => farNo.home && farNo.home.need === 30 && !farNo.homeFar && farRoc.home === null && farRoc.homeFar && Math.abs(farRoc.homeFar.m - 77924) < 300,
+          () => JSON.stringify({ none: [farNo.home, farNo.homeFar], roc: [farRoc.home, farRoc.homeFar] }));
   }
 
   const C = require(path.join(APP, "static", "js", "coarse.js"));
@@ -1336,6 +1370,8 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
       "const fineHomeDist = () => (w.fineM != null ? {m: w.fineM} : {why: 'off the field'});",
       "const nogoDR = () => ({min: 3.15}), airNeedM = () => 4.85;",
       "const coarseHomeBuild = async (key, here) => { w.builds.push({key, here}); };",
+      // (2026-11-13) past RTH_MAX_M it is built only where a passage home can be planned: a reason unless the world says none
+      "const passageHomeRefusal = () => (w.passageNo === undefined ? 'a passage is being sailed' : w.passageNo);",
       d(/const COARSE_HOME_RETRY_MS = [^;]*;/), grab("coarseHomeKey"), grab("coarseHomeTick"),
       "return {tick: coarseHomeTick, key: coarseHomeKey};"].join("\n");
     w.api = new Function("w", "HOME", "distTo", "coarseHomeDistM", src)(w, HOMEP, flatD, C.coarseHomeDistM);
@@ -1344,6 +1380,9 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
   const t1 = tickWorld(); t1.api.tick();                                              // 25 km out, off the field: built
   const tFine = tickWorld({ fineM: 9000 }); tFine.api.tick();                         // the field round home answers
   const tFar = tickWorld({ here: { lat: 43.07, lon: -69.9 } }); tFar.api.tick();      // ~66 km: out of range
+  // ... unless a passage home can be planned from there (2026-11-13): the monitor sends her home from 66 km then, at an RTH
+  // point measured by water
+  const tFarP = tickWorld({ here: { lat: 43.07, lon: -69.9 }, passageNo: null }); tFarP.api.tick();
   const tBusy = tickWorld({ coarse: { key: null, hf: null, at: 0, note: null, busy: true } }); tBusy.api.tick();
   const tFld = tickWorld({ fldBuild: { id: 1 } }); tFld.api.tick();                   // the fine field is being built
   const tSoon = tickWorld(); Object.assign(tSoon.coarse, { tried: tSoon.api.key(), at: Date.now() - 1000, note: "failed" }); tSoon.api.tick();
@@ -1354,12 +1393,12 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
   const tMoved = tickWorld({ coarse: { key: "another home", tried: "another home", hf: holds, at: Date.now() - 1000, note: "ready", busy: false } });
   tMoved.api.tick();
   check("11d. WHEN IT IS BUILT (coarseHomeTick, on every frame): she past the field round home and within RTH_MAX_M of "
-        + "home - and not while the field round home answers, she is out of range, a build is running or the field round "
-        + "home is being built, within a minute of trying for this same home, or with a field built for this home that "
-        + "holds her; at once when home (or her floor) moved",
+        + "home - or past it where a passage home can be planned (2026-11-13) - and not while the field round home answers, "
+        + "she is out of range, a build is running or the field round home is being built, within a minute of trying for "
+        + "this same home, or with a field built for this home that holds her; at once when home (or her floor) moved",
         () => t1.builds.length === 1 && t1.builds[0].key === t1.api.key() && [tFine, tFar, tBusy, tFld, tSoon, tHold].every((w) => w.builds.length === 0)
-              && tMoved.builds.length === 1,
-        () => JSON.stringify([t1, tFine, tFar, tBusy, tFld, tSoon, tHold, tMoved].map((w) => w.builds.length)));
+              && tMoved.builds.length === 1 && tFarP.builds.length === 1,
+        () => JSON.stringify([t1, tFine, tFar, tBusy, tFld, tSoon, tHold, tMoved, tFarP].map((w) => w.builds.length)));
 
   const buildWorld = (o) => {
     const w = Object.assign({ posts: [], gets: 0, workerMsgs: [], logs: [], st0: { id: "c1", state: "running", total: 8 },
@@ -1464,7 +1503,7 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
   const kOpen = tickWorld({ V: {} }).api.key(), kClose = tickWorld({ V: { OPEN_WATER: false } }).api.key();
   const bOff = buildWorld({ V: { OPEN_WATER: false } }); await bOff.api.build("K1", mid);
   const sent = [b1.workerMsgs[0] && b1.workerMsgs[0].openWater, bOff.workerMsgs[0] && bOff.workerMsgs[0].openWater];
-  const planSend = grab("planPassageNow");
+  const planSend = grab("passagePlanFor");     // (Plan passage's planner since 2026-11-13: the way home from far plans through it too)
   check("11i. OPEN WATER FIRST, COARSE: round the wall the way home keeps off its end - " + (mWo / 1000).toFixed(2) + " km against "
         + "the level rules' " + (mW / 1000).toFixed(2) + ", within 2% of the way round " + OWC.CLEAR_M + " m off its end worked by hand ("
         + (aroundD / 1000).toFixed(2) + ") - and round the band wider; open water unchanged; inside home's own circle no cost (round an "

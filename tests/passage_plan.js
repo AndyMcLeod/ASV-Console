@@ -520,7 +520,7 @@ const FLOOR = 30;
       + fuelSrc + "\n"
       + /const PASSAGE_CASING = [^;]*;/.exec(H)[0] + "\n"
       + ["strokeCased", "fillHaloed", "passageEdited", "passagePointAt", "toggleFuelStop", "passageRefusal", "passagePoints", "passageName", "passageFuelLegs",
-         "passageAlong", "passageSummary", "passageLine", "passageGrids", "passageHalfKm", "passageEndsSay", "planPassageNow",
+         "passageAlong", "passageSummary", "passageLine", "passageGrids", "passageHalfKm", "passageEndsSay", "passagePlanFor", "planPassageNow",
          "drawPassage", "preReadFirstSection"].map(grab).join("\n")
       + "\nlet passagePreRead = null;"
       + "\nreturn {passageEdited, passagePointAt, toggleFuelStop, passageRefusal, passagePoints, passageFuelLegs, passageAlong,"
@@ -676,9 +676,9 @@ const FLOOR = 30;
   const W16d = world({ transit: T3.map((p) => ({ ...p })) });
   W16d.seq = [{ id: "g", state: "running", total: 9, done: 1, tiles: [] }, { id: "g", state: "canceled", total: 9, done: 2 }];
   await W16d.api.planPassageNow();
-  check("16b. REFUSED AND SAID, NOTHING KEPT: the line edited while it was planned; a worker that failed; a chart read "
-        + "that stopped (the worker never asked)",
-        () => W16b.api.state().passage === null && /edited while it was being planned/.test(W16b.banners.pop() || "")
+  check("16b. REFUSED AND SAID, NOTHING KEPT: the line edited while it was planned (its ends not then planned for nothing - "
+        + "2026-11-13, a mutation found that unchecked); a worker that failed; a chart read that stopped (the worker never asked)",
+        () => W16b.api.state().passage === null && /edited while it was being planned/.test(W16b.banners.pop() || "") && !W16b.endsAsked
               && W16c.api.state().passage === null && /worker failed: boom/.test(W16c.banners.pop() || "")
               && W16d.api.state().passage === null && W16d.workerMsgs.length === 0 && /was stopped/.test(W16d.banners.pop() || "")
               && !W16b.api.state().passageBusy && !W16c.api.state().passageBusy && !W16d.api.state().passageBusy,

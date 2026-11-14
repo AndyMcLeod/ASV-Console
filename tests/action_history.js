@@ -400,16 +400,20 @@ const rowText = (r) => r.lastChild.textContent;
     const pins = {
       upload: ups.length === 2 && up.indexOf('setPlanIntent("survey", raw, raw.route);') < up.indexOf("newMission(") && atPress(up),
       sail: atPress(sp) && sp.indexOf('newMission(missionAt, "Sail passage");') > sp.indexOf("if(r.error || r.soft)"),
-      home: /function sailHome\(H, brk, far, missionAt = null\)/.test(sh)
-            && /if\(missionAt != null\) newMission\(missionAt, "RTH along the passage"\);/.test(sh)
+      home: /function sailHome\(H, brk, far, missionAt = null, how = null\)/.test(sh)
+            && /if\(missionAt != null\) newMission\(missionAt, fresh \? "RTH as a passage home" : "RTH along the passage"\);/.test(sh)
             && sh.indexOf("newMission(") > sh.indexOf("if(r.error || r.soft)"),
+      // (2026-11-13) the way home planned as a passage from where she is: the press's time handed through to sailHome
+      fresh: /const out = await sailHomeFresh\(brk, far, missionAt, !!why\);/.test(rth)
+             && /return sailHome\(homePassageRecord\(out\.plan\), brk, far, missionAt, \{fromHere: true, lowFuel: !!lowFuel\}\);/.test(grab("sailHomeFresh")),
       rth: /const missionAt = chained \|\| \(opts && opts\.breakWhy\) \? null : Date\.now\(\);/.test(rth)
            && /const out = await sailHome\(H, brk, far, missionAt\);/.test(rth) && atPress(rth),
       press: atPress(go) && atPress(tr),
     };
     check("16. WHO STARTS ONE: Upload on both of its accepted paths but not Upload from here or the Continue past a hold; "
-          + "Sail passage once its first section is sent; the RTH button's way home along a passage, not the chain's (the "
-          + "mission she is on, 2026-11-12) or the low-fuel shift's - each timed at the press, before anything is awaited",
+          + "Sail passage once its first section is sent; the RTH button's way home along a passage - or planned as one from "
+          + "where she is (2026-11-13) - not the chain's (the mission she is on, 2026-11-12) or the low-fuel shift's - each "
+          + "timed at the press, before anything is awaited",
           () => Object.values(pins).every(Boolean),
           () => JSON.stringify(pins));
   }
