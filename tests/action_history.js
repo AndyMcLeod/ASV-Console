@@ -398,7 +398,7 @@ const rowText = (r) => r.lastChild.textContent;
     const atPress = (src) => code(src).indexOf("missionAt") > 0 && code(src).indexOf("missionAt") < firstAwait(src);
     const ups = up.match(/if\(!fromSv && !release\) newMission\(missionAt, "Upload"\);/g) || [];
     const pins = {
-      upload: ups.length === 2 && up.indexOf('setPlanIntent("survey", raw, raw.route);') < up.indexOf("newMission(") && atPress(up),
+      upload: ups.length === 2 && up.indexOf('setPlanIntent("survey", raw, raw.route, false, pressedAt);') < up.indexOf("newMission(") && atPress(up),
       sail: atPress(sp) && sp.indexOf('newMission(missionAt, "Sail passage");') > sp.indexOf("if(r.error || r.soft)"),
       home: /function sailHome\(H, brk, far, missionAt = null, how = null\)/.test(sh)
             && /if\(missionAt != null\) newMission\(missionAt, fresh \? "RTH as a passage home" : "RTH along the passage"\);/.test(sh)

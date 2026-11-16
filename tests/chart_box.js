@@ -497,7 +497,9 @@ const fresh = () => { banners = []; downs = []; covers = []; aisTaken = 0; cover
         () => /const plan = await planGoToLeg\(how\.from \|\| \{lat:asv\.lat,lon:asv\.lon\}, target, "Go-To"\);/.test(go)
               && /return planInsideChart\(\[from, target\], undefined, \(\) => \{\s*\n\s*const o = /.test(grab("planGoToLeg"))
               && /planOffThread\(\{op: "nogo", args: \{from, to: target, opts: o\}\}, \(\) => planNogoRoute\(from, target, o\)\)/.test(grab("planGoToLeg"))
-              && /const plan = await planInsideChart\(\[\{lat:asv\.lat,lon:asv\.lon\}, \{lat:S\.home\.lat,lon:S\.home\.lon\}\], undefined, \(\) => \{[^\n]*\n\s*const from = \{lat:asv\.lat,lon:asv\.lon\}, to = \{lat:S\.home\.lat,lon:S\.home\.lon\}, o = /.test(rth)
+              // (the boxed return's fence asked before the search, 2026-11-16: command_result 54h - and after doRTH's own
+              // read, before planInsideChart reads any more: an RTH withdrawn there is planned not at all)
+              && /const plan = g0 \? \{fenced: g0\} : await planInsideChart\(\[\{lat:asv\.lat,lon:asv\.lon\}, \{lat:S\.home\.lat,lon:S\.home\.lon\}\], undefined, async \(\) => \{[^\n]*\n\s*let g = fenced\(\); if\(g\) return \{fenced: g\};\s*\n\s*const from = \{lat:asv\.lat,lon:asv\.lon\}, to = \{lat:S\.home\.lat,lon:S\.home\.lon\}, o = /.test(rth)
               && /planOffThread\(\{op: "nogo", args: \{from, to, opts: o\}\}, \(\) => planNogoRoute\(from, to, o\)\)/.test(rth),
         "doGoTo / doRTH");
   check("6b. ... and say what to do about it: the uncharted refusal gets its own advice, not 'nearer open water'",
