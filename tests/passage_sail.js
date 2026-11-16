@@ -173,6 +173,14 @@ console.log("The passage, sailed:");
     legs: [{ lengthM: 40000 }, { lengthM: 20000 }], twKn: 7, floorM: 3.15,
     sections: [sec(P0, P1, [east(HERE, 10000)]), sec(P1, P2, [east(HERE, 30000)], "port", 1), sec(P2, P3, [], "port", 2)],
     fuelLegs: [{ from: { t: 0 }, to: { t: 1 } }, { from: { t: 1 }, to: { t: 2 } }], fuel: [{ ok: true }, { ok: true }] });
+  // (the world's setPlanIntent is a copy of the page's counting: a change to the page's line is a change to make there too -
+  // and that line is the only place in it that counts: a second count anywhere else in the function is a change too)
+  {
+    const spi = grab("setPlanIntent");
+    if (!/\n  if\(!guardOwn\)\{ if\(kind === "escape"\) escapeGen\+\+; else \{ cmdGen\+\+; cmdKind = kind; \} \}/.test(spi)
+        || (spi.match(/escapeGen|cmdGen|cmdKind/g) || []).length !== 3)
+      throw new Error("test setup: setPlanIntent's counting line changed - this world's copy of it must follow");
+  }
   const world = (o) => {
     const w = Object.assign({ S: { armed: true, estop: false, run: "idle", status: { fuel_l: 200, holding: false }, wp_total: 0 },
       asv: { ...HERE }, wpIndex: 0, mission: { passage: null }, passage: PLAN(), runRoute: null, cmds: [], banners: [], notes: [],
@@ -180,7 +188,7 @@ console.log("The passage, sailed:");
       gotoTakes: true, planIntent: null, planGen: 0, waterAsked: [], levels: [], banked: [],
       level: { m: 0.35, say: "+0.35 m, the lowest predicted along it over the next 4.0 h (Test Harbor, 3 km off)" } }, o || {});
     const src = [
-      "let S = w.S, asv = w.asv, mission = w.mission, passage = w.passage, runRoute = w.runRoute, runUnsafe = [], planIntent = w.planIntent, planGen = w.planGen, cmdGen = 0, escapeGen = 0;",
+      "let S = w.S, asv = w.asv, mission = w.mission, passage = w.passage, runRoute = w.runRoute, runUnsafe = [], planIntent = w.planIntent, planGen = w.planGen, cmdGen = 0, escapeGen = 0, cmdKind = null;",
       "const window = {get _wpIndex(){ return w.wpIndex; }};",
       "let routeCmdsInFlight = 0, escapeThrottle = !w.quiet, guardActedAt = 0, guardEdgeAt = 0, aisAroundBusy = false, heldResuming = false;",
       // (the guard's level and when it last commanded an escape - rthChainRetry asks them after an escape's withdrawal, 16i)
@@ -208,10 +216,13 @@ console.log("The passage, sailed:");
       "const routePlan = (from, line, kr, std, ta, ro) => { w.planned.push({from, line, ow: ro && ro.openWater}); return {route: line.map((p) => ({lat: p.lat, lon: p.lon})), unroutable: Array(w.unroutable).fill(0)}; };",
       // (the command's answer is the world's `post` when it sets one - refused, lost, never sent (16g) - and taken otherwise;
       // took and notTookSay are the page's own, which keep those three apart)
-      "const routeCmd = async (p, b) => { w.cmds.push([p, b]); return w.post || {ok: true, state: {status: {}}}; };",
+      // (`defer(path)`: that command's answer is held until the check calls `w.release(reply)` - a slow link's, 16k)
+      "const routeCmd = async (p, b) => { w.cmds.push([p, b]); if (w.defer && w.defer(p)) return new Promise((res) => { w.release = res; });"
+        + " return w.post || {ok: true, state: {status: {}}}; };",
       grab("took"), grab("notTookSay"), "const releaseEscapeClaim = () => {};",
-      // (cmdGen and escapeGen as the page counts them - rthFence's, the 2026-11-14 review)
-      "const setPlanIntent = (k, p, r, own) => { planGen++; if (k === 'escape') escapeGen++; else if (!own) cmdGen++; planIntent = {kind: k, why: [], route: r.length}; };",
+      // (cmdGen and escapeGen as the page counts them - rthFence's, the 2026-11-14 review; the guard's own upkeep counts
+      // neither, an escape's included - the second review of 2026-11-16. A COPY, so the page's own line is pinned below.)
+      "const setPlanIntent = (k, p, r, own) => { planGen++; if (!own) { if (k === 'escape') escapeGen++; else { cmdGen++; cmdKind = k; } } planIntent = {kind: k, why: [], route: r.length}; };",
       "const legStartsHere = () => {}, setTip = (el, t) => { el.tip = t; };",
       // step 6: the water a section is planned at (stubbed here; 14 drives the real ones), and doRTH's way home
       "const sectionWater = async (P, from, pts, append) => { w.waterAsked.push({from, pts, append}); return w.level; };",
@@ -236,7 +247,7 @@ console.log("The passage, sailed:");
       "const surveyBreakNow = () => w.brk || null, bankBreak = (b) => w.banked.push(b);",
       decl("RTH_MAX_M"),
       "const ctx = new Proxy({}, {get: (t, k) => (k in t ? t[k] : (...a) => { w.ops.push([k, ...a]); }), set: (t, k, v) => { t[k] = v; return true; }});",
-      "const doGoTo = async (ll) => { w.cmds.push(['goto', ll]); if (w.gotoTakes) { planGen++; cmdGen++; planIntent = {kind: 'goto', why: []}; if (w.gotoRoute) runRoute = w.gotoRoute; } };",
+      "const doGoTo = async (ll) => { w.cmds.push(['goto', ll]); if (w.gotoTakes) { planGen++; cmdGen++; cmdKind = 'goto'; planIntent = {kind: 'goto', why: []}; if (w.gotoRoute) runRoute = w.gotoRoute; } };",
       "const $ = (id) => w.dom[id] || (w.dom[id] = {style: {}, classList: {toggle(c, on){ this[c] = on; }}, disabled: false});",
       decl("PASSAGE_CASING"), grab("strokeCased"), grab("fillHaloed"),
       "const PASSAGE_PORT_R_M = w.C.PORT_R_M;", grab("sectionPorts"), grab("sectionAtPort"), grab("portSectionLine"),
@@ -252,7 +263,11 @@ console.log("The passage, sailed:");
       // (the review, 2026-11-13: one way home planned at a time and joined; the chain asked again after "busy" - its timer the
       // world's `later`, run by the check; the monitor's rule at the send; the press kept)
       // (`rthChainEscapeRun`: the run whose end the chain has been asked again at once after an escape - rthChainAgain, 16i)
-      "let homeFlight = null, rthChainBusyAt = 0, rthChained = !!w.rthChained, rthChainEscapeRun = null;", decl("RTH_BUSY_RETRY_MS"),
+      // (`rthHeldRun`: the motion she was last seen holding on - under way on it is the guard's re-approach, no new run, 16j)
+      "let homeFlight = null, rthChainBusyAt = 0, rthChained = !!w.rthChained, rthChainEscapeRun = null, rthHeldRun = null;", decl("RTH_BUSY_RETRY_MS"),
+      // THE ROUTED RE-APPROACH (16j): the page's own reapproachIfSetOff, its route the world's planNogoRoute (straight back)
+      "let reapproachAt = 0, reapproachBusy = false;", decl("REAPPROACH_MIN_MS"),
+      "const patClipBufM = () => 3, koWithAis = () => null, planWhy = (p) => String((p && p.error) || '');",
       "const setTimeout = (fn, ms) => { if (ms !== RTH_BUSY_RETRY_MS) return globalThis.setTimeout(fn, ms); w.later = (w.later || []).concat([{fn, ms}]); };",
       "const passagePlanFor = async (points, say, gone) => { w.homeAsked = (w.homeAsked || []).concat([{points, busy: passageBusy}]); say('reading');"
         + " if (w.duringHomePlan) w.duringHomePlan(w, api); if (gone()) return {gone: true};"
@@ -262,9 +277,10 @@ console.log("The passage, sailed:");
        "sailFuelShort", "continueRefusal", "continuePassage", "continueSend", "divertPassage", "dropPassage", "renderPassageControls", "sailLine", "sailOwnsHold", "sailArrival", "sailArrived", "drawSail",
        "rthTooFar", "doRTH", "passageHome", "homeRecord", "sailHome",
        "passageHomeRefusal", "homePassageRecord", "homePassageRefusal", "sailHomeFresh", "sailHomeFreshRun", "rthFence", "rthChainRetry",
-       "rthNotCalledOff", "rthChainAgain", "rearmRthChain"].map(grab).join("\n"),
+       "rthNotCalledOff", "rthChainAgain", "chainRunKey", "rearmRthChain", "reapproachIfSetOff"].map(grab).join("\n"),
       "const api = {sailRecord, sailRefusal, sectionRest, sailPassage, passageTick, sailAtEnd, continuePassage, continueRefusal, divertPassage,",
       "  dropPassage, renderPassageControls, sailOwnsHold, sailLine, drawSail, doRTH, homeRecord, rthPending, chainFires, setPlanIntent, rearmRthChain,",
+      "  reapproachIfSetOff,",
       "  passageHomeRefusal, homePassageRecord, stop: (name) => { routeStopGen++; routeStopName = name; },",
       "  showBanner, takeDownBanner, swapBanner, RTH_WAITING_RE,",
       "  st: () => ({mission, runRoute, planIntent, planGen, cmdGen, escapeGen, passage, sailBusy, passageBusy, rthChainFailed, rthChained, rthChainBusyAt, homeFlight}), set: (k, v) => { eval(k + ' = v'); }};",
@@ -1144,7 +1160,8 @@ console.log("The passage, sailed:");
   // (`chain16`: the chain's RTH asked of a world, and what it left; `wait16`: what happens in the retry's wait - `during` -
   // then the wait's end (its timer), and what THAT left; `fire16`: the world moved on by `before`, then the chain's own
   // condition asked as onState asks it, and the chain fired when it holds; `underWay`: the frames of a run she is commanded
-  // on - under way, where the page's own rearmRthChain re-arms the chain, then holding at its end; `up`: the banner
+  // on - a NEW motion, so the console's run_seq moves (measured: a Go-To given while one runs, the escape; 16j) - under
+  // way, where the page's own rearmRthChain re-arms the chain, then holding at its end, a frame it reads too; `up`: the banner
   // standing in the one slot - the world's element, written by its showBanner and the page's own takeDownBanner / swapBanner)
   const up = (w) => { const b = w.dom["#encbanner"]; return b && b.style.display === "block" ? b.textContent : ""; };
   const chain16 = async (w, first) => {
@@ -1173,7 +1190,8 @@ console.log("The passage, sailed:");
     return { fires, sent: w.cmds.length, failed: !!w.api.st().rthChainFailed, asked: (w.homeAsked || []).length, P: w.api.st().mission.passage,
              timers: (w.later || []).length, said: w.banners[w.banners.length - 1] || "" };
   };
-  const underWay = (w, beh) => { w.S.behavior = beh; w.S.status.holding = false; w.api.rearmRthChain(w.S, w.S.status); w.S.status.holding = true; };
+  const underWay = (w, beh) => { w.S.behavior = beh; w.S.run_seq = (w.S.run_seq || 0) + 1; w.S.status.holding = false;
+    w.api.rearmRthChain(w.S, w.S.status); w.S.status.holding = true; w.api.rearmRthChain(w.S, w.S.status); };
   // (an escape she TOOK - under way on it - and one the guard only ASKED: escapeGen moves at the ask, she holds as she was)
   const tookEscape = (w, api) => { api.setPlanIntent("escape", null, []); w.S.behavior = "escape"; w.S.status.holding = false; };
   const askedEscape = (w, api) => { api.setPlanIntent("escape", null, []); };
@@ -1286,8 +1304,9 @@ console.log("The passage, sailed:");
     const r = await chain16(w), ww = wait16(r), f = await fire16(w); return { w, r, ww, f }; };
   const lp16 = await lap16(), lp16w = lp16.ww, lp16f = lp16.f;
   const lp16log = (lp16.w.logs.filter((l) => l[0] === "plan_withdrawn").pop() || [0, {}])[1].by;
-  // ... and a NEW end asks again: she has been under way since (the same run number: the mark is dropped where the chain is
-  // re-armed); her next run's end with no frame under way between (run_seq); the same run number on a new link (boot_id)
+  // ... and a NEW end asks again: she has been under way on a new run since (the mark is dropped where the chain is
+  // re-armed - and NOT by the routed re-approach to this hold, the same run carrying on: 16j); her next run's end with no
+  // frame under way between (run_seq); the same run number on a new link (boot_id)
   const again16i = (w, api) => { api.set("rthChained", false); api.set("rthChainFailed", false); };
   const lu16 = await lap16(), lu16n = await fire16(lu16.w, (w) => { underWay(w, "goto"); });
   const ls16 = await lap16(), ls16n = await fire16(ls16.w, (w, api) => { w.S.run_seq = 8; again16i(w, api); });
@@ -1365,7 +1384,8 @@ console.log("The passage, sailed:");
     both: pc16.by === "another command" && pc16.failed && pc16.later.length === 0 && pc16.sent === 0
           && pe16.by === "End of plan" && pe16.failed && pe16.later.length === 0 && pe16.sent === 0
           && pu16.by === "another command" && pu16.failed && pu16.later.length === 0
-          && pg16.by === "another command" && pg16.failed && /this console commanded her elsewhere \(a new plan\) while/.test(pg16.said)
+          // (the Go-To is named, not the escape drawn after it - cmdKind, the third review of 2026-11-16: it was "a new plan")
+          && pg16.by === "another command" && pg16.failed && /this console commanded her elsewhere \(goto\) while/.test(pg16.said)
           && pl16.by === "End of plan" && pl16.failed && pl16.later.length === 0
           && px16.by === "the guard's escape" && !px16.failed && px16.later.length === 1 && WAIT_ESC.test(px16.said)
           && pr16.by === "her run stopped" && pr16.failed && pr16.later.length === 0,
@@ -1394,6 +1414,138 @@ console.log("The passage, sailed:");
                                inWait: [he16w.off, ht16w.rearmed, ht16f.fires], runTookIt: [sr16w.rearmed, sr16w.up],
                                laterWait: [tw16timers.length, tw16a.rearmed, tw16a.up === tw16said, tw16b.rearmed], notTheMonitors: [lf16w.failed, lf16w.up.slice(0, 22), lf16w.note.slice(0, 50)],
                                both: [pc16.by, pe16.by, pu16.by, pg16.by, pg16.said.slice(0, 80), pl16.by, px16.by, px16.failed, pr16.by], slot: slot16, wiring: [iAt > 0, iAt < iEsc, iEsc < iBox, iBox < iSet] }));
+
+  // ── 16j. THE GUARD'S OWN RE-APPROACH IS NOT A COMMANDED RUN, AND IT RUNS WHILE THE WAY HOME PLANS (2026-11-16; found by the
+  // reviews of 16h-16i, pre-existing). The console's routed re-approach (reapproachIfSetOff -> Engine.reapproach: she was
+  // set beyond the water certified clear round her hold, and is routed back) puts her under way for the leg back with her
+  // run, her behavior and her run_seq as they were - measured on a throwaway console, and no field names the leg - and
+  // rearmRthChain read every such frame as a commanded run: a chain RECORDED at that end (withdrawn by an Upload while its
+  // way home planned, ended by one in its wait, refused, ended at a second escape) was cleared, and fired again when she
+  // was back on station - an RTH sent over the plan the operator had uploaded; and a wait still standing was taken, the
+  // chain firing on her return with no fence asked. Now under way re-arms only on a motion other than the one she was
+  // last seen holding on. And the re-approach stood down while rthPending(): through the minutes a far way home plans,
+  // and each 15 s wait, she sat set off her station, beyond the certified water, with the way off. It runs now, moving
+  // neither fence (the guard's own upkeep counts no command) nor the chain; and a view-only tab sends none.
+  // (`j16`: arrived at the end of run 4 of link b1, the chart model up, a frame of her hold read as onState reads it;
+  // `setOff`: 45 m off, beyond the 30 m certified round her hold - the vessel takes the way off and asks for a route;
+  // `leg`: the frames as the console sends them - her hold, the re-approach under way on the run she held on, her hold
+  // again; `back`: set off, the page's own reapproachIfSetOff asked - what it posted, and what it said; `rth`: RTHs posted)
+  const j16 = (o, so) => { const w = arrived(Object.assign({ nogo: { ready: true } }, o || {}), so); w.S.run_seq = 4; w.S.boot_id = "b1";
+    w.api.rearmRthChain(w.S, w.S.status); return w; };
+  const setOff = (w) => Object.assign(w.S.status, { holding: true, hold_wants_route: true, hold: { ...P3 }, off_station_m: 45, hold_clear_m: 30 });
+  const leg = (w) => { w.S.status.holding = true; w.api.rearmRthChain(w.S, w.S.status);
+    Object.assign(w.S.status, { holding: false, hold_wants_route: false }); w.api.rearmRthChain(w.S, w.S.status); w.api.rearmRthChain(w.S, w.S.status);
+    Object.assign(w.S.status, { holding: true, off_station_m: 1 }); w.api.rearmRthChain(w.S, w.S.status); };
+  const back = async (w) => { const n = w.cmds.length, said = w.notes.length + w.banners.length, g0 = w.api.st().cmdGen; setOff(w);
+    await w.api.reapproachIfSetOff(w.S, w.S.status);
+    return { sent: w.cmds.slice(n).map((c) => c[0]).join(","), said: w.notes.length + w.banners.length - said, moved: w.api.st().cmdGen - g0 }; };
+  const rth = (w) => w.cmds.filter((c) => c[0] === "/api/cmd/rth").length;
+  const upload = (w, api) => api.setPlanIntent("survey", null, []);
+  // the chain RECORDED at her end, then she is set off and routed back onto station
+  const rA = await chain16(j16({ duringCover: upload }));                                     // an Upload while its way home planned
+  rA.w.duringCover = null;
+  const rAb = await back(rA.w); leg(rA.w); const rAst = rA.w.api.st(), rAf = await fire16(rA.w);
+  const rB = await chain16(j16({ duringCover: movedHome })), rBw = wait16(rB, upload);        // ... ended by an Upload in its wait
+  rB.w.duringCover = null;
+  const rBb = await back(rB.w); leg(rB.w); const rBf = await fire16(rB.w);
+  const rC = await chain16(j16({ post: { ok: false, error: "ARM before commanding the boat", sent: true, refused: true } }));   // refused
+  rC.w.post = null;
+  const rCn = rth(rC.w), rCb = await back(rC.w); leg(rC.w); const rCf = await fire16(rC.w);
+  const rD = await lap16(); leg(rD.w); const rDf = await fire16(rD.w, (w) => { w.duringPlan = null; });   // ended at a second escape
+  // the WAIT, not taken by the re-approach: back on station inside the 15 s, the fence is still asked at its end
+  const wA = await chain16(j16({ duringCover: movedHome })); wA.w.duringCover = null;
+  const wAb = await back(wA.w); leg(wA.w);
+  const wAearly = await fire16(wA.w), wAw = wait16(wA, upload);                              // (an Upload in the wait)
+  const wB = await chain16(j16({ duringCover: movedHome })); wB.w.duringCover = null;
+  const wBb = await back(wB.w); leg(wB.w); const wBw = wait16(wB), wBf = await fire16(wB.w);  // (nothing in the wait)
+  // routed back WHILE the way home plans: one return sent when it is ready
+  const pH = await chain16(j16({ duringCover: (w) => { w.backed = back(w); } }));
+  const pHb = await pH.w.backed; leg(pH.w); const pHf = await fire16(pH.w);
+  // a view-only tab routes nothing and says nothing; the supervising one does (End of plan LOITER: no chain at all)
+  const vL = j16({ sup: false }, { completion: "loiter" }), sL = j16({}, { completion: "loiter" });
+  const vLb = await back(vL), sLb = await back(sL);
+  // KEPT: a run commanded over a recorded chain, and the guard's escape - each a new motion - re-arm it, and take its wait
+  const kN = await chain16(j16({ duringCover: upload })); kN.w.duringCover = null;
+  underWay(kN.w, "goto"); const kNf = await fire16(kN.w);
+  const escUnder = (w) => { tookEscape(w, w.api); w.S.run_seq += 1; w.api.rearmRthChain(w.S, w.S.status); return w.api.st(); };
+  const kE = await chain16(j16({ duringCover: upload })); kE.w.duringCover = null;
+  const kEst = escUnder(kE.w); kE.w.S.status.holding = true; kE.w.api.rearmRthChain(kE.w.S, kE.w.S.status); const kEf = await fire16(kE.w);
+  const kW = await chain16(j16({ duringCover: movedHome })); kW.w.duringCover = null;
+  const kWst = escUnder(kW.w);
+  const j16r = {
+    recordedUpload: rA.failed && rA.by === "another command" && rAb.sent === "/api/cmd/reapproach" && rAst.rthChainFailed && rAst.rthChained
+                    && !rAf.fires && rth(rA.w) === 0 && !rA.w.api.rthPending(),
+    recordedInWait: !rBw.rearmed && rBw.failed && rBw.off === "another command" && rBb.sent === "/api/cmd/reapproach" && !rBf.fires && rth(rB.w) === 0,
+    recordedRefused: rC.failed && rCn === 1 && rCb.sent === "/api/cmd/reapproach" && !rCf.fires && rth(rC.w) === 1,
+    secondEscape: rD.f.failed && !rDf.fires && rD.w.api.st().rthChainFailed,
+    waitStands: wAb.sent === "/api/cmd/reapproach" && !wAearly.fires && rth(wA.w) === 0 && !wAw.rearmed && wAw.failed && wAw.off === "another command",
+    waitAsked: wBb.sent === "/api/cmd/reapproach" && wBw.rearmed && !wBw.failed && wBf.fires && rth(wB.w) === 1 && distTo(wBf.P.home, NEWHOME16) < 1,
+    whilePlanning: pHb.sent === "/api/cmd/reapproach" && pH.w.cmds.map((c) => c[0]).join(",") === "/api/cmd/reapproach,/api/cmd/rth"
+                   && !pH.failed && pH.by === null && pH.chained === true && !pHf.fires && rth(pH.w) === 1,
+    ownUpkeep: [rAb, rBb, rCb, wAb, wBb, pHb, sLb].every((b) => b.moved === 0),
+    viewOnly: vLb.sent === "" && vLb.said === 0 && sLb.sent === "/api/cmd/reapproach",
+    newRun: kNf.fires && !kNf.failed && rth(kN.w) === 1,
+    escape: kEst.rthChained === false && !kEst.rthChainFailed && !kEf.fires && rth(kE.w) === 0 && kW.at > 0 && kWst.rthChainBusyAt === 0,
+  };
+  check("16j. ⚠ THE GUARD'S OWN RE-APPROACH IS NOT A COMMANDED RUN: a chain RECORDED at her end - withdrawn by an Upload while "
+        + "its way home planned, ended by an Upload in its wait, refused, ended at a second escape - stays recorded when she is "
+        + "set off station and routed back (under way on the run she held on): it does not fire on her return, nothing sent; a "
+        + "WAIT still standing is not taken by it - back on station before the 15 s are up nothing fires, and the wait's own "
+        + "fence ends it on an Upload, or asks it again and sends her home; and she IS routed back while her far way home "
+        + "plans (it was stood down for minutes, set off with the way off) - the re-approach moving no fence, the way home "
+        + "sent once. A view-only tab routes nothing. KEPT: a run commanded over the recorded chain, and the guard's escape - "
+        + "each a new motion - re-arm it and take its wait",
+        () => Object.values(j16r).every(Boolean),
+        () => JSON.stringify({ bad: Object.entries(j16r).filter(([, v]) => !v).map(([k]) => k),
+                               upload: [rA.failed, rA.by, rAb, rAst.rthChainFailed, rAf.fires, rth(rA.w)], inWait: [rBw.rearmed, rBw.off, rBb.sent, rBf.fires],
+                               refused: [rC.failed, rCn, rCb.sent, rCf.fires, rth(rC.w)], second: [rD.f.failed, rDf.fires],
+                               waitStands: [wAb.sent, wAearly.fires, wAw.rearmed, wAw.off], waitAsked: [wBb.sent, wBw.rearmed, wBf.fires, rth(wB.w)],
+                               planning: [pHb, pH.w.cmds.map((c) => c[0]), pH.failed, pH.by, pHf.fires], viewOnly: [vLb, sLb.sent],
+                               newRun: [kNf.fires, kNf.failed, rth(kN.w)], escape: [kEst.rthChained, kEst.rthChainFailed, kEf.fires, kW.at, kWst.rthChainBusyAt] }));
+
+  // ── 16k. THE RE-APPROACH NEVER OVER A COMMAND IN FLIGHT (the adversarial review of 16j, the same day). With the stand-down
+  // gone a re-approach can meet the chained RTH. Measured on a throwaway console, its link's upload slowed as a real one's
+  // is: a re-approach that reached the console while the RTH held it ran AFTER it, the leg back over the way home (the far
+  // return lost); and the review's replay of this suite's world, the re-approach's reply released after the RTH's, drew
+  // the leg back over the passage home, which passageTick then broke off. Three answers: not sent while a route command
+  // is between send and reply; the run it was planned on rides it (run_seq - the console refuses it once she is on
+  // another: tests/run_link_control.py 15i-15k, escape_chain.py 12); and its reply draws nothing once another plan's
+  // picture is up, or she is on another run by the frame or by the reply's own state. KEPT: its reply with nothing
+  // between draws the leg back, as before.
+  // (`k16`: her hold at the end of run 4 of link b1, End of plan LOITER - no chain - and the re-approach's answer held by
+  // the world until `late` releases it: `between` runs while it is held)
+  const k16 = (o) => j16(o, { completion: "loiter" });
+  const kA = k16(); await back(kA); const kAbody = (kA.cmds[kA.cmds.length - 1] || [])[1] || {};
+  const kB = k16(); kB.api.set("routeCmdsInFlight", 1); const kBb = await back(kB);
+  kB.api.set("routeCmdsInFlight", 0); const kBb2 = await back(kB);
+  const late = async (between, reply) => {
+    const w = k16({ defer: (p) => p === "/api/cmd/reapproach" }); setOff(w);
+    const before = w.api.st().runRoute, rthRoute = [{ ...P0 }];
+    const p = w.api.reapproachIfSetOff(w.S, w.S.status); await settle();
+    if (between) between(w, rthRoute);
+    w.release(reply || { ok: true, state: { status: {}, boot_id: "b1", run_seq: 4 } }); await p;
+    const st = w.api.st();
+    return { sent: w.cmds.map((c) => c[0]).join(","), kind: st.planIntent && st.planIntent.kind,
+             drew: st.runRoute === rthRoute ? "the RTH's" : st.runRoute === before ? "as it was" : "the leg back" };
+  };
+  const kRth = await late((w, r) => { w.api.setPlanIntent("rth", null, r); w.api.set("runRoute", r); });   // the RTH answered first
+  const kFrame = await late((w) => { w.S.run_seq = 5; });                                                   // a frame on another run
+  const kReply = await late(null, { ok: true, state: { status: {}, boot_id: "b1", run_seq: 5 } });         // her state as it answered
+  const kCtl = await late(null);                                                                            // nothing between
+  const k16r = {
+    runSeq: kAbody.run_seq === 4 && kA.cmds.some((c) => c[0] === "/api/cmd/reapproach"),
+    inFlight: kBb.sent === "" && kBb.said === 0 && kBb2.sent === "/api/cmd/reapproach",
+    laterPicture: kRth.sent === "/api/cmd/reapproach" && kRth.drew === "the RTH's" && kRth.kind === "rth",
+    frameMoved: kFrame.drew === "as it was", replyMoved: kReply.drew === "as it was",
+    control: kCtl.drew === "the leg back",
+  };
+  check("16k. ⚠ THE RE-APPROACH NEVER OVER A COMMAND IN FLIGHT: it carries the run it was planned on; it is not sent while a "
+        + "route command is between send and reply, and is once that is answered; and an answer that comes after another "
+        + "plan's picture is up - the RTH's - or with her on another run, by the frame or by its own state, draws nothing over "
+        + "it. KEPT: an answer with nothing between draws the leg back",
+        () => Object.values(k16r).every(Boolean),
+        () => JSON.stringify({ bad: Object.entries(k16r).filter(([, v]) => !v).map(([k]) => k), body: kAbody.run_seq,
+                               inFlight: [kBb, kBb2], rth: kRth, frame: kFrame, reply: kReply, control: kCtl }));
 
   // ── 14. the water a section is planned at ───────────────────────────────────────────────────────────────────────
   const lv = (() => {
@@ -1970,6 +2122,11 @@ console.log("The passage, sailed:");
     escapeElsewhere: await fenced17({}, (w) => { w.S.behavior = "escape"; }),
     upload: await fenced17({}, (w, api) => api.setPlanIntent("survey", null, [])),
     upkeep: await fenced17({}, (w, api) => api.setPlanIntent("survey", null, [], true)),
+    // (and the upkeep of an ESCAPE she holds on - the re-approach draws under the run's kind, "escape" there - is upkeep
+    // too: it counted escapeGen, and a way home pressed at an escape's hold was withdrawn "by the guard's escape" each
+    // time she was set off and routed back - the second review of 2026-11-16; the world's copy of the count is pinned)
+    upkeepEscape: await fenced17({ behavior: "escape", status: { holding: true, fuel_l: 200 } },
+                                 (w, api) => { w.api.set("planIntent", {kind: "escape", why: []}); api.setPlanIntent("escape", null, [], true); }),
     holdAtPress: await fenced17({ behavior: "hold" }, (w) => { w.S.behavior = "survey"; }),
     holdWhile: await fenced17({}, (w) => { w.S.behavior = "hold"; }),
     gotoElsewhere: await fenced17({}, (w) => { w.S.behavior = "goto"; }),
@@ -1983,14 +2140,15 @@ console.log("The passage, sailed:");
             // (said as COMMANDED, 2026-11-16: it counts from the guard's ask, whether or not she took the helm)
             && /RTH withdrawn: the guard commanded an escape in extremis while the way home was being planned\./.test(q17.escape.said),
     upload: q17.upload.by === "another command" && q17.upload.sent === 0 && /this console commanded her elsewhere \(survey\)/.test(q17.upload.said),
-    sent: ["upkeep", "holdAtPress", "holdWhile", "endPlanPress", "chainSent"].every((k) => q17[k].by === null && q17[k].sent === 1)
+    sent: ["upkeep", "upkeepEscape", "holdAtPress", "holdWhile", "endPlanPress", "chainSent"].every((k) => q17[k].by === null && q17[k].sent === 1)
           && !q17.chainSent.failed,
     goto: q17.gotoElsewhere.by === "another command" && q17.gotoElsewhere.sent === 0,
     endPlan: q17.endPlan.by === "End of plan" && q17.endPlan.sent === 0 && q17.endPlan.failed && /End of plan was changed to LOITER/.test(q17.endPlan.said),
     chainHold: q17.chainHold.by === "a hold" && q17.chainHold.sent === 0 && q17.chainHold.failed,
   };
   check("17q. THE FENCE: withdrawn by the guard's ESCAPE (this console's, one that came and went, another window's) and by a motion "
-        + "THIS console commanded of the same behavior (a survey uploaded over the survey); NOT by the guard's own upkeep, or a hold "
+        + "THIS console commanded of the same behavior (a survey uploaded over the survey); NOT by the guard's own upkeep (an "
+        + "escape's too: the re-approach at an escape's hold), or a hold "
         + "at the press or while it plans; the end-of-plan chain withdrawn and recorded when End of plan is switched to LOITER (the "
         + "operator's press goes on) and by a hold",
         () => Object.values(wq17).every(Boolean),

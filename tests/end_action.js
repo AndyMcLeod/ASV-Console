@@ -36,7 +36,10 @@
 // Drop the rthChainFailed guard and 9 fails. Drop the armed/estop guards and 7 and 8 fail.
 // Drop the `behavior !== "rth"` guard and 5 fails. Re-arm the chain on every running frame
 // (drop the !holding test) and 15 fails; re-arm only on idle -> running, the behaviour that
-// produced the live bug, and 14 fails.
+// produced the live bug, and 14 fails. (2026-11-16, 16f: re-arm on any motion under way - drop the
+// test of the run she held on - and 16f fails; never write the run she holds on, and 16f; key it
+// without the link's boot_id, and 16f; without run_seq, and 14; drop the console-without-run_seq
+// rule, and 14b; re-arm a stopped boat whose run differs, and 16.)
 //
 // NOTE: this suite evaluates page code SLOPPY - a direct eval, so the page's function declarations bind into this
 // file. The page itself is <script type="module">, which runs STRICT: an assignment to an undeclared name passes
@@ -102,6 +105,7 @@ function grab(name) {
 
 var S = null, rthChained = false, rthChainFailed = false, rthChainBusyAt = 0, mission = { completion: "rth" };   // (rthChainBusyAt: a busy far RTH's retry, which re-arming clears - passage_sail 17h)
 var rthChainEscapeRun = null;   // (the run whose end has waited once on the guard after an escape, which re-arming clears too - passage_sail 16i)
+var rthHeldRun = null;          // (the motion she was last seen holding on: under way on it is no commanded run - 16f)
 // eslint-disable-next-line no-eval
 // CHAINABLE_BEHAVIORS comes across VERBATIM with its helper - the real list, so a behaviour
 // added to the page is tested here rather than in a copy of it that can drift.
@@ -111,7 +115,7 @@ eval(grabDecl("CHAINABLE_BEHAVIORS") + "\n" + grab("chainableRun") + "\n" +
      "var pendingHold = null;\n" + grab("heldSplitRun") + "\n" +
      // the passage being sailed (2026-10-12): its holds are not an end of plan - this world sails none
      "var sailOwnsHold = () => false;\n" +
-     grab("rthPending") + "\n" + grab("endAction") + "\n" + grab("rearmRthChain"));
+     grab("rthPending") + "\n" + grab("endAction") + "\n" + grab("chainRunKey") + "\n" + grab("rearmRthChain"));
 
 let fails = 0;
 function check(name, cond, detail) {
@@ -250,19 +254,89 @@ check("13. survey, setting rth, everything armed and homed — rth",
 // so the idle -> running edge that used to re-arm the chain never fired, and the second
 // run held at its endpoint indefinitely - with the card promising a return home the whole
 // time. Being under way is the signal, not a run starting.
-function rearm(over, chained) {
-  const s = state(over); rthChained = !!chained; rthChainFailed = !!chained;
+// (The frames as onState reads them, the console's own run identity on each - link b1: first her HOLD at the end of run
+// 4, where the chain was spent (every frame of a hold writes the run she holds on; the chain fires only on one), then
+// `over`. A new commanded motion moves run_seq - measured on a throwaway console: a Go-To given while one runs, the
+// escape - and the routed re-approach to her hold does not: 16f.)
+// heldSeq null = a console that publishes no run_seq at all: the key is left out of both frames (NOT undefined, which the
+// default parameter turns back into 4 - the first draft's 14b passed nothing that way).
+function rearm(over, chained, heldSeq = 4) {
+  const seq = heldSeq === null ? {} : { run_seq: heldSeq };
+  rthHeldRun = null;
+  rearmRthChain(state(Object.assign({ boot_id: "b1", status: { holding: true } }, seq)), { holding: true });
+  const s = state(Object.assign({ boot_id: "b1" }, seq, over)); rthChained = !!chained; rthChainFailed = !!chained;
   rearmRthChain(s, s.status || {});
   return rthChained;
 }
 check("14. THE LIVE BUG: a new run commanded while under way re-arms the chain",
-      rearm({ behavior: "goto", status: { holding: false } }, true) === false,
+      rearm({ behavior: "goto", run_seq: 5, status: { holding: false } }, true) === false,
       "run never left 'running', so nothing else would have re-armed it");
+check("14b. ... and from a console that publishes no run_seq at all - on her hold, and under way - under way re-arms it as "
+      + "it always did",
+      rearm({ behavior: "goto", status: { holding: false } }, true, null) === false,
+      "nothing on such a frame tells one motion from another: the 2026-08-01 rule stands");
+// (holding on the run she held on: a hold on ANOTHER run is that motion seen first at its hold, and re-arms - 16g)
 check("15. ... but HOLDING does not — including the seconds doRTH spends routing",
-      rearm({ behavior: "goto", status: { holding: true } }, true) === true,
+      rearm({ behavior: "goto", run_seq: 4, status: { holding: true } }, true) === true
+      && rearm({ behavior: "goto", status: { holding: true } }, true, null) === true,
       "the one-shot still stops the chain re-firing every telemetry frame");
 check("16. ... and a stopped boat does not re-arm anything either",
-      rearm({ run: "idle", status: { holding: false } }, true) === true);
+      rearm({ run: "idle", status: { holding: false } }, true) === true
+      && rearm({ run: "idle", run_seq: 5, status: { holding: false } }, true) === true
+      && rearm({ run: "idle", status: { holding: false } }, true, null) === true);
+
+// 16f. THE GUARD'S OWN UPKEEP IS NOT A COMMANDED RUN (2026-11-16, the reviews of the chain's re-arm). The console's routed
+// re-approach - she was set beyond the water certified clear round her hold, and is routed back (reapproachIfSetOff ->
+// Engine.reapproach) - puts her under way for the leg back onto station with her run, her behavior and her run_seq as
+// they were (measured on a throwaway console). Read as a commanded run, its frames cleared a chain that had been
+// RECORDED - refused, or withdrawn by the operator's word, or ended in its retry's wait - and it fired again on her
+// return. Recorded at run 4's end: every one of the chain's four marks survives the re-approach's frames; a NEW motion
+// under way - run 5, the escape on run 5, the same run number on a new link - clears all four, as before.
+function after(over) {
+  rthHeldRun = null;
+  rearmRthChain(state({ boot_id: "b1", run_seq: 4, status: { holding: true } }), { holding: true });   // her hold, run 4
+  rthChained = true; rthChainFailed = true; rthChainBusyAt = 12345; rthChainEscapeRun = "b1/4";   // the chain spent there
+  const s = state(Object.assign({ boot_id: "b1", run_seq: 4, status: { holding: false } }, over));
+  rearmRthChain(s, s.status);
+  return JSON.stringify([rthChained, rthChainFailed, rthChainBusyAt, rthChainEscapeRun]);
+}
+const KEPT = JSON.stringify([true, true, 12345, "b1/4"]), CLEARED = JSON.stringify([false, false, 0, null]);
+const f16 = { reapproach: after({}), newRun: after({ run_seq: 5 }), escape: after({ run_seq: 5, behavior: "escape" }),
+              newLink: after({ boot_id: "b2" }) };
+check("16f. ⚠ THE ROUTED RE-APPROACH TO HER HOLD - under way on the run she held on - leaves a RECORDED chain recorded (its "
+      + "one-shot, its refusal, its retry's wait and its escape mark all kept); a new motion under way - another run, the "
+      + "guard's escape, the same run number on a new link - re-arms all of it, as before",
+      f16.reapproach === KEPT && f16.newRun === CLEARED && f16.escape === CLEARED && f16.newLink === CLEARED,
+      JSON.stringify(f16));
+
+// 16g. A NEW MOTION SEEN FIRST AT ITS HOLD (the review of 16f, the same day; pre-existing). A tab that saw no frame of a
+// new motion under way - a Go-To whose target lies inside her arrival radius, a dropped push, a hidden tab polling once a
+// minute - left the new run on the spent chain: her end of mission sent nothing. A hold frame on a motion other than the
+// one she was last seen holding on is that motion's, and re-arms as under way would have. KEPT: a hold on her own run
+// (every frame of it), a console with no run_seq, and a tab's FIRST hold (nothing seen before it: a reload is freshRun's).
+function heldOn(over, first) {
+  rthHeldRun = null;
+  if (!first) rearmRthChain(state({ boot_id: "b1", run_seq: 4, status: { holding: true } }), { holding: true });
+  rthChained = true; rthChainFailed = true; rthChainBusyAt = 12345; rthChainEscapeRun = "b1/4";
+  const s = state(Object.assign({ boot_id: "b1", run_seq: 4, status: { holding: true } }, over));
+  rearmRthChain(s, s.status);
+  return JSON.stringify([rthChained, rthChainFailed, rthChainBusyAt, rthChainEscapeRun]);
+}
+const g16 = { newRun: heldOn({ run_seq: 5 }), newLink: heldOn({ boot_id: "b2" }), escape: heldOn({ run_seq: 5, behavior: "escape" }),
+              sameRun: heldOn({}), firstHold: heldOn({ run_seq: 5 }, true), noSeq: heldOn({ run_seq: undefined }),
+              held: (heldOn({ run_seq: 5 }), String(rthHeldRun)) };
+// (noSeq: a console that publishes none is read as before - a hold never re-arms there: its key reads "b1/undefined")
+rthHeldRun = null;
+rearmRthChain(state({ boot_id: "b1", status: { holding: true } }), { holding: true });
+rthChained = true; rthChainFailed = true;
+rearmRthChain(state({ boot_id: "b1", status: { holding: true } }), { holding: true });
+g16.noSeqKept = rthChained && rthChainFailed;
+check("16g. ⚠ A NEW MOTION SEEN FIRST AT ITS HOLD - another run, a new link, the guard's escape - re-arms the chain, all four "
+      + "marks, as a frame of it under way would have; and the run she holds on is the one written. KEPT: a hold on her own "
+      + "run, a tab's first hold, a console that publishes no run_seq",
+      g16.newRun === CLEARED && g16.newLink === CLEARED && g16.escape === CLEARED && g16.held === "b1/5"
+      && g16.sameRun === KEPT && g16.firstHold === KEPT && g16.noSeq === KEPT && g16.noSeqKept === true,
+      JSON.stringify(g16));
 
 // 16b. THE ACTUAL FIX, PINNED AT ITS OWN SITE. Every check above tests rthPending() and
 // rearmRthChain() in isolation - the PREDICTORS. The chain that actually COMMANDS doRTH()
@@ -331,9 +405,9 @@ check("16. ... and a stopped boat does not re-arm anything either",
   // passage.js deepWhy for deep water first's, which says nothing of a plan without a margin layer - tests/deep_first.js)
   // (and openwater.js openWaterWhy for open water first's, 2026-10-14 - tests/open_water.js)
   var deepWhy = () => [], openWaterWhy = () => [], fmtDist = (m) => Math.round(m) + " m";
-  // (cmdGen and escapeGen are eval-scoped lets: read through the var below, never re-declared out here - 18b)
+  // (cmdGen, escapeGen and cmdKind are eval-scoped lets: read through the var below, never re-declared out here - 18b)
   eval(grabDecl("planGen") + "\n" + grabDecl("cmdGen") + "\n" + grab("offshoreWhy") + "\n" + grab("setPlanIntent") + "\n" + grab("wptRole")
-       + "\nvar gensNow = () => [cmdGen, escapeGen];");
+       + "\nvar gensNow = () => [cmdGen, escapeGen, cmdKind];");
   var planIntent = null;
   // (HOW SHE ARRIVES is arrivalSay's line, 2026-10-08 - it reads the vessel's speeds and laws, none of which this
   // world has; these checks are about the routing lines, and say nothing of the arrival)
@@ -358,14 +432,21 @@ check("16. ... and a stopped boat does not re-arm anything either",
   // her hold, its own resume of a leg it held - neither (a way home planned for minutes is not withdrawn by those)
   const gn0 = gensNow(); setPlanIntent("goto", {routed: false}, R(2)); const gn1 = gensNow();
   setPlanIntent("escape", null, R(1)); const gn2 = gensNow();
-  setPlanIntent("goto", {routed: false}, R(2), true); const gn3 = gensNow();
+  setPlanIntent("transit", {routed: false}, R(2), true); const gn3 = gensNow();
+  // (and the command's NAME is counted with it - cmdKind, what a withdrawal says - by a command only: the escape and the
+  // guard's upkeep, under another kind, leave the Go-To's - the third review of 2026-11-16)
+  // (and the upkeep of an ESCAPE she is holding on - the re-approach draws under the run's own kind, "escape" at an escape's
+  // hold - counts neither: it counted escapeGen, so a far RTH asked from an escape's hold was withdrawn "by the guard's
+  // escape" every time she was set off and routed back, nothing sent - the second review of 2026-11-16, measured)
+  setPlanIntent("escape", null, R(1), true); const gn4 = gensNow();
   const ownSites = [/setPlanIntent\(kind, plan, plan\.route, true\);/.test(grab("reapproachIfSetOff")),
                     /setPlanIntent\(beh, plan, tail, !!auto\);/.test(grab("resumeHeldLeg"))];
-  check("18b. a commanded motion counts cmdGen, the guard's escape escapeGen (not cmdGen), the guard's own upkeep neither - and the "
-        + "re-approach and the guard's own resume of a held leg say they are its upkeep",
+  check("18b. a commanded motion counts cmdGen, the guard's escape escapeGen (not cmdGen), the guard's own upkeep neither - an "
+        + "escape's upkeep included; the command's name is counted with it, by a command only - and the re-approach and the "
+        + "guard's own resume of a held leg say they are its upkeep",
         gn1[0] === gn0[0] + 1 && gn1[1] === gn0[1] && gn2[0] === gn1[0] && gn2[1] === gn1[1] + 1 && gn3[0] === gn2[0] && gn3[1] === gn2[1]
-        && ownSites.every(Boolean),
-        JSON.stringify({gn0, gn1, gn2, gn3, ownSites}));
+        && gn4[0] === gn3[0] && gn4[1] === gn3[1] && [gn1, gn2, gn3, gn4].every((g) => g[2] === "goto") && ownSites.every(Boolean),
+        JSON.stringify({gn0, gn1, gn2, gn3, gn4, ownSites}));
 
   // 19. A PARTIAL lane must read differently from a full one - the distinction that matters
   // on the water: a route that rode the lane over part of itself and sat on a channel

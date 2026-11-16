@@ -3537,11 +3537,39 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    she is under way again. After an escape she took, she holds where the guard put her and nothing
    is sent home from that hold; the plan she is next commanded on goes home at its end. A Stop,
    Pause, Hold or E-STOP, another command, End of plan switched away, a new link, and a hold while
-   it plans still end it, as before. Two limits are older than this change and still stand. An
-   end recorded this way lasts until she is next under way, and the console's own routed
-   re-approach (she was set off her hold) counts as under way. And the boxed return within 50 km
-   has no such fence: when a home moved into range is asked again, nothing withdraws that plan
-   before it is sent. **One way home is planned
+   it plans still end it, as before. Two limits are older than this change. **The first is fixed
+   (2026-11-16).** An end recorded this way lasted until she was next under way, and the
+   console's own routed re-approach (she was set off her hold) counted as under way. So a return
+   that had been refused, or already sent, was cleared, and was sent again when she came back on
+   station, even over a plan staged at that hold. The console does not number the re-approach as
+   a new motion, so now the page counts it as the same one carrying on: an end recorded at that
+   hold stays recorded through it, and a 15 s wait still stands. A new motion still clears it:
+   another Go-To while she is under way, the guard's escape, a new run or a new link. The
+   re-approach also no longer waits while End of plan plans its way home or waits to ask again
+   (the far one plans for minutes, and she sat off station with the way off all that time), and
+   only the window that supervises her sends it. It never replaces a command still on its way.
+   A re-approach that reached the console while the RTH was being taken used to run after it,
+   over the way home (measured with a link's slow upload). Now it is not sent while another route
+   command waits for its answer, it carries the run it was planned on, and the console refuses it
+   once she is on another run or no longer holding. An answer that comes after another plan is
+   drawn draws nothing. And a new motion the window first sees at its hold (she arrived before a
+   frame of her under way reached it) clears the record too, where it used to leave the new run
+   with no return at its end. The guard's own hold and its resume of the leg it held are new
+   motions as well, so they clear a recorded end the same way: that errs toward the return home.
+   Two holes the second review found are closed too. An Upload the console took while the
+   re-approach was being drawn was not counted as your command, because its plan was not drawn,
+   so a way home that was planning, or waiting out its 15 s, was sent over the plan you had just
+   staged. An Upload the console takes now counts whether or not the chart can show it. And at
+   the hold the guard's escape left her on, the re-approach counted as another escape, so an RTH
+   pressed there was withdrawn each time she was set off and routed back. It counts as the
+   guard's own upkeep now, like every re-approach. A withdrawal also names the command you
+   gave, not the plan drawn last: of an Upload at a Go-To's hold it had said "commanded her
+   elsewhere (goto)".
+   The second limit still stands. The boxed return within 50 km has no
+   such fence: when a home moved into range is asked again, nothing withdraws that plan before it
+   is sent. One more limit stands: End of plan's return is decided in each window at the frame she
+   arrives. A window that is only watching sends nothing, and taking over later does not send her
+   either, so if no window supervised her when she arrived, press RTH. **One way home is planned
    at a time.** A second far RTH while one plans takes its answer about the way home (sent,
    refused, busy), and the low-fuel rule goes with it. A withdrawal or the override is the first
    press's own reason. The second asks its own press: if that still stands, its way home is
@@ -3584,7 +3612,8 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    where a passage home can be planned and a full tank reaches it with the 20% reserve. The coarse
    water distance home is built past 50 km there too, so the RTH point is measured by water. The
    Fuel row charges the way home from a far plan end when no passage is being sailed.
-   `tests/passage_sail.js` 13b, 16h, 16i, 17-17w, `tests/fuel_rth.js` 8v, 8w, 8x, 8y, 8y2, 9m, 11d, 11j, 11k, `tests/end_action.js` 18b, `tests/command_result.js` 54e, `tests/passage_plan.js` 16b, 16j-16r, `tests/corridor_read.js` 1c-1g, `tests/passage_tab.js` 3c. **Each section is planned at its own water.** The
+   `tests/passage_sail.js` 13b, 16h, 16i, 16j, 16k, 17-17w, `tests/end_action.js` 14-16g, `tests/hold_point.js` 11,
+   `tests/escape_chain.py` 11-12, `tests/run_link_control.py` 15i-15l, `tests/fuel_rth.js` 8v, 8w, 8x, 8y, 8y2, 9m, 11d, 11j, 11k, `tests/end_action.js` 18b, `tests/pause_resume.js` 1n2, `tests/command_result.js` 54e, `tests/passage_plan.js` 16b, 16j-16r, `tests/corridor_read.js` 1c-1g, `tests/passage_tab.js` 3c. **Each section is planned at its own water.** The
    live water level follows the boat: the stations nearest her, now. A section is planned ahead of
    her and sailed over the hours after, often tens of km from those stations. So each section is
    planned at the **lowest level predicted along it over the hours she is expected in it**, from

@@ -133,7 +133,8 @@ def _crash_report(_t, _e, _tb):
 sys.excepthook = _crash_report
 
 
-APP = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+# (ASV_APP: a sidecar copy of the app, for a console mutation run - 2026-11-16; without it, this tree)
+APP = os.environ.get("ASV_APP") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path.insert(0, APP)
 
 fails = 0
@@ -654,6 +655,95 @@ try:
           "that restarted on them would be lying the other way",
           lambda: seq_resume == seq_goto and seq_reapproach == seq_second,
           "resume %s (was %s); re-approach %s (was %s)" % (seq_resume, seq_goto, seq_reapproach, seq_second))
+
+    # 15i-15l. A RE-APPROACH ASKS ITS GATES UNDER THE LOCK (2026-11-16, the adversarial review of the page's end-of-plan
+    # chain, measured on a throwaway console with a link's upload slowed as a real one's is: a re-approach that reached the
+    # console while the chained Return-to-Home held the lock ran AFTER it - its leg back over the RTH's route, the far way
+    # home lost). The run the page planned it on rides it (`run_seq`); a command that ran first, while it waited on the
+    # lock, moved that, so it is refused there and never run. Driven here by holding the Engine's own lock while the run
+    # number moves underneath a re-approach already past its own early gates and waiting on it - a check made BEFORE the
+    # lock passes this. 15i is the control: nothing moved, and the same wait ends in the leg back, on the same run.
+    E.stop()
+    time.sleep(0.4)
+    here = (E.status["lat_deg"], E.status["lon_deg"])
+
+    def held():
+        t0 = time.time()
+        while not E.status.get("holding") and time.time() - t0 < 20:
+            time.sleep(0.05)
+        return bool(E.status.get("holding"))
+
+    E.go_to(*here)
+    import threading as _th
+
+    def raced(bump, send_seq=True, between=None):
+        ok_hold, out, seq = held(), {}, E.run_seq
+
+        def go():
+            try:
+                E.reapproach([{"lat": here[0], "lon": here[1]}], None, seq if send_seq else None)
+                out["ok"] = E.run_seq
+            except Exception as e:
+                out["err"] = str(e)
+        undo = None
+        E._lock.acquire()
+        try:
+            t = _th.Thread(target=go)
+            t.start()
+            time.sleep(0.3)                          # past reapproach()'s own gates, waiting on the lock
+            waiting = t.is_alive()
+            if bump:
+                E.run_seq += 1                       # what any commanded motion does, under the lock
+            if between:
+                undo = between()
+        finally:
+            E._lock.release()
+        t.join(10)
+        if undo:
+            undo()
+        return ok_hold, waiting, out, seq
+
+    def ended_hold():
+        # what a route command that ran first does under the lock (_run_route): a new run, a new command generation (a
+        # frame read before it is dropped), and the applied frame's `holding` taken down - and the link's own word after
+        # it, not holding, until this case is over (or a telemetry tick could put it back before the waiting re-approach
+        # takes the lock)
+        E.run_seq += 1
+        E._cmd_gen += 1
+        E.status = dict(E.status, holding=False)
+        real = E._link.tick
+        E._link.tick = lambda dt: (lambda f: dict(f, holding=False) if f else f)(real(dt))
+        return lambda: delattr(E._link, "tick")
+    rc = raced(False)
+    rb = raced(True)
+    rn = raced(False, send_seq=False, between=ended_hold)
+    rnc = raced(False, send_seq=False)
+    check("15i. a re-approach that waited on the lock with nothing moving runs, on the run it was planned on",
+          lambda: rc[0] and rc[1] and rc[2].get("ok") == rc[3],
+          "holding %s, waited %s, %s (planned on run %s)" % rc)
+    check("15j. ... and one whose run moved while it waited is REFUSED there - another command ran first, and the way back "
+          "was for a motion she is no longer on",
+          lambda: rb[0] and rb[1] and "commanded since" in (rb[2].get("err") or ""),
+          "holding %s, waited %s, %s (planned on run %s)" % rb)
+    # 15l. ... AND AN OLDER PAGE'S, WHICH CARRIES NO RUN NUMBER, IS REFUSED BY THE OTHER GATE (the second review of the
+    # page's re-approach, 2026-11-16: no committed check killed the removal of the holding re-check, and with no run_seq it
+    # is the only one). Her hold ended by the command that ran first while it waited: refused there, "not
+    # station-keeping", never run over that command; the same wait with nothing moved, and no run number, runs.
+    check("15l. ... and one with NO run number (an older page's) is refused there too once the command that ran first ended "
+          "her hold - and runs when nothing moved",
+          lambda: rn[0] and rn[1] and "not station-keeping" in (rn[2].get("err") or "")
+                  and rnc[0] and rnc[1] and rnc[2].get("ok") == rnc[3],
+          "ended: holding %s, waited %s, %s (run %s); control: holding %s, waited %s, %s (run %s)" % (rn + rnc))
+    held()
+    bad = []
+    for v in ("4", 4.5, True, [4]):
+        try:
+            E.reapproach([{"lat": here[0], "lon": here[1]}], None, v)
+            bad.append((v, "accepted"))
+        except _C.VcuProtocolError as e:
+            bad.append((v, "refused" if "run_seq must be" in str(e) else str(e)))
+    check("15k. ... and a run number that is not an integer is refused in words, never run and never a server error",
+          lambda: all(b[1] == "refused" for b in bad), "%s" % bad)
 
     # 16. ... AND THE SAVED PLAN MEETS THE SAME BOUND (review #9). An upload with no route sends the
     # saved plan's own waypoints, which never passed the route check. In-process, with the store

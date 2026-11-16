@@ -32,6 +32,12 @@ TEETH - mutations RUN, and the checks each one turned red:
     the escape command drops its ARM gate                                -> 5
     reapproach() after an escape hold forgets the run's own behaviour    -> 6
     hold_clear_m is accepted but never reaches the vessel                -> 3
+    (2026-11-16) a re-approach moves run_seq like a new motion           -> 11
+    (2026-11-16) a route command given while one runs keeps run_seq      -> 11
+    (2026-11-16) the dispatch drops the re-approach's run_seq            -> 12
+    (2026-11-16) the re-approach's run check is dropped                  -> 12
+
+ASV_APP points it at a sidecar copy of the app for a console mutation run; without it, this tree.
 """
 
 import json
@@ -55,7 +61,7 @@ def _crash_report(_t, _e, _tb):
 
 sys.excepthook = _crash_report
 
-APP = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+APP = os.environ.get("ASV_APP") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 
 fails = 0
 
@@ -268,6 +274,76 @@ try:
           "exemption was written for",
           s_rz["behavior"] == "escape",
           "resumed escape reads behavior=%s" % s_rz["behavior"])
+
+    # 11. THE RUN'S NUMBER, WHICH THE PAGE'S END-OF-PLAN CHAIN READS (2026-11-16; static/asv.html rearmRthChain, page
+    # checks tests/end_action.js 16f and tests/passage_sail.js 16j). The page re-arms its one-shot return home when she is
+    # under way on a motion OTHER than the one she was holding on - so the console must move run_seq for every commanded
+    # motion, a Go-To given while another is still under way among them (the 2026-08-01 case: `run` never leaves
+    # "running"), and the guard's escape; and must NOT move it for the routed re-approach to her hold, the same motion
+    # carrying on. A commanded motion that kept the number would never re-arm the chain, and its end would not go home; a
+    # re-approach that moved it would fire again a return recorded at that hold when she came back on station.
+    api(port, "/api/cmd/stop", {})
+    time.sleep(0.4)
+    out = {"lat": tgt["lat"] + 0.00012, "lon": tgt["lon"]}          # ~13 m north of the hold point
+    api(port, "/api/cmd/goto", {"lat": out["lat"], "lon": out["lon"], "hold_clear_m": 9.0})
+    s_a = state(port)
+    api(port, "/api/cmd/goto", {"lat": tgt["lat"], "lon": tgt["lon"], "hold_clear_m": 9.0})   # while the first is under way
+    s_b = state(port)
+    s_bh = s_b
+    for _ in range(160):
+        s_bh = state(port)
+        if s_bh["status"].get("holding"):
+            break
+        time.sleep(0.25)
+    code_r, _r = api(port, "/api/cmd/reapproach", {"route": [out, tgt], "hold_clear_m": 9.0})
+    s_r = state(port)
+    s_rh = s_r
+    for _ in range(200):
+        s_rh = state(port)
+        if s_rh["status"].get("holding"):
+            break
+        time.sleep(0.25)
+    code_e, _e = api(port, "/api/cmd/escape", {"lat": out["lat"], "lon": out["lon"], "hold_clear_m": 9.0})
+    s_e = state(port)
+    seqs = [s.get("run_seq") for s in (s_a, s_b, s_bh, s_r, s_rh, s_e)]
+    check("11. run_seq moves for every commanded motion - a Go-To given while another is under way, the escape - and NOT "
+          "for the routed re-approach to her hold, which keeps her run under way and her behavior (the page's end-of-plan "
+          "chain tells the two apart by it)",
+          s_a["run"] == "running" and not s_a["status"].get("holding")
+          and s_b["run"] == "running" and s_b["run_seq"] == s_a["run_seq"] + 1
+          and s_bh["status"].get("holding") and s_bh["run_seq"] == s_b["run_seq"]
+          and code_r == 200 and s_r["run"] == "running" and not s_r["status"].get("holding")
+          and s_r["run_seq"] == s_bh["run_seq"] and s_r["behavior"] == "goto"
+          and s_rh["status"].get("holding") and s_rh["run_seq"] == s_bh["run_seq"]
+          and code_e == 200 and s_e["run_seq"] == s_bh["run_seq"] + 1 and s_e["behavior"] == "escape",
+          "run_seq Go-To %s, Go-To over it %s, at its hold %s, re-approach %s (code %s, holding %s, %s), back on station "
+          "%s (holding %s), escape %s (code %s, %s)" % (seqs[0], seqs[1], seqs[2], seqs[3], code_r,
+                                                        s_r["status"].get("holding"), s_r["behavior"], seqs[4],
+                                                        s_rh["status"].get("holding"), seqs[5], code_e, s_e["behavior"]))
+
+    # 12. AND A RE-APPROACH CARRIES THE RUN IT WAS PLANNED ON (2026-11-16, the review of 11's page work: a re-approach
+    # that reached the console while the chained RTH held it ran after it, over it - tests/run_link_control.py 15i-15k
+    # drives the lock). Over the wire: from the escape's hold, one planned on the run before it is refused in words, one
+    # on hers runs and keeps the escape an escape, and a malformed number is a refusal, not a server error.
+    s_eh = s_e
+    for _ in range(160):
+        s_eh = state(port)
+        if s_eh["status"].get("holding"):
+            break
+        time.sleep(0.25)
+    m = s_eh.get("run_seq")
+    code_o, r_o = api(port, "/api/cmd/reapproach", {"route": [out, tgt], "hold_clear_m": 9.0, "run_seq": m - 1})
+    code_x, r_x = api(port, "/api/cmd/reapproach", {"route": [out, tgt], "hold_clear_m": 9.0, "run_seq": "x"})
+    code_n, r_n = api(port, "/api/cmd/reapproach", {"route": [out, tgt], "hold_clear_m": 9.0, "run_seq": m})
+    s_n = state(port)
+    check("12. a re-approach planned on a run she is no longer on is REFUSED (409, in words); one on her own run runs and "
+          "keeps it an escape on the same run; a run number that is not one is refused, never a server error",
+          s_eh["status"].get("holding") and code_o == 409 and "commanded since" in (r_o.get("error") or "")
+          and code_x == 409 and "run_seq must be" in (r_x.get("error") or "")
+          and code_n == 200 and s_n["run_seq"] == m and s_n["behavior"] == "escape",
+          "holding %s on run %s; stale %s %r; malformed %s %r; own %s -> run %s %s"
+          % (s_eh["status"].get("holding"), m, code_o, r_o.get("error"), code_x, r_x.get("error"), code_n,
+             s_n["run_seq"], s_n["behavior"]))
 
     srvlog.seek(0)
     log = srvlog.read()

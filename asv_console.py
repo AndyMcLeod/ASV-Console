@@ -8822,7 +8822,7 @@ class Engine:
         self._push_state()
 
     # -- generalized behaviors (route + station-keep) ---------------------- #
-    def _run_route(self, route, behavior, note, hold_clear_m=None, coast_from_m=None, continuing=False):
+    def _run_route(self, route, behavior, note, hold_clear_m=None, coast_from_m=None, continuing=False, gate=None):
         """Arm-gated: push a behavior route to the link and run it, holding at the
         end. Shared by Go-To / Return-to-Home / Hold / Transit / the routed re-approach.
         `hold_clear_m` is the console's certified clear disc around the end point (see
@@ -8831,7 +8831,8 @@ class Engine:
         come in on the drift (coast.js solved it); None powers in exactly as before.
         `continuing` marks a leg of the run in progress (the re-approach): refused unless that
         run is still under way, and checked here, under the lock, so a Stop that lands between
-        the caller's own gates and this upload cannot be overtaken by it."""
+        the caller's own gates and this upload cannot be overtaken by it. `gate` (the re-approach's)
+        is asked here too, under the lock, and answers the behavior to run under: see reapproach()."""
         hold_clear_m = self._hold_clear(hold_clear_m)
         coast_from_m = self._coast_from(coast_from_m)
         with self._lock:
@@ -8843,6 +8844,8 @@ class Engine:
             self._require(not continuing or self.run == "running",
                           "the run is not under way (%s) - a re-approach only continues a run in "
                           "progress; resuming or restarting it is the operator's" % self.run)
+            if gate is not None:
+                behavior = gate()                    # the re-approach's own gates, after anything that held the lock
             # The last good plan settings, never a file read that could fail a Go-To, a hold or
             # the escape - and the speed the vessel is ACTUALLY running, not a copy of it on disk.
             m = mission_params()
@@ -8971,7 +8974,7 @@ class Engine:
         self._run_route([{"lat": st["lat_deg"], "lon": st["lon_deg"]}], "hold",
                         "Hold: station-keeping at present position.", hold_clear_m)
 
-    def reapproach(self, route, hold_clear_m=None):
+    def reapproach(self, route, hold_clear_m=None, run_seq=None):
         """The ROUTED way back onto station, supplied by the console when the vessel reports
         it has been set beyond the water certified clear around its hold point
         (`hold_wants_route` on the telemetry - see SimVcu's station-keep branch).
@@ -8985,14 +8988,35 @@ class Engine:
         enough: the simulator's `holding` survived Stop, E-STOP and a disarm, and a real vessel
         may go on reporting its last station-keeping state - so a re-approach from a stale frame
         restarted a boat the operator had just stopped. A PAUSED run is not under way either:
-        a re-approach would un-pause it, and resuming is the operator's. See `continuing`."""
+        a re-approach would un-pause it, and resuming is the operator's. See `continuing`.
+
+        ⚠⚠ AND ITS GATES ARE ASKED AGAIN UNDER THE LOCK (2026-11-16, the adversarial review of the
+        chain's re-arm, measured on a throwaway console). These read `holding` and the run's behavior
+        BEFORE the lock, so a re-approach that reached the console while another command held it -
+        the end-of-plan Return-to-Home, its upload slowed as a real link's is - waited, then ran
+        after it: its route over the RTH's, her run still numbered the RTH's, labeled with the
+        behavior read before it ("rth 200, reapproach 200 -> goto ... holding 55.8 m from home, at
+        the plan's end"). The far way home was lost with it. `gate` asks them again where nothing
+        can land between it and the upload (_run_route): she is still station-keeping (a command
+        that ran first ended that), she is still on the run the way back was planned on - `run_seq`,
+        from the frame the console read (every commanded motion moves it; a re-approach does not;
+        absent, from an older page, it is not asked) - and the behavior is the one read there."""
         st = self.status
         self._require(bool(st.get("holding")), "the vessel is not station-keeping")
         self._require(not self._rth_follow, "a moving home is re-targeted by the chase, not here")
+        if run_seq is not None and (isinstance(run_seq, bool) or not isinstance(run_seq, int)):
+            raise VcuProtocolError("run_seq must be the run's number (an integer), or absent")
         r = self._sanitize_route(route)
-        self._run_route(r, self.behavior,
+
+        def gate():
+            self._require(bool(self.status.get("holding")), "the vessel is not station-keeping")
+            self._require(run_seq is None or run_seq == self.run_seq,
+                          "she has been commanded since the frame this re-approach was planned on (run %s, now %s)"
+                          " - the way back was for a motion she is no longer on" % (run_seq, self.run_seq))
+            return self.behavior
+        self._run_route(r, None,
                         "Set off station - re-approaching on a routed path (%d wpts)." % len(r),
-                        hold_clear_m, continuing=True)
+                        hold_clear_m, continuing=True, gate=gate)
 
     def hold_clear(self, hold_clear_m=None, note=None):
         """THE HOLD DISC, RE-CERTIFIED WHILE SHE HOLDS (Andy, 2026-09-30, item 7 of his list: "Re-checking the hold disc
@@ -10881,7 +10905,7 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/cmd/hold":              # behavior: station-keep here
                 ENGINE.hold(body.get("hold_clear_m"))
             elif path == "/api/cmd/reapproach":        # the routed way back onto station
-                ENGINE.reapproach(body.get("route"), body.get("hold_clear_m"))
+                ENGINE.reapproach(body.get("route"), body.get("hold_clear_m"), body.get("run_seq"))
             elif path == "/api/cmd/hold_clear":        # the hold disc re-certified while she holds
                 ENGINE.hold_clear(body.get("hold_clear_m"), body.get("note"))
             elif path == "/api/cmd/escape":            # the in-extremis guard's OWN maneuver

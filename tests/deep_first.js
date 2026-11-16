@@ -495,7 +495,7 @@ const modelAt = new Function("w", ["const nogo = {frame: 'F', enf: 'E', features
   grabFn("nogoModelAt"), "return nogoModelAt;"].join("\n"))(w);
 const kAt = modelAt(0.7);
 // setPlanIntent itself, driven with the real deepWhy
-const SPI = new Function("deepWhy", "fmtDist", ["let planGen = 0, cmdGen = 0, escapeGen = 0, planIntent = null, guardOverride, edgeSpentM, edgeCount, guardActedAt, holdWant, edgeSearchAt;",
+const SPI = new Function("deepWhy", "fmtDist", ["let planGen = 0, cmdGen = 0, escapeGen = 0, cmdKind = null, planIntent = null, guardOverride, edgeSpentM, edgeCount, guardActedAt, holdWant, edgeSearchAt;",
   "const arrivalSay = () => null, offshoreWhy = () => [], openWaterWhy = () => [], wptRole = () => '';", grabFn("setPlanIntent"), "return setPlanIntent;"].join("\n"))(P.deepWhy, fmt);
 const piDeep = SPI("goto", { routed: true, lane: false, deep: dMix }, [at, at]), piNone = SPI("goto", { routed: true, lane: false }, [at, at]);
 check("21. THE PAGE: the Go-To, RTH and transit banners carry deepNote; the Intent card says deepWhy's line of every plan that "
