@@ -529,6 +529,41 @@ check("15b3 ... and it confirms Home only on the server's OWN ok, never on silen
     && SETHOME_SRC.indexOf("took(r)") < SETHOME_SRC.indexOf("Home set at the chosen point"),
   () => (SETHOME_SRC.match(/if\(![^\n]*\)\s*return;/) || ["<no success guard>"])[0]);
 
+// A HOME THE CHART COULD NOT BE READ OVER IS SAID AS NOT CHECKED (2026-11-16, the read's bound). A read given up - no answer
+// in time, the network, the console's 5xx - or refused for its size now KEEPS the model of the water already read
+// (refreshNogo), so `nogo.ready` stands while the point lies outside it: tested against that model it reads clear against
+// nothing. Run on the SHIPPED doSetHome (async - `grab` leaves the keyword, so it is put back): the read's own cause named,
+// "not checked"; read and clear, plainly set. ⚠ doSetHome AWAITS, and check() is synchronous - a promise handed to it would
+// read as a pass - so the scenario is run here and checked at the END of the suite, once it has settled (15b4, below).
+// (one world: its own setHomeGen, the read stubbed by W.cover, every post recorded)
+const setHomeWorld = (W) =>
+  // eslint-disable-next-line no-new-func
+  new Function("W", "const showBanner = (t) => W.said.push(t), render = () => {}, took = (r) => !!(r && r.ok);\n"
+    + "let setHomeGen = 0;\n"
+    + "const ensureNogoCovers = async (pts, pad, ask) => W.cover(pts, pad, ask);\n"
+    + "const cmd = async (u, b) => { W.posts.push(b); return {ok: true}; }, nogo = {ready: true, frame: null, ko: null, buffer: 3};\n"
+    + "const blockedInfo = () => null, llEN = () => ({e: 0, n: 0});\nasync " + SETHOME_SRC + "\nreturn doSetHome;")(W);
+const run15b4 = async (covered, failed) => {
+  const W = { said: [], posts: [], cover: async (pts, pad, ask) => { if (ask && failed) ask.failed = failed; return covered; } };
+  await setHomeWorld(W)({ lat: 38.75, lon: -74.25 });
+  return W.said[W.said.length - 1] || "";
+};
+// 15b5. A NEWER SET HOME WITHDRAWS AN OLDER ONE STILL READING (the 2026-11-16 review, finding 3): the older read, now bounded
+// in hours rather than never, would otherwise land and post ITS point over the newer Home. Its read is told it is withdrawn
+// (the record's poll, which ends a read waited on within a second), and it posts nothing.
+const run15b5 = async () => {
+  let release = null; const held = new Promise((r) => { release = r; }); const seen = [];
+  const W = { said: [], posts: [], cover: async (pts, pad, ask) => {
+    if (pts[0].lat === 1) { await held; seen.push(ask.read.gone(), ask.read.withdrawn && ask.read.withdrawn.by); }
+    return true; } };
+  const doSetHome = setHomeWorld(W);
+  const first = doSetHome({ lat: 1, lon: 1 });
+  await new Promise((r) => setTimeout(r, 0));
+  await doSetHome({ lat: 2, lon: 2 });
+  release(); await first;
+  return { posts: W.posts.map((p) => p.lat), gone: seen, set: W.said.filter((t) => /^Home set/.test(t)).length, last: W.said[W.said.length - 1] };
+};
+
 // Andy moved all three off the command bar. A button left behind is a SECOND path to a
 // vessel command, gated by whatever that button happens to still say.
 const CMDBAR = H.slice(H.indexOf('<div class="cmdbar'), H.indexOf('</div>', H.indexOf('id="b_estop"')));
@@ -695,5 +730,34 @@ check("27 the menu is hidden in the CONTROLS window — it acts on a chart it ca
   /body\.ui-controls #chartMenu\{display:none!important;\}/.test(H.replace(/"\+\s*\n?\s*(\/\/[^\n]*\n\s*)*"/g, "")),
   "bridged-window rule");
 
-console.log("\n" + (fails ? "FAILED " + fails + " of " + ran : "PASSED all " + ran + " checks"));
-process.exit(fails ? 1 : 0);
+// ⚠ THE ONE CHECK THAT AWAITS (15b4, 2026-11-16) is made here, after every synchronous one, once the shipped doSetHome has
+// settled - and a suite whose await never settles does not exit 0: node would run out of work and exit cleanly, unsummarized.
+let finished = false;
+process.on("exit", (code) => {
+  if (finished || code !== 0) return;
+  console.log("  FAIL 0. the suite EXITED EARLY without reaching its summary - an await that never settled, after " + ran + " check(s)");
+  process.exitCode = 1;
+});
+(async () => {
+  let r15b4 = null, e15b4 = null;
+  try { r15b4 = await Promise.all([run15b4(false, "the console gave no answer it could use to the chart read (unanswered in 30 min)"),
+                                   run15b4(false, null), run15b4(true, null)]); }
+  catch (e) { e15b4 = e.message; }
+  check("15b4 ... and a point the chart could NOT be read over is said as NOT CHECKED, by the read's own cause - not as set "
+        + "plainly against a model that does not reach it",
+    () => !!r15b4 && /^Home set at the chosen point, but the chart could not be read over it \(the console gave no answer it could use to the chart read \(unanswered in 30 min\)\), so it was not checked — Return-to-Home may be REFUSED/.test(r15b4[0])
+      && /but the chart could not be read over it \(it was not read there\), so it was not checked/.test(r15b4[1])
+      && r15b4[2] === "Home set at the chosen point.",
+    () => r15b4 ? JSON.stringify(r15b4) : "THREW: " + e15b4);
+  let r15b5 = null, e15b5 = null;
+  try { r15b5 = await Promise.race([run15b5(), new Promise((r, j) => setTimeout(() => j(new Error("never settled (5 s)")), 5000))]); }
+  catch (e) { e15b5 = e.message; }
+  check("15b5 ... and a NEWER Set Home withdraws an older one still reading: its read is told so (by the newer Set Home), it "
+        + "posts nothing, and only the newer Home is set and said",
+    () => !!r15b5 && JSON.stringify(r15b5.posts) === "[2]" && r15b5.gone[0] === true && r15b5.gone[1] === "a newer Set Home"
+      && r15b5.set === 1 && r15b5.last === "Home set at the chosen point.",
+    () => r15b5 ? JSON.stringify(r15b5) : "THREW: " + e15b5);
+  finished = true;
+  console.log("\n" + (fails ? "FAILED " + fails + " of " + ran : "PASSED all " + ran + " checks"));
+  process.exit(fails ? 1 : 0);
+})();

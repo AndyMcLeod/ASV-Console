@@ -228,6 +228,8 @@ const encSpanRefusal = eval("(" + grab("encSpanRefusal") + ")");
 // eslint-disable-next-line no-eval
 const sizeWhy = eval("(" + grab("sizeWhy") + ")");
 // eslint-disable-next-line no-eval
+const lateKeeps = eval("(" + grab("lateKeeps") + ")");   // (unchartedTip's late words, 2026-11-16)
+// eslint-disable-next-line no-eval
 const unchartedTip = eval("(" + grab("unchartedTip") + ")");
 // eslint-disable-next-line no-eval
 const planWhy = eval("(" + grab("planWhy") + ")");
@@ -251,6 +253,9 @@ const planOffThread = async (job, here) => here();
 let routeStopGen = 0, routeStopName = null;
 // OPEN WATER FIRST's read of the water it searches (2026-10-14) is tests/open_water.js's: none here
 const openWaterRead = async () => null;
+// a command's chart reads as one (2026-11-16, the read's bound: tests/unread_water.js 3c drives it)
+// eslint-disable-next-line no-eval
+const commandReads = eval("(" + grab("commandReads") + ")");
 // eslint-disable-next-line no-eval
 const planInsideChart = eval("(" + grab("planInsideChart") + ")");
 const fresh = () => { banners = []; downs = []; covers = []; aisTaken = 0; coverAnswer = null; };
@@ -495,9 +500,10 @@ const fresh = () => { banners = []; downs = []; covers = []; aisTaken = 0; cover
         // (the search from her to the target in the route worker since 2026-10-12, and here beside it: tests/route_worker.js)
         // (since 2026-10-18 the Go-To plans through planGoToLeg, from her unless a lock transit's leg names its own start)
         () => /const plan = await planGoToLeg\(how\.from \|\| \{lat:asv\.lat,lon:asv\.lon\}, target, "Go-To"\);/.test(go)
-              && /return planInsideChart\(\[from, target\], undefined, \(\) => \{\s*\n\s*const o = /.test(grab("planGoToLeg"))
+              // (and each command's reads as one record since 2026-11-16: commandReads, `read: rd` - tests/nogo_readout.js 35e)
+              && /return planInsideChart\(\[from, target\], \{read: rd\}, \(\) => \{\s*\n\s*const o = /.test(grab("planGoToLeg"))
               && /planOffThread\(\{op: "nogo", args: \{from, to: target, opts: o\}\}, \(\) => planNogoRoute\(from, target, o\)\)/.test(grab("planGoToLeg"))
-              && /const plan = await planInsideChart\(\[\{lat:asv\.lat,lon:asv\.lon\}, \{lat:S\.home\.lat,lon:S\.home\.lon\}\], undefined, \(\) => \{[^\n]*\n\s*const from = \{lat:asv\.lat,lon:asv\.lon\}, to = \{lat:S\.home\.lat,lon:S\.home\.lon\}, o = /.test(rth)
+              && /const plan = await planInsideChart\(\[\{lat:asv\.lat,lon:asv\.lon\}, \{lat:S\.home\.lat,lon:S\.home\.lon\}\], \{read: rd\}, \(\) => \{[^\n]*\n\s*const from = \{lat:asv\.lat,lon:asv\.lon\}, to = \{lat:S\.home\.lat,lon:S\.home\.lon\}, o = /.test(rth)
               && /planOffThread\(\{op: "nogo", args: \{from, to, opts: o\}\}, \(\) => planNogoRoute\(from, to, o\)\)/.test(rth),
         "doGoTo / doRTH");
   check("6b. ... and say what to do about it: the uncharted refusal gets its own advice, not 'nearer open water'",
@@ -517,7 +523,8 @@ const fresh = () => { banners = []; downs = []; covers = []; aisTaken = 0; cover
         iUpPost = up.indexOf('cmd("/api/cmd/upload", {route: plan.route'), iUpDraw = up.indexOf("runRoute = plan.route");
   check("6d. the Upload plans through it with its own {plan: true} (each survey's water read again), and refuses an "
         + "uncharted plan before it draws or posts anything",
-        () => /await planInsideChart\(\[\{lat:asv\.lat, lon:asv\.lon\}, \.\.\.wps\], \{plan: true\},/.test(up)
+        // (with the press's reads as one record since 2026-11-16: commandReads, `read: rd`)
+        () => /await planInsideChart\(\[\{lat:asv\.lat, lon:asv\.lon\}, \.\.\.wps\], \{plan: true, read: rd\},/.test(up)
               && iUpUn > iUpPlan && iUpUn < iUpPost && iUpUn < iUpDraw,
         "planInsideChart " + iUpPlan + ", uncharted refusal " + iUpUn + ", post " + iUpPost + ", draw " + iUpDraw);
   const rpCalls = (H.match(/routePlan\(/g) || []).length - (H.match(/function routePlan\(/g) || []).length;
@@ -635,7 +642,8 @@ const fresh = () => { banners = []; downs = []; covers = []; aisTaken = 0; cover
         () => /if\(beyondChart\(\[\{lat: fromLL\.lat, lon: fromLL\.lon\}, \.\.\.route\], nogo\.bbox, undefined, nogo\.unread\)\) return null;/.test(taut)
               && (taut.match(/return \{route/g) || []).length === 1,
         "tautRoundHer");
-  const iCov = rfh.indexOf("await ensureNogoCovers([from, target]);"), iPic = rfh.indexOf("await planInsideChart([from, target]");
+  // (its read and its plan's, one record since 2026-11-16: commandReads, `read: rd`)
+  const iCov = rfh.indexOf("await ensureNogoCovers([from, target], null, {read: rd});"), iPic = rfh.indexOf("await planInsideChart([from, target], {read: rd}");
   const closure = iPic > 0 ? rfh.slice(iPic, rfh.indexOf('}, "Resume from here");', iPic)) : "";
   check("9b. Resume from here plans its way in through planInsideChart, AFTER its read, with her and the contacts' "
         + "model taken again INSIDE the plan - not the ones taken before a read that may have replaced the model",

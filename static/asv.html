@@ -10793,9 +10793,11 @@ function fuelTick(s){
       const nt = out && out.notTaken, ns = nt && nt.state && typeof nt.state === "object" ? nt.state : S;
       if(nt && fuelBoot === bootAt && (nt.sent === false || (nt.withdrawn && ["E-STOP", "home moved", "the guard's escape"].includes(nt.by))
                                        || (nt.refused && (!ns.armed || ns.estop)))) fuelRth.acted = false;
-      // BUSY (far: one passage plan at a time) or LATE (far: the chart read along the way home did not finish in
-      // CORRIDOR_WAIT_MAX_MS) - asked again RTH_BUSY_RETRY_MS on, not answered (above, at RTH_BUSY_RETRY_MS)
-      if(nt && (nt.busy || nt.late) && fuelBoot === bootAt){ fuelRth.acted = false; fuelRetryAt = Date.now() + RTH_BUSY_RETRY_MS; }
+      // BUSY (far: one passage plan at a time), LATE (a chart read along the way home with no answer in time - the
+      // passage plan's in CORRIDOR_WAIT_MAX_MS, a section's or the boxed return's at fetchENCBbox's bound) or UNKNOWN (far:
+      // the post's reply lost - if she took it she is on an RTH by then, which rthDecision only latches) - asked again
+      // RTH_BUSY_RETRY_MS on, not answered (above, at RTH_BUSY_RETRY_MS)
+      if(nt && (nt.busy || nt.late || nt.unknown) && fuelBoot === bootAt){ fuelRth.acted = false; fuelRetryAt = Date.now() + RTH_BUSY_RETRY_MS; }
     }).finally(() => { if(fuelFlight === sentAt) fuelFlight = 0; });
     return;
   }
@@ -13955,18 +13957,55 @@ async function skinOffThread(enc, b, feats, ownN){
   await new Promise(r => setTimeout(r, 0));
   return skinOverHarbour(feats, b, enc);
 }
-async function fetchENCBbox(b, minDepth){
+// ⚠⚠ THE CHART READ HAS AN END (2026-11-16, residual 1 of the far RTH's plan bounds). This was a bare `fetch` - no signal, no
+// timer - and every command's chart read is this one (refreshNogo: the guard's own box, a Go-To's, an Upload's, the far RTH's
+// first section, a passage's). A console that took the request and never answered held them for good: the far RTH's send
+// held homeFlight (every later far RTH joins it) and sailBusy (every far RTH "busy" every 15 s), the end-of-plan chain was
+// neither failed nor asked again, and a Stop released nothing. Now the read is corridorAsk's - bounded, aborted at its end,
+// and no answer to take (none in time, the network, the console's own HTTP 5xx, not JSON) is null with `note.why` in words:
+// each caller says it by that cause and asks again where asking again is its business (refreshNogo, planInsideChart).
+// SIZED FROM THE SESSION LOGS, GENEROUSLY - a refused way home is worse than a slow one (2026-11-16: 608 reads of the page's
+// box from "reading chart" to its landing, every log): median 4.6 s, 12.9 s at the 90th percentile, 121 s at the 99th; the
+// slowest of their own tiles 259 s (12 tiles, the Castine Upload's first box, 21.6 s a tile) and 174 s for two; and the
+// slowest of all 877 s for TWO tiles, queued behind a field home's corridor read (the console builds one tile from NOAA at a
+// time, ENC_TILE_BUILDS, for every reader). The Castine Upload's 1.0 x 0.7 degree read took about 15 minutes. So
+// ENC_READ_MIN_MS is twice the slowest read logged and twice the Castine read, and a box of more tiles than that covers is
+// allowed ENC_READ_TILE_MS a tile - four times the slowest tile measured from NOAA (~20 s) and twice the Castine rate - so
+// the widest box the console reads (ENC_MAX_SPAN_DEG, 81 tiles) is waited ~2 h. A limit is a timer: a hidden tab fires it
+// late, never early. And a read given up is not lost: the console goes on reading the tiles and keeps each one it reads,
+// so the next ask picks them up.
+const ENC_READ_MIN_MS = 30 * 60 * 1000, ENC_READ_TILE_MS = 90 * 1000;
+const ENC_READ_TILE_DEG = 0.25;                // asv_console.py ENC_TILE_DEG: the tile the console reads and keeps
+// ... AND A PRESS THAT NO LONGER STANDS ENDS IT AT ONCE (`gone`, commandReads): asked this often while the read is waited on
+const CHART_READ_GONE_MS = 1000;
+/** How long a read of the box `b` is waited for: ENC_READ_MIN_MS, or ENC_READ_TILE_MS for each of the console's tiles it
+ *  reaches into when that is more. */
+function encReadMs(b){
+  const d = ENC_READ_TILE_DEG, n = (lo, hi) => Math.max(1, Math.floor(hi / d - 1e-12) - Math.floor(lo / d) + 1);
+  return Math.max(ENC_READ_MIN_MS, n(b.W, b.E) * n(b.S, b.N) * ENC_READ_TILE_MS);
+}
+/** THE CHART OVER `b`, READ (refreshNogo): the console's answer, written to `sea.enc` - or null when there is none to take,
+ *  and then `note.why` says why (corridorAsk), and `note.gone` that `gone()` withdrew it. */
+async function fetchENCBbox(b, minDepth, note, gone){
   const url=`/api/enc?bbox=${b.W.toFixed(5)},${b.S.toFixed(5)},${b.E.toFixed(5)},${b.N.toFixed(5)}&min_depth=${minDepth}`;
+  note = note || {};
   // THE BYTES FIRST, WHEN THE SEABED IS WALKED OFF THIS THREAD (2026-10-17, skinOffThread): they go to the worker as they
   // arrive - transferred, this page keeps the text - so the worker's parse runs while this page parses its own.
-  const resp = await fetch(url);
+  const got = await corridorAsk(async (signal) => {
+    const resp = await fetch(url, {signal});
+    if(resp.status >= 500) return corridorReply(resp);         // (the console's own failure: thrown, no answer to take)
+    return typeof resp.arrayBuffer === "function" && skinWorkerUsable() ? {raw: await resp.arrayBuffer()} : {json: await resp.json()};
+  }, note, encReadMs(b), gone);
+  if(!got) return null;
   let d, skinJob = null;
-  if(typeof resp.arrayBuffer === "function" && skinWorkerUsable()){
-    const raw = await resp.arrayBuffer();
-    const txt = new TextDecoder().decode(raw);
-    skinJob = skinJobStart(raw, b);
-    d = JSON.parse(txt);
-  } else d = await resp.json();
+  try{
+    if(got.raw){
+      const txt = new TextDecoder().decode(got.raw);
+      skinJob = skinJobStart(got.raw, b);
+      d = JSON.parse(txt);
+    } else d = got.json;
+  }catch(e){ note.why = corridorFailure(e); return null; }
+  if(!d || typeof d !== "object" || Array.isArray(d)){ note.why = "a reply that was not a chart"; return null; }
   // `partial` names the layers that failed to arrive (the server serves such an extract once and never caches
   // it). The seabed-gap check refuses on it: a missing depth layer would read as one gap over the whole area.
   // `unread` (2026-10-11, the layered chart): the squares of the box no chart covers, and those whose chart could not
@@ -14170,6 +14209,32 @@ const NOGO_QUEUE_MAX_MS = 8000;
 const NOGO_RETRY_MS = 30000;
 // what a command refused for a failed read is told to do (chartFailedRefusal, passage.js)
 const CHART_FAILED_TIP = "Nothing was sent: she carries on as she was. Command it again once the NOGO row no longer says the chart could not be read.";
+/** A COMMAND'S CHART READS, AS ONE (2026-11-16, with the read's bound - fetchENCBbox): handed on `ask.read` to every read
+ *  one command makes - its own ensureNogoCovers, and planInsideChart's after it (its points read again, open water's, a
+ *  widening) - so that ONE give-up ends its reading. `late`: the console gave none of them an answer it could use (in
+ *  words, corridorAsk's why); every read after it is answered at once, not asked (refreshNogo), and the plan is refused by
+ *  that cause (planInsideChart) - a console that never answered had a command wait out the bound once for each read, the
+ *  far RTH's send four times over. `stopAt`: the Stop count when the command began, so a Stop, Pause, Hold or E-STOP
+ *  pressed while its FIRST read ran withdraws it (planInsideChart took its own mark after that read, and planned and sent
+ *  the command over the Stop); `fence` (the far RTH's press, rthFence) is asked beside it. `gone()` is asked while each read
+ *  is waited on (corridorAsk) and aborts it at once; `withdrawn` then names why, {by, say}, and stands. */
+function commandReads(fence){
+  const rd = {stopAt: routeStopGen, late: null, withdrawn: null};
+  rd.gone = () => {
+    if(rd.withdrawn) return true;
+    const g = routeStopGen !== rd.stopAt ? {by: routeStopName || "a stop", say: (routeStopName || "a stop") + " was pressed"}
+            : fence ? fence() : null;
+    if(g) rd.withdrawn = g;
+    return !!g;
+  };
+  return rd;
+}
+/** What a read given up for no answer leaves for the next ask, in words - said ONLY when it ran out of time ("unanswered in":
+ *  the console goes on with a read it is still making, as its handler does, and keeps each tile it builds on its disk). An
+ *  error, the network, a reply that is not a chart: nothing is known read, and nothing is promised (the 2026-11-16 review). */
+function lateKeeps(why, what){
+  return /unanswered in \d/.test(String(why || "")) ? " - the console goes on reading " + (what || "it") + " meanwhile, and keeps what it reads" : "";
+}
 /** A `keep` read that arrived without some layers (`failed`, their classes): the EARLIER read's features of those classes
  *  added to it (`enc`, as fetchENCBbox wrote it), none twice (class + object id). Returns how many were kept (2026-10-18,
  *  A1 - see refreshNogo). */
@@ -14206,7 +14271,9 @@ function encSpanRefusal(b){
 //     has for the operating area's own read - and for a read asked only to plan a route further, that threw away the
 //     model of the water she was IN: the guard stood down, the automatic re-extract (which needs a model) never came,
 //     and the next command went out degraded and straight (found by the review: an offline NOAA did it);
-//   * `failed` - written here: why a `keep` read, or a box too big to ask for, did not land.
+//   * `failed` - written here: why a `keep` read, or a box too big to ask for, did not land;
+//   * `read` - the command's reads as one (commandReads, 2026-11-16): one given up for no answer is not asked again, and
+//     `read.gone()` withdraws one being waited on; `late` - written here: this read was given up for no answer.
 async function refreshNogo(centerLL, bbox, ask){     // extract ENC for the operating area + rebuild nogo
   // ⚠⚠ A BOX THE SERVER WILL REFUSE IS NOT ASKED FOR (2026-10-03). It answers 400, and the branch below that takes an
   // answer with no band set `nogo.ready = false` - so a Go-To to a point 170 km off threw away the model of the water
@@ -14215,7 +14282,13 @@ async function refreshNogo(centerLL, bbox, ask){     // extract ENC for the oper
   // read is now asked for routinely - and a read that cannot be had must leave the model it would have replaced.
   // The caller's coverage test (ensureNogoCovers' last line) then answers false, and the plan is refused in words.
   // (Only a box a caller hands in can be too big: the operating area's own is 10 km.)
-  if(ask) ask.failed = null;
+  if(ask){ ask.failed = null; ask.late = false; }
+  // (the command's reads, as one: one the console gave no answer is not asked again, nor one its press withdrew - commandReads)
+  const rd = (ask && ask.read) || null;
+  if(rd && (rd.late || rd.withdrawn)){
+    ask.failed = rd.late ? "the console gave no answer it could use to the chart read (" + rd.late + ")" : rd.withdrawn.say || "withdrawn";
+    ask.late = !!rd.late; return;
+  }
   const tooBig = bbox ? encSpanRefusal(bbox) : null;
   if(tooBig){ if(ask) ask.failed = "it would take " + tooBig;
               nogoStatus("Chart NOT read over that water: it would take " + tooBig
@@ -14235,10 +14308,11 @@ async function refreshNogo(centerLL, bbox, ask){     // extract ENC for the oper
   // `&& nogoPending` is the deadlock stop: if `busy` were ever left standing with nothing in
   // flight - a throw above the try - this proceeds rather than spinning for ever.
   //
-  // ⚠⚠ AND THE WAIT IS BOUNDED, because `fetchENCBbox` is a bare `fetch` with no timeout and
+  // ⚠⚠ AND THE WAIT IS BOUNDED, because `fetchENCBbox` was a bare `fetch` with no timeout and
   // no AbortController: an extract that never returns would otherwise take every Go-To, RTH
   // and punch on the page with it, for ever, with no banner - which is a worse failure than
-  // the one this queue fixes. `resetForNewArea` bounds its own wait at the same 8 s for
+  // the one this queue fixes. (The read has its own end since 2026-11-16 - encReadMs, up to
+  // hours for a wide box - and a queued read waits this bound, not that one.) `resetForNewArea` bounds its own wait at the same 8 s for
   // exactly this reason, and nogo_readout check 2 exists so a hung fetch stays VISIBLE as a
   // hung fetch. Past the bound we proceed rather than refuse: the caller then gets a real
   // answer, and the coverage test at the end of ensureNogoCovers/ensureNogoArea is what
@@ -14246,8 +14320,10 @@ async function refreshNogo(centerLL, bbox, ask){     // extract ENC for the oper
   const queueUntil = Date.now() + NOGO_QUEUE_MAX_MS;
   while(nogo.busy && nogoPending && Date.now() < queueUntil)
     await Promise.race([nogoPending, new Promise(r => setTimeout(r, 250))]);
+  if(rd && rd.gone && rd.gone()){ ask.failed = (rd.withdrawn && rd.withdrawn.say) || "withdrawn"; return; }   // (withdrawn while it queued: not asked)
   const ll = centerLL || (asv?{lat:asv.lat,lon:asv.lon}:(S.home||center));
   const b = bbox || bboxAround(ll, NOGO_RADIUS_M);
+  const boxWas = nogo.bbox;                      // (a read that lands while this one waits sets a new box - finding 7, below)
   nogo.busy=true; nogo.since=Date.now();         // `since` drives the row's elapsed counter
   updateNogoUI(); nogoStatus((ask && ask.say) || "Extracting ENC nogo boundaries for the operating area…");
   // A `keep` read that fails: the extract it replaced stands (fetchENCBbox has already written sea.enc - put back).
@@ -14259,7 +14335,46 @@ async function refreshNogo(centerLL, bbox, ask){     // extract ENC for the oper
   // true; it must not also strand a waiter on a promise nobody settles.
   let settle; nogoPending = new Promise(r => settle = r);
   try{
-    const d = await fetchENCBbox(b, V.NOGO_MIN_DEPTH_M);
+    const note = {};
+    const d = await fetchENCBbox(b, V.NOGO_MIN_DEPTH_M, note, rd && rd.gone);
+    // ⚠⚠ NO ANSWER IS NOT A CHART, AND NOT A REASON TO BLIND THE GUARD (2026-11-16, the read's bound). None in time (the
+    // read aborted at encReadMs), the network, the console's own HTTP 5xx, a reply that is not a chart: the console said
+    // nothing about the water. `sea.enc` was never written. A press withdrawn while it was waited on (`rd.gone`): nothing
+    // more - its caller says so. Otherwise the earlier model STANDS wherever there is one that will do: a box a caller
+    // handed in, and a `keep` read (the caller's coverage test refuses its plan, by this cause: `ask.late`, `read.late`),
+    // and the operating area's own read while she is inside the water the earlier one read (said beside the model, and
+    // read again every NOGO_RETRY_MS - `nogo.failed`). A throw here, and a 502, had set `nogo.ready = false` for all of
+    // them but a `keep` read: the guard stood down over the water she was in for a read of water she was not.
+    if(!d){
+      nogo.busy = false;
+      if(note.gone){ if(ask) ask.failed = rd.withdrawn ? rd.withdrawn.say : "withdrawn"; updateNogoUI(); return; }
+      // (ANOTHER READ HAS LANDED THIS WATER MEANWHILE - a command's, while this one queued and waited: nothing is lost, and
+      //  nothing is said or marked late - the review, finding 7: the row said "these zones are the earlier read's" over it.
+      //  LANDED SINCE THIS ONE BEGAN, not merely a box that holds this one: a re-read of the same water is not moot)
+      if(nogo.ready && nogo.bbox && nogo.bbox !== boxWas && bboxContains(nogo.bbox, b)){ updateNogoUI(); return; }
+      const why = "the console gave no answer it could use to the chart read (" + note.why + ")";
+      if(rd) rd.late = note.why;
+      if(ask){ ask.failed = why; ask.late = true; }
+      const herIn = !asv || (nogo.bbox && bboxContains(nogo.bbox, {W: asv.lon, S: asv.lat, E: asv.lon, N: asv.lat}));
+      const stands = nogo.ready && (!!bbox || keep || herIn);
+      logClient("chart_read", {state: "given up", why: String(note.why).slice(0, 200), box: [b.W, b.S, b.E, b.N].map(v => +v.toFixed(5)),
+                               ms: encReadMs(b), own: !bbox, kept: stands});
+      if(stands){
+        // the operating area: read again every NOGO_RETRY_MS (onState), and the row says it beside the zones - the one note
+        // rebuildNogo writes over a failed read (their water's own model, unchanged: sea.enc was not written)
+        if(!bbox && !keep){ nogo.failed = {at: Date.now(), why}; rebuildNogo(); }
+        else updateNogoUI();
+        nogoStatus(bbox || keep ? "Chart NOT read over that water: " + why + ". The model of the water already read is kept."
+          : "Nogo: the chart round her could NOT be read again - " + why + ". The earlier read's zones are kept (she is in the "
+            + "water it read), and it is read again every " + Math.round(NOGO_RETRY_MS / 1000) + " s.");
+        render(); return;
+      }
+      nogo.ready = false; nogo.note = "chart read failed: " + why;
+      nogo.failed = {at: Date.now(), why: nogo.note};              // a failed read, not a sea with no chart (A3)
+      updateNogoUI(); nogoStatus("Nogo extraction failed: " + why + " - nothing is routed until the chart is read: reading it "
+                                 + "again every " + Math.round(NOGO_RETRY_MS / 1000) + " s.");
+      render(); return;
+    }
     if(keep && (!d || !d.band)){ keptOn((d&&(d.note || d.error)) || "no ENC coverage / offline"); return; }
     // ⚠⚠ ... AND ONE THAT ARRIVED WITHOUT SOME OF ITS LAYERS IS USED, NOT THROWN AWAY (Andy, 2026-10-18, at the
     // Canaveral lock: "goto path planning is driving over land"). Such a read was discarded WHOLE and the model it would
@@ -14609,8 +14724,10 @@ async function goToOrPassage(ll){
 /** The Go-To planner's leg, from `from` to `target`: the chart read over both, the route planned inside the water it was
  *  read over (planInsideChart) in the route worker. `what` names it in the planner's words. */
 async function planGoToLeg(from, target, what){
-  await ensureNogoCovers([from, target]);          // model obstacles near a distant target
-  return planInsideChart([from, target], undefined, () => {
+  // (its reads as one - commandReads: one given up for no answer ends them, said by that cause; a Stop aborts the one waited on)
+  const rd = commandReads();
+  await ensureNogoCovers([from, target], null, {read: rd});   // model obstacles near a distant target
+  return planInsideChart([from, target], {read: rd}, () => {
     const o = {...holdOpts(), standoffM: transitStandoffM()};
     return planOffThread({op: "nogo", args: {from, to: target, opts: o}}, () => planNogoRoute(from, target, o));   // the route worker
   }, what);
@@ -14895,13 +15012,25 @@ $("#lk_cancel").onclick = () => { if(lockTransit) lockEnd(lockTransit.stage === 
 // a home outside the modelled box tests "clear" because there is nothing loaded near it,
 // and silence would read as approval. `blockedInfo` names WHAT blocks it, not just that
 // something does.
+// ⚠ A NEWER SET HOME WITHDRAWS ONE STILL WAITING ON ITS CHART READ (the 2026-11-16 review, finding 3). The read has an end
+// now, up to 30 min and more: given up, the older Home was then sent - over the newer one set meanwhile, and a far RTH in
+// flight withdrawn for "home moved" by it. Its read is withdrawn at the newer press (`gone`), and nothing is sent for it.
+let setHomeGen = 0;
 async function doSetHome(ll){
+  const gen = ++setHomeGen;
   // Says what it is doing before it blocks, exactly as Go-To does: a point outside the
   // modelled box makes ensureNogoCovers FETCH, which can take seconds. In the common case
   // (a right-click on chart already modelled) it returns at once and this banner is
   // replaced within the same frame.
   showBanner("Setting Home at the chosen point… checking it against the keep-out model.");
-  await ensureNogoCovers([{lat:ll.lat, lon:ll.lon}], 400);
+  // (`covered`: a read given up, or refused for its size, KEEPS the model of the water already read - refreshNogo - and
+  //  a point outside it would test clear against nothing; said as not checked, by the read's own cause)
+  const rd = {late: null, withdrawn: null};
+  rd.gone = () => { if(!rd.withdrawn && gen !== setHomeGen) rd.withdrawn = {by: "a newer Set Home", say: "a newer Set Home was given"};
+                    return !!rd.withdrawn; };
+  const ask = {read: rd};
+  const covered = await ensureNogoCovers([{lat:ll.lat, lon:ll.lon}], 400, ask);
+  if(gen !== setHomeGen) return;                   // (a newer Set Home replaced this one while it read: that one says its own)
   const r = await cmd("/api/cmd/sethome", {lat:ll.lat, lon:ll.lon});
   // TEST FOR SUCCESS, NOT FOR FAILURE. cmd() returns {} on a network error (having already
   // flashed it), so `if(r.error)` would fall straight through and announce "Home set" for a
@@ -14911,6 +15040,7 @@ async function doSetHome(ll){
                                                     // it twice is the tide-note defect again
   let warn = "";
   if(!nogo.ready) warn = "the keep-out model is not loaded, so it was not checked";
+  else if(!covered) warn = "the chart could not be read over it (" + (ask.failed || "it was not read there") + "), so it was not checked";
   else {
     const bi = blockedInfo(llEN(ll.lat, ll.lon, nogo.frame), nogo.ko, nogo.buffer);
     if(bi) warn = "it sits in a keep-out zone ("+(bi.kind||"charted feature")+")";
@@ -14987,7 +15117,9 @@ async function doRTH(opts){
       // refusal of a return that is coming - and the chain marked refused under it
       if(chained && !supervising()) return;
       const out = await sailHome(H, brk, far, missionAt, {fence: rthFence(chained), chained});
-      if(chained && out === "busy"){ rthChainRetry(); return; }   // (a section being sent: the chain fires again shortly)
+      // (a section being sent, the first section's chart read given up for no answer, or the post's reply lost: the chain
+      // fires again shortly - none of them is a refusal of the way home; 2026-11-16 for late and unknown)
+      if(chained && (out === "busy" || out === "late" || out === "unknown")){ rthChainRetry(); return; }
       if(chained && (out === "refused" || out === "withdrawn")) rthChainFailed = true;   // said: she holds, and the cards stop promising a return
       return;
     }
@@ -15001,15 +15133,17 @@ async function doRTH(opts){
       // (rthFence); the low-fuel rule, the lock transit this press ended, and how to take the survey's break-off again
       const how = {lowFuel: !!why, chained, fence: rthFence(chained), lockWas, brkAgain: () => surveyBreakNow(opts && opts.breakWhy)};
       const out = await sailHomeFresh(brk, far, missionAt, how);
-      // (one plan at a time, or the chart read along the way home not finished in CORRIDOR_WAIT_MAX_MS: the chain fires
-      // again shortly - "late" is not a refusal of the way home, and recorded as one she would hold far out for good)
-      if(chained && (out === "busy" || out === "late")){ rthChainRetry(); return; }
+      // (one plan at a time, or a chart read along the way home not finished - the passage plan's in CORRIDOR_WAIT_MAX_MS,
+      // the first section's at fetchENCBbox's bound - or the post's reply lost: the chain fires again shortly - none is a
+      // refusal of the way home, and recorded as one she would hold far out for good)
+      if(chained && (out === "busy" || out === "late" || out === "unknown")){ rthChainRetry(); return; }
       if(chained && (out === "refused" || out === "withdrawn")) rthChainFailed = true;
       // (the low-fuel monitor asks why it was not taken - fuelTick: never sent, refused - with the console's own state
-      // when it was the console that refused - withdrawn by which stop, busy, or late; the override's withdrawal is an answer)
+      // when it was the console that refused - withdrawn by which stop, busy, late, or no answer to the post (unknown);
+      // the override's withdrawal is an answer)
       return out === "sent" || out === "overridden" ? undefined
         : {notTaken: out === "withdrawn" ? {withdrawn: true, by: how.by || routeStopName} : out === "unsent" ? {sent: false}
-                   : out === "busy" ? {busy: true} : out === "late" ? {late: true}
+                   : out === "busy" ? {busy: true} : out === "late" ? {late: true} : out === "unknown" ? {unknown: true}
                    : out === "refused" ? (how.post && how.post.refused ? how.post : {refused: true, state: S}) : {}};
     }
     if(chained) rthChainFailed = true;
@@ -15021,16 +15155,31 @@ async function doRTH(opts){
     flashNote("RTH refused: home is " + fmtDist(far.m) + " away.");
     updateMissionCard(); render(); return;
   }
-  await ensureNogoCovers([{lat:asv.lat,lon:asv.lon}, {lat:S.home.lat,lon:S.home.lon}]);
+  // ITS READS AS ONE (commandReads): the read here and planInsideChart's after it - one given up for no answer ends both,
+  // and a Stop pressed while either is waited on withdraws it at once
+  const rd = commandReads();
+  await ensureNogoCovers([{lat:asv.lat,lon:asv.lon}, {lat:S.home.lat,lon:S.home.lon}], null, {read: rd});
   showBanner("Routing home… a long transit around obstacles can take several seconds.");
   await new Promise(r=>setTimeout(r,50));
-  const plan = await planInsideChart([{lat:asv.lat,lon:asv.lon}, {lat:S.home.lat,lon:S.home.lon}], undefined, () => {   // see doGoTo
+  const plan = await planInsideChart([{lat:asv.lat,lon:asv.lon}, {lat:S.home.lat,lon:S.home.lon}], {read: rd}, () => {   // see doGoTo
     const from = {lat:asv.lat,lon:asv.lon}, to = {lat:S.home.lat,lon:S.home.lon}, o = {...holdOpts(), standoffM: transitStandoffM()};
     return planOffThread({op: "nogo", args: {from, to, opts: o}}, () => planNogoRoute(from, to, o));
   }, "RTH");
   if(plan.withdrawn){                // (see doGoTo; a chained RTH is not tried again by itself)
     if(chained) rthChainFailed=true;
     return {notTaken: {withdrawn: true, by: routeStopName}};   // the low-fuel monitor asks which stop (fuelTick)
+  }
+  // ⚠ THE CHART READ HAD NO ANSWER THE PAGE COULD USE (2026-11-16, fetchENCBbox's bound): nothing was sent, and it is not a
+  // refusal of the way home - the end-of-plan chain and the low-fuel monitor ask again RTH_BUSY_RETRY_MS on (as for the
+  // far return's "late"), the console keeping what it read; the operator's press is refused by that cause (unchartedTip).
+  if(plan.error && plan.late && (chained || why)){
+    if(chained) rthChainRetry();
+    setViolation(plan.reason);
+    showBanner((chained ? "End of plan " : "Low-fuel ") + "RTH WAITING: " + plan.error + " - nothing was sent; it is asked again in "
+      + Math.round(RTH_BUSY_RETRY_MS / 1000) + " s.");
+    logClient("rth_waiting", {chained, low_fuel: !!why, why: String(plan.error).slice(0, 300)});
+    updateMissionCard(); render();
+    return {notTaken: {late: true}};
   }
   if(plan.error){
     if(chained) rthChainFailed=true;
@@ -15455,20 +15604,31 @@ function corridorReadLine(c){
  *  no answer in CORRIDOR_ASK_MS (aborted), a failure (the network, a reply that is not JSON, the console's own HTTP 5xx),
  *  or an answer that is not a status - and then `note.why` says which (corridorLate). `ms`: another bound than
  *  CORRIDOR_ASK_MS, for the console's other answers a plan waits on (2026-11-15: a tile's planning grid - passageGrids -
- *  and a passage end's chart - passageEndWorld; each answers an object), so there is ONE bounded, aborted ask. */
-async function corridorAsk(ask, note, ms = CORRIDOR_ASK_MS){
+ *  and a passage end's chart - passageEndWorld; each answers an object), so there is ONE bounded, aborted ask. `gone`
+ *  (2026-11-16, the page's chart read - fetchENCBbox): asked every CHART_READ_GONE_MS while the answer is waited for, and
+ *  the moment it answers true the ask is aborted and null answered, `note.gone` set - a Stop does not wait out the bound. */
+async function corridorAsk(ask, note, ms = CORRIDOR_ASK_MS, gone = null){
   const ac = typeof AbortController === "function" ? new AbortController() : null;
-  let timer = null, why = null;
+  let timer = null, look = null, why = null, off = false;
   const bound = new Promise((r) => { timer = setTimeout(() => {
     why = "unanswered in " + (ms >= 120000 ? Math.round(ms / 60000) + " min" : Math.round(ms / 1000) + " s");
-    try{ if(ac) ac.abort(); }catch(e){} r(null); }, ms); });
+    try{ if(ac) ac.abort(); }catch(e){} r(null); }, ms);
+    if(gone){
+      const ask1 = () => {
+        let g = false; try{ g = !!gone(); }catch(e){}         // (a fault in the asker is not a withdrawal: the bound still ends it)
+        if(g){ off = true; try{ if(ac) ac.abort(); }catch(e){} r(null); } else look = setTimeout(ask1, CHART_READ_GONE_MS);
+      };
+      look = setTimeout(ask1, CHART_READ_GONE_MS);
+    }
+  });
   try{
     const st = await Promise.race([Promise.resolve().then(() => ask(ac ? ac.signal : undefined))
       .catch((e) => { why = why || corridorFailure(e); return null; }), bound]);   // (the abort's own rejection is not the why)
+    if(off){ if(note){ note.gone = true; note.why = "withdrawn"; } return null; }
     if(st && typeof st === "object" && !Array.isArray(st)) return st;
     if(note) note.why = why || "a reply that was not a status";
     return null;
-  }finally{ clearTimeout(timer); }
+  }finally{ clearTimeout(timer); clearTimeout(look); }
 }
 /** THE CORRIDOR READ ASKED FOR (readCorridor, passagePlanFor, coarseHomeBuild): `body` posted, and posted again every
  *  CORRIDOR_POLL_MS while there is no answer to take (corridorAsk - the console rejoins a read of the same tiles), to its
@@ -15975,13 +16135,16 @@ async function planPassageNow(again){
 // floats), so it is not skipped: it is begun as soon as the plan is in, while the operator arms her and looks it over, over
 // the water sailSend will read (her position, the section's points), and Sail waits for it only if it is still running.
 // A Go-To past 50 km that sails itself waits the same read as before, now during the planning. Nothing is commanded here.
-let passagePreRead = null;                      // {plan, done, over}: section 1's read, begun at planning
+// ⚠ BOUNDED (2026-11-16, fetchENCBbox): `read` is its read record (commandReads' shape, withdrawn by nothing - nothing is
+// commanded here), and `read.late` says it was given up for no answer: a Sail that WAITED for it is refused by that cause
+// (sailPassage), not sent to read it all over again with sailBusy held.
+let passagePreRead = null;                      // {plan, done, over, read}: section 1's read, begun at planning
 function preReadFirstSection(plan){
   const c = plan.sections && plan.sections[0];
   if(!c || !asv) return null;
-  const t0 = Date.now(), r = {plan, over: false, done: null};
-  r.done = ensureNogoCovers([{lat: asv.lat, lon: asv.lon}, ...c.via, c.to], null, {route: true})
-    .then(() => logClient("passage_preread", {ms: Date.now() - t0, ok: true}),
+  const t0 = Date.now(), r = {plan, over: false, done: null, read: {late: null, withdrawn: null, gone: () => false}};
+  r.done = ensureNogoCovers([{lat: asv.lat, lon: asv.lon}, ...c.via, c.to], null, {route: true, read: r.read})
+    .then(() => logClient("passage_preread", {ms: Date.now() - t0, ok: !r.read.late, ...(r.read.late ? {late: r.read.late} : {})}),
           (e) => logClient("passage_preread", {ms: Date.now() - t0, ok: false, why: String((e && e.message) || e)}))
     .finally(() => { r.over = true; });
   return r;
@@ -16261,15 +16424,25 @@ function sailLeftM(){
  * withdrawn, by} when a Stop was pressed while it planned (`said`: planInsideChart said so) or `fence` - the far RTH's
  * press, kept (rthFence) - no longer stands: asked after the chart read and again before the post (the 2026-11-13 review:
  * a Stop pressed during the read, before planInsideChart took its own mark, was not seen).
+ * {error, late: true}: the console gave no answer it could use to a chart read along it (fetchENCBbox's bound) - nothing
+ * was sent; asked again where that is its caller's business (sailHome's "late").
+ * ⚠ THE PRESS IS ASKED WHILE EACH READ IS WAITED ON (2026-11-16, commandReads): a read the console never answered held this
+ * - and the far RTH's sailBusy and homeFlight with it - for good, and a Stop pressed meanwhile released nothing, the fence
+ * being asked only after the awaits. Now one give-up ends all of this section's reading, and a Stop or a fence that
+ * no longer stands aborts the read being waited on, within CHART_READ_GONE_MS.
  */
 async function sailSend(P, k, from, bo, append, fence){
   const c = P.sections[k], home = P.kind === "rth";
   const pts = bo ? [bo.at, ...sectionRest(c, bo.at), c.to] : [...c.via, c.to];
   const wasGen = planGen, rrWas = runRoute;
-  const fenced = () => { const g = fence ? fence() : null; return g ? {error: g.say, withdrawn: true, by: g.by} : null; };
+  const rd = commandReads(fence);
+  const fenced = () => { rd.gone(); const g = rd.withdrawn; return g ? {error: g.say, withdrawn: true, by: g.by} : null; };
+  const lateSay = () => "the console gave no answer it could use to the chart read along it (" + rd.late + ")";
   // ITS CHART IMAGE READ ALONG IT, where the read can find something (`route`: readRouteInk) - its one box is past the
   // read's budget, and the console, not the operator, sends it - and so is any wider read the planning makes.
-  await ensureNogoCovers([from, ...pts], null, {route: true});
+  await ensureNogoCovers([from, ...pts], null, {route: true, read: rd});
+  const fr = fenced(); if(fr) return fr;
+  if(rd.late) return {error: lateSay(), late: true, why: rd.late};
   // AT THE WATER IT WILL HAVE (step 6): the lowest predicted along it while she sails it - not the boat's level now,
   // which the guard's own chart keeps (sectionWater, atWaterLevel).
   const lv = await sectionWater(P, from, pts, append);
@@ -16279,7 +16452,7 @@ async function sailSend(P, k, from, bo, append, fence){
   const {line, ow} = portSectionLine(P, c, bo, pts, nogo.ready ? nogo : null);
   let ht = null;
   // In the route worker (planOffThread), on the chart at that water (koAtLevel); on this thread as before if it cannot.
-  const plan = await planInsideChart([from, ...pts], {route: true}, () => {
+  const plan = await planInsideChart([from, ...pts], {route: true, read: rd}, () => {
     const o = holdOpts(), via = line.slice(0, -1), std = transitStandoffM(), koLv = koAtLevel(lv.m);
     return planOffThread({op: "holdRoute", ko: koLv, args: {target: c.to, holdOpts: o, start: from, via, keepRightAll: true, standoffM: std,
                                                             ropts: {openWater: ow}}},   // a passage: open water on every leg (a port's joined line: round what blocks it)
@@ -16290,13 +16463,17 @@ async function sailSend(P, k, from, bo, append, fence){
       }, koLv),
       (r) => { ht = r.ht; return r.plan; });
   }, (home ? "Home along the passage, section " : "Passage section ") + (k + 1));
-  if(plan && plan.withdrawn) return {error: plan.error, withdrawn: true, by: routeStopName, said: true};
+  // (withdrawn by a Stop planInsideChart saw: said there; by the fence while a read was waited on: handed back UNSAID)
+  if(plan && plan.withdrawn) return plan.unsaid ? {error: plan.error, withdrawn: true, by: plan.by}
+                                                : {error: plan.error, withdrawn: true, by: routeStopName, said: true};
   // (a hold point refused because the CHART could not be read names that, not the water - 2026-10-18 review)
-  if(ht !== null && ht.error) return {error: (ht.reason && ht.reason.mode === "chart_failed") ? ht.error
-                                               : "the end of section " + (k + 1) + " is not clear water to hold at"};
+  if(ht !== null && ht.error){
+    const chartFailed = !!(ht.reason && ht.reason.mode === "chart_failed");
+    return {error: chartFailed ? ht.error : "the end of section " + (k + 1) + " is not clear water to hold at", late: chartFailed && !!rd.late};
+  }
   if(!plan) return {error: "no plan"};
-  if(plan.error) return {error: plan.error};
-  if(plan.uncharted) return {error: plan.uncharted.say || "the chart is not read over all of it"};
+  if(plan.error) return {error: plan.error, late: !!plan.late, why: plan.late ? rd.late : null};
+  if(plan.uncharted) return {error: plan.uncharted.say || "the chart is not read over all of it", late: !!plan.late, why: plan.late ? rd.late : null};
   if(plan.unroutable && plan.unroutable.length) return {error: "no route clear of the chart's keep-outs on " + plan.unroutable.length + " leg(s)"};
   plan.heldOff = ht.heldOff; plan.holdClear = holdClearWithContacts(ht.to, ht.holdClear);
   let prefix = [], cut = 0;
@@ -16340,13 +16517,33 @@ async function sailPassage(){
      && !await guiConfirm("Sail the passage", "She is under way on another plan. Sailing the passage replaces it.")) return;
   if(lockTransit) lockEnd("the passage replaces the lock transit");   // the gates back before its sections plan (2026-10-18 review)
   const P = sailRecord(passage);
+  const stopAt = routeStopGen;                   // (the press: a Stop while the pre-read is waited on withdraws it)
   sailBusy = true; updateTransitPanel(); applyCmdState(S);
   try{
     // (section 1's chart image, begun when the passage was planned: waited for if it is still being read - a read in hand
     //  returns at once from the second asker, chartInk.busy, and section 1 would be planned without it)
-    if(passagePreRead && passagePreRead.plan === passage && !passagePreRead.over){
+    // ⚠ AND THE WAIT ENDS AT A STOP, AND AT THE READ'S OWN BOUND (2026-11-16): it held sailBusy - every far RTH "busy" - for
+    // as long as a console that never answered took, and a Stop released nothing. Given up for no answer, the Sail is
+    // refused by that cause (asked again by Sail passage, the console keeping what it read); stopped, withdrawn.
+    const pr = passagePreRead;
+    if(pr && pr.plan === passage && !pr.over){
       flashNote("Passage: section 1's chart image is still being read - sailing as soon as it is in.");
-      await passagePreRead.done;
+      await new Promise(res => {
+        const t = setInterval(() => { if(routeStopGen !== stopAt){ clearInterval(t); res(); } }, CHART_READ_GONE_MS);
+        pr.done.finally(() => { clearInterval(t); res(); });
+      });
+      if(routeStopGen !== stopAt){
+        showBanner("Passage NOT sailed: " + (routeStopName || "a stop") + " was pressed while section 1's chart was being read. Nothing was sent.");
+        logClient("plan_withdrawn", {what: "Sail passage", by: routeStopName});
+        return;
+      }
+      if(pr.read && pr.read.late){
+        showBanner("Passage NOT sailed: the console gave no answer it could use to section 1's chart read (" + pr.read.late
+          + "). Nothing was sent: Sail passage again to ask for it again" + lateKeeps(pr.read.late) + ".");
+        logClient("passage_sail", {id: P.id, ok: false, why: "pre-read late", late: String(pr.read.late).slice(0, 200)});
+        if(passagePreRead === pr) passagePreRead = null;
+        return;
+      }
     }
     const r = await sailSend(P, 0, {lat: asv.lat, lon: asv.lon}, null, false);
     if(r.error || r.soft){
@@ -16372,6 +16569,9 @@ async function sailAppend(P, k){
   try{
     const r = await sailSend(P, k, P.end, null, true);
     if(r.soft) return;
+    // (withdrawn - a Stop, Pause, Hold or E-STOP pressed while it read or planned: she was stopped, and the press says so;
+    //  it is not a section that "could NOT be planned" - the 2026-11-16 review, finding 5. Nothing was sent.)
+    if(r.withdrawn){ logClient("passage_section", {id: P.id, k, ok: false, withdrawn: r.by || null}); return; }
     if(r.error){
       P.note = "section " + (k + 1) + " could not be planned: " + r.error;
       if(sailSaid !== P.note){
@@ -16776,12 +16976,31 @@ async function sailHome(H, brk, far, missionAt = null, how = null){
       }
       return "withdrawn";
     }
+    // ⚠ THE CHART READ ALONG THE FIRST SECTION HAD NO ANSWER THE PAGE COULD USE (2026-11-16, fetchENCBbox's bound; a 5xx or
+    // the network the same): nothing was sent, and it is NOT a refusal of the way home - "late", asked again by the chain and
+    // the monitor RTH_BUSY_RETRY_MS on (doRTH, fuelTick), as the passage plan's own late read is. The network failure of
+    // this read was "refused": final for the chain, she held far out for good. (`how.again`: the joined flight's own ask.)
+    if(r.late){
+      const again = how ? (how.again ? how.again() : !!(how.chained || how.lowFuel)) : false;
+      showBanner((again ? "RTH WAITING: " : "RTH refused: ") + "home is " + fmtDist(far.m) + " away, and the first section of the "
+        + "way home " + (fresh ? "as a passage" : "along the passage") + " could not be sent - " + r.error
+        + (again ? "; nothing was sent, and it is asked again in " + Math.round(RTH_BUSY_RETRY_MS / 1000) + " s."
+                 : ". Nothing was sent: press RTH again" + lateKeeps(r.why, "the chart") + "."));
+      logClient("passage_rth", {id: H.id, ok: false, from_here: fresh, late: true, why: String(r.error).slice(0, 300)});
+      return "late";
+    }
     if(r.error || r.soft){
       const post = r.post || null;             // the command's own answer, when it got as far as one
       if(how) how.post = post;
       if(post && post.sent === false){ takeDownBanner(/^Routing home (along|as) (the|a) passage/); return "unsent"; }
-      if(post && !post.refused){                // lost or unreadable: the console cannot tell whether she took it
-        showBanner(r.error + " - the way home " + (fresh ? "as a passage" : "along the passage") + ", " + fmtDist(far.m) + ".");
+      // LOST OR UNREADABLE: the console cannot tell whether she took it. Said so, and "unknown" - which the chain and the
+      // monitor now ask again RTH_BUSY_RETRY_MS on (doRTH, fuelTick; the 2026-11-16 brief: it neither retried nor failed,
+      // and she held far out with the card promising a return): if she took it she is going home by then, an RTH, which
+      // neither sends again (the chain never fires off an RTH's hold; the monitor's rthDecision only latches).
+      if(post && !post.refused){
+        const again = how ? (how.again ? how.again() : !!(how.chained || how.lowFuel)) : false;
+        showBanner(r.error + " - the way home " + (fresh ? "as a passage" : "along the passage") + ", " + fmtDist(far.m) + "."
+          + (again ? " If she did not take it, it is asked again in " + Math.round(RTH_BUSY_RETRY_MS / 1000) + " s." : ""));
         logClient("passage_rth", {id: H.id, ok: false, from_here: fresh, why: "unanswered"});
         return "unknown";
       }
@@ -17038,6 +17257,7 @@ async function sailHomeFreshRun(brk, far, missionAt, fl){
   const ended = S && S.behavior === "survey" && !!(S.status && S.status.holding);
   const brkNow = brk && how.brkAgain ? (how.brkAgain() || (ended ? null : brk)) : brk;
   how.fromHere = true;
+  how.again = () => fl.again;                    // (asked again if the chain or the monitor is in this flight - joined or its own)
   return sailHome(homePassageRecord(out.plan, fl.lowFuel), brkNow, far, missionAt, how);
 }
 // ── THE WATER A SECTION IS PLANNED AT (2026-10-12, step 6 of the long-transit plan) ─────────────────────────────────
@@ -17263,13 +17483,14 @@ async function doTransit(){
   const missionAt = Date.now();                  // a new mission's history opens here (newMission)
   if(lockTransit) lockEnd("a Transit replaces the lock transit");     // the gates back before this plans (2026-10-18 review)
   const wasGen = planGen;             // see doGoTo
-  await ensureNogoCovers([{lat:asv.lat,lon:asv.lon}, ...transit]);   // cover distant transit vertices
+  const rd = commandReads();          // (its reads as one: see planGoToLeg)
+  await ensureNogoCovers([{lat:asv.lat,lon:asv.lon}, ...transit], null, {read: rd});   // cover distant transit vertices
   // The LAST vertex is where the boat will hold, so it is a hold point like any other: a
   // vertex dropped in a keep-out is held OFF at the nearest clear water rather than refused.
   // Worked out INSIDE the plan below, so a wider read of the chart (planInsideChart) holds it on the model the route
   // is judged by; a refusal of it ends the planning (null) and is said here.
   let ht = null;
-  const plan = await planInsideChart([{lat:asv.lat,lon:asv.lon}, ...transit], undefined, () => {
+  const plan = await planInsideChart([{lat:asv.lat,lon:asv.lon}, ...transit], {read: rd}, () => {
     const from = {lat:asv.lat,lon:asv.lon}, tgt = transit[transit.length-1], o = holdOpts(), via = transit.slice(0,-1),
           std = transitStandoffM();
     // In the route worker (planOffThread), the hold point back beside the plan; on this thread as before if it cannot.
@@ -18736,7 +18957,9 @@ async function ensureChartInk(bb, opts){
   } finally { chartInk.busy = false; }
   return chartInk;
 }
-async function ensureNogoArea(){
+// `ask` (punchOut's): refreshNogo's - `failed` handed back, the cause of a read that did not land (2026-11-16: a read given
+// up for no answer, or refused for its size, keeps the model of other water, and the punch named THAT model's note).
+async function ensureNogoArea(ask){
   // ⚠ THE PAD MUST COVER THE LEAD, or the lead is validated against water nobody fetched.
   // The extension is clipped against the keep-out model, and outside the extract that
   // model is EMPTY — which reads as "clear" rather than as "unknown", so a 200 m lead-out
@@ -18746,8 +18969,8 @@ async function ensureNogoArea(){
   if(nogo.ready && bboxContains(nogo.bbox, b)){ await ensureChartInk(b); return true; }
   const fb = nogo.bbox ? {W:Math.min(b.W,nogo.bbox.W), S:Math.min(b.S,nogo.bbox.S),
                           E:Math.max(b.E,nogo.bbox.E), N:Math.max(b.N,nogo.bbox.N)} : b;
-  await refreshNogo(asv?{lat:asv.lat,lon:asv.lon}:{lat:(b.S+b.N)/2,lon:(b.W+b.E)/2}, fb);
-  if(nogo.ready) await ensureChartInk(b);   // the survey's own water, before it is punched
+  await refreshNogo(asv?{lat:asv.lat,lon:asv.lon}:{lat:(b.S+b.N)/2,lon:(b.W+b.E)/2}, fb, ask);
+  if(nogo.ready && !(ask && ask.failed)) await ensureChartInk(b);   // the survey's own water, before it is punched
   // ⚠ THE ANSWER IS ABOUT THIS SURVEY'S WATER, not about whether a model exists at all.
   // `nogo.ready` on its own was TRUE for a box this area sits OUTSIDE of, and punchOut acts
   // on this return.
@@ -18884,7 +19107,9 @@ async function ensureNogoCovers(pts, padM, opts){
   const fb = nogo.bbox ? {W:Math.min(b.W,nogo.bbox.W), S:Math.min(b.S,nogo.bbox.S),
                           E:Math.max(b.E,nogo.bbox.E), N:Math.max(b.N,nogo.bbox.N)} : b;
   await refreshNogo(asv?{lat:asv.lat,lon:asv.lon}:{lat:mid,lon:(b.W+b.E)/2}, fb, opts);   // `say` / `keep` / `failed`: see refreshNogo
-  if(nogo.ready) await readPlanInk(b, pad, pts, opts);
+  // (not the chart image over water the ENC was not read over: a read given up, or withdrawn, ends the command's reading)
+  const rd = opts && opts.read;
+  if(nogo.ready && !(rd && (rd.late || rd.withdrawn))) await readPlanInk(b, pad, pts, opts);
   // ⚠ THE ANSWER IS ABOUT THIS PLAN'S WATER, not about whether a model exists at all.
   // `nogo.ready` on its own was TRUE while nogo.bbox was a box the TARGET sat outside of,
   // which is how a Go-To 9.8 km away was planned straight through a charted island.
@@ -18944,7 +19169,10 @@ function sizeWhy(b, tooBig){
 }
 /** What the operator can do about an uncharted refusal: a read that FAILED is not a distance (the review). */
 function unchartedTip(u, partWay){
-  return u && u.cause === "failed" ? "Command it again once the chart can be read there."
+  // A READ THE CONSOLE GAVE NO ANSWER (cause "late", fetchENCBbox's bound): nothing was sent. One that ran out of time is
+  // still being read by the console, which keeps each tile on its disk, so the next command asks for less (lateKeeps).
+  return u && u.cause === "late" ? "Nothing was sent. Command it again: the chart is asked for again then" + lateKeeps(u.say) + "."
+       : u && u.cause === "failed" ? "Command it again once the chart can be read there."
        : u && u.cause === "unread" ? "No chart at any scale covers that water: choose a point inside charted water, or route round it."
        : partWay;
 }
@@ -19152,7 +19380,7 @@ async function openWaterRead(pts, opts, what){
   if(!box || bboxContains(nogo.bbox, box)) return null;
   const tooBig = encSpanRefusal(bbUnion(nogo.bbox, box));
   if(tooBig){ logClient("open_water_read", {what, read: false, why: tooBig}); return {read: false, why: tooBig}; }
-  const ask = {say: what + ": reading the chart over the open water round the way there…", keep: true};
+  const ask = {say: what + ": reading the chart over the open water round the way there…", keep: true, read: opts && opts.read};
   await refreshNogo(asv ? {lat: asv.lat, lon: asv.lon} : pts[0], bbUnion(nogo.bbox, box), ask);
   logClient("open_water_read", {what, read: true, failed: ask.failed || null});
   if(!ask.failed) await ensureNogoCovers(pts, null, {...(opts || {}), keep: true});   // the plan's own chart image, read again
@@ -19160,13 +19388,24 @@ async function openWaterRead(pts, opts, what){
 }
 async function planInsideChart(pts, opts, plan, what){
   const subjectOf = () => what === "Upload" ? "the plan" : what === "Transit" ? "the transit" : what === "RTH" ? "home" : "the target";
-  const stopWas = routeStopGen;
+  // THE COMMAND'S READS, AS ONE (commandReads, 2026-11-16): the caller's, handed on `opts.read` when it read first - so a give-up
+  // there ends this plan's reading too, and a Stop pressed during it withdraws this plan - else this plan's own.
+  const rd = (opts && opts.read && typeof opts.read.gone === "function") ? opts.read : commandReads();
+  opts = {...(opts || {}), read: rd};
+  const stopWas = rd.stopAt;
   const withdrawn = () => {
     const say = what + " withdrawn: " + (routeStopName || "a stop") + " was pressed while its route was being planned. Nothing was sent.";
     showBanner("⚠ " + say);
     logClient("plan_withdrawn", {what, by: routeStopName});
     return {error: say, withdrawn: true};
   };
+  // ... and withdrawn by the caller's own press (the far RTH's fence) while a read was waited on: handed back UNSAID, with
+  // why - its caller says it in its own words (sailSend)
+  const off = () => routeStopGen !== stopWas ? withdrawn()
+    : rd.withdrawn ? {error: rd.withdrawn.say, withdrawn: true, by: rd.withdrawn.by, unsaid: true} : null;
+  // A READ THE CONSOLE GAVE NO ANSWER (refreshNogo, `rd.late`): not asked again here - said, by that cause (`late`)
+  const lateWhy = () => "the console gave no answer it could use to the chart read (" + rd.late + ")";
+  let gone = off(); if(gone) return gone;
   // ⚠ WATER NO CHART COVERS IS REFUSED AT ONCE (2026-10-11, the layered chart): reading wider cannot chart it. A read
   // that FAILED there says so, and to command it again once the chart can be read.
   const unreadRefusal = (u, route) => {
@@ -19183,27 +19422,44 @@ async function planInsideChart(pts, opts, plan, what){
     const ownBox = boxAround(pts, CHART_WIDEN_PAD_M);
     const tooBig = encSpanRefusal(bbUnion(nogo.bbox, ownBox));
     const ask = {...(opts || {}), keep: true};
-    if(!tooBig){
+    if(!tooBig && !rd.late){                        // (a read the console gave no answer is not asked again: rd.late)
       await ensureNogoCovers(pts, null, ask);
+      gone = off(); if(gone) return gone;
       own = nogo.ready && nogo.bbox ? beyondChart(pts, nogo.bbox, undefined, nogo.unread, {points: true}) : null;
       if(own && own.where === "unread") return unreadRefusal(own, null);
     }
     if(own){
       // NOTHING WAS PLANNED, so it is the command's own point that is said, not a route (the review).
       own.subject = subjectOf();
+      const late = !tooBig && !!rd.late;
       const say = beyondChartSay(own, fmtDist) + " - " + (tooBig ? sizeWhy(ownBox, tooBig)
-                                                                 : "the chart could not be read over it (" + (ask.failed || nogo.note || "no extract") + ")");
-      return {error: say, reason: {mode: "uncharted", info: {kind: "water the chart was not read over"}, at: own.at, near: !(own.outM > 0)},
-              uncharted: {...own, route: [], say, rounds: 0, cause: tooBig ? "size" : "failed"}};
+        : late ? "the chart could not be read over it: " + lateWhy()
+               : "the chart could not be read over it (" + (ask.failed || nogo.note || "no extract") + ")");
+      return {error: say, late, reason: {mode: "uncharted", info: {kind: "water the chart was not read over"}, at: own.at, near: !(own.outM > 0)},
+              uncharted: {...own, route: [], say, rounds: 0, cause: tooBig ? "size" : late ? "late" : "failed"}};
     }
   }
+  // ⚠⚠ ... AND THE COMMAND'S OWN READ GIVEN UP IS A REFUSAL WHEREVER ITS POINTS LIE (the 2026-11-16 review, finding 1).
+  // That read was asked because the water the command needs - its points and the pad round them - was not all read; given
+  // up, the model it would have replaced stands, and that water and the chart image over it (readPlanInk, skipped) are
+  // not read. Planned on, a Go-To or an Upload a few hundred meters inside the old box went out with its hold disc and pad
+  // over unread water - which reads as clear - and no chart image compared (run, by the review). Refused by that cause,
+  // as a 5xx or a throw was before the read had an end (nogo.ready false). NOT for open water first's wider read below:
+  // that one is the search's own, and given up it keeps the search to the water read, as a failed read always did.
+  const lateRefusal = () => {
+    const at = pts[pts.length - 1], say = "the chart could not be read round " + subjectOf() + ": " + lateWhy();
+    return {error: say, late: true, reason: {mode: "uncharted", info: {kind: "water the chart was not read over"}, at, near: true},
+            uncharted: {at, outM: 0, route: [], say, rounds: 0, cause: "late"}};
+  };
+  if(rd.late) return lateRefusal();
   await openWaterRead(pts, opts, what);           // the water open water first searches, read first (2026-10-14)
+  gone = off(); if(gone) return gone;
   await readPassageAis(pts);                     // the vessels not under way along it, for passageKo (2026-10-07)
   aisKeepoutsNow();
   // THE SEARCH RUNS IN THE ROUTE WORKER (planOffThread), or on this thread with the console told (planHere): `plan` is the
   // caller's, and either way its answer is awaited.
   let p = await plan(), why = null, cause = null, round = 0;
-  if(routeStopGen !== stopWas) return withdrawn();
+  gone = off(); if(gone) return gone;
   while(p && p.uncharted){
     if(p.uncharted.where === "unread"){                // no wider read charts it: said at once (the advice: unchartedTip)
       cause = p.uncharted.failed ? "failed" : "unread"; break;
@@ -19221,28 +19477,38 @@ async function planInsideChart(pts, opts, plan, what){
     const wantBox = boxAround(want, CHART_WIDEN_PAD_M);
     const tooBig = encSpanRefusal(bbUnion(nogo.bbox, wantBox));
     if(tooBig){ why = sizeWhy(wantBox, tooBig); cause = "size"; break; }
+    if(rd.late){ why = "the chart could not be read along it: " + lateWhy(); cause = "late"; break; }   // (not asked again)
     round++;                                            // counted as a READ: a refusal above reads nothing
     // THE READ SAYS WHAT IT IS (refreshNogo's banner while it fetches - 53 s on the live check), and the planning after it
     // says so too: the route search holds the page's thread for seconds, and the banner up then is the one they read.
     const n = " (" + round + " of " + CHART_WIDEN_ROUNDS + ")…";
-    const ask = {say: what + ": the route ran past the water the chart was read over - reading the chart along it" + n, keep: true};
+    const ask = {say: what + ": the route ran past the water the chart was read over - reading the chart along it" + n, keep: true, read: rd};
     if(!await ensureNogoCovers(want, CHART_WIDEN_PAD_M, ask)){
-      why = "the chart could not be read over it (" + (ask.failed || nogo.note || "no extract") + ")";
-      cause = "failed"; break;
+      gone = off(); if(gone) return gone;
+      why = rd.late ? "the chart could not be read along it: " + lateWhy()
+                    : "the chart could not be read over it (" + (ask.failed || nogo.note || "no extract") + ")";
+      cause = rd.late ? "late" : "failed"; break;
     }
     await ensureNogoCovers(pts, null, {...(opts || {}), keep: true});   // the plan's own water, read again if a new extract dropped it
+    gone = off(); if(gone) return gone;
+    if(rd.late) return lateRefusal();                   // (that read given up: the plan's own water - as its first, above)
     showBanner(what + ": planning again over the chart read along the route" + n);
     await new Promise(r=>setTimeout(r,50));             // the rebuild's paint, and this banner's, before the routing takes the thread
     aisKeepoutsNow();                                   // the contacts, in the frame the new extract set
     p = await plan();
-    if(routeStopGen !== stopWas) return withdrawn();
+    gone = off(); if(gone) return gone;
   }
-  if(routeStopGen !== stopWas) return withdrawn();
+  gone = off(); if(gone) return gone;
   if(p && p.uncharted){
     p.uncharted.say = beyondChartSay(p.uncharted, fmtDist) + (why ? " - " + why : "");
     p.uncharted.rounds = round; p.uncharted.cause = cause;
     if(p.error) p.error = p.uncharted.say;
   } else if(round) takeDownBanner(/planning again over the chart read along the route/);
+  // A REFUSAL BECAUSE A READ WAS GIVEN UP FOR NO ANSWER is said `late` - the widening's (cause "late"), its own points' and
+  // its own water's above - and its caller asks again where that is its business (doRTH, sailSend). Only those: a refusal
+  // for its own reason (a size, the keep-outs) after open water first's read was given up is not one, and asked again it
+  // would be refused again for good (the review, finding 4).
+  if(p && cause === "late") p.late = true;
   return p;
 }
 /**
@@ -19276,7 +19542,8 @@ async function punchOut(cut, slicer){
   applyNogoControls();                             // fold panel buffer/enforce into the shared nogo
   punchBusy=true; $("#sp_punch").disabled=true; $("#sp_hint").textContent="Extracting ENC / nogo for the survey area…";
   try{
-    const ok=await ensureNogoArea();
+    const areaAsk = {};
+    const ok=await ensureNogoArea(areaAsk);
     // ⚠ THE DEPTH WINDOW IS READ AFTER THE CHART READ, as the buffer and the cut are (review 2026-11-06): read before
     // it, a Min depth raised while the chart was read clipped at the old one while patStrikeKey - read after - named the
     // new, so the memo served that clip to the next punch at the new depth (measured: 5 runs where a fresh punch gives 3).
@@ -19287,6 +19554,14 @@ async function punchOut(cut, slicer){
       // THIS punch's answer, said in the banner below: no chart, so the un-punched pattern is what Add to plan
       // commits, as it always has - which is why a punch the tide threw away earlier stops refusing here.
       patClip=null; patDropped=null;
+      // (a read that did not land over the survey - given up for no answer, refused for its size - is said by ITS cause:
+      //  the model kept is of other water, and its note is not about this one - 2026-11-16)
+      if(!ok && areaAsk.failed){
+        $("#sp_hint").textContent="Punch Out: the chart could not be read over the survey — lines unchanged.";
+        showBanner("Punch Out: the chart could not be read over the survey ("+areaAsk.failed+") — survey lines were NOT trimmed."
+          + (areaAsk.late ? " Punch Out again to ask for it again" + lateKeeps(areaAsk.failed) + "." : ""));
+        updatePatReadout(); return;
+      }
       const why=nogo.note||"no ENC features returned";
       $("#sp_hint").textContent="Punch Out: "+why+" — lines unchanged.";
       showBanner("Punch Out found no ENC coverage here ("+why+") — survey lines were NOT trimmed. Verify the plan manually.");
@@ -23312,7 +23587,10 @@ async function doUpload(opts){
   // one given during the confirm is. A new await on this path is only safe BECAUSE that
   // snapshot is taken first; anything added above it would not be.
   // ... AND EACH SURVEY'S OWN WATER, and a plan too big for one read read leg by leg (2026-10-02, readPlanInk).
-  await ensureNogoCovers([{lat:asv.lat, lon:asv.lon}, ...wps], null, {plan: true});
+  // (its reads as one - commandReads: one given up for no answer ends them, refused by that cause; a Stop aborts the one
+  //  waited on, and planInsideChart withdraws the Upload)
+  const rd = commandReads();
+  await ensureNogoCovers([{lat:asv.lat, lon:asv.lon}, ...wps], null, {plan: true, read: rd});
   // ⚠ AND A TURN BETWEEN THE CHART READ AND THE ROUTING (2026-09-29, the freeze): the model rebuild and
   // redraw that end the read, then routePlan, certifyDeparture and the first corner slice, were one task.
   // Go-To and RTH already take theirs ("Routing …", 50 ms); fenced by the same snapshot as the await above.
@@ -23328,7 +23606,7 @@ async function doUpload(opts){
   // and survey charts built from the chart at the post would be mixed with it.
   let lk = null;
   const legsAt = () => { lk = surveyLegKos(wps); return lk ? {svKo: lk.svKo} : undefined; };
-  const plan = await planInsideChart([{lat:asv.lat, lon:asv.lon}, ...wps], {plan: true}, () => {
+  const plan = await planInsideChart([{lat:asv.lat, lon:asv.lon}, ...wps], {plan: true, read: rd}, () => {
     const start = {lat:asv.lat, lon:asv.lon}, std = transitStandoffM(), at = surveyEntries(wps);
     const ropts = legsAt();
     return planOffThread({op: "route", args: {start, wps, keepRightAll: false, standoffM: std, transitAt: at, ropts}},   // the route worker
@@ -23829,8 +24107,9 @@ async function continueSurvey(){
         + "looks safe and no uncharted obstacle is in the way.")) return;
     const from = {lat: asv.lat, lon: asv.lon}, target = tail[0];
     showBanner("Routing to the survey… a long way round obstacles can take several seconds.");
-    await ensureNogoCovers([from, target]);
-    const pin = await planInsideChart([from, target], undefined, () => {
+    const rd = commandReads();           // (its reads as one: see planGoToLeg)
+    await ensureNogoCovers([from, target], null, {read: rd});
+    const pin = await planInsideChart([from, target], {read: rd}, () => {
       const o = {...holdOpts(), standoffM: patClipBufM(), flyThrough: true};
       return planOffThread({op: "nogo", args: {from, to: target, opts: o}}, () => planNogoRoute(from, target, o));   // the route worker
     }, "Continue");
@@ -24044,8 +24323,9 @@ async function reflyStrike(){
         + "End of plan. Confirm the route looks safe and no uncharted obstacle is in the way.")) return;
     const from = {lat: asv.lat, lon: asv.lon}, target = tail[0];
     showBanner("Routing to the struck coverage… a long way round obstacles can take several seconds.");
-    await ensureNogoCovers([from, ...tail]);
-    const pin = await planInsideChart([from, target], undefined, () => {
+    const rd = commandReads();           // (its reads as one: see planGoToLeg)
+    await ensureNogoCovers([from, ...tail], null, {read: rd});
+    const pin = await planInsideChart([from, target], {read: rd}, () => {
       const o = {...holdOpts(), standoffM: patClipBufM(), flyThrough: true};
       return planOffThread({op: "nogo", args: {from, to: target, opts: o}}, () => planNogoRoute(from, target, o));   // the route worker
     }, "Re-fly");
@@ -24475,13 +24755,14 @@ async function resumeFromHere(ll){
   // - and against the contacts too (koIn), which live in the guard's model and never in nogo.ko.
   const from = {lat: asv.lat, lon: asv.lon};
   showBanner("Routing to the point on line " + line + '…' + " a long way round obstacles can take several seconds.");
-  await ensureNogoCovers([from, target]);
+  const rd = commandReads();           // (its reads as one: see planGoToLeg)
+  await ensureNogoCovers([from, target], null, {read: rd});
   // ⚠ PLANNED ON THE MODEL THE READ LEFT, AND INSIDE THE WATER IT READ (2026-10-03, found by the review). `koIn` and
   // `her` above were taken BEFORE that read: when it extracted, the way in was planned on the previous model while the
   // planner judged it against the NEW box - so a route over land the old model never held passed as read. They are
   // taken again inside the plan, after every read (planInsideChart takes the contacts again before each), and a way in
   // that runs past the chart is read along and planned again like a Go-To's.
-  const pin = await planInsideChart([from, target], undefined, () => {
+  const pin = await planInsideChart([from, target], {read: rd}, () => {
     const ais = aisKoDrawn || [];
     const her = !ais.length ? null : aisHerPoly(ais, null, {lat: asv.lat, lon: asv.lon}, hit.to, std);
     const koIn = koRoundHer(ais, her, std);
@@ -26424,7 +26705,9 @@ function onState(s){
     // On the first fix, establish the ENC nogo zones for the operating area; as the
     // boat transits out of that area, re-extract so behaviors stay ENC-aware.
     if(!nogoInit){ nogoInit=true; refreshNogo({lat:asv.lat,lon:asv.lon}); }
-    else if(nogo.ready && !nogo.busy && nogo.center &&
+    // (not while a read that FAILED waits out its NOGO_RETRY_MS below: a read given up keeps the model and its center -
+    //  refreshNogo - and this branch, first, asked it again EVERY FRAME, each a rebuild and a banner; the 2026-11-16 review)
+    else if(nogo.ready && !nogo.busy && nogo.center && !(nogo.failed && Date.now() - nogo.failed.at <= NOGO_RETRY_MS) &&
             distTo({lat:asv.lat,lon:asv.lon}, nogo.center) > NOGO_RADIUS_M*0.6){
       refreshNogo({lat:asv.lat,lon:asv.lon});
     }

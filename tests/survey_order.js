@@ -258,7 +258,8 @@ check("8. Upload routes mission.waypoints IN ORDER from the fix, laning only leg
             // at the guard's standoff (2026-09-26); each later survey's approach (2026-10-02); inside the water the chart
             // was read over, read again and re-planned when the route runs past it (planInsideChart, 2026-10-03)
             // (in the route worker since 2026-10-12, and on the page beside it if it cannot answer: tests/route_worker.js 2)
-            && /const plan = await planInsideChart\(\[\{lat:asv\.lat, lon:asv\.lon\}, \.\.\.wps\], \{plan: true\}, \(\) => \{\s*\n\s*const start = \{lat:asv\.lat, lon:asv\.lon\}, std = transitStandoffM\(\), at = surveyEntries\(wps\);/.test(upload)
+            // (with the Upload's reads as one since 2026-11-16 - `read: rd`, commandReads: tests/unread_water.js 3c)
+            && /const plan = await planInsideChart\(\[\{lat:asv\.lat, lon:asv\.lon\}, \.\.\.wps\], \{plan: true, read: rd\}, \(\) => \{\s*\n\s*const start = \{lat:asv\.lat, lon:asv\.lon\}, std = transitStandoffM\(\), at = surveyEntries\(wps\);/.test(upload)
             // (2026-11-08: with each survey's own legs on the chart at the water it was cut for - `ropts`, surveyLegKos -
             // to the worker and to the search here alike, the search here asking again: tests/route_worker.js 7d, 13b)
             && /planOffThread\(\{op: "route", args: \{start, wps, keepRightAll: false, standoffM: std, transitAt: at, ropts\}\},[^\n]*\n\s*\(\) => routePlan\(start, wps, false, std, at, legsAt\(\)\)\);/.test(upload)

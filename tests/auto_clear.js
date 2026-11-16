@@ -161,7 +161,7 @@ const ISLAND = () => ({ role: "land", props: {}, geometry: { type: "Polygon", co
 const LAND = () => ({ role: "land", props: {}, geometry: { type: "Polygon", coordinates: [
   [[-3000, 1000], [3000, 1000], [3000, 2000], [-3000, 2000], [-3000, 1000]].map(([x, y]) => { const p = at(x, y); return [p.lon, p.lat]; })] } });
 
-const PAGE_FUNCS = ["punchOut", "currentPattern", "surveyPattern", "patSourceLines", "boundaryActive", "clipLine",
+const PAGE_FUNCS = ["punchOut", "lateKeeps", "currentPattern", "surveyPattern", "patSourceLines", "boundaryActive", "clipLine",
   "patStrikeKey", "strikeKeyChart", "punchSpeedSig", "activeStruck", "keptRuns", "distToRunM", "isStruckRun", "runMid", "extendLead", "runWithLeads", "patCoverSeg", "patCoverMid",
   "patIdentSeg", "trimEnd", "judgeJoin", "patClipBufM", "patClipKey", "bandWord",
   "makesWayKey", "slowestMakingWayKey", "setMsNow",

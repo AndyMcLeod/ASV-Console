@@ -567,7 +567,9 @@ const FLOOR = 30;
       async (msg) => { w.workerMsgs.push(msg); if (w.duringWorker) w.duringWorker(w); return w.worker; },
       (t) => w.banners.push(t), (t) => w.notes.push(t), (k, d) => w.logs.push([k, d]), () => {}, () => { w.renders++; },
       (lat, lon) => ({ x: lon * 1000, y: -lat * 1000 }), 9, ctx, () => 3.85,
-      async (pts, pad, opts) => { w.preReads.push({ pts, pad, opts }); return true; },
+      // (w.preReadLate: the console gave the read no answer - what refreshNogo leaves on the record it was handed, 16h2)
+      async (pts, pad, opts) => { w.preReads.push({ pts, pad, opts });
+        if (w.preReadLate && opts && opts.read) { opts.read.late = w.preReadLate; return false; } return true; },
       require("../static/js/units.js").fmtVol);   // the page's fuelFmt writes fuel through it (2026-10-17)
     return w;
   };
@@ -691,6 +693,23 @@ const FLOOR = 30;
               && JSON.stringify(pr16.pts) === JSON.stringify([{ lat: W16h.asv.lat, lon: W16h.asv.lon }, P16[1], P16[2]])
               && kept16 && kept16.plan === W16h.api.state().passage && W16i.preReads.length === 0 && W16i.api.preRead() === null,
         () => JSON.stringify({ reads: W16h.preReads.length, pts: pr16 && pr16.pts, kept: !!kept16, notSailable: W16i.preReads.length }));
+  // 16h2 (2026-11-16, the chart read's bound). ... ITS READ RECORD IS KEPT WITH IT: the read is handed the record (commandReads'
+  // shape, withdrawn by nothing - nothing is commanded at planning), and a read the console gave no answer marks it `late`,
+  // logged so - which is what Sail, waiting on it, refuses by (passage_sail 4c2). A read that landed leaves it clear.
+  await kept16.done;
+  const W16h2 = world({ transit: T3.map((p) => ({ ...p })) });
+  W16h2.seq = [{ id: "h2", state: "done", total: 3, done: 3, tiles: tiles16, failed: [] }];
+  W16h2.worker = { ...W16.worker, sections: [SEC1] }; W16h2.preReadLate = "unanswered in 30 min";
+  await W16h2.api.planPassageNow();
+  const kept16h2 = W16h2.api.preRead(); if (kept16h2) await kept16h2.done;
+  const preLog = (w) => w.logs.filter((l) => l[0] === "passage_preread").map((l) => l[1]);
+  check("16h2. ... its READ RECORD is kept with it and handed to the read (withdrawn by nothing); a read the console gave no "
+        + "answer marks it late, logged not ok with the cause; one that landed leaves it clear, logged ok",
+        () => kept16.read && pr16.opts.read === kept16.read && kept16.read.late === null && kept16.read.gone() === false
+              && kept16.over === true && JSON.stringify(preLog(W16h).map((d) => d.ok)) === "[true]"
+              && !!kept16h2 && kept16h2.read.late === "unanswered in 30 min" && W16h2.preReads[0].opts.read === kept16h2.read
+              && kept16h2.over === true && preLog(W16h2).length === 1 && preLog(W16h2)[0].ok === false && preLog(W16h2)[0].late === "unanswered in 30 min",
+        () => JSON.stringify({ landed: kept16.read && kept16.read.late, late: kept16h2 && kept16h2.read.late, logs: [preLog(W16h), preLog(W16h2)] }));
   const W16b = world({ transit: T3.map((p) => ({ ...p })) });
   W16b.seq = [{ id: "g", state: "done", total: 1, done: 1, tiles: [tiles16[0]], failed: [] }];
   W16b.worker = W16.worker;

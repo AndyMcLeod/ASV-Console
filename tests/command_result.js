@@ -57,6 +57,11 @@
 //   cmd(): the AbortController dropped (an unbounded POST)         -> the suite HANGS, and
 //                                                                     the exit guard catches
 //                                                                     it at 2 of 17 run
+//   (2026-11-16, the chart read's bound - each RUN on a scratch copy, all killed:)
+//   doRTH: the boxed `late` branch removed                         -> 55
+//   doRTH: the chain's rthChainRetry() dropped from it             -> 55
+//   unchartedTip: the `late` advice gone                           -> 55, 55b
+//   planInsideChart: an own point's refusal not marked `late`      -> 55, 55b
 //
 // ⚠ ALL FOURTEEN WERE KILLED BY THIS SUITE AND BY NOTHING ELSE. hold_point, end_action,
 // supervisor_page, action_history, nogo_readout, plan_save and page_strict were run against
@@ -223,7 +228,7 @@ function check(name, cond, detail) {
 // await that never settles does not crash node - it just ends the process quietly with the
 // remaining checks never run, which a mutation sweep scores as SURVIVED. Seen once already
 // in this repo, so the floor is asserted rather than assumed.
-const EXPECTED = 41;
+const EXPECTED = 44;
 let finished = false;
 process.on("exit", (code) => {
   if (!finished && !code) {
@@ -275,7 +280,14 @@ const PRELUDE = [
   "const showNote = (t) => { out.notes.push(t); };",
   "const flashNote = (t) => { out.notes.push(t); };",
   "const $ = (sel) => (sel === '#encbanner' ? out.banner : {style:{}, textContent:''});",
-  "const ensureNogoCovers = async () => { if (W.routing) W.routing(); return true; };",   // W.routing: what changes while she is routed (54c)
+  "const ensureNogoCovers = async (pts, pad, ask) => { if (W.routing) W.routing();",   // W.routing: what changes while she is routed (54c)
+  // W.coverLate: the console gave no answer to the read (2026-11-16, 55) - what refreshNogo then leaves: the ask told why and
+  // late, and the command's read record (commandReads) marked, so its later reads are answered at once
+  "  if (W.coverLate) { if (ask) { ask.failed = 'the console gave no answer it could use to the chart read (' + W.coverLate + ')';",
+  "                                ask.late = true; if (ask.read) ask.read.late = W.coverLate; } return false; }",
+  "  return true; };",
+  // the end-of-plan chain asked again shortly (rthChainRetry, tests/passage_sail.js 17w): recorded, not timed, here
+  "const rthChainRetry = () => { out.chainRetries++; };",
   "const planNogoRoute = () => W.plan;",
   "const routePlan = () => W.plan;",
   "const holdTarget = (p) => ({to: p, heldOff: null, holdClear: 12});",
@@ -346,7 +358,7 @@ const IR = require("../static/js/inkreads.js"), PS = require("../static/js/passa
 function world(opts) {
   const o = opts || {};
   const out = { notes: [], recorded: [], renders: 0, card: 0, violations: 0, violation: null, missions: [],
-                posts: [], bodies: [], banner: bannerEl(), aborts: 0, resumed: 0, banked: [], lockEnded: 0 };
+                posts: [], bodies: [], banner: bannerEl(), aborts: 0, resumed: 0, banked: [], lockEnded: 0, chainRetries: 0 };
   // THE FETCH, not the command. `reply` decides what the console answers.
   const fetchStub = (url, init) => {
     out.posts.push(url);
@@ -411,7 +423,7 @@ function world(opts) {
   };
   const W = { out, supervising: o.viewOnly ? false : true, fetch: fetchStub, holdClearAt: o.holdClearAt || null,
               fuelNow: o.fuelNow || null, brk: o.brk || null, lock: o.lock || null, routing: o.routing || null,
-              nogo: o.nogo || null, boxAround: IR.boxAround, beyondChart: PS.beyondChart, beyondChartSay: PS.beyondChartSay,
+              nogo: o.nogo || null, coverLate: o.coverLate || null, boxAround: IR.boxAround, beyondChart: PS.beyondChart, beyondChartSay: PS.beyondChartSay,
               transit: o.transit || [{ lat: 43.0, lon: -70.5 }, { lat: 43.01, lon: -70.49 }],
               S: { home: { lat: 43.0, lon: -70.5 }, note: "" },
               asv: o.noFix ? null : { lat: 43.02, lon: -70.48 },
@@ -429,6 +441,7 @@ function world(opts) {
                            + grabDecl("SUP_RELEASE") + "\n"
                            + grabDecl("CMD_TIMEOUT_MS") + "\n"
                            + grabDecl("NOGO_RADIUS_M") + "\n" + grabDecl("RTH_MAX_M") + "\n"
+                           + grabDecl("RTH_BUSY_RETRY_MS") + "\n"     // (a chain waiting says when it is asked again - 55)
                            + grab("rthTooFar") + "\n"
                            // took() and notTookSay() are the page's ONE success test and
                            // its operator wording. They come across verbatim, so a change
@@ -489,8 +502,8 @@ function world(opts) {
                            // new Function cannot require), so 51-53 drive the refusals rather than pin their text
                            + 'const boxAround = W.boxAround, beyondChart = W.beyondChart, beyondChartSay = W.beyondChartSay;' + "\n"
                            + grabDecl("STALL_TICK_MS") + "\n" + grabDecl("ENC_MAX_SPAN_DEG") + "\n" + grab("encSpanRefusal") + "\n" + grabDecl("bbUnion") + "\n"
-                           + grab("sizeWhy") + "\n" + grab("unchartedTip") + "\n" + grab("planWhy") + "\n"
-                           + grab("planInsideChart") + "\n"
+                           + grab("sizeWhy") + "\n" + grab("lateKeeps") + "\n" + grab("unchartedTip") + "\n" + grab("planWhy") + "\n"
+                           + grab("commandReads") + "\n" + grab("planInsideChart") + "\n"   // (a command's reads as one, 2026-11-16)
                            // doGoTo plans through planGoToLeg since 2026-10-18 (the lock transit's legs); a refused Go-To
                            // offers a lock - none here (tests/lock_transit.js)
                            // ... and a world may be IN a lock transit (W.lock, 54b): lockEnd ends it, as the page's does
@@ -1759,6 +1772,57 @@ const PAST = () => ({ route: [{ lat: 43.0, lon: -70.5 }, { lat: 43.01, lon: -70.
         tookEx === false && ex.out.posts.length === 0 && /taken exactly or not at all/.test(ex.banner())
         && tookPlain === true && plain.out.posts.length === 1 && /holding 110 m off it/.test(plain.banner()),
         "exact: took " + tookEx + ", " + ex.out.posts.length + " post(s), banner: " + ex.banner().slice(0, 120) + " | plain: took " + tookPlain + ", " + plain.out.posts.length + " post(s)");
+}
+
+console.log("\n-- 55: a chart read the console gave no answer is not a refusal of the way home --");
+// 55-55b (2026-11-16, fetchENCBbox's bound). The read over home gave up - none in time, the network, the console's 5xx - so
+// planInsideChart refuses home's point past the box as `late`, with the read's cause, and asks nothing more. The end-of-plan
+// chain and the low-fuel monitor WAIT (asked again, the chain through rthChainRetry): nothing sent, the chain not failed. The
+// operator's own press, and a Go-To, are refused by that cause, with what to do. A read that answered and still did not
+// reach home is the ordinary refusal: the chain fails, as before (53).
+{
+  const NOGO = () => ({ ready: true, bbox: { W: -70.49, S: 43.015, E: -70.47, N: 43.025 }, unread: [], note: "2 nogo zone(s)" });
+  const LATE = "unanswered in 30 min";
+  const chain = world({ nogo: NOGO(), coverLate: LATE }); const chainOut = await chain.doRTH({ chained: true });
+  const fuel = world({ nogo: NOGO(), coverLate: LATE }); const fuelOut = await fuel.doRTH({ why: "LOW FUEL", breakWhy: "fuel" });
+  const own = world({ nogo: NOGO(), coverLate: LATE }); const ownOut = await own.doRTH({});
+  const late = (w) => /the chart could not be read over it: the console gave no answer it could use to the chart read \(unanswered in 30 min\)/.test(w.banner());
+  check("55. a chart read over home GIVEN UP: the end-of-plan RTH waits - asked again (rthChainRetry), the chain NOT failed, "
+        + "nothing posted, the spot marked, said with the read's cause and when; the low-fuel RTH waits too (its monitor asks "
+        + "again: notTaken late); the operator's own RTH is refused by that cause, told to command it again",
+        chainOut && chainOut.notTaken && chainOut.notTaken.late === true && chain.out.chainRetries === 1 && chain.after().rthChainFailed === false
+        && chain.out.posts.length === 0 && chain.out.violation && chain.out.violation.mode === "uncharted" && late(chain)
+        && /^End of plan RTH WAITING: home lies .* - nothing was sent; it is asked again in 15 s\.$/.test(chain.banner())
+        && fuelOut && fuelOut.notTaken && fuelOut.notTaken.late === true && fuel.out.chainRetries === 0 && fuel.out.posts.length === 0
+        && fuel.out.banked.length === 0 && late(fuel) && /^Low-fuel RTH WAITING: /.test(fuel.banner())
+        && !(ownOut && ownOut.notTaken) && own.out.chainRetries === 0 && own.after().rthChainFailed === false && own.out.posts.length === 0
+        && late(own) && /^RTH refused: .* — highlighted on the chart\. Nothing was sent\. Command it again: the chart is asked for again then - the console goes on reading it meanwhile, and keeps what it reads\.$/.test(own.banner()),
+        JSON.stringify({ chain: [chainOut, chain.out.chainRetries, chain.after().rthChainFailed, chain.out.posts.length, chain.banner()],
+                         fuel: [fuelOut, fuel.out.chainRetries, fuel.out.posts.length, fuel.banner().slice(0, 40)],
+                         own: [ownOut, own.out.posts.length, own.banner().slice(-140)] }));
+  const go = world({ nogo: NOGO(), coverLate: LATE }); const goOut = await go.doGoTo({ lat: 43.0, lon: -70.5 });
+  const read = world({ nogo: NOGO() }); await read.doRTH({ chained: true });
+  check("55b. ... a Go-To's read given up is refused by that cause, nothing posted, told to command it again; and a read that "
+        + "ANSWERED but did not reach home fails the end-of-plan chain as before - not asked again",
+        goOut === false && go.out.posts.length === 0 && late(go)
+        && /^Go-To refused: .* Nothing was sent\. Command it again: the chart is asked for again then - the console goes on reading it meanwhile, and keeps what it reads\.$/.test(go.banner())
+        && read.after().rthChainFailed === true && read.out.chainRetries === 0 && read.out.posts.length === 0
+        && /^RTH refused: .*the chart could not be read over it \(2 nogo zone\(s\)\)/.test(read.banner()),
+        JSON.stringify({ go: [goOut, go.out.posts.length, go.banner().slice(-160)],
+                         read: [read.after().rthChainFailed, read.out.chainRetries, read.banner().slice(0, 140)] }));
+  // 55c. ... WHEREVER ITS POINTS LIE (the 2026-11-16 review, finding 1): she and the target both inside the water already
+  //      read, the command's read given up - it was planned against the kept model and SENT. Refused by that cause now,
+  //      nothing posted; the same Go-To whose read answered is planned and sent as before.
+  const IN = { lat: 43.018, lon: -70.475 };                      // (NOGO's box; she is at 43.02, -70.48, inside it too)
+  const inLate = world({ nogo: NOGO(), coverLate: LATE }); const inLateOut = await inLate.doGoTo(IN);
+  const inRead = world({ nogo: NOGO() }); const inReadOut = await inRead.doGoTo(IN);
+  check("55c. a Go-To whose read was GIVEN UP is refused by that cause even with every point inside the water already read - "
+        + "nothing posted, told to command it again; read, the same Go-To is sent",
+        inLateOut === false && inLate.out.posts.length === 0
+        && /the console gave no answer it could use to the chart read \(unanswered in 30 min\)/.test(inLate.banner())
+        && /Nothing was sent\. Command it again: the chart is asked for again then - the console goes on reading it meanwhile, and keeps what it reads\.$/.test(inLate.banner())
+        && inReadOut === true && inRead.out.posts.length === 1,
+        JSON.stringify({ late: [inLateOut, inLate.out.posts.length, inLate.banner()], read: [inReadOut, inRead.out.posts.length, inRead.banner().slice(0, 100)] }));
 }
 
 finished = true;

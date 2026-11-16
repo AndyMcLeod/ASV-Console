@@ -231,7 +231,7 @@ eval([
   "const { boxAround } = require('../static/js/inkreads.js');",
   grabDecl("CHART_WIDEN_ROUNDS"), grabDecl("CHART_WIDEN_PAD_M"), grabDecl("bbUnion"),
   // ... and the words a refusal is said in (1y drives the Upload's)
-  grabDecl("STALL_TICK_MS"), grabDecl("ENC_MAX_SPAN_DEG"), grab("encSpanRefusal"), grab("sizeWhy"), grab("unchartedTip"),
+  grabDecl("STALL_TICK_MS"), grabDecl("ENC_MAX_SPAN_DEG"), grab("encSpanRefusal"), grab("sizeWhy"), grab("lateKeeps"), grab("unchartedTip"),
   "function aisKeepoutsNow(){ return aisKoDrawn; }",
   // the vessels along a passage (2026-10-07): no AIS proxy answers here, so the read takes nothing - tests/chart_box.js 10
   "async function readPassageAis(){}",
@@ -242,7 +242,8 @@ eval([
   // THE ROUTE WORKER (2026-10-12) is not here: each search runs on this thread as it always did (tests/route_worker.js); and the
   // stop-class presses withdraw a plan in flight - the page's own (tests/route_worker.js 12-13)
   "async function planOffThread(job, here){ return here(); }", "let routeStopGen = 0, routeStopName = null;", grab("routeStopPressed"),
-  grab("planInsideChart"),
+  // (a command's chart reads as one, 2026-11-16 - the read's bound: tests/unread_water.js 3c and nogo_readout.js 35 drive it)
+  grab("commandReads"), grab("planInsideChart"),
   // review #14: the guard and the governor act only in the SUPERVISING tab; this world is that tab. A view-only one is tests/supervisor_page.js's subject.
   "const supervising = () => true;",
   // speedGovernor reads the JUNCTION corner set (2026-09-19, tests/corner_slow.js) and

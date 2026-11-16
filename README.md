@@ -3589,10 +3589,37 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    30 s and dropped too: a request a stalled console never answered held one of the browser's
    few connections to it. `tests/passage_plan.js` 16w-16z2, `tests/corridor_read.js` 1f, 1h, 1i,
    4b, `tests/passage_tab.js` 4d, 5c, `tests/fuel_rth.js` 11l, 11m, `tests/route_worker.js` 9f.
-   **Still without an end (found by the review of this change, not fixed in it).** Once the way
-   home is planned, sending its first section reads the chart round it through the page's own
-   chart read, which has no limit: a console that never answers that read still holds the way
-   home, and a Stop does not release it. The same read is behind Go-To, Upload and the guard.
+   **The page's own chart read has an end too (2026-11-16).** Once the way home is planned,
+   sending its first section reads the chart round it through the page's own chart read: the
+   read behind Go-To, RTH, Upload, Transit, Punch Out, Set Home, Sail passage and the guard's own
+   area. It had no limit. A console that never answered it held the way home, so every later RTH
+   was said busy; End of plan's return was neither refused nor asked again; and a Stop did not
+   release it. Now the read is given up at 30 minutes, or at 90 s for each of the console's 0.25°
+   tiles the box reaches when that is longer (up to about 2 hours for the widest box the console
+   reads). The limit is sized from the session logs: 608 reads, median 4.6 s, 121 s at the 99th
+   percentile, the slowest 877 s. The console's own error (an HTTP 5xx), a network failure and a
+   reply that is not a chart count as no answer too, and each is said by its cause. A Stop,
+   Pause, Hold or E-STOP pressed while a read is waited on ends it within a second (later in a
+   hidden tab), and so does the way home's own press no longer standing (home moved, another
+   command). A read given up is not asked again within the same command: the command is refused,
+   or waits, by that cause. End of plan and the low-fuel RTH wait (RTH WAITING) and ask again
+   15 s later. Your RTH, a Go-To, a Transit, an Upload and Sail passage say to command it again.
+   Punch Out says the lines were not trimmed and to punch again. Set Home says the point was not
+   checked. A read that timed out goes on in the console, which keeps the tiles it reads, so the
+   next try picks up from there; the message says so only then. A command whose read was given
+   up is refused even when all its points lie in water already read. A read of
+   other water does not blind the guard: the model it has stands. The operating area's own read,
+   given up while she is in the water the last read covered, keeps that model, says so on the
+   Nogo row and is asked again every 30 s, not on every frame. A read given up after another read
+   has covered the same water meanwhile is not reported. A second Set Home given while the
+   first is still being checked replaces it, and the first sends nothing. A Stop pressed while a
+   passage's next section is read is not reported as a section that could not be planned. Sending
+   a section also no longer takes a network
+   failure of its read as a refusal, and a lost reply to the section's post is asked again 15 s
+   later by End of plan and the low-fuel RTH (if she took it, her next frames say so and nothing
+   more is sent). `tests/unread_water.js` 3c-3g, 7b-7c, `tests/nogo_readout.js` 35-35h,
+   `tests/passage_sail.js` 4c2, 5w, 17w, `tests/command_result.js` 55-55c, `tests/fuel_rth.js` 8y3,
+   `tests/measure_tool.js` 15b4-15b5, `tests/turn_refusal.js` 14f, `tests/passage_plan.js` 16h2.
    **The 50 km stays as the line
    between the two planners, not as a refusal.** Within it the return is planned in one chart box,
    as before. A box of the water between stalls the page from not far past it: the Castine plan's

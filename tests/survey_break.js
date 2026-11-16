@@ -139,6 +139,8 @@ function world(o) {
     "let breakSel = null, continueBusy = false, breakReadySaid = null;", decl("breakWaited"),
     grab("lineMark"), grab("resumePointOn"),
     grab("surveyBreakNow"), grab("bankBreak"), grab("breakList"), grab("breakSelected"), grab("breakLabel"),
+    // (the way in's chart reads as one - commandReads, 2026-11-16: tests/unread_water.js 3c drives it)
+    "let routeStopGen = 0, routeStopName = null;", grab("commandReads"),
     grab("breakReady"), grab("breakTail"), grab("continueSurvey"),
     "return {now: (why) => surveyBreakNow(why), bank: bankBreak, ready: breakReady, tail: breakTail, cont: continueSurvey,",
     "        mission: () => mission, runRoute: () => runRoute, setS: (s) => { S = s; w.S = s; }, setAsv: (p) => { asv = p; } };",
@@ -385,6 +387,8 @@ const homeAt = (o) => world(Object.assign({ asv: LL(-200, -100),
       // `during` runs inside the planning await - the world a press can change under the page's feet (5c's idiom);
       // `pin` steers the ANSWER (review C10): error / heldOff / withdrawn / degraded are refusal branches too.
       "const planInsideChart = async (pts, opts, plan) => { if (w.during) w.during(); return w.pin ? w.pin : plan(); };",
+      // (the press's reads as one record since 2026-11-16 - the real one: tests/nogo_readout.js 35e-35f)
+      "let routeStopGen = 0, routeStopName = null;", grab("commandReads"),
       "const planOffThread = async (job, here) => here();",
       "const planWhy = (p) => p && p.error, heldOffWhy = () => 'it is held off';",
       "const notTookSay = (r) => 'REFUSED: ' + (r && r.error);",
