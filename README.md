@@ -3319,7 +3319,8 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    from tiles already read. Neither moves the boat; the planners still read their own boxes. The
    console's side is `POST /api/enc/corridor {route, half_km}` (a background job; the same tiles asked
    again rejoin it) and `GET /api/enc/corridor?id=` for its progress; it reads at most 600 tiles at
-   once and is not logged as a command.
+   once and is not logged as a command. A read that has not finished 30 minutes after it was asked
+   for is given up, and said so with how much was read (2026-11-14; see the passage home below).
 
    **A chart read no longer stops the console (2026-10-11).** Reading the chart used to stop the
    telemetry stream for seconds at a time. Opening a cached tile (one JSON file of up to 30 MB) held
@@ -3524,6 +3525,34 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    press's own reason. The second asks its own press: if that still stands, its way home is
    planned again as its own. If it does not, it is withdrawn by what it names. While the Passage tab plans a passage, or a section is being sent, End of
    plan and the low-fuel monitor wait and ask again 15 s later; the RTH button says to press again.
+   **The chart read along the way has an end (2026-11-14).** The read was waited on for as long as
+   it ran. A read the console never finished (a stalled server, a request never answered) held
+   the way home being planned, and with it every RTH that joined it, until a Stop.
+   It held Plan passage the same way, and with it every far RTH, which waited as busy. Now each
+   chart read along a line is given up 30 minutes after it was asked for, timed by the clock and
+   not by its polls (a hidden tab may poll only once a minute): the way home, Plan passage, Read
+   chart and the water distance home the fuel monitor measures. Thirty minutes is several times
+   the longest read measured. The refusal says how much was read and that the tiles read are kept. The read goes on in the console, so the next
+   ask picks it up. End of plan and the low-fuel monitor ask again 15 s later, as for busy, and
+   End of plan does not record it as refused. The RTH button and Plan passage say to press again.
+   Each ask of the console has an end too: one not answered in 30 s is dropped and asked again,
+   and so is one that fails (the network, a reply that is not a status). One failed poll used to
+   make a far RTH a final refusal, and one unanswered ask held the whole 30 minutes with a Stop
+   unseen behind it. The 30 minutes are judged on an answer asked for after they pass, so a read
+   that finished in the last wait is taken. When the console never answered the ask at all, the
+   refusal does not say the tiles are kept.
+   A console that has stopped answering is given up sooner: after 2 minutes and 3 asks in a row
+   with nothing it could use, rather than holding Read chart and Plan passage grayed for the whole
+   30 minutes. The refusal says how long, how much was read when it last answered, and what the
+   last ask got. The console's own failure (an HTTP 500) counts as no answer and is asked again,
+   where one used to end End of plan's return for good. A refusal in words (a bad route) is still
+   an answer. A tile the console could not read is counted apart (the console counts it done), and
+   only a tile known to be read is said kept. After a give-up, or a line edited while it was being
+   read, the Passage tab's line says the read was given up instead of "reading chart". An edit
+   during the request that decides the give-up is said as the edit. Where End of plan or the
+   low-fuel monitor will ask again, the banner says RTH WAITING, not refused. A chain that joined a
+   way home already being planned, whose End of plan was switched away meanwhile, is withdrawn when
+   the read is given up, not asked again.
    **The 50 km stays as the line
    between the two planners, not as a refusal.** Within it the return is planned in one chart box,
    as before. A box of the water between stalls the page from not far past it: the Castine plan's
@@ -3533,7 +3562,7 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    where a passage home can be planned and a full tank reaches it with the 20% reserve. The coarse
    water distance home is built past 50 km there too, so the RTH point is measured by water. The
    Fuel row charges the way home from a far plan end when no passage is being sailed.
-   `tests/passage_sail.js` 13b, 17-17u, `tests/fuel_rth.js` 8v, 8w, 8x, 9m, 11d, `tests/end_action.js` 18b, `tests/passage_plan.js` 16b. **Each section is planned at its own water.** The
+   `tests/passage_sail.js` 13b, 17-17v, `tests/fuel_rth.js` 8v, 8w, 8x, 8y, 8y2, 9m, 11d, 11j, 11k, `tests/end_action.js` 18b, `tests/passage_plan.js` 16b, 16j-16r, `tests/corridor_read.js` 1c-1g, `tests/passage_tab.js` 3c. **Each section is planned at its own water.** The
    live water level follows the boat: the stations nearest her, now. A section is planned ahead of
    her and sailed over the hours after, often tens of km from those stations. So each section is
    planned at the **lowest level predicted along it over the hours she is expected in it**, from

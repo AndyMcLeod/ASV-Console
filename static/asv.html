@@ -10531,19 +10531,19 @@ function coarseHomeInWorker(msg){
 /** THE BUILD: the chart along the way home with its grids, the grids, the search - and the field kept with its key. */
 async function coarseHomeBuild(key, here){
   coarseHome = {...coarseHome, busy: true, tried: key};
-  const home = {lat: S.home.lat, lon: S.home.lon}, t0 = Date.now();
+  const home = {lat: S.home.lat, lon: S.home.lon}, t0 = Date.now(), until = t0 + CORRIDOR_WAIT_MAX_MS;
   const halfKm = Math.min(COARSE_HOME_HALF_MAX_KM, Math.max(COARSE_HOME_HALF_MIN_KM, COARSE_HOME_HALF_FRAC * distTo(here, home) / 1000));
   const fail = (note) => { coarseHome = {...coarseHome, busy: false, at: Date.now(), note}; logClient("coarse_home", {ok: false, note}); };
-  let st = await postCorridor({route: [home, here], half_km: halfKm, grids: true});
+  let st = await corridorStart({route: [home, here], half_km: halfKm, grids: true}, until);
   if(!st || st.error) return fail("the chart along the way could not be read (" + ((st && st.error) || "no answer") + ")");
   if((st.total || 0) > COARSE_HOME_MAX_TILES){                  // the read is stopped, not left reading for nothing
     if(st.id && st.state === "running") postCorridor({cancel: st.id}).catch(() => {});
     return fail("the way home is " + st.total + " chart tiles, past the " + COARSE_HOME_MAX_TILES + " it is measured over");
   }
-  while(st && !st.error && st.state === "running"){
-    await new Promise(r => setTimeout(r, CORRIDOR_POLL_MS));
-    st = await getCorridor(st.id);
-  }
+  // (a read that never finished held `busy` for good, and the monitor measured home in a straight line from then on -
+  // CORRIDOR_WAIT_MAX_MS: given up, said, and built again COARSE_HOME_RETRY_MS on)
+  st = await corridorWait(st, until);
+  if(st && st.late) return fail("the chart read along the way " + st.late);
   if(!st || st.error || st.state !== "done") return fail("the chart read along the way " + ((st && st.state) || "failed"));
   const g = await passageGrids(st.tiles || []);
   const res = await coarseHomeInWorker({kind: "home", grids: g.grids, floorDm: Math.round(nogoDR().min * 10),
@@ -10695,7 +10695,8 @@ const FUEL_FLIGHT_MS = 120000;
 // (sailHomeFresh), one plan at a time - while the Passage tab plans one, or a passage's section is being sent, it cannot
 // start. That answer was "refused": final for the end-of-plan chain (she held for good, the card saying REFUSED) and for
 // the monitor (the latch kept, so she was never sent). Now it is "busy": the chain fires again, and the monitor decides
-// again, RTH_BUSY_RETRY_MS later (`fuelRetryAt`: until then nothing is sent, as while one is in flight).
+// again, RTH_BUSY_RETRY_MS later (`fuelRetryAt`: until then nothing is sent, as while one is in flight). And "late" (2026-
+// 11-14): the chart read along the way home did not finish in CORRIDOR_WAIT_MAX_MS - given up, said, and asked again so.
 const RTH_BUSY_RETRY_MS = 15000;
 // ⚠ TWO MORE WAYS THE LATCH OUTLIVED WHAT IT ANSWERED (2026-11-10, the review of the above). (1) A NEW LINK IS A NEW
 // WATCH: the latch is this page's, and a page that is not reloaded carried it through a Spawn, a vessel or port switch
@@ -10780,8 +10781,9 @@ function fuelTick(s){
       const nt = out && out.notTaken, ns = nt && nt.state && typeof nt.state === "object" ? nt.state : S;
       if(nt && fuelBoot === bootAt && (nt.sent === false || (nt.withdrawn && ["E-STOP", "home moved", "the guard's escape"].includes(nt.by))
                                        || (nt.refused && (!ns.armed || ns.estop)))) fuelRth.acted = false;
-      // BUSY (far: one passage plan at a time) - asked again RTH_BUSY_RETRY_MS on, not answered (above, at RTH_BUSY_RETRY_MS)
-      if(nt && nt.busy && fuelBoot === bootAt){ fuelRth.acted = false; fuelRetryAt = Date.now() + RTH_BUSY_RETRY_MS; }
+      // BUSY (far: one passage plan at a time) or LATE (far: the chart read along the way home did not finish in
+      // CORRIDOR_WAIT_MAX_MS) - asked again RTH_BUSY_RETRY_MS on, not answered (above, at RTH_BUSY_RETRY_MS)
+      if(nt && (nt.busy || nt.late) && fuelBoot === bootAt){ fuelRth.acted = false; fuelRetryAt = Date.now() + RTH_BUSY_RETRY_MS; }
     }).finally(() => { if(fuelFlight === sentAt) fuelFlight = 0; });
     return;
   }
@@ -14586,7 +14588,7 @@ async function goToOrPassage(ll){
   showBanner("Go-To " + fmtDist(d) + " away - past " + fmtDist(RTH_MAX_M) + ", so planned as a PASSAGE: read along its way, "
     + "planned coarse and its two ends in detail, then sailed a section at a time.");
   logClient("goto_passage", {km: +(d / 1000).toFixed(1), lat: +ll.lat.toFixed(5), lon: +ll.lon.toFixed(5)});
-  await planPassageNow();
+  await planPassageNow("give the Go-To again");  // (a refusal's advice: the Go-To plans and sails - the 2026-11-14 review)
   if(!passage) return;                           // planPassageNow said why
   const why = sailRefusal(passage);
   if(why){ showBanner("Go-To NOT sent as a passage: " + why + ". The plan is on the Passage tab."); return; }
@@ -14987,13 +14989,15 @@ async function doRTH(opts){
       // (rthFence); the low-fuel rule, the lock transit this press ended, and how to take the survey's break-off again
       const how = {lowFuel: !!why, chained, fence: rthFence(chained), lockWas, brkAgain: () => surveyBreakNow(opts && opts.breakWhy)};
       const out = await sailHomeFresh(brk, far, missionAt, how);
-      if(chained && out === "busy"){ rthChainRetry(); return; }   // (one plan at a time: the chain fires again shortly)
+      // (one plan at a time, or the chart read along the way home not finished in CORRIDOR_WAIT_MAX_MS: the chain fires
+      // again shortly - "late" is not a refusal of the way home, and recorded as one she would hold far out for good)
+      if(chained && (out === "busy" || out === "late")){ rthChainRetry(); return; }
       if(chained && (out === "refused" || out === "withdrawn")) rthChainFailed = true;
       // (the low-fuel monitor asks why it was not taken - fuelTick: never sent, refused - with the console's own state
-      // when it was the console that refused - withdrawn by which stop, or busy; the override's withdrawal is an answer)
+      // when it was the console that refused - withdrawn by which stop, busy, or late; the override's withdrawal is an answer)
       return out === "sent" || out === "overridden" ? undefined
         : {notTaken: out === "withdrawn" ? {withdrawn: true, by: how.by || routeStopName} : out === "unsent" ? {sent: false}
-                   : out === "busy" ? {busy: true}
+                   : out === "busy" ? {busy: true} : out === "late" ? {late: true}
                    : out === "refused" ? (how.post && how.post.refused ? how.post : {refused: true, state: S}) : {}};
     }
     if(chained) rthChainFailed = true;
@@ -15302,10 +15306,7 @@ function updateTransitPanel(){
   }
   if(ps) ps.textContent = passageBusy ? passageStatus : passage ? passageLine(passage) : "";
   updateSailButton();
-  if(rs) rs.textContent = !c ? "" : c.state === "running"
-    ? "reading chart: " + c.done + " of " + c.total + " tiles" + (c.eta_s != null ? " · ~" + fmtMS(c.eta_s) + " left" : "")
-    : "chart read: " + c.total + " tiles" + (c.unread_n ? " · " + c.unread_n + " unread" : "")
-      + (c.failed && c.failed.length ? " · " + c.failed.length + " NOT read" : "") + (c.state === "canceled" ? " · stopped" : "");
+  if(rs) rs.textContent = corridorReadLine(c);
   $("#tr_follow").disabled = !(transit.length>=1 && S.armed && !S.estop);
   $("#tr_hint").textContent = transit.length
     ? (S.armed ? "Follow to drive the transit (ENC-routed), or click to add more points."
@@ -15330,22 +15331,166 @@ function updateTransitPanel(){
 // Neither moves anything: a chart read is not a command, and the planners still read their own boxes as before.
 const CORRIDOR_HALF_KM = 5;                    // either side of the line: the guard's own box reaches NOGO_RADIUS_M
 const CORRIDOR_POLL_MS = 2000;
+// ⚠ THE WAIT FOR A CORRIDOR READ HAS AN END (2026-11-14, a residual the far RTH's review named). Each reader polled
+// `while(st.state === "running")` with no end, so a read the console never finishes - a stalled server, a job lost in
+// it, a request it never answers (a rejoined job once hung its request for good: tests/enc_corridor.py 4) - held its
+// caller for ever. The far RTH plans ONE way home at a time (homeFlight) and every later RTH - the button's, the end-of-
+// plan chain's, the low-fuel monitor's - JOINS it, so no RTH past RTH_MAX_M was planned again until a Stop withdrew it;
+// Plan passage held passageBusy (every far RTH "busy" for good); the coarse field home held its build (the monitor's way
+// home measured in a straight line for good). Now each waits CORRIDOR_WAIT_MAX_MS of WALL CLOCK from its ask (Date.now():
+// the poll's turn is a timer, which a hidden tab stretches to ~1 s and then ~1 min, so a count of polls is no clock),
+// and then gives up IN WORDS (corridorLate): how much was read, and that the tiles read are kept - the read goes on in
+// the console, and the next ask picks it up (a running read of the same tiles is rejoined, and tiles already read answer
+// at once - corridor_start).
+// SIZED FROM THE LONGEST READS MEASURED, GENEROUSLY - a refused way home is worse than a slow one: 39 tiles read from NOAA
+// with their grids in 514 s (Portsmouth to the New York approaches, 287 nm, 2026-10-12), ~13-20 s a tile from NOAA with
+// one tile built at a time (ENC_TILE_BUILDS), and a build the console cuts at ENC_TILE_BUILD_TIMEOUT_S (900 s). A far
+// RTH's way home is a few tiles to a few dozen; 30 min is 3.5 times the longest read measured. Two builds cut at their
+// limit back to back (2 x 900 s) fill it whole: a read that meets two is refused once, and the next ask - the end-of-plan
+// chain's and the monitor's 15 s on, the operator's press - picks it up. A longer read (a passage of hundreds of tiles
+// never read) is refused at 30 min with what it has read, and Plan passage again goes on from there.
+const CORRIDOR_WAIT_MAX_MS = 30 * 60 * 1000;
+// ⚠ EACH ASK HAS AN END TOO, AND A FAILED ONE IS NOT AN ANSWER (the 2026-11-14 review). The console answers the ask
+// (corridor_start: the tiles along the line, and a thread started) and each poll (corridor_status: a dict read) at once -
+// a few seconds at the most, in a stall of the interpreter - so an ask with no answer in CORRIDOR_ASK_MS is aborted (a
+// fetch left hanging holds one of the browser's few connections to the console) and, like one that failed (the network,
+// a reply that is not JSON), asked again at the next poll (corridorAsk). One lost poll had made a far RTH a FINAL
+// refusal (the chain's rthChainFailed, the monitor's latch kept), and one hung request took the whole limit with a Stop
+// unseen behind it. And the limit is judged on an answer asked for AFTER it passed (corridorWait), so a read that
+// finished in the last poll's wait - a minute, hidden - is taken, not refused.
+const CORRIDOR_ASK_MS = 30000;
+// ⚠ AND A CONSOLE THAT HAS STOPPED ANSWERING IS GIVEN UP SOONER (the second 2026-11-14 review). Asking again on a failure
+// made a console that fails at once - down, restarting - hold Read chart and Plan passage (both grayed) for the whole
+// 30 min, where it had been said at once. So a wait in which the console has answered nothing for CORRIDOR_MUTE_MS AND
+// at least CORRIDOR_MUTE_ASKS asks in a row (a hidden tab polls a minute apart: one or two lost polls are not a dead
+// console) is given up then - not final either (late: the chain and the monitor ask again), and said as no answer, how
+// long, how much it had read when it last answered, and what the last ask got. An answer of the console's own failure
+// (HTTP 5xx - one exception in corridor_start had ended the end-of-plan chain for good) is no answer (corridorReply); its
+// refusal (4xx, {error} in words) stays an answer.
+const CORRIDOR_MUTE_MS = 2 * 60 * 1000, CORRIDOR_MUTE_ASKS = 3;
 const CORRIDOR_AHEAD_M = 30000, CORRIDOR_AHEAD_EVERY_M = 2000;
 let corridorRead = null;                       // the last read's status, its unread squares as {W, S, E, N}
 let corridorBusy = false;
 let corridorAhead = {at: null, route: null};
-async function postCorridor(body){
-  const r = await fetch("/api/enc/corridor", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+async function postCorridor(body, signal){
+  return corridorReply(await fetch("/api/enc/corridor", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body), signal}));
+}
+async function getCorridor(id, signal){ return corridorReply(await fetch("/api/enc/corridor?id=" + encodeURIComponent(id), {signal})); }
+/** A corridor reply's body - or, for the console's own failure (HTTP 5xx: do_POST's catch, a proxy's), a throw naming it:
+ *  no answer to take, asked again (corridorAsk). Its refusal (4xx, {error}) is an answer. */
+async function corridorReply(r){
+  if(r.status >= 500){
+    let said = "";
+    try{ const j = await r.json(); said = j && j.error ? " - " + String(j.error).slice(0, 160) : ""; }catch(e){}   // (its words, not a command's landing: took())
+    const e = new Error("HTTP " + r.status + said); e.corridor = true; throw e;
+  }
   return r.json();
 }
-async function getCorridor(id){ return (await fetch("/api/enc/corridor?id=" + encodeURIComponent(id))).json(); }
+/** An ask's failure, in words for the operator (corridorAsk). */
+function corridorFailure(e){
+  if(e && e.corridor) return e.message;
+  if(e && e.name === "SyntaxError") return "a reply that was not JSON";
+  if(e && e.name === "TypeError") return "the console could not be reached";
+  return String((e && e.message) || e).slice(0, 160);
+}
+/** A corridor read given up, as a status: `error` in words, `late` the clause its callers say it by - "did not finish in
+ *  30 min (12 of 18 tile(s) read)" at CORRIDOR_WAIT_MAX_MS, or, `mutedMs` given, "had no answer it could use from the
+ *  console for 2 min (12 of 18 tile(s) read when it last answered; the last ask: HTTP 500 - ...)", `why` what the last ask
+ *  got - from `st` the last status heard (null when the console never answered the ask itself). `kept` only when a tile is
+ *  known to be read: the ones read are on the console's disk. */
+function corridorLate(st, mutedMs, why){
+  const mute = mutedMs != null, said = [];
+  // (the console counts a tile `done` when it is finished with it, read or FAILED - the third 2026-11-14 review: two
+  // builds cut at their limit were said "2 of 9 read, kept")
+  const failed = st ? (st.failed || []).length : 0, read = st ? Math.max(0, (st.done || 0) - failed) : 0;
+  if(st) said.push(read + " of " + (st.total || 0) + " tile(s) read" + (mute ? " when it last answered" : "")
+                   + (failed ? ", " + failed + " could not be" : ""));
+  if(mute && why) said.push("the last ask: " + why);
+  const min = mute ? Math.max(1, Math.floor(mutedMs / 60000)) : Math.round(CORRIDOR_WAIT_MAX_MS / 60000);
+  const late = (mute ? "had no answer it could use from the console for " : "did not finish in ") + min + " min"
+             + (said.length ? " (" + said.join("; ") + ")" : "");
+  return {error: "the read " + late, late, mute, min, kept: read > 0,
+          id: st ? st.id : null, done: st ? st.done || 0 : 0, total: st ? st.total || 0 : 0};
+}
+/** The read `id` no longer waited on (given up, or withdrawn): its last status shown, no longer "running" - the Passage
+ *  tab's line said "reading chart: ... left" for good after it (the third 2026-11-14 review). Only that read's: another's
+ *  is left as it is. The squares it found unread stay drawn. */
+function corridorGivenUp(id){
+  if(id && corridorRead && corridorRead.state === "running" && corridorRead.id === id)
+    corridorRead = {...corridorRead, state: "given up", eta_s: null};
+}
+/** The Passage tab's line for the last chart read, `c` (corridorRead). */
+function corridorReadLine(c){
+  if(!c) return "";
+  const notRead = c.failed && c.failed.length ? " · " + c.failed.length + " NOT read" : "", unread = c.unread_n ? " · " + c.unread_n + " unread" : "";
+  if(c.state === "running") return "reading chart: " + c.done + " of " + c.total + " tiles" + (c.eta_s != null ? " · ~" + fmtMS(c.eta_s) + " left" : "");
+  if(c.state === "given up") return "chart read given up at " + c.done + " of " + c.total + " tiles" + unread + notRead;
+  return "chart read: " + c.total + " tiles" + unread + notRead + (c.state === "canceled" ? " · stopped" : "");
+}
+/** ONE ASK of the console - `ask(signal)`, postCorridor's or getCorridor's: its answer, or null when there is none to take -
+ *  no answer in CORRIDOR_ASK_MS (aborted), a failure (the network, a reply that is not JSON, the console's own HTTP 5xx),
+ *  or an answer that is not a status - and then `note.why` says which (corridorLate). */
+async function corridorAsk(ask, note){
+  const ac = typeof AbortController === "function" ? new AbortController() : null;
+  let timer = null, why = null;
+  const bound = new Promise((r) => { timer = setTimeout(() => {
+    why = "unanswered in " + Math.round(CORRIDOR_ASK_MS / 1000) + " s"; try{ if(ac) ac.abort(); }catch(e){} r(null); }, CORRIDOR_ASK_MS); });
+  try{
+    const st = await Promise.race([Promise.resolve().then(() => ask(ac ? ac.signal : undefined))
+      .catch((e) => { why = why || corridorFailure(e); return null; }), bound]);   // (the abort's own rejection is not the why)
+    if(st && typeof st === "object" && !Array.isArray(st)) return st;
+    if(note) note.why = why || "a reply that was not a status";
+    return null;
+  }finally{ clearTimeout(timer); }
+}
+/** THE CORRIDOR READ ASKED FOR (readCorridor, passagePlanFor, coarseHomeBuild): `body` posted, and posted again every
+ *  CORRIDOR_POLL_MS while there is no answer to take (corridorAsk - the console rejoins a read of the same tiles), to its
+ *  answer: a status, or the console's refusal {error}. corridorLate(null, ...) once the console has answered nothing for
+ *  CORRIDOR_MUTE_MS and CORRIDOR_MUTE_ASKS asks, or the wall clock has passed `until`; {gone: true} when `gone()`, asked
+ *  after each wait, no longer wants it. */
+async function corridorStart(body, until, gone){
+  const t0 = Date.now(), note = {};
+  for(let n = 1;; n++){
+    const st = await corridorAsk((signal) => postCorridor(body, signal), note);
+    if(st) return st;
+    const muted = Date.now() - t0;
+    if(Date.now() >= until || (n >= CORRIDOR_MUTE_ASKS && muted >= CORRIDOR_MUTE_MS)) return corridorLate(null, muted, note.why);
+    await new Promise(r => setTimeout(r, CORRIDOR_POLL_MS));
+    if(gone && gone()) return {gone: true};
+  }
+}
+/** THE CORRIDOR READ WAITED OUT (readCorridor, passagePlanFor, coarseHomeBuild): `st`, the ask's answer, polled every
+ *  CORRIDOR_POLL_MS while it runs - `each(st)` told each status first; a poll with no answer to take (corridorAsk) is
+ *  polled again - to its last status (done, canceled, {error}). corridorLate's, the last status heard, when it is still
+ *  running on a poll asked once the wall clock has passed `until`, or the console has answered nothing for
+ *  CORRIDOR_MUTE_MS and CORRIDOR_MUTE_ASKS polls; {gone: true} when `gone()`, asked after each wait and before the poll,
+ *  no longer wants it. */
+async function corridorWait(st, until, each, gone){
+  let heard = Date.now(), unheard = 0;                // (`st` the ask's answer, just heard)
+  const note = {};
+  while(st && !st.error && st.state === "running"){
+    if(each) each(st);
+    await new Promise(r => setTimeout(r, CORRIDOR_POLL_MS));
+    // (asked while the chart is read too - the 2026-11-13 review: a read of new tiles takes minutes, and the withdrawal waited
+    // them out. The read itself goes on: the server shares a read of the same tiles with any other asking - corridor_start)
+    if(gone && gone()) return {gone: true};
+    const over = Date.now() >= until, id = st.id;     // past the clock: this poll is the last, and its answer is taken
+    const ans = await corridorAsk((signal) => getCorridor(id, signal), note);
+    if(ans){ st = ans; heard = Date.now(); unheard = 0; }
+    else if(++unheard >= CORRIDOR_MUTE_ASKS && Date.now() - heard >= CORRIDOR_MUTE_MS) return corridorLate(st, Date.now() - heard, note.why);
+    if(over && st && !st.error && st.state === "running") return corridorLate(st);
+  }
+  return st;
+}
 function toCorridor(st){
   return st && !st.error ? {...st, unread: (st.unread || []).map(r => ({W: r[0], S: r[1], E: r[2], N: r[3], failed: false}))} : null;
 }
 const CORRIDOR_SCALES = ["harbour", "approach", "coastal", "general"];
 /** A read's status, in words: what it read, at which scales, what it could not, and the water no chart covers. */
 function corridorSummary(st){
-  if(!st || st.error) return "Chart NOT read along the line: " + ((st && st.error) || "no answer") + ".";
+  if(!st || st.error) return "Chart NOT read along the line: " + ((st && st.error) || "no answer")
+    + (st && st.late && st.kept ? " - the tiles read are kept: press Read chart again to go on from them"
+       : st && st.late ? " - press Read chart again to ask again" : "") + ".";
   const scales = CORRIDOR_SCALES.filter(k => st.bands && st.bands[k]).map(k => bandWord(k) + " " + st.bands[k]).join(", ");
   const none = st.bands && st.bands.none ? "; " + st.bands.none + " tile(s) with no chart at any scale" : "";
   if(st.state === "canceled")
@@ -15364,20 +15509,19 @@ async function readCorridor(){
   if(!passageWps.length){ flashNote("Draw the passage's line on the Passage tab first, then Read chart."); return; }
   corridorBusy = true; updateTransitPanel();
   try{
-    let st = await postCorridor({route: pts, half_km: CORRIDOR_HALF_KM});
+    const until = Date.now() + CORRIDOR_WAIT_MAX_MS;
+    let st = await corridorStart({route: pts, half_km: CORRIDOR_HALF_KM}, until);
     if(!st || st.error){ showBanner(corridorSummary(st)); return; }
     logClient("corridor_read", {id: st.id, tiles: st.total, points: pts.length, state: "started"});
     showBanner("Reading the chart along the line: " + st.total + " tile(s) within " + CORRIDOR_HALF_KM + " km of it. "
       + "Tiles already read answer at once; a new one takes up to a minute.");
-    while(st && !st.error && st.state === "running"){
-      corridorRead = toCorridor(st); updateTransitPanel(); render();
-      await new Promise(r => setTimeout(r, CORRIDOR_POLL_MS));
-      st = await getCorridor(st.id);
-    }
+    st = await corridorWait(st, until, (s) => { corridorRead = toCorridor(s); updateTransitPanel(); render(); });
     if(st && !st.error){ corridorRead = toCorridor(st); render(); }
+    else if(st && st.late){ corridorGivenUp(st.id); render(); }
     showBanner(corridorSummary(st));
     if(st && !st.error) logClient("corridor_read", {id: st.id, tiles: st.total, state: st.state, failed: (st.failed || []).length,
                                                     bands: st.bands, unread: st.unread_n, s: st.seconds});
+    else if(st && st.late) logClient("corridor_read", {id: st.id, tiles: st.total, state: "late", done: st.done, min: st.min, mute: !!st.mute});
   }catch(e){ showBanner("Chart NOT read along the line: " + ((e && e.message) || e) + "."); }
   finally{ corridorBusy = false; updateTransitPanel(); }
 }
@@ -15588,23 +15732,32 @@ async function passageGrids(tiles){
 /** THE PASSAGE PLANNED for `points` (passagePoints' shape: her position first, a port; the last the arrival): the chart
  *  along it with its grids, the coarse plan in the worker, the fuel leg by leg, and its two ends in detail. `say(text)` is
  *  told where it has got to; `gone()` is asked after each long wait whether the caller still wants it. {plan, id} -
- *  `id` the chart read's - or {error} in words, or {gone: true}. ONE planner for Plan passage (planPassageNow) and the way
- *  home past RTH_MAX_M with no passage to go home along (sailHomeFresh, 2026-11-13), so the two cannot plan differently.
- *  The caller holds `passageBusy`: the worker answers one plan at a time (passageInWorker). */
+ *  `id` the chart read's - or {error} in words, or {gone: true}; {error, late: true, kept} when the chart read along it did
+ *  not finish in CORRIDOR_WAIT_MAX_MS (the read goes on in the console: the far RTH asks again; `kept` false when the
+ *  console never answered the ask, so nothing is known to be read). ONE planner for Plan passage
+ *  (planPassageNow) and the way home past RTH_MAX_M with no passage to go home along (sailHomeFresh, 2026-11-13), so the
+ *  two cannot plan differently. The caller holds `passageBusy`: the worker answers one plan at a time (passageInWorker). */
 async function passagePlanFor(points, say, gone){
   const model = fuelModel(), twKn = V.SPEED_KN[roleSpeed("transit")], floorM = nogoDR().min, gen = passageGen;
-  let st = await postCorridor({route: points.map(p => ({lat: p.lat, lon: p.lon})), half_km: passageHalfKm(points), grids: true});
+  const until = Date.now() + CORRIDOR_WAIT_MAX_MS;                    // the WALL CLOCK, from the ask (corridorWait)
+  const late = (s) => {
+    corridorGivenUp(s.id);
+    logClient("passage_plan", {state: "late", id: s.id, done: s.done, tiles: s.total, min: s.min, mute: !!s.mute});
+    return {error: "the chart read along it " + s.late, late: true, kept: !!s.kept};
+  };
+  let st = await corridorStart({route: points.map(p => ({lat: p.lat, lon: p.lon})), half_km: passageHalfKm(points), grids: true}, until, gone);
+  if((st && st.gone) || gone()) return {gone: true};            // (a withdrawal outranks the clock - the 2026-11-14 review)
+  if(st && st.late) return late(st);
   if(!st || st.error) return {error: corridorSummary(st).replace(/\.$/, "")};   // (the caller ends the sentence)
   logClient("passage_plan", {state: "reading", id: st.id, tiles: st.total, points: points.length});
-  while(st && !st.error && st.state === "running"){
-    say("reading chart: " + st.done + " of " + st.total + " tiles" + (st.eta_s != null ? " · ~" + fmtMS(st.eta_s) + " left" : ""));
-    corridorRead = toCorridor(st); updateTransitPanel(); render();
-    await new Promise(r => setTimeout(r, CORRIDOR_POLL_MS));
-    // (asked while the chart is read too - the 2026-11-13 review: a read of new tiles takes minutes, and the withdrawal waited
-    // them out. The read itself goes on: the server shares a read of the same tiles with any other asking - corridor_start)
-    if(gone()) return {gone: true};
-    st = await getCorridor(st.id);
-  }
+  const readId = st.id;
+  st = await corridorWait(st, until, (s) => {
+    say("reading chart: " + s.done + " of " + s.total + " tiles" + (s.eta_s != null ? " · ~" + fmtMS(s.eta_s) + " left" : ""));
+    corridorRead = toCorridor(s); updateTransitPanel(); render();
+  }, gone);
+  // (and asked again after it: an edit in the poll that decided it is the edit, not a read too slow - the third review)
+  if((st && st.gone) || gone()){ corridorGivenUp(readId); return {gone: true}; }
+  if(st && st.late) return late(st);
   if(!st || st.error || st.state !== "done")
     return {error: "the chart read along it " + (st && st.state === "canceled" ? "was stopped" : "failed: " + ((st && st.error) || "no answer"))};
   corridorRead = toCorridor(st);
@@ -15635,7 +15788,8 @@ async function passagePlanFor(points, say, gone){
   return {plan, id: st.id};
 }
 /** PLAN PASSAGE: the chart along the line with its grids, the coarse plan in the worker, the fuel leg by leg (passagePlanFor). */
-async function planPassageNow(){
+async function planPassageNow(again){
+  again = again || "press Plan passage again";       // what asks again, in the refusal's words (a far Go-To's: goToOrPassage)
   // (said, not silent - the 2026-11-13 review: the way home planned as a passage holds the planner for minutes)
   if(passageBusy){ flashNote("Plan passage: " + (homeFlight ? "the way home is being planned as a passage - plan this when it is done."
                                                                   : "a passage is being planned already.")); return; }
@@ -15650,7 +15804,9 @@ async function planPassageNow(){
   try{
     const out = await passagePlanFor(points, (t) => { passageStatus = t; updateTransitPanel(); }, () => gen !== passageGen);
     if(out.gone){ showBanner("Passage NOT planned: the line was edited while it was being planned - plan it again."); return; }
-    if(out.error){ showBanner("Passage NOT planned: " + out.error + "."); return; }
+    if(out.error){ showBanner("Passage NOT planned: " + out.error
+                     + (out.late && out.kept ? " - the tiles read are kept: " + again + " to go on from them"
+                        : out.late ? " - " + again + " to ask again" : "") + "."); return; }
     const plan = out.plan;
     passage = plan;
     const endsBad = passageEndsSay(plan.ends);
@@ -16573,7 +16729,8 @@ function rthFence(chained){
                                : {by: "another command", say: "she was commanded elsewhere (" + (S.behavior || "a new plan") + " now)"})
     : null;
 }
-/** THE END-OF-PLAN CHAIN, ASKED AGAIN: its RTH answered "busy" (one passage plan at a time - sailHomeFresh), so the one-shot
+/** THE END-OF-PLAN CHAIN, ASKED AGAIN: its RTH answered "busy" (one passage plan at a time - sailHomeFresh) or "late" (the
+ *  chart read along the way home not finished in CORRIDOR_WAIT_MAX_MS - the read goes on in the console), so the one-shot
  *  is re-armed RTH_BUSY_RETRY_MS on and the chain's own condition (onState) fires it again if it still holds. A run
  *  commanded meanwhile re-arms the chain itself (rearmRthChain), and takes this retry with it (`rthChainBusyAt`). */
 let rthChainBusyAt = 0;
@@ -16587,7 +16744,8 @@ let homeFlight = null;
  *  sailHome. doRTH's answers, and: "withdrawn" - the press no longer stands (`how.fence`, rthFence: a stop, a new link,
  *  home moved, another command; `how.by` names it), said, nothing sent; "busy" - a passage is being planned on the Passage
  *  tab, or a section sent, and this one cannot start (said; doRTH and the monitor ask again); "overridden" - the low-fuel
- *  monitor's, withdrawn because the energy override was turned on while it planned (as the boxed RTH's is). `how`:
+ *  monitor's, withdrawn because the energy override was turned on while it planned (as the boxed RTH's is); "late" - the
+ *  chart read along the way home did not finish in CORRIDOR_WAIT_MAX_MS (said; doRTH and the monitor ask again). `how`:
  *  {lowFuel, fence, lockWas, brkAgain}, and handed back on it `by` and `post` (sailHome). Until the first section is sent
  *  she carries on as she was: a survey, or her hold at the end of the plan.
  *  ⚠ ONE AT A TIME, AND JOINED (the 2026-11-13 review): a second far RTH - the chain at the survey's end while the monitor's
@@ -16606,6 +16764,7 @@ async function sailHomeFresh(brk, far, missionAt, how){
   if(homeFlight){
     const fl = homeFlight;
     if(how.lowFuel && !fl.judged) fl.lowFuel = true;
+    if(how.lowFuel || how.chained) fl.again = true;        // (a "late" answer is then asked again - said so: sailHomeFreshRun)
     flashNote("RTH: the way home is already being planned as a passage - it is sent when it is ready.");
     const ans = await fl.done;
     if(homeFlight === fl) homeFlight = null;    // (the first press's own finally clears it first; never joined twice)
@@ -16622,6 +16781,18 @@ async function sailHomeFresh(brk, far, missionAt, how){
       logClient("passage_rth", {state: "planned again", by: fl.how.by || ans, low_fuel: !!how.lowFuel, chained: !!how.chained});
       return sailHomeFresh(brk, far, missionAt, how);
     }
+    // (LATE is about the way home, but whether to ask again is this press's own: one that no longer stands - End of plan
+    // switched away, a hold for the chain - is withdrawn by what it names, not asked again: the second 2026-11-14 review)
+    if(ans === "late"){
+      const g = how.fence ? how.fence() : null;
+      if(g){
+        how.by = g.by;
+        showBanner("RTH withdrawn: " + g.say + " while the way home was being planned. Nothing was sent.");
+        logClient("plan_withdrawn", {what: "RTH", by: g.by});
+        return "withdrawn";
+      }
+      return ans;
+    }
     how.by = fl.how.by; how.post = fl.how.post;
     // (judged by the 20% rule before the monitor joined, and refused by it: the monitor's own, by its rule)
     if(how.lowFuel && ans === "refused" && !fl.lowFuelJudged && !fl.how.post) return sailHomeFresh(brk, far, missionAt, how);
@@ -16635,7 +16806,7 @@ async function sailHomeFresh(brk, far, missionAt, how){
     else showBanner("RTH not started: home is " + fmtDist(far.m) + " away, and " + what + " - press RTH again in a moment.");
     return "busy";
   }
-  const fl = homeFlight = {lowFuel: !!how.lowFuel, how, judged: false, lowFuelJudged: false, done: null};
+  const fl = homeFlight = {lowFuel: !!how.lowFuel, how, judged: false, lowFuelJudged: false, again: !!(how.lowFuel || how.chained), done: null};
   fl.done = sailHomeFreshRun(brk, far, missionAt, fl);
   try{ return await fl.done; }
   finally{ if(homeFlight === fl) homeFlight = null; }
@@ -16668,6 +16839,20 @@ async function sailHomeFreshRun(brk, far, missionAt, fl){
       + "nothing is monitored. She carries on as she was.");
     logClient("plan_withdrawn", {what: "RTH", by: "the energy override"});
     return "overridden";
+  }
+  // ⚠ THE CHART READ ALONG THE WAY HOME DID NOT FINISH (CORRIDOR_WAIT_MAX_MS, 2026-11-14): it held this flight - and every
+  // RTH that joined it - for good. Said as a refusal naming that cause, and answered "late": NOT final - the end-of-plan
+  // chain and the low-fuel monitor ask again RTH_BUSY_RETRY_MS on, as for "busy" (doRTH, fuelTick), and the read goes on
+  // in the console, so the next ask picks it up; the operator presses RTH again. Nothing was judged: no fuel rule taken.
+  if(out.late){
+    // (WAITING, not refused, where it is asked again - as busy says it: the second 2026-11-14 review)
+    showBanner((fl.again ? "RTH WAITING: " : "RTH refused: ") + "home is " + fmtDist(far.m) + " away, past the " + fmtDist(RTH_MAX_M) + " a boxed return is planned "
+      + "for, and the way home could not be planned as a passage - " + out.error
+      + (fl.again ? "; " + (out.kept ? "the tiles read are kept, and " : "") + "the way home is asked again in "
+                    + Math.round(RTH_BUSY_RETRY_MS / 1000) + " s."
+                  : out.kept ? ". The tiles read are kept: press RTH again to go on from them." : ". Press RTH again to ask again."));
+    logClient("passage_rth", {ok: false, from_here: true, late: true, why: String(out.error).slice(0, 300)});
+    return "late";
   }
   fl.judged = true; fl.lowFuelJudged = fl.lowFuel;
   const why = out.error || homePassageRefusal(out.plan, fl.lowFuel);
