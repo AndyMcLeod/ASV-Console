@@ -242,6 +242,10 @@ const PRELUDE = [
   "const newMission = (t0, what) => { out.missions.push({t0, what}); };",
   "let S = W.S, asv = W.asv;",
   "let runRoute = null, runUnsafe = [], planIntent = null, rthChainFailed = false;",
+  // THE BOXED RETURN'S FENCE (2026-11-16, 54f-54h): the page's own rthFence and the chain's ask-again (rthChainAgain,
+  // rthChainRetry) are lifted, so what they read is here - the two counts setPlanIntent keeps (cmdGen, escapeGen: the
+  // stub below counts them as the page does), the chain's one-shot and its retry, and the guard's level since an escape
+  "let cmdGen = 0, escapeGen = 0, cmdUnstamped = 0, cmdPressedMax = 0, rthChained = false, rthChainBusyAt = 0, rthChainEscapeRun = null, guardLevel = 'clear', guardEscapeAt = 0;",
   // what the command-bar handlers touch beyond the three motions
   "let pauseMark = {line:0}, resumeSlow = true;",
   // markPause() is what #b_pause claims BEFORE the console answers: where she stopped.
@@ -275,7 +279,8 @@ const PRELUDE = [
   "const showNote = (t) => { out.notes.push(t); };",
   "const flashNote = (t) => { out.notes.push(t); };",
   "const $ = (sel) => (sel === '#encbanner' ? out.banner : {style:{}, textContent:''});",
-  "const ensureNogoCovers = async () => { if (W.routing) W.routing(); return true; };",   // W.routing: what changes while she is routed (54c)
+  // W.routing: what changes while she is routed (54c) - handed which read this is (54f-54h count them: out.reads)
+  "const ensureNogoCovers = async () => { out.reads++; if (W.routing) W.routing(out.reads); return true; };",
   "const planNogoRoute = () => W.plan;",
   "const routePlan = () => W.plan;",
   "const holdTarget = (p) => ({to: p, heldOff: null, holdClear: 12});",
@@ -284,7 +289,12 @@ const PRELUDE = [
   // at every site that installs a NEW commanded route and at neither of the two that AMEND
   // one. A stub that bumped it somewhere else would be testing a different rule.
   "let planGen = 0;",
-  "const setPlanIntent = (k, p, r) => { planGen++; planIntent = {kind:k, route:(r||[]).length};",
+  // (cmdGen and escapeGen as the page counts them: the guard's escape is escapeGen, its own upkeep - `own`, the routed
+  // re-approach and its own resume - neither; every other commanded motion is cmdGen. rthFence reads both: 54f)
+  "const setPlanIntent = (k, p, r, own, at) => { planGen++; if (k === 'escape') escapeGen++;",
+  // (and when each was PRESSED, as the page keeps it: one handed no time counts as a landing - cmdPressedMax, 54i)
+  "  else if (!own) { cmdGen++; if (at == null) cmdUnstamped++; else cmdPressedMax = Math.max(cmdPressedMax, at); }",
+  "  planIntent = {kind:k, route:(r||[]).length};",
   // setPlanIntent's OWN first statement, which is a consequence of calling it at all
   "  guardOverride = null; edgeSpentM = 0; edgeCount = 0; guardActedAt = 0; holdWant = null;",
   "  return planIntent; };",
@@ -332,6 +342,16 @@ const EPILOGUE = "\nconst bHold = " + grabHandler("b_hold") + ";"
   + " want: () => speedWant,"
   + " gone: () => routeGone, say: () => routeSayWhy(), card: () => cardRoute(),"
   + " setS: (o) => { Object.assign(S, o); },"
+  // (54f-54h: what happens while the boxed return plans - the guard's escape, asked or taken; a motion this console
+  // commanded; the guard's own upkeep; a Stop - and what the chain's ask-again left)
+  + " escape: (took) => { setPlanIntent('escape', null, [1]); if (took) S.behavior = 'escape'; },"
+  + " upkeep: () => { setPlanIntent(S.behavior || 'goto', null, [1, 2], true); },"
+  // (54i: a command of a given PRESS time landing - a Go-To pressed before the RTH, or after it; another RTH)
+  + " landed: (kind, at) => { runRoute = [{lat:9, lon:9}]; setPlanIntent(kind, null, [1,2], false, at); },"
+  // (54i: the console's OWN upkeep of a plan landing - the passage rejoined by itself at a Go-To's end, a guard's resume)
+  + " ownLanded: (kind) => { runRoute = [{lat:9, lon:9}]; setPlanIntent(kind, null, [1,2], true); },"
+  + " chainSt: () => ({rthChainFailed, rthChained, rthChainBusyAt, cmdGen, escapeGen}),"
+  + " setChained: (v) => { rthChained = v; },"
   + " bar: () => ({runRoute, planIntent, runUnsafe, guardHeld, pauseMark, resumeSlow,"
   + "              escapeThrottle, commandedSpeed, speedWant}),"
   + " after: () => ({runRoute, planIntent, rthChainFailed,"
@@ -346,7 +366,8 @@ const IR = require("../static/js/inkreads.js"), PS = require("../static/js/passa
 function world(opts) {
   const o = opts || {};
   const out = { notes: [], recorded: [], renders: 0, card: 0, violations: 0, violation: null, missions: [],
-                posts: [], bodies: [], banner: bannerEl(), aborts: 0, resumed: 0, banked: [], lockEnded: 0 };
+                posts: [], bodies: [], banner: bannerEl(), aborts: 0, resumed: 0, banked: [], lockEnded: 0,
+                logs: [], later: [], searches: 0, reads: 0, owReads: 0, aisReads: 0 };
   // THE FETCH, not the command. `reply` decides what the console answers.
   const fetchStub = (url, init) => {
     out.posts.push(url);
@@ -413,7 +434,9 @@ function world(opts) {
               fuelNow: o.fuelNow || null, brk: o.brk || null, lock: o.lock || null, routing: o.routing || null,
               nogo: o.nogo || null, boxAround: IR.boxAround, beyondChart: PS.beyondChart, beyondChartSay: PS.beyondChartSay,
               transit: o.transit || [{ lat: 43.0, lon: -70.5 }, { lat: 43.01, lon: -70.49 }],
-              S: { home: { lat: 43.0, lon: -70.5 }, note: "" },
+              // (her run RUNNING under End of plan RTH, as the frame the end-of-plan chain fires on reads: the chain's fence
+              // asks both - rthFence, 54f. A press that is not the chain's reads neither)
+              S: Object.assign({ home: { lat: 43.0, lon: -70.5 }, note: "", run: "running", completion: "rth" }, o.S || {}),
               asv: o.noFix ? null : { lat: 43.02, lon: -70.48 },
               plan: o.plan || { route: [{ lat: 43.0, lon: -70.5 }, { lat: 43.01, lon: -70.49 }],
                                 holdClear: 12, routed: true, lane: null, partial: false,
@@ -474,12 +497,13 @@ function world(opts) {
                            // the vessels along a passage (2026-10-07): no AIS proxy answers in this world, so the
                            // read takes nothing and each plan is laid in the chart's model; the read itself is
                            // tests/chart_box.js's subject (10). The banner's words for what one names are the page's own.
-                           + 'const readPassageAis = async () => {}, openWaterRead = async () => null;' + "\n" + grab("mooredNote") + "\n"
+                           + 'const readPassageAis = async () => { out.aisReads++; }, openWaterRead = async () => { out.owReads++; if (W.owRead) W.owRead(out.owReads); return null; };' + "\n" + grab("mooredNote") + "\n"
                            // THE ROUTE WORKER (2026-10-12) is not here: each search runs on this thread as it always did (tests/route_worker.js);
                            // and the four stop-class presses withdraw a plan in flight - the page's own (tests/route_worker.js 12-13)
                            // (W.searching: what is pressed while the search runs - 54d)
-                           + 'const planOffThread = async (job, here) => { if (W.searching) W.searching(); return here(); }; let routeStopGen = 0, routeStopName = null;' + "\n"
-                           + 'const logClient = () => {};' + "\n"   // planInsideChart's withdrawal records itself (54d)
+                           // (each search counted - out.searches, 54g - and W.searching handed which it is)
+                           + 'const planOffThread = async (job, here) => { out.searches++; if (W.searching) W.searching(out.searches); return here(); }; let routeStopGen = 0, routeStopName = null;' + "\n"
+                           + 'const logClient = (k, d) => { out.logs.push([k, d]); };' + "\n"   // planInsideChart's withdrawal records itself (54d)
                            + grab("routeStopPressed") + "\n"
                            // its first question - are the command's own points inside the box the chart was read
                            // over? - needs a model; this one has no box, so nothing is judged (as with no extract)
@@ -495,6 +519,14 @@ function world(opts) {
                            // offers a lock - none here (tests/lock_transit.js)
                            // ... and a world may be IN a lock transit (W.lock, 54b): lockEnd ends it, as the page's does
                            + grab("planGoToLeg") + "\n" + "const lockOffer = () => {}; let lockTransit = W.lock || null; const lockEnd = () => { lockTransit = null; out.lockEnded++; };" + "\n"
+                           // THE PRESS, KEPT (2026-11-16): the far return's fence, the page's own, and the end-of-plan
+                           // chain's ask-again after "home moved" / "the guard's escape" - its 15 s wait kept by the
+                           // check (out.later: the timer handed back, not run; cmd()'s own 15 s bound keeps the real one)
+                           + grabDecl("RTH_BUSY_RETRY_MS") + "\n" + grabDecl("RTH_WAITING_RE") + "\n" + grab("swapBanner") + "\n" + grab("sayUnlessAlarm") + "\n"
+                           + grab("rthFence") + "\n" + grab("rthNotCalledOff") + "\n"
+                           + "const rthChainRetry = (() => { const setTimeout = (fn, ms) => { out.later.push({fn, ms}); return 0; };\n"
+                           + grab("rthChainRetry") + "\nreturn rthChainRetry; })();\n"
+                           + grab("rthChainAgain") + "\n"
                            + grab("doRTH") + "\n" + grab("doGoTo") + "\n" + grab("doTransit")
                            + EPILOGUE)(W, setTimeout, clearTimeout, AbortController);
   W.api = api;              // so a fetch stub can act INSIDE the bundle mid-round-trip
@@ -590,6 +622,311 @@ console.log("-- 54: a new mission's history (newMission) --");
         () => byC.out.posts.length === 0 && byC.after().rthChainFailed === true && !!outC && outC.notTaken.by === "STOP"
               && chain.out.posts.length > 0 && chain.after().rthChainFailed === false,
         JSON.stringify({ stopped: [byC.out.posts, byC.after().rthChainFailed, outC], taken: [chain.out.posts, chain.after().rthChainFailed] }));
+}
+
+console.log("-- 54f-54h: the boxed return's press, kept (rthFence) --");
+// 54f-54h (2026-11-16). THE BOXED RETURN IS FENCED AS THE FAR ONE IS. Home within RTH_MAX_M, doRTH plans through
+// planInsideChart and posts - seconds, more when the chart is read wider - and the only thing that withdrew it was a
+// Stop-class press there (routeStopGen) or the energy override: the END-OF-PLAN chain's RTH and the RTH BUTTON'S were POSTED
+// after the guard's in-extremis escape began while it planned (S.behavior "escape" - the Eastport defect CHAINABLE_BEHAVIORS
+// records, sent by another door), after home moved, after End of plan was switched away, after a Go-To was commanded.
+// The far return has had rthFence since the 2026-11-13/14 reviews; the boxed one now takes it at the press and asks it
+// before and after each route search and once more before anything is judged or sent, with the far return's outcomes:
+// withdrawn, said in words naming what withdrew it, nothing sent, no break-off banked, the monitor told by what
+// ({notTaken: {withdrawn, by}} - fuelTick decides per `by`), and for the chain the far returns' decision: asked again
+// after "home moved" / "the guard's escape" (rthChainAgain), recorded after every other withdrawal (rthChainFailed).
+// Each withdrawal is paired with the same world with nothing happening: sent. The page's own planInsideChart, rthFence,
+// rthChainAgain and rthChainRetry; the event fired inside the first route search (W.searching) unless said.
+{
+  const B = { id: "B2", why: "fuel" };
+  // `cs`: the frame the end-of-plan chain fires on (her Go-To at its end, held there; End of plan RTH, run running)
+  const cs = (o) => Object.assign({ behavior: "goto", status: { holding: true } }, o || {});
+  const BOX = async (o, opts, ev, at) => {
+    const w = world(o || {});
+    if (o && o.intent) w.seed([{ lat: 9, lon: 9 }], o.intent);   // (this tab's last picture, drawn before the press - 54i)
+    if (ev) {
+      if (at == null) w.W.searching = (n) => { if (n === 1) ev(w); };
+      else if (at === "ow") w.W.owRead = (n) => { if (n === 1) ev(w); };   // (planInsideChart's open-water read, before its first search)
+      else w.W.routing = (n) => { if (n === at) ev(w); };     // (1: doRTH's own chart read; 2: planInsideChart's)
+    }
+    if (opts && opts.chained) w.setChained(true);              // (onState spends the one-shot as it calls doRTH)
+    const ret = await w.doRTH(opts || {});
+    const st = w.chainSt();
+    return { w, ret, posts: w.out.posts.slice(), failed: st.rthChainFailed, chained: st.rthChained, later: w.out.later.slice(),
+             banner: w.banner(), by: (w.out.logs.filter((l) => l[0] === "plan_withdrawn").pop() || [0, {}])[1].by || null,
+             banked: w.out.banked.length, missions: w.out.missions.length, searches: w.out.searches, reads: w.out.reads,
+             pre: w.out.owReads + w.out.aisReads, notes: w.out.notes.slice(),
+             said: w.out.recorded.filter((r) => r[0] === "banner" && /withdrawn/i.test(r[1])).length };
+  };
+  const ESC = (w) => w.escape(false), TOOK = (w) => w.escape(true);
+  const HOME = (w) => { w.W.S.home = { lat: 43.001, lon: -70.5 }; };
+  const GOTO = (w) => w.newMotion(), LOITER = (w) => { w.W.S.completion = "loiter"; };
+  const HOLD = (w) => { w.W.S.behavior = "hold"; }, UPKEEP = (w) => w.upkeep();
+  const UNLESS = ", unless she is stopped, held or commanded or End of plan is changed meanwhile";
+  const WAITING = (by, tail) => new RegExp("^End of plan RTH WAITING: the way home was withdrawn \\(" + by + "\\) while it was being "
+    + "planned, and nothing was sent\\. It is asked again in 15 s" + tail + "\\.$");
+  const W_HOME = WAITING("home moved", " for the home she has now" + UNLESS);
+  const W_ESC = WAITING("the guard's escape", ", once, if the guard has been quiet since and she still holds at the end of her plan"
+    + UNLESS + "; from an escape's own hold she waits for your next command");
+  const WD = (say) => new RegExp("^RTH withdrawn: " + say + " while the way home was being routed\\. Nothing was sent\\.$");
+  const CH = { chained: true }, FUEL = { why: "LOW FUEL", breakWhy: "fuel" };
+
+  // 54f. THE CHAIN
+  const cEs = await BOX({ S: cs() }, CH, ESC), cTk = await BOX({ S: cs() }, CH, TOOK), cHm = await BOX({ S: cs() }, CH, HOME);
+  const cGo = await BOX({ S: cs() }, CH, GOTO), cLo = await BOX({ S: cs() }, CH, LOITER), cOk = await BOX({ S: cs() }, CH, null);
+  const waits = (r, re, by) => r.posts.length === 0 && !r.failed && r.chained === true && r.later.length === 1 && r.later[0].ms === 15000
+    && re.test(r.banner) && r.by === by && r.w.out.logs.some((l) => l[0] === "passage_rth" && l[1].state === "waiting" && l[1].by === by);
+  // (recorded, the Mission card is redrawn at once: it stops promising a return - nothing else in this world redraws it)
+  const ends = (r, re, by) => r.posts.length === 0 && r.failed && r.later.length === 0 && re.test(r.banner) && r.by === by
+    && !!r.ret && !!r.ret.notTaken && r.ret.notTaken.withdrawn === true && r.ret.notTaken.by === by && r.w.out.card > 0;
+  // (the wait's end, the home moved: nothing called it off meanwhile, so the one-shot is handed back - the chain's own
+  // condition fires it again, for the home she has now: passage_sail 16s)
+  if (cHm.later[0]) cHm.later[0].fn();
+  const f = {
+    escapeAsked: waits(cEs, W_ESC, "the guard's escape"), escapeTaken: waits(cTk, W_ESC, "the guard's escape"),
+    homeMoved: waits(cHm, W_HOME, "home moved") && cHm.w.chainSt().rthChained === false && !cHm.w.chainSt().rthChainFailed,
+    goTo: ends(cGo, WD("this console commanded her elsewhere \\(goto\\)"), "another command"),
+    endOfPlan: ends(cLo, WD("End of plan was changed to LOITER"), "End of plan"),
+    sent: cOk.posts.length === 1 && cOk.posts[0] === "/api/cmd/rth" && !cOk.failed && cOk.later.length === 0 && cOk.by === null,
+  };
+  check("54f. ⚠ THE END-OF-PLAN CHAIN'S BOXED RTH IS FENCED: the guard's escape (asked, or taken) and home moved while it is "
+        + "planned withdraw it - nothing sent, not recorded, said WAITING and asked again 15 s on (rthChainAgain), the one-shot "
+        + "handed back at the wait's end - and a Go-To commanded or End of plan switched to LOITER withdraw it for good: said, "
+        + "recorded, nothing sent; the same world with nothing happening: sent",
+        () => Object.values(f).every(Boolean),
+        JSON.stringify({ bad: Object.entries(f).filter(([, v]) => !v).map(([k]) => k),
+          esc: [cEs.posts.length, cEs.failed, cEs.later.length, cEs.by, cEs.banner.slice(0, 90)], took: [cTk.posts.length, cTk.by],
+          home: [cHm.posts.length, cHm.failed, cHm.later.length, cHm.banner.slice(0, 90)], goTo: [cGo.posts.length, cGo.failed, cGo.banner.slice(0, 90)],
+          loiter: [cLo.posts.length, cLo.failed, cLo.by], sent: [cOk.posts, cOk.failed] }));
+
+  // 54g. THE BUTTON, THE MONITOR, AND WHAT MUST NOT WITHDRAW IT
+  const bEs = await BOX({ brk: B }, {}, TOOK), bHm = await BOX({ brk: B }, {}, HOME), bGo = await BOX({ brk: B }, {}, GOTO);
+  const bOk = await BOX({ brk: B }, {}, null);
+  const press = (r, re, by) => r.posts.length === 0 && re.test(r.banner) && r.by === by && r.later.length === 0 && r.banked === 0
+    && r.missions === 0 && !r.failed && !!r.ret && r.ret.notTaken.withdrawn === true && r.ret.notTaken.by === by;
+  // the monitor's: what withdrew it handed back - fuelTick drops its latch for home moved and the escape (rthNotCalledOff,
+  // fuel_rth 8x), and keeps it for another command, the operator's word
+  const mHm = await BOX({ brk: B }, FUEL, HOME), mEs = await BOX({ brk: B }, FUEL, ESC), mGo = await BOX({ brk: B }, FUEL, GOTO);
+  const mOk = await BOX({ brk: B }, FUEL, null);
+  const told = (r, by) => r.posts.length === 0 && r.banked === 0 && !!r.ret && r.ret.notTaken.withdrawn === true && r.ret.notTaken.by === by;
+  // NOT WITHDRAWN: the guard's own upkeep (the routed re-approach, its own resume) - button and chain; a hold, for the
+  // button (the guard's hold rung, waited through: the press is about going home, and Stop withdraws it) - where the
+  // chain's strict fence ends on it (it never sends her home off a maneuver it did not see her end on); a ROC's own
+  // recovery point moving (a ship's, chased by the vessel itself) - where a switch of ROC is home moved
+  const bUp = await BOX({ S: { behavior: "survey" } }, {}, UPKEEP), cUp = await BOX({ S: cs() }, CH, UPKEEP);
+  const bHd = await BOX({ S: { behavior: "survey" } }, {}, HOLD), cHd = await BOX({ S: cs() }, CH, HOLD);
+  const ROC = (o) => ({ S: Object.assign({ home_source: "roc1" }, o || {}) });
+  const rMv = await BOX(ROC(), {}, (w) => { w.W.S.home = { lat: 43.0004, lon: -70.4995 }; });
+  const rMc = await BOX(ROC(cs()), CH, (w) => { w.W.S.home = { lat: 43.0004, lon: -70.4995 }; });
+  const rSw = await BOX(ROC(), {}, (w) => { w.W.S.home_source = "roc2"; });
+  // A VIEW-ONLY TAB posts nothing (cmd() refuses it before the wire) and CLAIMS nothing - no banner, no retry, no record
+  const vHm = await BOX({ S: cs(), viewOnly: true }, CH, HOME);
+  const g = {
+    buttonEscape: press(bEs, WD("the guard commanded an escape in extremis"), "the guard's escape"),
+    buttonHome: press(bHm, WD("home was moved"), "home moved"),
+    buttonGoTo: press(bGo, WD("this console commanded her elsewhere \\(goto\\)"), "another command"),
+    buttonSent: bOk.posts.length === 1 && bOk.banked === 1 && bOk.missions === 1 && bOk.ret === undefined,
+    monitor: told(mHm, "home moved") && told(mEs, "the guard's escape") && told(mGo, "another command")
+             && mOk.posts.length === 1 && mOk.banked === 1 && mOk.ret === undefined,
+    upkeep: bUp.posts.length === 1 && cUp.posts.length === 1 && !cUp.failed,
+    hold: bHd.posts.length === 1 && cHd.posts.length === 0 && cHd.failed && cHd.by === "a hold" && cHd.later.length === 0,
+    roc: rMv.posts.length === 1 && rMc.posts.length === 1 && !rMc.failed && rSw.posts.length === 0 && rSw.by === "home moved",
+    viewOnly: vHm.posts.length === 0 && vHm.banner === "" && vHm.later.length === 0 && !vHm.failed && vHm.said === 0
+              && vHm.reads === 0 && vHm.searches === 0 && vHm.notes.length === 0,
+  };
+  check("54g. ... THE RTH BUTTON'S, withdrawn by the guard's escape, home moved or a Go-To: said, nothing sent, no break-off banked, "
+        + "no mission started, not asked again; THE LOW-FUEL MONITOR'S answers what withdrew it; and NOT withdrawn by the guard's "
+        + "own upkeep, by a hold for the button (the chain's ends on it, recorded), nor by a ROC's own point moving (a switch of "
+        + "ROC withdraws it); a VIEW-ONLY tab sends nothing and claims nothing; each the same world with nothing happening: sent",
+        () => Object.values(g).every(Boolean),
+        JSON.stringify({ bad: Object.entries(g).filter(([, v]) => !v).map(([k]) => k),
+          button: [bEs.posts.length, bEs.by, bEs.banner.slice(0, 80), bHm.posts.length, bGo.posts.length, bOk.posts.length, bOk.banked],
+          monitor: [mHm.ret, mEs.ret, mGo.ret, mOk.posts.length], upkeep: [bUp.posts.length, cUp.posts.length, cUp.by],
+          hold: [bHd.posts.length, bHd.by, cHd.posts.length, cHd.failed, cHd.by], roc: [rMv.posts.length, rMv.by, rMc.posts.length, rMc.by, rSw.posts.length, rSw.by],
+          view: [vHm.posts.length, vHm.banner, vHm.later.length, vHm.failed, vHm.said, vHm.reads, vHm.searches, vHm.notes] }));
+
+  // 54h. WHERE IT IS ASKED. Before each search - after the chart read the plan stands on (here doRTH's own, 1): withdrawn
+  // with NO search made; after each search - before planInsideChart reads the chart wider for a route that ran past it (a
+  // plan past the chart every round): withdrawn with NO wider read; and after the plan, before anything is judged - the
+  // command's own point past the chart, refused before any search, home moved at THAT read (2): withdrawn, not refused,
+  // and the chain asked again for the home she has now, not recorded REFUSED. A STOP pressed before planInsideChart took its
+  // own mark (at doRTH's read) is seen by the fence and said ONCE; one pressed during the search is planInsideChart's, said
+  // once by it.
+  // (51-53's plan past the chart, every round: here before 51's own is declared)
+  const PAST54 = () => ({ route: [{ lat: 43.0, lon: -70.5 }, { lat: 43.01, lon: -70.49 }], holdClear: 12, unroutable: [],
+                          routed: true, lane: null, partial: false, heldOff: null,
+                          error: "the route runs 429 m beyond the water the chart was read over",
+                          reason: { mode: "uncharted", info: { kind: "water the chart was not read over" }, at: { lat: 43.01, lon: -70.49 } },
+                          uncharted: { at: { lat: 43.01, lon: -70.49 }, outM: 429, edgeM: 100,
+                                       pts: [{ lat: 43.02, lon: -70.48 }, { lat: 43.01, lon: -70.49 }],
+                                       route: [{ lat: 43.0, lon: -70.5 }, { lat: 43.01, lon: -70.49 }] } });
+  const aRd = await BOX({ S: cs() }, CH, HOME, 1), aOk = await BOX({ S: cs() }, CH, null);
+  // (and home moved during planInsideChart's OWN reads, after doRTH's: asked before the first search, none made - since the
+  // ask after doRTH's read, aRd no longer reaches the callback's first ask; this does)
+  const aPr = await BOX({ S: cs() }, CH, HOME, "ow");
+  const aPs = await BOX({ S: cs(), plan: PAST54() }, CH, ESC);
+  const NOGO52 = { ready: true, bbox: { W: -70.60, S: 42.90, E: -70.55, N: 42.95 }, note: "ENC offline (no cache for this area)" };
+  const aOw = await BOX({ S: cs(), nogo: NOGO52 }, CH, HOME, 2), aOwQ = await BOX({ S: cs(), nogo: NOGO52 }, CH, null);
+  const sRd = await BOX({ brk: B }, {}, (w) => w.routeStopPressed("STOP"), 1);
+  const sSe = await BOX({ brk: B }, {}, (w) => w.routeStopPressed("STOP"));
+  const h = {
+    beforeSearch: aRd.searches === 0 && aRd.reads === 1 && aRd.pre === 0 && aRd.posts.length === 0 && aRd.by === "home moved" && !aRd.failed
+                  && aRd.later.length === 1 && aOk.pre === 2
+                  && aPr.searches === 0 && aPr.pre === 2 && aPr.posts.length === 0 && aPr.by === "home moved" && !aPr.failed && aPr.later.length === 1,
+    afterSearch: aPs.searches === 1 && aPs.reads === 1 && aPs.posts.length === 0 && aPs.by === "the guard's escape" && !aPs.failed,
+    afterPlan: aOw.posts.length === 0 && !aOw.failed && aOw.later.length === 1 && W_HOME.test(aOw.banner)
+               && aOwQ.posts.length === 0 && aOwQ.failed && /^RTH refused: /.test(aOwQ.banner),
+    stopOnce: sRd.posts.length === 0 && sRd.said === 1 && WD("STOP was pressed").test(sRd.banner) && sRd.ret.notTaken.by === "STOP"
+              && sSe.posts.length === 0 && sSe.said === 1 && /^⚠ RTH withdrawn: STOP was pressed while its route was being planned/.test(sSe.banner),
+  };
+  check("54h. ... ASKED after doRTH's own chart read (withdrawn there, planInsideChart reads nothing more) and before each search (withdrawn after the chart read with no search made), after it (no wider read for a "
+        + "route past the chart), and after the plan before it is judged (a refusal about a home since moved is a withdrawal, "
+        + "the chain asked again - where the same refusal, home unmoved, is recorded); a Stop is said once, by whichever saw it",
+        () => Object.values(h).every(Boolean),
+        JSON.stringify({ bad: Object.entries(h).filter(([, v]) => !v).map(([k]) => k),
+          beforeSearch: [aRd.searches, aRd.reads, aRd.pre, aOk.pre, aRd.posts.length, aRd.by, aRd.later.length],
+          ownRead: [aPr.searches, aPr.pre, aPr.posts.length, aPr.by, aPr.failed, aPr.later.length], afterSearch: [aPs.searches, aPs.reads, aPs.posts.length, aPs.by, aPs.failed],
+          afterPlan: [aOw.posts.length, aOw.failed, aOw.later.length, aOw.banner.slice(0, 80), aOwQ.failed, aOwQ.banner.slice(0, 40)],
+          stop: [sRd.posts.length, sRd.said, sRd.banner.slice(0, 70), sSe.posts.length, sSe.said, sSe.banner.slice(0, 60)] }));
+
+  // 54i (2026-11-16, the review of 54f-54h). ANOTHER COMMAND IS ONE PRESSED AFTER THE PRESS - for the button and the
+  // monitor. The fence counted a command's LANDING: a Go-To pressed a moment BEFORE the RTH (a lock transit's leg, the first
+  // of two RTH presses) that landed while the way home planned withdrew it - the operator's newer word lost, and the
+  // low-fuel monitor's latch then kept for "another command": no return home at all, where before the fence the RTH was
+  // sent over it and she went home. Each command hands setPlanIntent the time of its own press now (cmdPressedMax); one
+  // handed none is a landing, as before (54g's Go-To). The END-OF-PLAN CHAIN is withdrawn by any command that lands,
+  // pressed when it may be: it is the console's own, and every command of the operator's outranks it.
+  const before = performance.now();                           // (a press made before any RTH below is pressed)
+  const PRE = (kind) => (w) => w.landed(kind, before), POST = (kind) => (w) => w.landed(kind, performance.now());
+  const iBp = await BOX({ brk: B }, {}, PRE("goto")), iBa = await BOX({ brk: B }, {}, POST("goto"));
+  const iMp = await BOX({ brk: B }, FUEL, PRE("goto")), iMa = await BOX({ brk: B }, FUEL, POST("goto"));
+  const iCp = await BOX({ S: cs() }, CH, PRE("goto"));
+  const iRo = await BOX({ brk: B }, {}, PRE("rth")), iRn = await BOX({ brk: B }, {}, POST("rth"));
+  // (AND THE FRAME AFTER IT: the vessel shows her on what landed. An older Go-To's landing let through and her next frame -
+  // behavior goto - withdrew the RTH by its behavior clause, the same lost return one frame on. Another window's command
+  // is seen ONLY by her behavior: still withdrawn, and so is one of ours landed with her then on something else)
+  const FRAME = (kind, beh) => (w) => { w.landed(kind, before); w.W.S.behavior = beh || kind; };
+  const iBf = await BOX({ brk: B }, {}, FRAME("goto")), iMf = await BOX({ brk: B }, FUEL, FRAME("goto"));
+  const iBw = await BOX({ brk: B }, {}, (w) => { w.W.S.behavior = "goto"; }), iBx = await BOX({ brk: B }, {}, FRAME("goto", "transit"));
+  // (and the console's OWN upkeep, landed and shown: the passage rejoined by itself at a Go-To's end is a transit she is
+  // put on while the RTH routes - kept out of cmdGen, and then withdrawn one frame on by her behavior, the monitor's latch
+  // kept: no return home. The second review, 2026-11-16)
+  const OWNF = (w) => { w.ownLanded("transit"); w.W.S.behavior = "transit"; };
+  const iBu = await BOX({ brk: B }, {}, OWNF), iMu = await BOX({ brk: B }, FUEL, OWNF);
+  // (and ONLY a picture landed since the press: this tab's last one a Go-To, drawn before it, and another window's Go-To
+  // while it routes - her behavior matches that old picture, and it is still another window's command. The chain lets
+  // no behavior through, its own upkeep's either: a held leg resumed by the guard while it plans is not her plan's end)
+  const iBo = await BOX({ brk: B, intent: { kind: "goto", why: [] } }, {}, (w) => { w.W.S.behavior = "goto"; });
+  const iCu = await BOX({ S: cs() }, CH, (w) => { w.ownLanded("survey"); w.W.S.behavior = "survey"; });
+  const i = {
+    buttonPressedBefore: iBp.posts.length === 1 && iBp.posts[0] === "/api/cmd/rth" && iBp.by === null && iBp.ret === undefined && iBp.banked === 1,
+    buttonPressedAfter: press(iBa, WD("this console commanded her elsewhere \\(goto\\)"), "another command"),
+    monitorPressedBefore: iMp.posts.length === 1 && iMp.by === null && iMp.ret === undefined,
+    monitorPressedAfter: told(iMa, "another command"),
+    chainAnyLanding: ends(iCp, WD("this console commanded her elsewhere \\(goto\\)"), "another command"),
+    olderRth: iRo.posts.length === 1 && iRo.by === null,
+    newerRth: press(iRn, WD("a newer Return-to-Home was commanded"), "another command"),
+    buttonFrameAfter: iBf.posts.length === 1 && iBf.posts[0] === "/api/cmd/rth" && iBf.by === null && iBf.ret === undefined,
+    monitorFrameAfter: iMf.posts.length === 1 && iMf.by === null && iMf.ret === undefined,
+    anotherWindow: press(iBw, WD("she was commanded elsewhere \\(goto now\\)"), "another command"),
+    oursThenElse: press(iBx, WD("she was commanded elsewhere \\(transit now\\)"), "another command"),
+    oldPictureOnly: press(iBo, WD("she was commanded elsewhere \\(goto now\\)"), "another command"),
+    chainNoUpkeepFrame: ends(iCu, WD("she was commanded elsewhere \\(survey now\\)"), "another command"),
+    ownUpkeepFrame: iBu.posts.length === 1 && iBu.posts[0] === "/api/cmd/rth" && iBu.by === null && iMu.posts.length === 1 && iMu.by === null && iMu.ret === undefined,
+  };
+  check("54i. ⚠ ANOTHER COMMAND IS ONE PRESSED AFTER THE PRESS: a Go-To pressed BEFORE the RTH button, or before the low-fuel "
+        + "monitor's RTH, that lands while it is routed does not withdraw it - sent, as before the fence; one pressed after it "
+        + "does; the end-of-plan chain is withdrawn by any that lands; an older RTH's landing withdraws a press of the button "
+        + "no more, and a newer one's is said as a newer Return-to-Home; nor does the frame showing her on that older Go-To; "
+        + "another window's command (her behavior alone) does, and so does ours with her then on something else; nor does the "
+        + "console's own upkeep landed and shown (the passage's rejoin) - only one landed since the press, never this tab's "
+        + "older picture; the chain's lets no behavior through",
+        () => Object.values(i).every(Boolean),
+        JSON.stringify({ bad: Object.entries(i).filter(([, v]) => !v).map(([k]) => k),
+          button: [iBp.posts.length, iBp.by, iBp.banked, iBa.posts.length, iBa.by], monitor: [iMp.posts.length, iMp.by, iMa.ret],
+          chain: [iCp.posts.length, iCp.failed, iCp.by], rth: [iRo.posts.length, iRo.by, iRn.posts.length, iRn.by, iRn.banner.slice(0, 70)],
+          frame: [iBf.posts.length, iBf.by, iMf.posts.length, iMf.by, iBw.posts.length, iBw.by, iBw.banner.slice(0, 80), iBx.posts.length, iBx.banner.slice(0, 80)],
+          own: [iBu.posts.length, iBu.by, iBu.banner.slice(0, 80), iMu.posts.length, iMu.by],
+          oldPicture: [iBo.posts.length, iBo.by, iBo.banner.slice(0, 80)], chainUpkeep: [iCu.posts.length, iCu.failed, iCu.by, iCu.banner.slice(0, 80)] }));
+
+  // 54j (the same review). NOT OVER THE ALARM. The guard's escape that withdraws a way home raises its own in-extremis alarm
+  // at that moment, and the banner slot is ONE: the withdrawal - and End of plan's WAITING - took it down. Said in a note
+  // while a "⚠⚠" alarm stands, the alarm left up; in the slot when none does (54f, 54g). And a VIEW-ONLY tab's chain plans
+  // nothing at all: a plan it refused said "RTH refused" and recorded the chain failed, in a tab that knows nothing of her.
+  const ALARM = "⚠⚠ IN EXTREMIS — the guard is steering her clear.";
+  const ALARMED = (w) => { w.out.banner.textContent = ALARM; w.out.banner.style.display = "block"; w.escape(false); };
+  const jBt = await BOX({ brk: B }, {}, ALARMED), jCh = await BOX({ S: cs() }, CH, ALARMED);
+  // (the alarm is not only the "⚠⚠" one: an escape REFUSED or NOT ACKNOWLEDGED raises "IN EXTREMIS ESCAPE ..." - TAKE MANUAL
+  // CONTROL - and the helm rung's own banner is "⚠ HELM — ..."; a lower rung's, "⚠ SLOW —", is replaced as any banner is)
+  const UP = (t) => (w) => { w.out.banner.textContent = t; w.out.banner.style.display = "block"; w.escape(false); };
+  const REF = "IN EXTREMIS ESCAPE REFUSED: no way out — THE HELM WAS NOT TAKEN: she drifts on. TAKE MANUAL CONTROL.";
+  const NAK = "IN EXTREMIS ESCAPE NOT ACKNOWLEDGED: the console did not answer - the console cannot tell whether she received it";
+  const HLM = "⚠ HELM — a keep-out ahead", SLW = "⚠ SLOW — a keep-out ahead";
+  const jRf = await BOX({ brk: B }, {}, UP(REF)), jNk = await BOX({ brk: B }, {}, UP(NAK)), jHl = await BOX({ brk: B }, {}, UP(HLM));
+  const jSl = await BOX({ brk: B }, {}, UP(SLW));
+  const jDn = await BOX({ brk: B }, {}, (w) => { w.out.banner.textContent = ALARM; w.out.banner.style.display = "none"; w.escape(false); });
+  const jVw = await BOX({ S: cs(), viewOnly: true, nogo: NOGO52 }, CH, null), jSp = await BOX({ S: cs(), nogo: NOGO52 }, CH, null);
+  // (and a tab that LOSES supervision while its press is routed - another window took over - asks no fence: what withdrew
+  // the return is the supervising tab's to say. Its post is refused before the wire, as any view-only post is; against
+  // the same escape in a tab that still supervises, withdrawn and said)
+  const jLs = await BOX({ brk: B }, {}, (w) => { w.setViewOnly(true); w.escape(false); }), jKp = await BOX({ brk: B }, {}, ESC);
+  const j = {
+    buttonUnderAlarm: jBt.posts.length === 0 && jBt.banner === ALARM && jBt.by === "the guard's escape"
+                      && jBt.notes.some((n) => WD("the guard commanded an escape in extremis").test(n)),
+    chainUnderAlarm: jCh.posts.length === 0 && jCh.banner === ALARM && jCh.later.length === 1 && !jCh.failed
+                     && jCh.notes.some((n) => WD("the guard commanded an escape in extremis").test(n)) && jCh.notes.some((n) => W_ESC.test(n)),
+    viewOnlyRefusal: jVw.posts.length === 0 && jVw.banner === "" && !jVw.failed && jVw.reads === 0 && jVw.notes.length === 0
+                     && jSp.failed && /^RTH refused: /.test(jSp.banner),
+    otherAlarms: [[jRf, REF], [jNk, NAK], [jHl, HLM]].every(([r, t]) => r.posts.length === 0 && r.banner === t && r.by === "the guard's escape"
+                   && r.notes.some((n) => WD("the guard commanded an escape in extremis").test(n)))
+                 && jSl.posts.length === 0 && jSl.by === "the guard's escape" && WD("the guard commanded an escape in extremis").test(jSl.banner)
+                 && jDn.posts.length === 0 && WD("the guard commanded an escape in extremis").test(jDn.banner),
+    lostSupervision: jLs.posts.length === 0 && jLs.by === null && !/withdrawn/i.test(jLs.banner) && jLs.said === 0
+                     && !jLs.notes.some((n) => /withdrawn/i.test(n)) && jLs.notes.some((n) => /VIEW ONLY/.test(n))
+                     && jKp.posts.length === 0 && jKp.by === "the guard's escape" && WD("the guard commanded an escape in extremis").test(jKp.banner),
+  };
+  check("54j. NOT OVER THE ALARM: the RTH button's, and End of plan's WAITING, withdrawn by the guard's escape while its ⚠⚠ "
+        + "in-extremis alarm stands, are said in a note and the alarm stays up; a VIEW-ONLY tab's chain plans nothing and "
+        + "claims nothing - where the supervising tab's same plan is refused and recorded; and a tab that loses supervision "
+        + "while its press is routed says nothing of what withdrew it; the alarm is a refused or unanswered escape's and the helm "
+        + "rung's too, where a lower rung's banner is replaced",
+        () => Object.values(j).every(Boolean),
+        JSON.stringify({ bad: Object.entries(j).filter(([, v]) => !v).map(([k]) => k),
+          button: [jBt.posts.length, jBt.banner.slice(0, 40), jBt.notes], chain: [jCh.posts.length, jCh.banner.slice(0, 40), jCh.later.length, jCh.notes],
+          view: [jVw.posts.length, jVw.banner, jVw.failed, jVw.reads, jVw.notes], sup: [jSp.failed, jSp.banner.slice(0, 40)],
+          lost: [jLs.posts.length, jLs.by, jLs.banner.slice(0, 60), jLs.said, jLs.notes], kept: [jKp.posts.length, jKp.by],
+          others: [jRf, jNk, jHl, jSl].map((r) => [r.posts.length, r.by, r.banner.slice(0, 30), r.notes.length]) }));
+
+  // 54k. THE WIRING OF 54i: EVERY COMMAND HANDS ITS PRESS ON. 54i drives the fence with stamps it hands in itself; what it
+  // stands on is that every command of the operator's that lands a picture hands setPlanIntent the time it was pressed - one
+  // that hands none is a bare landing, and withdraws an RTH pressed after it while it lands (the defect 54i closes). Every
+  // call in the page: the escape's (not a command), the guard's own upkeep (guardOwn true), and the rest stamped - the press
+  // taken at the function's entry, before anything awaits (Sail passage's after its confirm: the operator's word). A new
+  // command without one fails here until it is decided.
+  const SPI = H.split("\n").filter((l) => /setPlanIntent\(/.test(l) && !/function setPlanIntent\(/.test(l));
+  const bare = SPI.filter((l) => !/setPlanIntent\("escape", /.test(l) && !/setPlanIntent\([^;]*, true\);/.test(l)
+                                  && !/setPlanIntent\([^;]*(pressedAt|fence\.press)\);/.test(l));
+  const ENTRY = { doGoTo: 0, doTransit: 0, doUpload: 0, continueSurvey: 0, reflyStrike: 0, resumeHeldLeg: 0, continueSend: 0 };
+  const late = Object.keys(ENTRY).filter((f) => {
+    const s = grab(f).split(/\r?\n/).map((l) => l.replace(/\/\/.*$/, "")).join("\n");       // (an await in a comment is none)
+    const at = s.indexOf("pressedAt = "), aw = s.search(/\bawait\b/);
+    return at < 0 || (aw >= 0 && aw < at) || !/pressedAt = (auto \? null : )?performance\.now\(\);/.test(s); });
+  const k = {
+    callsSeen: SPI.length >= 12,
+    noneBare: bare.length === 0,
+    takenAtEntry: late.length === 0,
+    sailPassage: /const P = sailRecord\(passage\), pressedAt = performance\.now\(\);/.test(grab("sailPassage"))
+                 && /sailSend\(P, 0, \{[^}]*\}, null, false, null, false, pressedAt\)/.test(grab("sailPassage")),
+    farRth: /setPlanIntent\(home \? "rth" : "transit", whole, route, append \|\| !!own, pressedAt != null \? pressedAt : fence && fence\.press\);/.test(grab("sailSend"))
+            && /f\.press = at;/.test(grab("rthFence")),
+    boxedRth: /setPlanIntent\("rth", plan, plan\.route, false, fence\.press\);/.test(grab("doRTH")),
+  };
+  check("54k. THE WIRING OF 54i - EVERY COMMAND HANDS ITS PRESS ON: each setPlanIntent in the page is the escape's, the guard's "
+        + "own upkeep's, or stamped with the press (taken at its function's entry, before it awaits); the RTH's own landing "
+        + "with its fence's press, the far one's through sailSend",
+        () => Object.values(k).every(Boolean),
+        JSON.stringify({ bad: Object.entries(k).filter(([, v]) => !v).map(([x]) => x), calls: SPI.length,
+          bare: bare.map((l) => l.trim().slice(0, 110)), late }));
 }
 
 console.log("-- 1-2: cmd() answers THREE things, and the three are not the same thing --");
@@ -704,18 +1041,20 @@ console.log("\n-- 3-8: Return-to-Home --");
 // "not ok -> the chain failed" would have a view-only tab paint "REFUSED, will hold instead"
 // over a boat the supervising tab is at that moment bringing home. It knows nothing. It
 // takes its own sticky banner down and says nothing at all; cmd() has already told the
-// operator why, once.
+// operator why, once. (2026-11-16, the boxed return's review: it plans nothing at all now - no
+// banner put up, no chart read, no post for cmd() to refuse - as the far return's chain never
+// did; the supervising tab plans and sends it. Nothing said, nothing claimed: as before.)
 {
   const w = world({ viewOnly: true });
   await w.doRTH({ chained: true });
   const a = w.after();
   check("5. a VIEW-ONLY tab claims NOTHING about the boat - no route, no retraction, and its "
-        + "own \"Routing home\" banner taken down rather than replaced",
+        + "own \"Routing home\" banner never left up, and nothing said of a return",
         a.rthChainFailed === false && a.runRoute === null && a.planIntent === null
         && w.banner() === "" && w.out.posts.length === 0
-        && w.out.notes.some((n) => /VIEW ONLY/.test(n)),
+        && !w.out.notes.some((n) => /RTH|refused|withdrawn|HOLDING/.test(n)),
         "chain " + a.rthChainFailed + ", banner " + JSON.stringify(w.banner())
-          + ", " + w.out.posts.length + " post(s). The supervising tab may be bringing her "
+          + ", " + w.out.posts.length + " post(s), notes " + JSON.stringify(w.out.notes) + ". The supervising tab may be bringing her "
           + "home this second - this tab may not say otherwise");
 }
 

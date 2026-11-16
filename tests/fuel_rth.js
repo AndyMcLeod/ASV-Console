@@ -469,6 +469,7 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
   // (`hang`), when the check lands it itself (w.land()).
   const FLIGHT_MS = +(/^const FUEL_FLIGHT_MS = (\d+);/m.exec(H) || [])[1];
   const BUSY_MS = +(/^const RTH_BUSY_RETRY_MS = (\d+);/m.exec(H) || [])[1];     // (8w)
+  const REASSESS_MS = +(/^const GUARD_REASSESS_MS = (\d+);/m.exec(H) || [])[1];  // (8x2: the guard's re-solve lap)
   const world = (mdl) => {
     const m0 = mdl || model;
     // `up` is the banner standing on the page (showBanner puts one up; the page's takeDownBanner lifts it by its text)
@@ -477,13 +478,17 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
     const mk = new Function("S", "asv0", "fuelModel", "energyLevel", "fuelHomeNeed", "rthTooFar", "fuelWatch", "rthLevel", "rthDecision",
       "homeFieldTick", "coarseHomeTick", "supervising", "showBanner", "logClient", "doRTH", "fuelSay", "fuelFmt", "fmtDist", "FUEL_AT_HOME_M",
       "FUEL_RESERVE_FRAC", "RTH_MAX_M", "fmtVol", "FUEL_FLIGHT_MS", "Date", "takeDownBanner", "passageHomeRefusal", "RTH_BUSY_RETRY_MS",
-      // `asv` a binding the world can set (8t: a page's first frame, before it has a position of its own)
-      "let asv = asv0;\nlet fuelRth = {acted: false, alerted: false};\nlet fuelNow = null, fuelErrSaid = false, fuelFlight = 0, fuelBoot, fuelRetryAt = 0;\n" + grab("fuelTick")
+      "GUARD_REASSESS_MS",
+      // `asv` a binding the world can set (8t: a page's first frame, before it has a position of its own); the guard's
+      // level and its last in-extremis action, which the monitor asks after an escape withdrew its way home (8x2)
+      "let asv = asv0;\nlet fuelRth = {acted: false, alerted: false};\nlet fuelNow = null, fuelErrSaid = false, fuelFlight = 0, fuelBoot, fuelRetryAt = 0;\n"
+      + "let guardLevel = 'clear', guardEscapeAt = 0;\n" + grab("fuelTick")
       + "\n" + grab("fuelWatchAt") + "\n" + grab("fuelOutOfRangeSay") + "\n" + grab("fuelReserveOf") + "\n" + grab("homeHowSay")
       // (the page's own answer to "withdrawn, but not called off" - home moved, the guard's escape - which the end-of-plan
       // chain asks too: 8x, passage_sail 16h and 17w)
       + "\n" + grab("rthNotCalledOff")
-      + "\nreturn {tick: fuelTick, latch: () => ({...fuelRth}), now: () => fuelNow, flight: () => fuelFlight, setAsv: (v) => { asv = v; }};");
+      + "\nreturn {tick: fuelTick, latch: () => ({...fuelRth}), now: () => fuelNow, flight: () => fuelFlight, setAsv: (v) => { asv = v; },"
+      + " guard: (lv, at) => { guardLevel = lv; guardEscapeAt = at; }};");
     // (2026-11-10 review) .then is handed `w.outcome` when it settles - what became of the post, as doRTH answers it
     // (undefined: taken; {notTaken: <cmd()'s answer>}: not) - before the finally, as a promise chain runs them
     const flown = () => { const p = { thens: [], catch() { return p; }, then(fn) { p.thens.push(fn); return p; },
@@ -500,7 +505,7 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
       // (2026-11-13) why no passage home can be planned past RTH_MAX_M - a reason unless the world says none (8u), so `far`
       // is out of range as every check before 8u has it
       () => (w.passageNo === undefined ? "a passage is being sailed - it goes home along itself, or not at all" : w.passageNo),
-      BUSY_MS);
+      BUSY_MS, REASSESS_MS);
     w.frame = (fuel, o) => w.api.tick({ armed: true, estop: false, behavior: "survey",
       status: m0.kind === "fuel" ? { fuel_l: fuel } : { battery_v: fuel }, ...(o || {}) });
     return w;
@@ -857,6 +862,37 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
         + "ESCAPE, sent the frame the escape is over (nothing in it); withdrawn by ANOTHER COMMAND: it stands",
         () => Xh.sent.length === 2 && xeHeld && Xe.sent.length === 2 && Xc.sent.length === 1,
         () => JSON.stringify({ home: Xh.sent.length, escape: [xeHeld, Xe.sent.length], other: Xc.sent.length }));
+  // 8x2 (2026-11-16, the boxed return's review). AFTER THE ESCAPE'S WITHDRAWAL, ASKED AGAIN ONCE THE GUARD IS QUIET. The boxed
+  // return (home within RTH_MAX_M) took the far return's fence that day, and an escape the vessel did NOT take (refused,
+  // unanswered: she is not in "escape", so rthDecision sends) left the guard re-solving every GUARD_REASSESS_MS - each lap
+  // withdrew the next try, a way home planned and withdrawn every few seconds, its banners over the in-extremis alarm. Now
+  // nothing while the guard has commanded an escape within two re-solve laps (each re-solve commands one: guardEscapeAt);
+  // sent once it has not - whatever guardLevel reads: "clear" would never come for a guard reading slow beside a berth for
+  // good, and (the second review) guardLevel is left at "helm" by frames that do not write it - the guard's own hold, a
+  // clear frame not released - so a gate on it waited for good, nothing said. Home moved is asked again at once, as 8x.
+  const Xq = world(); Xq.hang = true; Xq.frame(60);
+  Xq.outcome = { notTaken: { withdrawn: true, by: "the guard's escape" } }; Xq.land();
+  Xq.api.guard("helm", Xq.clock - REASSESS_MS / 3); Xq.frame(59.9, { behavior: "hold" }); const xqLap = Xq.sent.length;
+  Xq.api.guard("slow", Xq.clock - 1.5 * REASSESS_MS); Xq.frame(59.8, { behavior: "hold" }); const xqNext = Xq.sent.length;
+  Xq.api.guard("slow", Xq.clock - 2.5 * REASSESS_MS); Xq.frame(59.7, { behavior: "hold" }); const xqQuiet = Xq.sent.length;
+  // (sent: the wait is spent with it - a withdrawal for home moved next is asked again at once, the guard at helm or not)
+  Xq.outcome = { notTaken: { withdrawn: true, by: "home moved" } }; Xq.land();
+  Xq.api.guard("helm", Xq.clock - 1000); Xq.frame(59.6, { behavior: "hold" }); const xqHome = Xq.sent.length;
+  const Xm = world(); Xm.hang = true; Xm.frame(60);
+  Xm.outcome = { notTaken: { withdrawn: true, by: "home moved" } }; Xm.land();
+  Xm.api.guard("helm", Xm.clock - 1000); Xm.frame(59.9, { behavior: "hold" });
+  // (and a STALE helm, its own world: guardLevel left at helm, no escape commanded for ten laps - sent)
+  const Xs = world(); Xs.hang = true; Xs.frame(60);
+  Xs.outcome = { notTaken: { withdrawn: true, by: "the guard's escape" } }; Xs.land();
+  Xs.api.guard("helm", Xs.clock - 10 * REASSESS_MS); Xs.frame(59.9, { behavior: "hold" });
+  check("8x2. WITHDRAWN BY THE GUARD'S ESCAPE, the low-fuel RTH is asked again once the guard is QUIET: nothing while it is in "
+        + "extremis, commanding an escape each re-solve lap (" + (REASSESS_MS / 1000) + " s) - nothing within two laps of the last; "
+        + "sent once none for two, and with guardLevel still reading helm (a stale level: no escape commanded); withdrawn because "
+        + "home moved, asked again at once whatever the guard reads",
+        () => REASSESS_MS > 0 && xqLap === 1 && xqNext === 1 && xqQuiet === 2 && /LOW FUEL/.test(Xq.sent[1].why) && xqHome === 3
+              && Xm.sent.length === 2 && Xs.sent.length === 2,
+        () => JSON.stringify({ reassess: REASSESS_MS, lap: xqLap, nextLap: xqNext, quiet: xqQuiet, home: xqHome, homeAtHelm: Xm.sent.length,
+                               staleHelm: Xs.sent.length }));
   // 8y (2026-11-14). LATE IS ASKED AGAIN: past RTH_MAX_M the chart read along the way home that did not finish in
   // CORRIDOR_WAIT_MAX_MS is given up (passagePlanFor) and doRTH answers LATE (passage_sail 17v). Taken as a refusal, the
   // latch was kept for good - below her point, a server stall away from never being sent home. Now as BUSY: nothing sent

@@ -333,7 +333,7 @@ check("16. ... and a stopped boat does not re-arm anything either",
   var deepWhy = () => [], openWaterWhy = () => [], fmtDist = (m) => Math.round(m) + " m";
   // (cmdGen and escapeGen are eval-scoped lets: read through the var below, never re-declared out here - 18b)
   eval(grabDecl("planGen") + "\n" + grabDecl("cmdGen") + "\n" + grab("offshoreWhy") + "\n" + grab("setPlanIntent") + "\n" + grab("wptRole")
-       + "\nvar gensNow = () => [cmdGen, escapeGen];");
+       + "\nvar gensNow = () => [cmdGen, escapeGen, cmdUnstamped, cmdPressedMax];");
   var planIntent = null;
   // (HOW SHE ARRIVES is arrivalSay's line, 2026-10-08 - it reads the vessel's speeds and laws, none of which this
   // world has; these checks are about the routing lines, and say nothing of the arrival)
@@ -359,13 +359,24 @@ check("16. ... and a stopped boat does not re-arm anything either",
   const gn0 = gensNow(); setPlanIntent("goto", {routed: false}, R(2)); const gn1 = gensNow();
   setPlanIntent("escape", null, R(1)); const gn2 = gensNow();
   setPlanIntent("goto", {routed: false}, R(2), true); const gn3 = gensNow();
+  // (2026-11-16, the boxed return's review: and WHEN each was pressed - a command handed its press time keeps the latest
+  // (cmdPressedMax), one handed none counts as a bare landing (cmdUnstamped), the guard's upkeep and the escape neither:
+  // a press made before an RTH's is not "another command" to it - command_result 54i, 54k)
+  setPlanIntent("goto", {routed: false}, R(2), false, 5000); const gn4 = gensNow();
+  setPlanIntent("transit", {routed: false}, R(2), false, 4000); const gn5 = gensNow();
+  setPlanIntent("goto", {routed: false}, R(2), true, 9000); setPlanIntent("escape", null, R(1), false, 9500); const gn6 = gensNow();
   const ownSites = [/setPlanIntent\(kind, plan, plan\.route, true\);/.test(grab("reapproachIfSetOff")),
-                    /setPlanIntent\(beh, plan, tail, !!auto\);/.test(grab("resumeHeldLeg"))];
+                    /setPlanIntent\(beh, plan, tail, !!auto, pressedAt\);/.test(grab("resumeHeldLeg"))];
   check("18b. a commanded motion counts cmdGen, the guard's escape escapeGen (not cmdGen), the guard's own upkeep neither - and the "
-        + "re-approach and the guard's own resume of a held leg say they are its upkeep",
+        + "re-approach and the guard's own resume of a held leg say they are its upkeep; and each command's press time kept, the "
+        + "latest, one with none a bare landing - the upkeep's and the escape's neither",
         gn1[0] === gn0[0] + 1 && gn1[1] === gn0[1] && gn2[0] === gn1[0] && gn2[1] === gn1[1] + 1 && gn3[0] === gn2[0] && gn3[1] === gn2[1]
+        && gn1[2] === gn0[2] + 1 && gn2[2] === gn1[2] && gn3[2] === gn2[2] && gn3[3] === gn0[3]
+        && gn4[0] === gn3[0] + 1 && gn4[2] === gn3[2] && gn4[3] === Math.max(gn3[3], 5000)
+        && gn5[0] === gn4[0] + 1 && gn5[2] === gn4[2] && gn5[3] === gn4[3]
+        && gn6[0] === gn5[0] && gn6[2] === gn5[2] && gn6[3] === gn5[3]
         && ownSites.every(Boolean),
-        JSON.stringify({gn0, gn1, gn2, gn3, ownSites}));
+        JSON.stringify({gn0, gn1, gn2, gn3, gn4, gn5, gn6, ownSites}));
 
   // 19. A PARTIAL lane must read differently from a full one - the distinction that matters
   // on the water: a route that rode the lane over part of itself and sat on a channel

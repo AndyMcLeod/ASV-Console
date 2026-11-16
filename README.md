@@ -3549,11 +3549,37 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    she is under way again. After an escape she took, she holds where the guard put her and nothing
    is sent home from that hold; the plan she is next commanded on goes home at its end. A Stop,
    Pause, Hold or E-STOP, another command, End of plan switched away, a new link, and a hold while
-   it plans still end it, as before. Two limits are older than this change and still stand. An
-   end recorded this way lasts until she is next under way, and the console's own routed
-   re-approach (she was set off her hold) counts as under way. And the boxed return within 50 km
-   has no such fence: when a home moved into range is asked again, nothing withdraws that plan
-   before it is sent. **One way home is planned
+   it plans still end it, as before. One limit is older than this change and still stands. An end
+   recorded this way lasts until she is next under way, and the console's own routed re-approach
+   (she was set off her hold) counts as under way. **The return within 50 km is kept the same way
+   (2026-11-16).** It is planned in one chart box, in seconds (a minute when the chart is read
+   wider). In that time it used to be sent whatever happened but a Stop, Pause, Hold or E-STOP
+   pressed after the first chart read, and, for a low-fuel one, the energy override. The RTH
+   button's, End of plan's and the low-fuel monitor's were sent after the guard's escape began
+   while they planned, after home moved, after End of plan was switched away, after a Go-To, and
+   after a Stop pressed during that first read. Now it is withdrawn, said, with nothing sent and no
+   survey break-off kept, by what withdraws the far return. That is asked after the first chart
+   read, before the route search, after it, and once more before the route is judged, so a route
+   refused to a home since moved is withdrawn, not refused. End of plan asks again after home moved
+   and after the guard's escape, as it does for the far return, and records every other
+   withdrawal. The low-fuel monitor asks again after those, as it does after an E-STOP. After the
+   guard's escape it waits until the guard is quiet: no escape commanded for two of its re-solves,
+   whatever level the guard last showed. Asked the next frame, an escape she did not take
+   withdrew every try, one a lap. A hold is waited through for the button and the monitor, not for
+   End of plan. The guard's
+   own upkeep of her plan is not another command, and since this change neither is a passage's
+   next section going out, nor the passage rejoined by itself at a Go-To's end. For the button and
+   the monitor, another command is one pressed after the RTH. A Go-To pressed first (a lock
+   transit's leg, say) that lands while the RTH plans is the older word, and the RTH is sent over
+   it, as before the fence; so is the frame that shows her on it, or on the console's own upkeep
+   (the passage rejoined at a Go-To's end). A command from another window is seen only as her
+   behavior changing, and still withdraws it. End of plan's RTH is withdrawn by any command that
+   lands. A ROC's home moves with the ship and the console chases it itself, so only a switch to
+   another home counts as home moved. The withdrawal is said in the banner. While one of the
+   guard's alarms stands (in extremis, an escape refused or not acknowledged, the HELM warning) it
+   is said in a note, and the alarm stays up. A window that
+   does not supervise asks nothing: End of plan's RTH plans nothing there, as the far return's
+   never did, and the button's is refused before it is sent. **One way home is planned
    at a time.** A second far RTH while one plans takes its answer about the way home (sent,
    refused, busy), and the low-fuel rule goes with it. A withdrawal or the override is the first
    press's own reason. The second asks its own press: if that still stands, its way home is
@@ -3652,7 +3678,7 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    where a passage home can be planned and a full tank reaches it with the 20% reserve. The coarse
    water distance home is built past 50 km there too, so the RTH point is measured by water. The
    Fuel row charges the way home from a far plan end when no passage is being sailed.
-   `tests/passage_sail.js` 13b, 16h, 16i, 17-17x, `tests/fuel_rth.js` 8v, 8w, 8x, 8y, 8y2, 9m, 11d, 11f, 11j, 11k, `tests/end_action.js` 18b, `tests/command_result.js` 54e, `tests/passage_plan.js` 16b, 16j-16u (16s-16u run the page against the console's own job code, `tests/lib/corridor_console.py`), `tests/enc_corridor.py` 4c-4g, `tests/corridor_read.js` 1c-1g, `tests/passage_tab.js` 3c. **Each section is planned at its own water.** The
+   `tests/passage_sail.js` 13b, 16h, 16i, 16s, 16t, 17-17x, `tests/fuel_rth.js` 8v, 8w, 8x, 8x2, 8y, 8y2, 9m, 11d, 11f, 11j, 11k, `tests/end_action.js` 18b, `tests/command_result.js` 5, 54e-54k, `tests/chart_box.js` 6, `tests/passage_plan.js` 16b, 16j-16u (16s-16u run the page against the console's own job code, `tests/lib/corridor_console.py`), `tests/enc_corridor.py` 4c-4g, `tests/corridor_read.js` 1c-1g, `tests/passage_tab.js` 3c. **Each section is planned at its own water.** The
    live water level follows the boat: the stations nearest her, now. A section is planned ahead of
    her and sailed over the hours after, often tens of km from those stations. So each section is
    planned at the **lowest level predicted along it over the hours she is expected in it**, from
@@ -4418,7 +4444,7 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    was answered. She arrives with the reserve either way; before, a dead supervising tab meant
    nobody sent her.
    `tests/fuel_rth.js` 6e, 8k-8u, 9f2, 9h-9j, 10g-10h; `tests/run_link_control.py` 21-21f;
-   `tests/energy_chartinfo.py` 14-15; `tests/command_result.js` 54b-54d; `tests/survey_break.js` 3b;
+   `tests/energy_chartinfo.py` 14-15; `tests/command_result.js` 54b-54d, 54g; `tests/survey_break.js` 3b;
    `tests/passage_sail.js` 8b2.
 
    **Home along the passage, not the straight line (2026-10-12).** The field covers only the chart
