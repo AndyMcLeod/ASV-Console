@@ -464,6 +464,9 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
       // `asv` a binding the world can set (8t: a page's first frame, before it has a position of its own)
       "let asv = asv0;\nlet fuelRth = {acted: false, alerted: false};\nlet fuelNow = null, fuelErrSaid = false, fuelFlight = 0, fuelBoot, fuelRetryAt = 0;\n" + grab("fuelTick")
       + "\n" + grab("fuelWatchAt") + "\n" + grab("fuelOutOfRangeSay") + "\n" + grab("fuelReserveOf") + "\n" + grab("homeHowSay")
+      // (the page's own answer to "withdrawn, but not called off" - home moved, the guard's escape - which the end-of-plan
+      // chain asks too: 8x, passage_sail 16h and 17w)
+      + "\n" + grab("rthNotCalledOff")
       + "\nreturn {tick: fuelTick, latch: () => ({...fuelRth}), now: () => fuelNow, flight: () => fuelFlight, setAsv: (v) => { asv = v; }};");
     // (2026-11-10 review) .then is handed `w.outcome` when it settles - what became of the post, as doRTH answers it
     // (undefined: taken; {notTaken: <cmd()'s answer>}: not) - before the finally, as a promise chain runs them

@@ -409,7 +409,8 @@ const rowText = (r) => r.lastChild.textContent;
              && /fl\.done = sailHomeFreshRun\(brk, far, missionAt, fl\);/.test(grab("sailHomeFresh"))
              && /return sailHome\(homePassageRecord\(out\.plan, fl\.lowFuel\), brkNow, far, missionAt, how\);/.test(grab("sailHomeFreshRun")),
       rth: /const missionAt = chained \|\| \(opts && opts\.breakWhy\) \? null : Date\.now\(\);/.test(rth)
-           && /const out = await sailHome\(H, brk, far, missionAt, \{fence: rthFence\(chained\), chained\}\);/.test(rth) && atPress(rth),
+           // (2026-11-16: the fence handed on a `how` doRTH keeps, so it can read back what withdrew the way home)
+           && /const how = \{fence: rthFence\(chained\), chained\};[^\n]*\n\s*const out = await sailHome\(H, brk, far, missionAt, how\);/.test(rth) && atPress(rth),
       press: atPress(go) && atPress(tr),
     };
     check("16. WHO STARTS ONE: Upload on both of its accepted paths but not Upload from here or the Continue past a hold; "

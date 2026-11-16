@@ -3508,15 +3508,40 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    sailed and done passes no rule to a later RTH. **The press is kept** (the
    review, the same day): the way home is planned for minutes, so it is withdrawn, said, with
    nothing sent, when before its first section goes a Stop, Pause, Hold or E-STOP is pressed, a
-   new link comes up, home moves, the guard's in-extremis escape steers her clear, this console
-   commands another motion (a survey uploaded over the survey counts, though the behavior does not
-   change), or she is commanded elsewhere. A hold is waited through, at the press or while it
+   new link comes up, home moves, the guard commands its in-extremis escape (taken or not), this
+   console commands another motion (a survey uploaded over the survey counts, though the behavior
+   does not change), or she is commanded elsewhere. When two of these happened before the planner
+   next looked, the operator's word is the one named. A hold is waited through, at the press or while it
    plans, and so is the guard's own upkeep of her plan (the routed re-approach, its own resume of a
    leg it held). End of plan is stricter. It is withdrawn by any change of behavior, a hold
-   included, and when End of plan is no longer RTH, since that is the operator's over-ride. A
+   included, and when End of plan is no longer RTH, since that is the operator's over-ride. It is
+   withdrawn too when she is no longer running her plan: a Pause or a Stop from another window
+   (which this window's own press count does not see), a disarm, a lost link, or the console
+   standing an unwatched boat down. A
    low-fuel RTH is withdrawn too when the energy override is turned on while it plans, as the
    boxed one is. When the way home is withdrawn because home moved, or by the guard's escape, the
-   monitor asks again: for the new home, and once the escape is over. **One way home is planned
+   monitor asks again: for the new home, and once the escape is over. **End of plan asks again
+   too (2026-11-16).** Neither of those is the operator's word against going home. A moved home
+   used to end End of plan's return for good, with the card reading REFUSED, and so did an escape
+   the guard commanded that she did not take. Now the banner says End of plan RTH WAITING and it
+   is asked again 15 s later: for the home she has now (the boxed return when that is within
+   50 km), along a passage or planned as one. Those 15 s are fenced as the planning is. A Stop,
+   Pause, Hold or E-STOP, another command (a plan uploaded counts), End of plan switched away, a
+   new link or a hold in that time ends it. The end is said in the banner, in place of the waiting
+   banner; if something else has been raised since (the guard's alarm), it is said in a note and
+   the alarm stays up. The waits after busy and after an unfinished chart read are fenced the same
+   way. After an escape it is asked again only if the guard has been quiet since: reading clear,
+   and not in extremis again since the wait began. Otherwise it ends there and she is commanded by
+   hand, as after any in-extremis episode. It is asked again once per run: if the guard commands
+   another escape while that second way home plans, End of plan's return ends there, said, until
+   she is under way again. After an escape she took, she holds where the guard put her and nothing
+   is sent home from that hold; the plan she is next commanded on goes home at its end. A Stop,
+   Pause, Hold or E-STOP, another command, End of plan switched away, a new link, and a hold while
+   it plans still end it, as before. Two limits are older than this change and still stand. An
+   end recorded this way lasts until she is next under way, and the console's own routed
+   re-approach (she was set off her hold) counts as under way. And the boxed return within 50 km
+   has no such fence: when a home moved into range is asked again, nothing withdraws that plan
+   before it is sent. **One way home is planned
    at a time.** A second far RTH while one plans takes its answer about the way home (sent,
    refused, busy), and the low-fuel rule goes with it. A withdrawal or the override is the first
    press's own reason. The second asks its own press: if that still stands, its way home is
@@ -3559,7 +3584,7 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    where a passage home can be planned and a full tank reaches it with the 20% reserve. The coarse
    water distance home is built past 50 km there too, so the RTH point is measured by water. The
    Fuel row charges the way home from a far plan end when no passage is being sailed.
-   `tests/passage_sail.js` 13b, 17-17v, `tests/fuel_rth.js` 8v, 8w, 8x, 8y, 8y2, 9m, 11d, 11j, 11k, `tests/end_action.js` 18b, `tests/passage_plan.js` 16b, 16j-16r, `tests/corridor_read.js` 1c-1g, `tests/passage_tab.js` 3c. **Each section is planned at its own water.** The
+   `tests/passage_sail.js` 13b, 16h, 16i, 17-17w, `tests/fuel_rth.js` 8v, 8w, 8x, 8y, 8y2, 9m, 11d, 11j, 11k, `tests/end_action.js` 18b, `tests/command_result.js` 54e, `tests/passage_plan.js` 16b, 16j-16r, `tests/corridor_read.js` 1c-1g, `tests/passage_tab.js` 3c. **Each section is planned at its own water.** The
    live water level follows the boat: the stations nearest her, now. A section is planned ahead of
    her and sailed over the hours after, often tens of km from those stations. So each section is
    planned at the **lowest level predicted along it over the hours she is expected in it**, from
