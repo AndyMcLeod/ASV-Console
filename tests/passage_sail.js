@@ -297,7 +297,7 @@ console.log("The passage, sailed:");
        "rthNotCalledOff", "rthChainAgain", "chainRunKey", "rearmRthChain", "reapproachIfSetOff", "commandReads", "lateKeeps"].map(grab).join("\n"),
       "const api = {sailRecord, sailRefusal, sectionRest, sailPassage, passageTick, sailAtEnd, continuePassage, continueRefusal, divertPassage,",
       "  dropPassage, renderPassageControls, sailOwnsHold, sailLine, drawSail, doRTH, homeRecord, rthPending, chainFires, setPlanIntent, rearmRthChain,",
-      "  reapproachIfSetOff,",
+      "  reapproachIfSetOff, rthFence,",
       "  passageHomeRefusal, homePassageRecord, stop: (name) => { routeStopGen++; routeStopName = name; },",
       "  showBanner, takeDownBanner, swapBanner, RTH_WAITING_RE,",
       "  st: () => ({mission, runRoute, planIntent, planGen, cmdGen, escapeGen, cmdUnstamped, cmdPressedMax, passage, sailBusy, passageBusy, rthChainFailed, rthChained, rthChainBusyAt, homeFlight, passagePreRead}), set: (k, v) => { eval(k + ' = v'); }};",
@@ -1686,6 +1686,31 @@ const CHART_READ_GONE_MS = +(/const CHART_READ_GONE_MS = (\d+);/.exec(H) || [])[
           rejoin: [kR.cmds.length, kR.cmds[0] && kR.cmds[0][0], kR0.planGen, kR1.planGen, kR0.cmdGen, kR1.cmdGen],
           cont: [kC.cmds.length, kC0.cmdGen, kC1.cmdGen, kC0.cmdUnstamped, kC1.cmdUnstamped, kC1.cmdPressedMax >= kCp] }));
 
+  // ── 16u. THE RE-APPROACH DRAWS UNDER HER RUN'S OWN KIND (the review of the merge of 2026-11-16). The press fence (rthFence,
+  // 3974bff) does not count her behavior moving onto what a picture of this console's own put her on since the press (the
+  // older word landing, the console's own upkeep); the guard's routed re-approach drew under the LAST PICTURE's kind - a plan
+  // staged meanwhile (an Upload while she holds, her run and behavior as they were) - so a Start of that plan after the RTH
+  // was pressed read as the re-approach's own, and the RTH was sent over the survey she had just started. DRIVEN: the page's
+  // own reapproachIfSetOff and rthFence; an Upload staged before the RTH press, she set off and routed back, then Start (her
+  // behavior: the survey) - withdrawn, "she was commanded elsewhere (survey now)"; THE PAIR, no re-approach: the same.
+  // TEETH, sidecar ASV_HTML (2026-11-16): the re-approach drawn under the last picture's kind again -> 16u.
+  const u16 = async (reapproach) => {
+    const w = j16(); w.api.setPlanIntent("survey", null, [], false, performance.now());   // (an Upload staged while she holds)
+    const fence = w.api.rthFence(false);                                                  // (the RTH button, pressed after it)
+    const b = reapproach ? await back(w) : null;
+    const drawn = w.api.st().planIntent ? w.api.st().planIntent.kind : null, beh = w.S.behavior;
+    w.S.behavior = "survey";                                                              // (Start: she runs the staged plan)
+    const f = fence();
+    return { sent: b ? b.sent : "", drawn, beh, by: f ? f.by : null, say: f ? f.say : null };
+  };
+  const uR16 = await u16(true), uN16 = await u16(false);
+  check("16u. THE GUARD'S RE-APPROACH DRAWS UNDER HER RUN'S KIND, not a staged plan's: an Upload staged before an RTH press, she "
+        + "set off and routed back, then Start - the RTH is withdrawn (she was commanded elsewhere), as it is with no re-approach",
+        () => uR16.sent === "/api/cmd/reapproach" && uR16.drawn === uR16.beh && uR16.beh !== "survey"
+              && uR16.by === "another command" && uR16.say === "she was commanded elsewhere (survey now)"
+              && uN16.by === "another command" && uN16.say === uR16.say,
+        () => JSON.stringify({ reapproached: uR16, none: uN16 }));
+
   // ── 14. the water a section is planned at ───────────────────────────────────────────────────────────────────────
   const lv = (() => {
     const src = ["const WATER_REMOTE_KM = 75;", "const fmtDist = (m, dp) => m < 1000 ? Math.round(m) + ' m' : (m / 1000).toFixed(dp == null ? 2 : dp) + ' km';",
@@ -2653,6 +2678,15 @@ const CHART_READ_GONE_MS = +(/const CHART_READ_GONE_MS = (\d+);/.exec(H) || [])[
   const ouCh = await capped17y(uCh.api.doRTH({ chained: true }));
   const uMon = lowWorld17({ post: lost17y });
   const ouMon = await capped17y(uMon.api.doRTH({ why: LOWF, breakWhy: "fuel" }));
+  // ... and that wait ENDED where its promise stood (the review of the merge of 2026-11-16: "unknown" waits in 813932e's
+  // fenced retry since that merge, whose RTH_WAITING_RE did not match the lost reply's promise - the end was a 4 s note under
+  // "it is asked again in 15 s"): End of plan switched to LOITER in the wait, the timer run - the chain recorded, the
+  // promise replaced by its end. TEETH, sidecar ASV_HTML (2026-11-16): the promise unmatched again -> 17y (lostEnds).
+  const uLo = farWorld17({ S: S17q(HOLDING), post: lost17y }); uLo.api.set("rthChained", true);
+  const ouLo = await capped17y(uLo.api.doRTH({ chained: true }));
+  const uLoWait = said17(uLo);
+  uLo.S.completion = "loiter";
+  if ((uLo.later || [])[0]) await uLo.later[0].fn();
   const free17y = (w) => w.api.st().homeFlight === null && w.api.st().sailBusy === false && !w.api.st().passageBusy;
   const w17y = {
     chain: ogCh === undefined && gCh.cmds.length === 0 && !gCh.api.st().rthChainFailed && (gCh.later || []).length === 1
@@ -2671,6 +2705,9 @@ const CHART_READ_GONE_MS = +(/const CHART_READ_GONE_MS = (\d+);/.exec(H) || [])[
     lostChain: ouCh === undefined && uCh.cmds.length === 1 && !uCh.api.st().rthChainFailed && (uCh.later || []).length === 1
                && /RTH NOT ACKNOWLEDGED: .* - the way home as a passage, 55\.0 km\. If she did not take it, it is asked again in 15 s\.$/.test(said17(uCh)),
     lostMonitor: nt17(ouMon).unknown === true && uMon.cmds.length === 1,
+    lostEnds: ouLo === undefined && /If she did not take it, it is asked again in 15 s\.$/.test(uLoWait) && (uLo.later || []).length === 1
+              && uLo.api.st().rthChainFailed === true
+              && /^End of plan RTH is not asked again: End of plan was changed to LOITER/.test(said17(uLo)),
   };
   check("17y. THE FIRST SECTION'S CHART READ HAS AN END: given up for no answer, the send answers LATE - the end-of-plan chain "
         + "(from here and along an arrived passage) asked again 15 s on and not recorded refused, the monitor told late, the "
@@ -2683,7 +2720,8 @@ const CHART_READ_GONE_MS = +(/const CHART_READ_GONE_MS = (\d+);/.exec(H) || [])[
                                op: [ogOp, said17(gOp).slice(-120)], mon: [ogMon, said17(gMon).slice(0, 60)],
                                along: [ogAl, gAl.cmds.length, gAl.api.st().rthChainFailed, (gAl.later || []).length, said17(gAl).slice(0, 160)],
                                stop: [ohSt, hSt.cmds.length, hSt.letGo, said(hSt).slice(-160)], fence: [ohHm, hHm.letGo, said(hHm).slice(-160)],
-                               lost: [ouCh, uCh.cmds.length, (uCh.later || []).length, said17(uCh).slice(-120)], lostMon: ouMon }));
+                               lost: [ouCh, uCh.cmds.length, (uCh.later || []).length, said17(uCh).slice(-120)], lostMon: ouMon,
+                               lostEnds: [ouLo, uLoWait.slice(-60), (uLo.later || []).length, uLo.api.st().rthChainFailed, said17(uLo).slice(0, 120), (uLo.notes || []).slice(-1)] }));
 
   console.log("\n" + (fails ? fails + " CHECK(S) FAILED (" + ran + " ran)" : "all checks passed (" + ran + ")"));
   process.exit(fails ? 1 : 0);

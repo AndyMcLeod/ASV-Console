@@ -3705,10 +3705,23 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    passage's next section is read is not reported as a section that could not be planned. Sending
    a section also no longer takes a network
    failure of its read as a refusal, and a lost reply to the section's post is asked again 15 s
-   later by End of plan and the low-fuel RTH (if she took it, her next frames say so and nothing
-   more is sent). `tests/unread_water.js` 3c-3g, 7b-7c, `tests/nogo_readout.js` 35-35h,
-   `tests/passage_sail.js` 4c2, 5w, 17y, `tests/command_result.js` 55-55c, `tests/fuel_rth.js` 8y3,
+   later by End of plan and the low-fuel RTH. If she took it, her next frames say so and nothing
+   more is sent, but only that first section is sailed: the rest of the way home is not followed
+   (a known limit). `tests/unread_water.js` 3c-3g, 7b-7c, `tests/nogo_readout.js` 35-35h,
+   `tests/passage_sail.js` 4c2, 5w, 17y, `tests/command_result.js` 55-55d, `tests/fuel_rth.js` 8y3,
    `tests/measure_tool.js` 15b4-15b5, `tests/turn_refusal.js` 14f, `tests/passage_plan.js` 16h2.
+   **Where these changes met (2026-11-16, the review of their merge).** The return within 50 km
+   now lets go of its chart read as soon as its press no longer stands (home moved, the guard's
+   escape, another command), as the far return does, rather than when the read ends. After it is
+   planned, what withdrew it is answered first, then the energy override, then a read given up:
+   a Go-To pressed while the read was given up withdraws it instead of having it asked again,
+   and under the override a low-fuel return whose read was given up is withdrawn by the override
+   instead of said WAITING. An Upload the console took without drawing its plan withdraws an RTH
+   pressed before it, the button's and the low-fuel monitor's as well as End of plan's. The
+   guard's re-approach to her hold is drawn as the plan she is running, not a plan staged since,
+   so a Start of that staged plan after an RTH press withdraws the RTH. When a lost reply's wait
+   ends without asking again, the end replaces the "asked again in 15 s" banner. `tests/command_result.js`
+   54k, 54l, 55d, `tests/pause_resume.js` 1n2, `tests/passage_sail.js` 16u, 17y, `tests/track_edge.js` 23.
    **The page never stops the way home's chart read (2026-11-15, a safety defect a review found).**
    The coarse home field (below) reads the same chart the passage home does: home to her, where the
    passage home reads her to home. The console names a read by its tiles, so from about 125 km out,
@@ -3732,8 +3745,8 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    where a passage home can be planned and a full tank reaches it with the 20% reserve. The coarse
    water distance home is built past 50 km there too, so the RTH point is measured by water. The
    Fuel row charges the way home from a far plan end when no passage is being sailed.
-   `tests/passage_sail.js` 13b, 16h, 16i, 16j, 16k, 16s, 16t, 17-17x, `tests/end_action.js` 14-16g, `tests/hold_point.js` 11,
-   `tests/escape_chain.py` 11-12, `tests/run_link_control.py` 15i-15l, `tests/fuel_rth.js` 8v, 8w, 8x, 8x2, 8y, 8y2, 9m, 11d, 11f, 11j, 11k, `tests/end_action.js` 18b, `tests/pause_resume.js` 1n2, `tests/command_result.js` 5, 54e-54k, `tests/chart_box.js` 6, `tests/passage_plan.js` 16b, 16j-16u (16s-16u run the page against the console's own job code, `tests/lib/corridor_console.py`), `tests/enc_corridor.py` 4c-4g, `tests/corridor_read.js` 1c-1g, `tests/passage_tab.js` 3c. **Each section is planned at its own water.** The
+   `tests/passage_sail.js` 13b, 16h, 16i, 16j, 16k, 16s, 16t, 16u, 17-17x, `tests/end_action.js` 14-16g, `tests/hold_point.js` 11,
+   `tests/escape_chain.py` 11-12, `tests/run_link_control.py` 15i-15l, `tests/fuel_rth.js` 8v, 8w, 8x, 8x2, 8y, 8y2, 9m, 11d, 11f, 11j, 11k, `tests/end_action.js` 18b, `tests/pause_resume.js` 1n2, `tests/command_result.js` 5, 54e-54l, `tests/chart_box.js` 6, `tests/passage_plan.js` 16b, 16j-16u (16s-16u run the page against the console's own job code, `tests/lib/corridor_console.py`), `tests/enc_corridor.py` 4c-4g, `tests/corridor_read.js` 1c-1g, `tests/passage_tab.js` 3c. **Each section is planned at its own water.** The
    live water level follows the boat: the stations nearest her, now. A section is planned ahead of
    her and sailed over the hours after, often tens of km from those stations. So each section is
    planned at the **lowest level predicted along it over the hours she is expected in it**, from

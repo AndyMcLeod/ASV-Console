@@ -559,8 +559,11 @@ check("22. ... and it never suppresses a DEVIATION, which is the forward progres
 check("23. it is ONE DECISION ABOUT ONE SITUATION — a new commanded motion clears it, so " +
       "it can never become a standing permission",
       () => {
-        const sp = H.slice(H.indexOf("function setPlanIntent"),
-                           H.indexOf("function setPlanIntent") + 1200);
+        // (read up to its early return, not a fixed 1200 characters: the merge of 2026-11-16 grew the
+        // command counting above the reset past that window - and the reset must stand BEFORE the
+        // return, so a command with no plan clears the override too)
+        const i0 = H.indexOf("function setPlanIntent("), i1 = H.indexOf("\n  if(!plan) return planIntent;", i0);
+        const sp = i0 >= 0 && i1 > i0 ? H.slice(i0, i1) : "";
         return /guardOverride = null; edgeSpentM = 0; edgeCount = 0;/.test(sp);
       },
       "setPlanIntent is written wherever runRoute is - every Go-To, RTH, transit and survey");

@@ -291,6 +291,13 @@ const PRELUDE = [
   // late, and the command's read record (commandReads) marked, so its later reads are answered at once
   "  if (W.coverLate) { if (ask) { ask.failed = 'the console gave no answer it could use to the chart read (' + W.coverLate + ')';",
   "                                ask.late = true; if (ask.read) ask.read.late = W.coverLate; } return false; }",
+  // W.coverWait: a read waited on for that many turns, its record asked at each (ask.read.gone() - as corridorAsk asks it,
+  // CHART_READ_GONE_MS apart) and let go at once when it is gone: out.letGo, the turn; W.coverTick(turn, read) what happens
+  // meanwhile, W.coverGone what happens after it is let go (54l)
+  "  if (W.coverWait) { for (let i = 1; i <= W.coverWait; i++) { if (W.coverTick) W.coverTick(i, out.reads);",
+  "      if (ask && ask.read && ask.read.gone && ask.read.gone()) { out.letGo = i;",
+  "        ask.failed = (ask.read.withdrawn && ask.read.withdrawn.say) || 'withdrawn'; if (W.coverGone) W.coverGone(); return false; }",
+  "      await null; } }",
   "  return true; };",
   // (the end-of-plan chain asked again shortly is the page's own rthChainRetry, lifted below: each ask of it is one entry
   // in out.later, its timer held - 55 counts them; bf0145a's stub of it went with the merge, a second declaration)
@@ -627,10 +634,11 @@ console.log("-- 54: a new mission's history (newMission) --");
         () => byE.out.posts.length === 0 && !!outE && !!outE.notTaken && outE.notTaken.withdrawn === true && outE.notTaken.by === "E-STOP"
               && byS.out.posts.length === 0 && !!outS && !!outS.notTaken && outS.notTaken.by === "STOP",
         JSON.stringify({ outE, outS, posts: [byE.out.posts, byS.out.posts] }));
-  // 54e (2026-11-16). THE BOXED RETURN'S ONLY WITHDRAWAL IS A STOP'S, AND FOR THE END-OF-PLAN CHAIN IT IS FINAL. The far
-  // return is fenced and asked again when it is withdrawn by no one's word against going home (home moved, the guard's
-  // escape: passage_sail 16h, 17w); the boxed one is withdrawn only by planInsideChart, which reads the four stop-class
-  // presses and nothing else - the operator's word. So the chain it withdraws stays recorded, as it always was.
+  // 54e (2026-11-16). THE BOXED RETURN WITHDRAWN BY A STOP: FOR THE END-OF-PLAN CHAIN IT IS FINAL. A Stop-class press is the
+  // operator's word, so the chain it withdraws stays recorded, as it always was. (Written when the boxed return's only
+  // withdrawal was planInsideChart's four stop-class presses; since 3974bff, merged 2026-11-16, it takes the far return's
+  // fence too - 54f-54h, 54l - and is asked again, as the far one is, for home moved and the guard's escape: passage_sail
+  // 16h, 17w.)
   const byC = world({}); byC.W.searching = () => byC.routeStopPressed("STOP");
   const outC = await byC.doRTH({ chained: true });
   check("54e. the END-OF-PLAN chain's boxed RTH withdrawn by a STOP pressed while it is searched is recorded (the card stops "
@@ -660,7 +668,11 @@ console.log("-- 54f-54h: the boxed return's press, kept (rthFence) --");
   const BOX = async (o, opts, ev, at) => {
     const w = world(o || {});
     if (o && o.intent) w.seed([{ lat: 9, lon: 9 }], o.intent);   // (this tab's last picture, drawn before the press - 54i)
-    if (ev) {
+    // (`at` an object: doRTH's own read WAITED ON, 50 turns, each turn's event at[turn], at.gone after it is let go - 54l)
+    if (at && typeof at === "object") {
+      w.W.coverWait = 50; w.W.coverTick = (i, n) => { if (n === 1 && at[i]) at[i](w); };
+      if (at.gone) w.W.coverGone = () => at.gone(w);
+    } else if (ev) {
       if (at == null) w.W.searching = (n) => { if (n === 1) ev(w); };
       else if (at === "ow") w.W.owRead = (n) => { if (n === 1) ev(w); };   // (planInsideChart's open-water read, before its first search)
       else w.W.routing = (n) => { if (n === at) ev(w); };     // (1: doRTH's own chart read; 2: planInsideChart's)
@@ -671,7 +683,7 @@ console.log("-- 54f-54h: the boxed return's press, kept (rthFence) --");
     return { w, ret, posts: w.out.posts.slice(), failed: st.rthChainFailed, chained: st.rthChained, later: w.out.later.slice(),
              banner: w.banner(), by: (w.out.logs.filter((l) => l[0] === "plan_withdrawn").pop() || [0, {}])[1].by || null,
              banked: w.out.banked.length, missions: w.out.missions.length, searches: w.out.searches, reads: w.out.reads,
-             pre: w.out.owReads + w.out.aisReads, notes: w.out.notes.slice(),
+             pre: w.out.owReads + w.out.aisReads, notes: w.out.notes.slice(), letGo: w.out.letGo == null ? null : w.out.letGo,
              said: w.out.recorded.filter((r) => r[0] === "banner" && /withdrawn/i.test(r[1])).length };
   };
   const ESC = (w) => w.escape(false), TOOK = (w) => w.escape(true);
@@ -936,13 +948,51 @@ console.log("-- 54f-54h: the boxed return's press, kept (rthFence) --");
     farRth: /setPlanIntent\(home \? "rth" : "transit", whole, route, append \|\| !!own, pressedAt != null \? pressedAt : fence && fence\.press\);/.test(grab("sailSend"))
             && /f\.press = at;/.test(grab("rthFence")),
     boxedRth: /setPlanIntent\("rth", plan, plan\.route, false, fence\.press\);/.test(grab("doRTH")),
+    // (and a command counted OUTSIDE setPlanIntent - doUpload's two not-drawn doors - records its press too: counted by
+    // cmdGen alone it withdrew End of plan's chain and no press, the review of the merge of 2026-11-16; pause_resume 1n2)
+    directCounts: (() => { const d = H.split("\n").filter((l) => /\bcmdGen\+\+/.test(l) && !/cmdKind = kind;/.test(l));
+                           return d.length >= 2 && d.every((l) => /cmdPressedMax = Math\.max\(cmdPressedMax, pressedAt\);/.test(l)); })(),
   };
   check("54k. THE WIRING OF 54i - EVERY COMMAND HANDS ITS PRESS ON: each setPlanIntent in the page is the escape's, the guard's "
         + "own upkeep's, or stamped with the press (taken at its function's entry, before it awaits); the RTH's own landing "
-        + "with its fence's press, the far one's through sailSend",
+        + "with its fence's press, the far one's through sailSend; and the commands counted outside it (doUpload's not-drawn "
+        + "doors) record their press too",
         () => Object.values(k).every(Boolean),
         JSON.stringify({ bad: Object.entries(k).filter(([, v]) => !v).map(([x]) => x), calls: SPI.length,
           bare: bare.map((l) => l.trim().slice(0, 110)), late }));
+
+  // 54l. THE BOXED RETURN'S READ IS LET GO BY ITS OWN FENCE (the review of the merge of 2026-11-16). The merge gave doRTH's
+  // boxed branch 3974bff's fence and bf0145a's read record apart (commandReads() bare): a Stop let its read go at once, but
+  // home moved, the guard's escape or another command only when the read ended - up to ENC_READ_MIN_MS for a console that
+  // never answers - the monitor's latch and the chain held meanwhile. DRIVEN: doRTH's own read waited on (W.coverWait), the
+  // event at its third turn: let go AT that turn, and answered as the fence answers it (54f-54g's words and outcomes). And
+  // the read record's withdrawal STANDS: with home moved back after the read was let go (the fence quiet again at its next
+  // ask), planInsideChart hands it back unsaid, and it is the fence's - the chain asked again for home moved - not a Stop's
+  // (recorded failed, by none). THE PAIR: the same world with nothing happening reads its 50 turns and sends.
+  // TEETH, sidecar ASV_HTML (2026-11-16): the read handed no fence -> 54l (let go at the read's end); the unsaid hand-back
+  // read as a Stop's again -> 54l.
+  {
+    const T3 = (ev) => ({ 3: ev });
+    const hB = await BOX({ brk: B }, {}, null, T3(HOME)), hM = await BOX({ brk: B }, FUEL, null, T3(ESC));
+    const hC = await BOX({ S: cs() }, CH, null, T3(GOTO)), hOk = await BOX({ brk: B }, {}, null, {});
+    const hBk = await BOX({ S: cs() }, CH, null, { 3: (w) => { w.home0 = w.W.S.home; HOME(w); }, gone: (w) => { w.W.S.home = w.home0; } });
+    const l = {
+      button: hB.letGo === 3 && press(hB, WD("home was moved"), "home moved"),
+      monitor: hM.letGo === 3 && told(hM, "the guard's escape"),
+      chain: hC.letGo === 3 && ends(hC, WD("this console commanded her elsewhere \\(goto\\)"), "another command"),
+      stands: hBk.letGo === 3 && waits(hBk, W_HOME, "home moved"),
+      sent: hOk.letGo === null && hOk.posts.length === 1 && hOk.posts[0] === "/api/cmd/rth" && hOk.reads >= 1,
+    };
+    check("54l. THE BOXED RTH'S CHART READ IS LET GO BY ITS OWN FENCE: home moved (the button's), the guard's escape (the "
+          + "monitor's) or a Go-To (the chain's) while doRTH's read is waited on let it go at once, answered as the fence answers "
+          + "it; the read's withdrawal stands - home moved back after, the chain is still asked again for home moved, not "
+          + "recorded as a Stop's; the same read with nothing happening runs to its end and the RTH is sent",
+          () => Object.values(l).every(Boolean),
+          JSON.stringify({ bad: Object.entries(l).filter(([, v]) => !v).map(([x]) => x),
+            button: [hB.letGo, hB.posts.length, hB.by, hB.banner.slice(0, 80)], monitor: [hM.letGo, hM.ret],
+            chain: [hC.letGo, hC.posts.length, hC.failed, hC.by], stands: [hBk.letGo, hBk.posts.length, hBk.failed, hBk.later.length, hBk.by, hBk.banner.slice(0, 80)],
+            sent: [hOk.letGo, hOk.posts, hOk.reads] }));
+  }
 }
 
 console.log("-- 1-2: cmd() answers THREE things, and the three are not the same thing --");
@@ -2176,6 +2226,34 @@ console.log("\n-- 55: a chart read the console gave no answer is not a refusal o
         && /Nothing was sent\. Command it again: the chart is asked for again then - the console goes on reading it meanwhile, and keeps what it reads\.$/.test(inLate.banner())
         && inReadOut === true && inRead.out.posts.length === 1,
         JSON.stringify({ late: [inLateOut, inLate.out.posts.length, inLate.banner()], read: [inReadOut, inRead.out.posts.length, inRead.banner().slice(0, 100)] }));
+  // 55d. THE ORDER AFTER THE BOXED PLAN (the review of the merge of 2026-11-16). bf0145a's give-up met 3974bff's fence in
+  //      that merge, and the FENCE is answered first: a Go-To pressed (the monitor's), or End of plan switched to LOITER (the
+  //      chain's), while planInsideChart's read of home was given up withdraws the return - answered "late", the monitor and
+  //      the chain asked again 15 s on, an RTH over the operator's word. And the ENERGY OVERRIDE before the give-up, as the
+  //      far return asks it (sailHomeFreshRun): below it the monitor's give-up said "Low-fuel RTH WAITING ... asked again in
+  //      15 s" under the override, which asks nothing again.
+  //      TEETH, sidecar ASV_HTML (2026-11-16): the give-up's block moved above the fence's -> 55d; the override asked below
+  //      the give-up again -> 55d.
+  const pm = world({ nogo: NOGO(), brk: { id: "B2", why: "fuel" } });
+  pm.W.routing = (n) => { if (n === 2) { pm.W.coverLate = LATE; pm.landed("goto", performance.now()); } };
+  const pmOut = await pm.doRTH({ why: "LOW FUEL", breakWhy: "fuel" });
+  const pc = world({ nogo: NOGO(), S: { behavior: "goto", status: { holding: true } } }); pc.setChained(true);
+  pc.W.routing = (n) => { if (n === 2) { pc.W.coverLate = LATE; pc.W.S.completion = "loiter"; } };
+  const pcOut = await pc.doRTH({ chained: true });
+  const ov = world({ nogo: NOGO(), coverLate: LATE, fuelNow: { override: true }, brk: { id: "B2", why: "fuel" } });
+  const ovOut = await ov.doRTH({ why: "LOW FUEL", breakWhy: "fuel" });
+  check("55d. AFTER THE BOXED PLAN, THE FENCE FIRST, THEN THE OVERRIDE, THEN A READ GIVEN UP: a Go-To pressed while home's read "
+        + "was given up withdraws the low-fuel RTH (another command - its latch kept), End of plan switched to LOITER ends the "
+        + "chain (recorded, not asked again); under the energy override a low-fuel RTH whose read was given up is withdrawn by "
+        + "the override, not said WAITING - nothing posted in each",
+        pmOut && pmOut.notTaken && pmOut.notTaken.withdrawn === true && pmOut.notTaken.by === "another command" && pm.out.posts.length === 0
+        && pcOut && pcOut.notTaken && pcOut.notTaken.by === "End of plan" && pc.after().rthChainFailed === true
+        && pc.out.later.length === 0 && pc.out.posts.length === 0
+        && ovOut === undefined && ov.out.posts.length === 0 && ov.out.later.length === 0 && ov.out.banked.length === 0
+        && /^Low-fuel RTH WITHDRAWN — the energy override was turned on while it was being routed/.test(ov.banner()),
+        JSON.stringify({ monitor: [pmOut, pm.out.posts.length, pm.banner().slice(0, 100)],
+                         chain: [pcOut, pc.after().rthChainFailed, pc.out.later.length, pc.banner().slice(0, 100)],
+                         override: [ovOut, ov.out.posts.length, ov.out.later.length, ov.banner().slice(0, 100)] }));
 }
 
 finished = true;

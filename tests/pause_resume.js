@@ -1169,10 +1169,14 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
       // (the last command counted is the Go-To that brought her to this hold: 1n's Upload wrote "survey", and a door that
       // wrote no name would pass on it)
       cmdKind = "goto";
-      const fence = rthFence(true), g0 = cmdGen;
+      // (and the RTH button's and the low-fuel monitor's fence, a PRESS's, taken beside it: it asks whether a command was
+      // pressed after it - cmdPressedMax - and reads no cmdGen. The merge of 2026-11-16 left the doors counting cmdGen alone,
+      // so the press stood and the way home was sent over the Upload - the review of that merge)
+      const fence = rthFence(true), press = rthFence(false), g0 = cmdGen;
       await up(setup);
-      const f = fence();
-      return { by: f ? f.by : null, say: f ? f.say : null, moved: cmdGen - g0, drawn: runRoute ? runRoute.map((p) => p.lat) : null,
+      const f = fence(), p = press();
+      return { by: f ? f.by : null, say: f ? f.say : null, pressBy: p ? p.by : null, pressSay: p ? p.say : null,
+               moved: cmdGen - g0, drawn: runRoute ? runRoute.map((p) => p.lat) : null,
                said: /THE CHART IS NOT SHOWING THE UPLOADED/.test(banners.join(" ")), sent: calls.length };
     };
     const routed = await across(() => { nogo = { ready: true, busy: false, band: "enc_harbour" }; reply = "upkeep"; });
@@ -1185,11 +1189,13 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     const SAY = "this console commanded her elsewhere (survey)";
     check("1n2. ... and that Upload, taken but not drawn - the guard's routed re-approach drew meanwhile - is still this "
           + "console's command: a far RTH asked before it is withdrawn by it (\"another command\", naming the Upload, not the "
-          + "picture up), through the routed door and the unrouted one; a REFUSED Upload moves nothing and the way home stands",
+          + "picture up) - End of plan's chain and a PRESS alike (the button, the low-fuel monitor) - through the routed door and "
+          + "the unrouted one; a REFUSED Upload moves nothing and the way home stands",
           () => routed.sent === 1 && routed.by === "another command" && routed.say === SAY && routed.moved === 1 && routed.said
-                && JSON.stringify(routed.drawn) === "[8]"
+                && JSON.stringify(routed.drawn) === "[8]" && routed.pressBy === "another command" && routed.pressSay === SAY
                 && unrouted.sent === 1 && unrouted.by === "another command" && unrouted.say === SAY && unrouted.moved === 1 && unrouted.said
-                && refused.sent === 1 && refused.by === null && refused.moved === 0,
+                && unrouted.pressBy === "another command" && unrouted.pressSay === SAY
+                && refused.sent === 1 && refused.by === null && refused.moved === 0 && refused.pressBy === null,
           () => JSON.stringify({ routed, unrouted, refused }));
   }
 

@@ -15221,8 +15221,11 @@ async function doRTH(opts){
   if(chained && !supervising()) return;
   const fence = rthFence(chained), fenced = () => supervising() ? fence() : null;
   // ITS READS AS ONE (commandReads): the read here and planInsideChart's after it - one given up for no answer ends both,
-  // and a Stop pressed while either is waited on withdraws it at once
-  const rd = commandReads();
+  // and a Stop pressed while either is waited on withdraws it at once - and so does its own FENCE (handed in, as sailSend
+  // hands the far return's): the merge of 2026-11-16 gave this return the fence and the read record apart, and a boxed RTH
+  // withdrawn by home moved, the escape or another command read on to the read's bound (up to ENC_READ_MIN_MS) before the
+  // fence was asked - the review of that merge
+  const rd = commandReads(fenced);
   await ensureNogoCovers([{lat:asv.lat,lon:asv.lon}, {lat:S.home.lat,lon:S.home.lon}], null, {read: rd});
   showBanner("Routing home… a long transit around obstacles can take several seconds.");
   await new Promise(r=>setTimeout(r,50));
@@ -15234,7 +15237,9 @@ async function doRTH(opts){
     g = fenced();
     return g ? {fenced: g} : p;
   }, "RTH");
-  if(plan.withdrawn){                // (see doGoTo; a chained RTH is not tried again by itself - a Stop's, said by planInsideChart)
+  // (a Stop's, said by planInsideChart - see doGoTo; a chained RTH is not tried again by itself. NOT one handed back UNSAID:
+  // that is the read record withdrawn by this return's own fence while a read was waited on - answered as the fence's, below)
+  if(plan.withdrawn && !plan.unsaid){
     if(chained) rthChainFailed=true;
     return {notTaken: {withdrawn: true, by: routeStopName}};   // the low-fuel monitor asks which stop (fuelTick)
   }
@@ -15243,7 +15248,8 @@ async function doRTH(opts){
   // again after home moved and the guard's escape (rthChainAgain: said WAITING, its wait fenced, once per run after an
   // escape), recorded after every other (the operator's word, a new link, a hold: the card stops promising a return).
   // Asked BEFORE a refusal is judged: a route refused to a home since moved is not the return's refusal.
-  const g = plan.fenced || fenced();
+  // (the read record's withdrawal STANDS - commandReads - and is what withdrew it, whatever the fence says now)
+  const g = plan.fenced || (plan.withdrawn ? {by: plan.by, say: plan.error} : null) || fenced();
   if(g){
     sayUnlessAlarm("RTH withdrawn: " + g.say + " while the way home was being routed. Nothing was sent.");   // (not over the escape's alarm)
     logClient("plan_withdrawn", {what: "RTH", by: g.by});
@@ -15251,6 +15257,19 @@ async function doRTH(opts){
     if(chained) rthChainFailed = true;
     updateMissionCard(); render();
     return {notTaken: {withdrawn: true, by: g.by}};
+  }
+  // ⚠ A LOW-FUEL RTH THE OVERRIDE HAS SINCE STOOD DOWN IS NOT POSTED (2026-11-10). The monitor asked for this seconds
+  // ago (the chart read and the route above took 7.3 s in the session that found it); the operator's answer to its
+  // banner is a click on the energy pill, and under the override nothing is monitored - the one reason this RTH was
+  // planned for is gone. Nothing has been sent and no break-off banked: she carries on as she was. NOT where this RTH
+  // ended a lock transit at its press (`lockWas`: the gates are back in the model, and "as she was" would be untrue) -
+  // that one goes home. ASKED HERE, after the fence and before a read given up or a refusal is judged, as the far return
+  // asks it (sailHomeFreshRun): below the give-up it said "Low-fuel RTH WAITING ... asked again in 15 s" under the
+  // override, which asks nothing again (the review of the merge of 2026-11-16). From here to the post nothing awaits.
+  if(opts && opts.breakWhy === "fuel" && !lockWas && fuelNow && fuelNow.override){
+    showBanner("Low-fuel RTH WITHDRAWN — the energy override was turned on while it was being routed, and under it "
+      + "nothing is monitored. She carries on as she was.");
+    updateMissionCard(); render(); return;
   }
   // ⚠ THE CHART READ HAD NO ANSWER THE PAGE COULD USE (2026-11-16, fetchENCBbox's bound): nothing was sent, and it is not a
   // refusal of the way home - the end-of-plan chain and the low-fuel monitor ask again RTH_BUSY_RETRY_MS on (as for the
@@ -15277,17 +15296,7 @@ async function doRTH(opts){
   // A HOME set at a berth is held OFF, at the nearest clear water - the route already ends
   // there (holdTarget) - and the vessel is told how much water is clear round that point.
   plan.holdClear = holdClearWithContacts(plan.route[plan.route.length-1] || S.home, plan.holdClear);   // + the contacts (2026-09-29)
-  // ⚠ A LOW-FUEL RTH THE OVERRIDE HAS SINCE STOOD DOWN IS NOT POSTED (2026-11-10). The monitor asked for this seconds
-  // ago (the chart read and the route above took 7.3 s in the session that found it); the operator's answer to its
-  // banner is a click on the energy pill, and under the override nothing is monitored - the one reason this RTH was
-  // planned for is gone. Nothing has been sent and no break-off banked: she carries on as she was. NOT where this RTH
-  // ended a lock transit at its press (`lockWas`: the gates are back in the model, and "as she was" would be untrue) -
-  // that one goes home.
-  if(opts && opts.breakWhy === "fuel" && !lockWas && fuelNow && fuelNow.override){
-    showBanner("Low-fuel RTH WITHDRAWN — the energy override was turned on while it was being routed, and under it "
-      + "nothing is monitored. She carries on as she was.");
-    updateMissionCard(); render(); return;
-  }
+  // (the energy override: asked above, after the fence)
   const rCoast = solveCoastFor(plan);
   const r = await routeCmd("/api/cmd/rth", {route:plan.route, hold_clear_m:plan.holdClear,
                        coast_from_m: rCoast ? rCoast.groundM : null});
@@ -17101,8 +17110,11 @@ async function sailHome(H, brk, far, missionAt = null, how = null){
       if(post && post.sent === false){ takeDownBanner(/^Routing home (along|as) (the|a) passage/); return "unsent"; }
       // LOST OR UNREADABLE: the console cannot tell whether she took it. Said so, and "unknown" - which the chain and the
       // monitor now ask again RTH_BUSY_RETRY_MS on (doRTH, fuelTick; the 2026-11-16 brief: it neither retried nor failed,
-      // and she held far out with the card promising a return): if she took it she is going home by then, an RTH, which
-      // neither sends again (the chain never fires off an RTH's hold; the monitor's rthDecision only latches).
+      // and she held far out with the card promising a return): if she took it she is on an RTH by then, which neither
+      // sends again (the chain never fires off an RTH's hold; the monitor's rthDecision only latches).
+      // ⚠ RESIDUAL (the review of the merge of 2026-11-16, pre-existing): she is on SECTION 1 only. This returns before the
+      // way-home record is kept (mission.passage, below), so passageTick follows nothing, and if she took it she holds at
+      // section 1's end, short of home.
       if(post && !post.refused){
         const again = how ? (how.again ? how.again() : !!(how.chained || how.lowFuel)) : false;
         showBanner(r.error + " - the way home " + (fresh ? "as a passage" : "along the passage") + ", " + fmtDist(far.m) + "."
@@ -17281,8 +17293,12 @@ function rthFence(chained){
  *  banner if that is still the one standing (swapBanner) - a 4 s note was all that said the return was over for good,
  *  where the same event while it planned leaves a sticky "RTH withdrawn". Over anything raised since (the guard's alarm)
  *  it is a note, and the alarm stands. A run commanded meanwhile takes the waiting banner down with the wait; and a tab
- *  that no longer supervises takes its own down and claims nothing - the promise is not its to keep, nor the end its to say. */
-const RTH_WAITING_RE = /^(End of plan )?RTH WAITING: /;
+ *  that no longer supervises takes its own down and claims nothing - the promise is not its to keep, nor the end its to say.
+ *  ⚠ AND A LOST REPLY'S PROMISE IS ONE (the review of the merge of 2026-11-16): since that merge "unknown" waits here too,
+ *  and sailHome words its wait "RTH NOT ACKNOWLEDGED: ... If she did not take it, it is asked again in 15 s." - which this
+ *  did not match, so its end was a 4 s note under a promise that stood. Matched by that promise, never by a lost reply
+ *  said without one (the operator's own press: nothing is asked again). */
+const RTH_WAITING_RE = /^(End of plan )?RTH WAITING: |^RTH NOT ACKNOWLEDGED: .* If she did not take it, it is asked again in \d+ s\.$/;
 let rthChainBusyAt = 0;
 function rthChainRetry(by){
   const at = rthChainBusyAt = Date.now(), fence = rthFence(true);
@@ -22090,7 +22106,11 @@ async function reapproachIfSetOff(s, st){
     if(planGen !== pg || chainRunKey(S) !== key || (rs && rs.run_seq != null && chainRunKey(rs) !== key)) return;
     // A committed route captures its reasoning (end_action 23b): the re-approach is one,
     // under the run's own kind, and it says why it exists.
-    const kind = (planIntent && planIntent.kind) || S.behavior || "goto";
+    // ⚠ HER RUN'S KIND - what she is on (the reply's state, else the frame) - NOT THE LAST PICTURE'S (the review of the merge
+    // of 2026-11-16): a plan staged meanwhile (an Upload while she holds: run and behavior as they were) left its own kind up,
+    // and the press fence (rthFence) reads her behavior moving onto a picture of this console's own as no new command - so a
+    // Start of that plan after an RTH was pressed read as this upkeep's, and the RTH was sent over the survey just started.
+    const kind = (rs && rs.behavior) || S.behavior || (planIntent && planIntent.kind) || "goto";
     runRoute = plan.route; runUnsafe = []; setPlanIntent(kind, plan, plan.route, true);   // (the guard's own upkeep: cmdGen)
     legStartsHere(0, r);                           // see doGoTo
     planIntent.why.unshift({t:"warn", s:"set "+fmtDist(st.off_station_m||0)
@@ -23854,7 +23874,7 @@ async function doUpload(opts){
       render(); return;
     }
     if(planGen !== was.gen || runRoute !== was.route){
-      cmdGen++; cmdKind = "survey";                // (taken, so this console's command, drawn or not - see the routed draw below)
+      cmdGen++; cmdKind = "survey"; cmdPressedMax = Math.max(cmdPressedMax, pressedAt);   // (taken, so this console's command, drawn or not - see the routed draw below)
       showBanner("Plan UPLOADED UNROUTED (" + raw.route.length + " waypoints) — but the boat "
         + "was commanded again while it was going out, so THE CHART IS NOT SHOWING THE "
         + "UPLOADED PLAN. Upload again before Start.");
@@ -24150,8 +24170,11 @@ async function doUpload(opts){
   // so an Upload whose reply came after it moved no count at all, and the way home planning at a plan's end - or waiting
   // out its 15 s - was sent over the plan the operator had just staged. The count moves here, drawn or not - and with it the
   // name a withdrawal says (cmdKind): the picture up is another's, the re-approach's under the run's own kind.
+  // ⚠ AND ITS PRESS TIME (cmdPressedMax), as setPlanIntent counts one (the review of the merge of 2026-11-16): the RTH
+  // button's fence and the low-fuel monitor's ask whether a command was PRESSED after theirs, and read no cmdGen - with the
+  // count alone, the Upload withdrew End of plan's chain and nothing else, and the RTH pressed before it was sent over it.
   if(planGen !== was.gen || runRoute !== was.route){
-    cmdGen++; cmdKind = "survey";
+    cmdGen++; cmdKind = "survey"; cmdPressedMax = Math.max(cmdPressedMax, pressedAt);
     showBanner("Plan UPLOADED (" + plan.route.length + " waypoints) — but the boat was "
       + "commanded again while it was going out, so THE CHART IS NOT SHOWING THE UPLOADED "
       + "PLAN. Upload again before Start.");
