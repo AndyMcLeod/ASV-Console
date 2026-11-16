@@ -245,7 +245,8 @@ const PRELUDE = [
   // THE BOXED RETURN'S FENCE (2026-11-16, 54f-54h): the page's own rthFence and the chain's ask-again (rthChainAgain,
   // rthChainRetry) are lifted, so what they read is here - the two counts setPlanIntent keeps (cmdGen, escapeGen: the
   // stub below counts them as the page does), the chain's one-shot and its retry, and the guard's level since an escape
-  "let cmdGen = 0, escapeGen = 0, cmdUnstamped = 0, cmdPressedMax = 0, rthChained = false, rthChainBusyAt = 0, rthChainEscapeRun = null, guardLevel = 'clear', guardEscapeAt = 0;",
+  // (and cmdKind, the kind counted with each command - what rthFence's withdrawal names: since the merge with 4ea0276)
+  "let cmdGen = 0, escapeGen = 0, cmdKind = null, cmdUnstamped = 0, cmdPressedMax = 0, rthChained = false, rthChainBusyAt = 0, rthChainEscapeRun = null, guardLevel = 'clear', guardEscapeAt = 0;",
   // what the command-bar handlers touch beyond the three motions
   "let pauseMark = {line:0}, resumeSlow = true;",
   // markPause() is what #b_pause claims BEFORE the console answers: where she stopped.
@@ -290,10 +291,11 @@ const PRELUDE = [
   // one. A stub that bumped it somewhere else would be testing a different rule.
   "let planGen = 0;",
   // (cmdGen and escapeGen as the page counts them: the guard's escape is escapeGen, its own upkeep - `own`, the routed
-  // re-approach and its own resume - neither; every other commanded motion is cmdGen. rthFence reads both: 54f)
-  "const setPlanIntent = (k, p, r, own, at) => { planGen++; if (k === 'escape') escapeGen++;",
+  // re-approach and its own resume, an escape's included - neither; every other commanded motion is cmdGen, its kind
+  // cmdKind. rthFence reads them: 54f)
+  "const setPlanIntent = (k, p, r, own, at) => { planGen++; if (!own) { if (k === 'escape') escapeGen++;",
   // (and when each was PRESSED, as the page keeps it: one handed no time counts as a landing - cmdPressedMax, 54i)
-  "  else if (!own) { cmdGen++; if (at == null) cmdUnstamped++; else cmdPressedMax = Math.max(cmdPressedMax, at); }",
+  "  else { cmdGen++; cmdKind = k; if (at == null) cmdUnstamped++; else cmdPressedMax = Math.max(cmdPressedMax, at); } }",
   "  planIntent = {kind:k, route:(r||[]).length};",
   // setPlanIntent's OWN first statement, which is a consequence of calling it at all
   "  guardOverride = null; edgeSpentM = 0; edgeCount = 0; guardActedAt = 0; holdWant = null;",
@@ -526,7 +528,8 @@ function world(opts) {
                            + grab("rthFence") + "\n" + grab("rthNotCalledOff") + "\n"
                            + "const rthChainRetry = (() => { const setTimeout = (fn, ms) => { out.later.push({fn, ms}); return 0; };\n"
                            + grab("rthChainRetry") + "\nreturn rthChainRetry; })();\n"
-                           + grab("rthChainAgain") + "\n"
+                           // (and the run key rthChainAgain marks an escape's wait by - chainRunKey, since the merge with 4ea0276)
+                           + grab("chainRunKey") + "\n" + grab("rthChainAgain") + "\n"
                            + grab("doRTH") + "\n" + grab("doGoTo") + "\n" + grab("doTransit")
                            + EPILOGUE)(W, setTimeout, clearTimeout, AbortController);
   W.api = api;              // so a fetch stub can act INSIDE the bundle mid-round-trip

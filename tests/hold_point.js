@@ -33,6 +33,7 @@
 //   doGoTo commands the operator's point rather than the route end -> 9
 //   the page never calls reapproachIfSetOff                        -> 12
 //   reapproachIfSetOff loses its authority gate                    -> 11
+//   ... or its supervising gate, or stands down for rthPending()  -> 11 (and passage_sail 16j)
 //
 // ⚠ PAGE CHECKS READ CODE, NOT COMMENTS. Every function grabbed from the page has its
 // line comments stripped before a regex touches it - the self-matching trap has now been
@@ -85,8 +86,10 @@ function grab(src, name) {
 // ⚠ BLOCK COMMENTS TOO. The first draft stripped only `//` lines, and a mutation that
 // commented the onState call out as `/* reapproachIfSetOff(s, st); */` SURVIVED check 12 -
 // the text was still there, inside a comment. Both forms go before a regex looks.
+// ⚠ AND CR-AWARE (2026-11-16): the page is CRLF in a checkout, and `.` stops at a CR, so `//.*$` stripped NO line comment
+// there - every one survived, and check 11's "rthPending() is not called" read its own explanation.
 const noComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, "")
-                           .replace(/^[^\n]*\/\/[^\n]*$/gm, (l) => l.replace(/\/\/.*$/, ""));
+                           .replace(/^[^\n]*\/\/[^\n]*$/gm, (l) => l.replace(/\/\/[^\r\n]*/, ""));
 
 // A pier lying east-west from e=-400 to e=+400, its near face at n=30, 300 m deep.
 function pierModel() {
@@ -406,11 +409,15 @@ check("5. holdClearM is the water round a point LESS the buffer: 12 m off the fa
         () => /Math\.max\(HOLD_RADIUS_MIN_M, \+\(mission\.approach_radius_m\) \|\| 0\)/.test(hr)
               && Math.abs(H.HOLD_RADIUS_MIN_M - 2.0) < 1e-9,
         "SimVcu holds within max(approach, 2.0); the client's disc must be the same disc");
-  check("11. the routed re-approach fires only with authority, only when the vessel ASKS, and "
-        + "never under a moving home or a pending end-of-plan RTH",
+  // (2026-11-16: from the SUPERVISING tab only - a view-only one was refused before the wire, said, every 3 s - and no
+  // longer stood down for a pending end-of-plan RTH: the far one plans for minutes, and she sat set off station with the
+  // way off for all of it; its fences and the chain's re-arm do not move for the re-approach - tests/passage_sail.js 16j)
+  check("11. the routed re-approach fires only with authority, only when the vessel ASKS, only from the supervising tab, "
+        + "and never under a moving home - and is not stood down while an end-of-plan RTH is pending",
         () => /st\.hold_wants_route/.test(re) && /s\.armed && !s\.estop/.test(re)
-              && /s\.home_following/.test(re) && /rthPending\(\)/.test(re)
-              && /routeCmd\("\/api\/cmd\/reapproach", \{route: plan\.route, hold_clear_m: plan\.holdClear\}\)/.test(re)
+              && /s\.home_following/.test(re) && /if\(!supervising\(\)\) return;/.test(re) && !/rthPending\(\)/.test(re)
+              && /const body = \{route: plan\.route, hold_clear_m: plan\.holdClear\};/.test(re)
+              && /routeCmd\("\/api\/cmd\/reapproach", body\)/.test(re)
               && /planNogoRoute\(/.test(re),
         "a re-approach sent to a boat the operator is driving is a control the console was never given");
   check("11b. ... one in flight at a time, with a floor between them",

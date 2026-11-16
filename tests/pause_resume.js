@@ -686,6 +686,9 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
       // seconds - so a guard deviation or an escape landing inside the window is ordinary,
       // not exotic. It installs a picture, which is what setPlanIntent means.
       if(reply === "race"){ runRoute = [{lat: 9, lon: 9}]; setPlanIntent("escape"); }
+      // (and the guard's routed re-approach to her hold, drawn as its own upkeep - guardOwn, counting nothing - under the
+      // run's own kind: a Go-To's hold here, so a withdrawal that named the picture up would say "goto": 1n2)
+      if(reply === "upkeep"){ runRoute = [{lat: 8, lon: 8}]; setPlanIntent("goto", null, runRoute, true); }
       return Promise.resolve({ ok: true, state: {} }); };
     const flashNote = (m) => unotes.push(m), showBanner = (m) => banners.push(m);
     const violatedAll = [];                    // what Upload's refusal highlights (1z7)
@@ -726,6 +729,10 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     // one. doUpload fences its draw on it now ("the draw may not overtake a command given
     // since"), so a stub that bumped it elsewhere would test a different rule.
     let planGen = 0;
+    // (and the far RTH's two counts - rthFence's - which an Upload TAKEN moves whether or not its picture is drawn: 1n2.
+    // This stub counts nothing: what is asked of it here is the draw, and the counting is end_action 18b's, on the page's own.)
+    // (and the press-time counts rthFence takes at the press, since the merge with 3974bff: cmdUnstamped, cmdPressedMax)
+    let cmdGen = 0, escapeGen = 0, cmdKind = null, cmdUnstamped = 0, cmdPressedMax = 0;
     const setPlanIntent = (kind) => { planGen++; planIntent = { kind, why: [] }; };
     // The page's ONE success test and its operator wording, carried across verbatim so a
     // change to either is a change HERE rather than in a copy that can drift.
@@ -1140,6 +1147,50 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
         () => "after the race the chart holds " + (raced ? raced.length + " wpt" : "null")
             + " (the command given since, not the upload), and the operator was "
             + (/THE CHART IS NOT SHOWING/.test(racedSaid) ? "told" : "TOLD NOTHING"));
+  // ⚠⚠ 1n2. ... AND AN UPLOAD THE VESSEL TOOK IS STILL THIS CONSOLE'S COMMAND, DRAWN OR NOT (the second review of
+  // 2026-11-16). The far RTH's fence (rthFence) counts the operator's commands by cmdGen, which only setPlanIntent moved -
+  // and 1n's draw is skipped exactly when something drew meanwhile. The guard's routed re-approach to her hold draws as its
+  // own upkeep, counting nothing, so an Upload answered after one moved no count at all, and the way home planning at a
+  // plan's end - or waiting out its 15 s - was sent over the plan the operator had just staged. DRIVEN: the page's own
+  // rthFence, taken as the end-of-plan chain takes it before the Upload and asked after, through both of doUpload's
+  // not-drawn doors (routed; unrouted, the chart model not ready and the operator saying yes). THE PAIR: a REFUSED Upload
+  // moves nothing and the fence stands.
+  // TEETH, sidecar ASV_HTML (2026-11-16): the routed door's count removed -> 1n2; the unrouted door's -> 1n2; either door's
+  // name (cmdKind) not written, and the fence naming the picture up again -> 1n2.
+  {
+    let routeStopGen = 0, routeStopName = null;
+    // eslint-disable-next-line no-eval
+    const rthFence = eval("(" + grab("rthFence") + ")");
+    const S0 = S;
+    S = { ...S0, run: "running", behavior: "survey", completion: "rth", boot_id: "b1",
+          home: { lat: 43.07, lon: -70.71 }, home_source: "sim" };
+    const across = async (setup) => {
+      // (the last command counted is the Go-To that brought her to this hold: 1n's Upload wrote "survey", and a door that
+      // wrote no name would pass on it)
+      cmdKind = "goto";
+      const fence = rthFence(true), g0 = cmdGen;
+      await up(setup);
+      const f = fence();
+      return { by: f ? f.by : null, say: f ? f.say : null, moved: cmdGen - g0, drawn: runRoute ? runRoute.map((p) => p.lat) : null,
+               said: /THE CHART IS NOT SHOWING THE UPLOADED/.test(banners.join(" ")), sent: calls.length };
+    };
+    const routed = await across(() => { nogo = { ready: true, busy: false, band: "enc_harbour" }; reply = "upkeep"; });
+    const unrouted = await across(() => { nogo = { ready: false, busy: false, band: null, note: "extract failed" };
+                                          answer = true; reply = "upkeep"; });
+    const refused = await across(() => { nogo = { ready: true, busy: false, band: "enc_harbour" }; reply = "refuse"; });
+    S = S0; nogo = { ready: true, busy: false, band: "enc_harbour" }; answer = false;
+    // (and the withdrawal names the UPLOAD - "survey" - never the picture up, the re-approach's under the Go-To's kind: it
+    // said "commanded her elsewhere (goto)" of an Upload, the third review of 2026-11-16 - cmdKind)
+    const SAY = "this console commanded her elsewhere (survey)";
+    check("1n2. ... and that Upload, taken but not drawn - the guard's routed re-approach drew meanwhile - is still this "
+          + "console's command: a far RTH asked before it is withdrawn by it (\"another command\", naming the Upload, not the "
+          + "picture up), through the routed door and the unrouted one; a REFUSED Upload moves nothing and the way home stands",
+          () => routed.sent === 1 && routed.by === "another command" && routed.say === SAY && routed.moved === 1 && routed.said
+                && JSON.stringify(routed.drawn) === "[8]"
+                && unrouted.sent === 1 && unrouted.by === "another command" && unrouted.say === SAY && unrouted.moved === 1 && unrouted.said
+                && refused.sent === 1 && refused.by === null && refused.moved === 0,
+          () => JSON.stringify({ routed, unrouted, refused }));
+  }
 
   // ⚠⚠ 1k-1m. NOTHING THE VESSEL DID NOT TAKE IS DRAWN. doUpload installed the route,
   // the Intent card and its generation SEVENTY LINES IN FRONT of a post it never read - the

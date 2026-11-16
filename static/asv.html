@@ -2348,7 +2348,9 @@ let planGen = 0;
 // (`pressedAt`, performance.now()); the latest of those is kept, and one handed none is counted as a landing. The RTH
 // button's and the low-fuel monitor's press is withdrawn by a command pressed after it (rthFence); the end-of-plan chain,
 // by any command that lands (cmdGen) - it is the console's own, and the operator's every command outranks it.
-let cmdGen = 0, escapeGen = 0, cmdUnstamped = 0, cmdPressedMax = 0;
+// (and `cmdKind`, the kind of the last command cmdGen counted: what a withdrawal names - the picture drawn last may be the
+// guard's, an escape or its routed re-approach, and an Upload whose draw was skipped draws none: the third review, 2026-11-16)
+let cmdGen = 0, escapeGen = 0, cmdKind = null, cmdUnstamped = 0, cmdPressedMax = 0;
 /** The Intent card's lines for a plan's OFFSHORE MARKS (2026-10-12, routing.js offshoreDangerSide): those kept between her
  *  and the danger each marks, and a warning for any that were NOT - asked of every plan, laned or not. */
 function offshoreWhy(plan){
@@ -2367,10 +2369,15 @@ function offshoreWhy(plan){
 }
 function setPlanIntent(kind, plan, route, guardOwn, pressedAt){
   planGen++;
-  if(kind === "escape") escapeGen++;
-  else if(!guardOwn){
-    cmdGen++;
-    if(pressedAt == null) cmdUnstamped++; else cmdPressedMax = Math.max(cmdPressedMax, pressedAt);   // (when it was pressed: above)
+  // (the guard's own upkeep counts NEITHER, an escape's included: the re-approach draws under the run's own kind, "escape"
+  // at an escape's hold, and counted as an escape it withdrew a far RTH asked from that hold every time she was set off and
+  // routed back, nothing sent - the second review of 2026-11-16)
+  if(!guardOwn){
+    if(kind === "escape") escapeGen++;
+    else {
+      cmdGen++; cmdKind = kind;
+      if(pressedAt == null) cmdUnstamped++; else cmdPressedMax = Math.max(cmdPressedMax, pressedAt);   // (when it was pressed: above)
+    }
   }
   // ⚠ A NEW COMMANDED MOTION IS A NEW DECISION. The operator's "proceed" was about one
   // situation on one track; carrying it into the next run would make a per-episode judgment
@@ -17001,11 +17008,12 @@ function rthFence(chained){
     // lost link, or the console standing an unwatched boat down: said as what the frame shows, her run, not as whose press)
     : chained && S.run !== "running"
       ? {by: "her run stopped", say: "her run was " + (S.run === "paused" ? "paused" : "stopped")}
-    // (the kind named is the command's, never the guard's escape that came after it: planIntent is the LAST picture)
+    // (the kind named is the command's own, counted with it - cmdKind - never the picture drawn last: that may be the guard's
+    // escape after it, or its routed re-approach under the run's kind, and an Upload whose draw was skipped draws nothing -
+    // "commanded her elsewhere (goto)" was said of an Upload at a Go-To's hold: the third review, 2026-11-16)
     : (chained ? cmdGen !== cg : cmdUnstamped !== cu || cmdPressedMax > at)
-      ? {by: "another command", say: planIntent && planIntent.kind === "rth" ? "a newer Return-to-Home was commanded"
-                                     : "this console commanded her elsewhere ("
-                                       + ((planIntent && planIntent.kind !== "escape" && planIntent.kind) || "a new plan") + ")"}
+      ? {by: "another command", say: cmdKind === "rth" ? "a newer Return-to-Home was commanded"
+                                     : "this console commanded her elsewhere (" + (cmdKind || "a new plan") + ")"}
     : chained && S.completion !== "rth"
       ? {by: "End of plan", say: "End of plan was changed to " + String(S.completion || "none").toUpperCase()}
     : escapeGen !== eg || (S.behavior === "escape" && beh !== "escape")
@@ -17032,7 +17040,8 @@ function rthFence(chained){
  *  chart read along the way home not finished in CORRIDOR_WAIT_MAX_MS - the read goes on in the console), or was withdrawn
  *  by no one's word against going home (rthChainAgain, 2026-11-16), so the one-shot is re-armed RTH_BUSY_RETRY_MS on and
  *  the chain's own condition (onState) fires it again if it still holds. A run commanded meanwhile re-arms the chain
- *  itself (rearmRthChain), and takes this retry with it (`rthChainBusyAt`).
+ *  itself (rearmRthChain), and takes this retry with it (`rthChainBusyAt`) - a new motion, never the guard's routed
+ *  re-approach to her hold, which is the same one carrying on: through that the wait stands, and its fence is asked.
  *  ⚠ THE WAIT IS FENCED AS THE PLANNING IS (the 2026-11-16 review). The withdrawn way home's fence ends with it, and the
  *  next is taken only when the chain fires again - so for RTH_BUSY_RETRY_MS nothing was asking. A new plan UPLOADED in the
  *  wait (staged while she holds: her run, behavior and hold as they were) was answered by an RTH sent over it, and a
@@ -17111,13 +17120,14 @@ function rthNotCalledOff(by){ return by === "home moved" || by === "the guard's 
  *  15 s later it was asked again, lap after lap, each with its banners over the alarm. `rthChainEscapeRun` is the run
  *  (this link's boot_id and run_seq) at whose end a wait has been armed after an escape: the second such withdrawal at
  *  that end is the chain's, recorded and said in a banner - the operator re-commands, and that run's end is a new one.
- *  Dropped wherever the chain itself is re-armed (rearmRthChain, a fresh run): she has been under way since. */
+ *  Dropped wherever the chain itself is re-armed (rearmRthChain, a fresh run): she has been under way on a new motion
+ *  since. The routed re-approach to her hold is not one, and keeps it (rearmRthChain). */
 let rthChainEscapeRun = null;
 function rthChainAgain(out, by){
   const notOff = out === "withdrawn" && rthNotCalledOff(by), esc = notOff && by === "the guard's escape";
   if(!(out === "busy" || out === "late" || notOff)) return false;
   if(esc){
-    const run = String(S.boot_id) + "/" + String(S.run_seq);
+    const run = chainRunKey(S);
     if(rthChainEscapeRun === run){
       sayUnlessAlarm("End of plan RTH withdrawn: the guard commanded an escape again while the way home was being planned. It has waited "
         + "once on the guard since she held here, and is not asked again. Nothing was sent - command her when it is safe.");
@@ -21708,9 +21718,40 @@ function endAction(){
 // which the `behavior !== "rth"` guard already excludes from re-firing. While the boat is
 // HOLDING - including the seconds doRTH spends routing - nothing is cleared, so the
 // one-shot still does its job.
+// ⚠ AND UNDER WAY ON THE MOTION SHE HELD ON IS NOT A COMMANDED RUN (2026-11-16, found by the reviews of the chain's
+// re-arm). The console's own ROUTED RE-APPROACH (reapproachIfSetOff -> Engine.reapproach: she was set beyond the water
+// certified clear round her hold, and is routed back) puts her under way for the leg back onto station, and it is the
+// same motion carrying on: the console keeps its run, its behavior and its run_seq (measured on a throwaway console:
+// every frame of the leg running and not holding, run_seq and behavior as at the hold, no field naming the leg). Read
+// as a commanded run, those frames cleared a chain that had been RECORDED - refused, withdrawn by the operator's word
+// while its way home planned, ended in its wait - and it fired again when she was back on station: an RTH sent over a
+// plan the operator had uploaded to stop it. So under way re-arms the chain only on a motion OTHER than the one she was
+// last seen holding on (`rthHeldRun`, chainRunKey: this link's boot_id and run_seq, written by every frame of a hold -
+// the chain fires only on one, after this has read it). A Go-To commanded over a Go-To (the 2026-08-01 case), the
+// guard's escape, a staged plan's Start and the chained RTH itself each move run_seq; the re-approach, an amend and a
+// resume do not. A console that publishes no run_seq is read as before: under way re-arms.
+// ⚠ "A MOTION OTHER THAN THE ONE SHE HELD ON" IS ANY COMMANDED ONE, THE GUARD'S OWN INCLUDED (its review, the same day):
+// the guard's HOLD rung (/api/cmd/hold) and its own resume of the leg it held (resumeHeldLeg, resumeHeldRun) are
+// commands of their own that move run_seq, so a chain recorded at her end is re-armed by them as by any new motion -
+// set off, routed back, held for a contact on the way and resumed, she is sent home from her hold over the word that
+// recorded it. Not fixed: it errs toward the return home, the one the rule exists for ("all end of mission should RTH
+// unless over-ridden by user").
+// ⚠ AND A NEW MOTION SEEN FIRST AT ITS HOLD RE-ARMS TOO (the review: pre-existing). A tab that saw no frame of it under
+// way - a Go-To whose target lies inside her arrival radius, a push dropped, a hidden tab polling once a minute - left
+// the new run on a spent chain, and her end of mission sent nothing. A hold frame whose motion is not the one she was
+// last seen holding on is that motion's: re-armed as under way would have (the fire site's `seqMoved` keeps the frame
+// that starts it). Not on a tab's first hold (rthHeldRun null): a reload is freshRun's (onState).
+let rthHeldRun = null;
+function chainRunKey(s){ return String(s.boot_id) + "/" + String(s.run_seq); }
 function rearmRthChain(s, st){
+  const key = chainRunKey(s);
   // (and a retry's wait with it - rthChainRetry - and the escape's once-per-run mark: rthChainAgain)
-  if(s.run==="running" && !(st||{}).holding){ rthChained=false; rthChainFailed=false; rthChainBusyAt=0; rthChainEscapeRun=null; }
+  const rearm = () => { rthChained=false; rthChainFailed=false; rthChainBusyAt=0; rthChainEscapeRun=null; };
+  if(s.run==="running" && (st||{}).holding){
+    if(s.run_seq != null && rthHeldRun !== null && key !== rthHeldRun) rearm();
+    rthHeldRun = key; return;
+  }
+  if(s.run==="running" && (s.run_seq == null || key !== rthHeldRun)) rearm();
 }
 // THE ROUTED RE-APPROACH. A station-keeping vessel that has been set beyond the water the
 // console certified clear round its hold point takes the way off and says so
@@ -21729,8 +21770,25 @@ async function reapproachIfSetOff(s, st){
   st = st || {};
   if(!(s && s.run==="running" && st.holding && st.hold_wants_route && st.hold)) return;
   if(!(s.armed && !s.estop)) return;               // not under autonomous command: alarm only
+  if(!supervising()) return;                       // the supervising tab routes her back: a view-only one commands nothing
   if(s.home_following) return;                     // a moving home is re-targeted by the chase
-  if(rthPending()) return;                         // the end-of-plan RTH is about to take over
+  // ⚠ NOT STOOD DOWN FOR A PENDING END-OF-PLAN RTH (2026-11-16). This returned while rthPending() - "the end-of-plan RTH
+  // is about to take over" - which was true when that return was always the boxed one, planned in seconds (2026-09-03).
+  // The far one is planned for minutes (a passage home, its chart read along the way up to CORRIDOR_WAIT_MAX_MS), and
+  // waits 15 s at a time while busy or asked again (rthChainRetry): for all of it she sat set off her station, beyond
+  // the water certified clear round it, with the way off. She is routed back meanwhile now. Neither fence is moved by
+  // it - the guard's own upkeep counts no command (setPlanIntent's `guardOwn`), keeps her run and her behavior - and its
+  // frames under way no longer re-arm the chain (rearmRthChain): one return comes when the way home is ready.
+  // (And a view-only tab sends nothing: it was refused before the wire, said in a note and the action history, every
+  // REAPPROACH_MIN_MS while she was set off.)
+  // ⚠⚠ BUT NEVER OVER A COMMAND BETWEEN SEND AND REPLY (its review, the same day, measured on a throwaway console with a
+  // link's slow upload): a re-approach that reached the console while the chained RTH held it ran AFTER it - the RTH's
+  // route replaced by the leg back, the far way home lost - and one answered after the RTH's reply drew the leg back
+  // over the way home, so the passage it was sailing was broken off. Three answers. Not sent while a route command is
+  // in flight (below). The run it was planned on rides it (`run_seq`): the console asks that, with her holding and her
+  // behavior, under the lock it uploads under (Engine.reapproach), so one that lost the race is refused, never run. And
+  // its reply draws nothing once another plan's picture is up, or she is on another run (the reply's state or the frame).
+  if(routeCmdsInFlight > 0) return;                // another route command is between send and reply: her motion is about to change
   if(!nogo.ready || !asv) return;                  // no model now: nothing honest to send
   if(reapproachBusy || Date.now() - reapproachAt < REAPPROACH_MIN_MS) return;
   reapproachBusy = true; reapproachAt = Date.now();
@@ -21749,8 +21807,13 @@ async function reapproachIfSetOff(s, st){
         + " — holding where it is with the way off. "+planWhy(plan) + (plan.uncharted ? ". A Go-To or RTH reads the chart further." : ""));
       return;
     }
-    const r = await routeCmd("/api/cmd/reapproach", {route: plan.route, hold_clear_m: plan.holdClear});
+    const key = chainRunKey(s), pg = planGen;
+    const body = {route: plan.route, hold_clear_m: plan.holdClear};
+    if(Number.isInteger(s.run_seq)) body.run_seq = s.run_seq;   // the run this way back is for (an older console ignores it)
+    const r = await routeCmd("/api/cmd/reapproach", body);
     if(!took(r)) return;                           // cmd() already said why
+    const rs = r && r.state;                       // (the console's state as it answered: a later command may have run first)
+    if(planGen !== pg || chainRunKey(S) !== key || (rs && rs.run_seq != null && chainRunKey(rs) !== key)) return;
     // A committed route captures its reasoning (end_action 23b): the re-approach is one,
     // under the run's own kind, and it says why it exists.
     const kind = (planIntent && planIntent.kind) || S.behavior || "goto";
@@ -23517,6 +23580,7 @@ async function doUpload(opts){
       render(); return;
     }
     if(planGen !== was.gen || runRoute !== was.route){
+      cmdGen++; cmdKind = "survey";                // (taken, so this console's command, drawn or not - see the routed draw below)
       showBanner("Plan UPLOADED UNROUTED (" + raw.route.length + " waypoints) — but the boat "
         + "was commanded again while it was going out, so THE CHART IS NOT SHOWING THE "
         + "UPLOADED PLAN. Upload again before Start.");
@@ -23803,7 +23867,14 @@ async function doUpload(opts){
   // throughout, and this round trip followed a routing that can take seconds. If anything
   // installed a picture while this was out, that command owns it and the operator is told
   // the chart is not the plan the vessel now holds.
+  // ⚠⚠ BUT THE UPLOAD WAS TAKEN, SO IT IS STILL THIS CONSOLE'S COMMAND (the second review of 2026-11-16). The far RTH's fence
+  // counts the operator's commands by cmdGen, which only setPlanIntent moved - and this draw is skipped exactly when
+  // something drew meanwhile. The guard's routed re-approach to her hold is such a draw (its own upkeep, counting nothing),
+  // so an Upload whose reply came after it moved no count at all, and the way home planning at a plan's end - or waiting
+  // out its 15 s - was sent over the plan the operator had just staged. The count moves here, drawn or not - and with it the
+  // name a withdrawal says (cmdKind): the picture up is another's, the re-approach's under the run's own kind.
   if(planGen !== was.gen || runRoute !== was.route){
+    cmdGen++; cmdKind = "survey";
     showBanner("Plan UPLOADED (" + plan.route.length + " waypoints) — but the boat was "
       + "commanded again while it was going out, so THE CHART IS NOT SHOWING THE UPLOADED "
       + "PLAN. Upload again before Start.");
