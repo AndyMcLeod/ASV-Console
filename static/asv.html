@@ -10520,15 +10520,26 @@ function coarseHomeTick(){
   if(coarseHome.tried === key && Date.now() - coarseHome.at < COARSE_HOME_RETRY_MS) return;
   coarseHomeBuild(key, here).catch((e) => { coarseHome = {...coarseHome, busy: false, at: Date.now(), note: "failed: " + ((e && e.message) || e)}; });
 }
-/** One coarse search in its own worker (the passage's has one message handler per plan in flight). */
+/** One coarse search in its own worker (the passage's has one message handler per plan in flight). Bounded by
+ *  COARSE_WORKER_MS (2026-11-15, as the passage's plan is - passageInWorker): a search that has not answered by then is
+ *  STOPPED (the worker terminated, a new one made for the next build) and said, so the build is free and tried again
+ *  COARSE_HOME_RETRY_MS on - one that never answered held `coarseHome.busy` for good. */
 function coarseHomeInWorker(msg){
   return new Promise((resolve) => {
     try{ if(!coarseHomeWorker) coarseHomeWorker = new Worker("/static/js/coarse_worker.js", {type: "module"}); }
     catch(e){ resolve({error: "no worker to search in (" + e + ")"}); return; }
     const id = ++coarseHomeSeq, w = coarseHomeWorker;
-    w.onmessage = (ev) => { const d = (ev && ev.data) || {}; if(d.id === id) resolve(d); };
-    w.onerror = (e) => { coarseHomeWorker = null; resolve({error: "the worker failed: " + ((e && e.message) || "error")}); };
-    w.postMessage({id, ...msg}, msg.grids);
+    let timer = null;
+    const done = (r) => { clearTimeout(timer); resolve(r); };
+    w.onmessage = (ev) => { const d = (ev && ev.data) || {}; if(d.id === id) done(d); };
+    w.onerror = (e) => { coarseHomeWorker = null; done({error: "the worker failed: " + ((e && e.message) || "error")}); };
+    timer = setTimeout(() => {
+      if(coarseHomeWorker === w) coarseHomeWorker = null;
+      try{ w.terminate(); }catch(e){}
+      done({error: "the search for the way home did not finish in " + Math.round(COARSE_WORKER_MS / 60000) + " min in its worker (stopped)", late: true});
+    }, COARSE_WORKER_MS);
+    try{ w.postMessage({id, ...msg}, msg.grids); }
+    catch(e){ done({error: "the search could not be sent to its worker (" + ((e && e.message) || e) + ")"}); }
   });
 }
 /** THE BUILD: the chart along the way home with its grids, the grids, the search - and the field kept with its key. */
@@ -10561,6 +10572,7 @@ async function coarseHomeBuild(key, here){
   if(st && st.late) return fail("the chart read along the way " + st.late);
   if(!st || st.error || st.state !== "done") return fail("the chart read along the way " + ((st && st.state) || "failed"));
   const g = await passageGrids(st.tiles || []);
+  if(g.late) return fail("the planning grids along the way " + g.late);   // (said, and built again COARSE_HOME_RETRY_MS on)
   const res = await coarseHomeInWorker({kind: "home", grids: g.grids, floorDm: Math.round(nogoDR().min * 10),
                                         airDm: Math.round(airNeedM() * 10), home, openWater: V.OPEN_WATER !== false});
   if(res.error) return fail(res.error === "unread" ? "home's own chart tile could not be read" : res.error);
@@ -15390,7 +15402,17 @@ let corridorAhead = {at: null, route: null};
 async function postCorridor(body, signal){
   return corridorReply(await fetch("/api/enc/corridor", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body), signal}));
 }
-async function getCorridor(id, signal){ return corridorReply(await fetch("/api/enc/corridor?id=" + encodeURIComponent(id), {signal})); }
+// ⚠ A READ THE CONSOLE NO LONGER HOLDS IS LOST, NOT REFUSED (2026-11-15, residual 3 of the corridor wait's reviews). The
+// console keeps its reads in memory: restarted, it answers a poll of the old read HTTP 404 - and where that poll landed
+// before this page saw the new boot frame, the read "failed: no such corridor read (usage: /api/enc/corridor?id=<job>)",
+// a developer's usage string on the banner and a FINAL refusal of the far RTH. The 404 is answered {lost} here, and
+// corridorWait asks for the read again as it was first asked (corridorStart keeps the ask on its answer): the console
+// rejoins a read of the same tiles or starts it again, and the tiles already read answer at once.
+async function getCorridor(id, signal){
+  const r = await fetch("/api/enc/corridor?id=" + encodeURIComponent(id), {signal});
+  if(r.status === 404) return {lost: true, id, error: "the console no longer holds that read (it was restarted, or the read made way for newer ones)"};
+  return corridorReply(r);
+}
 /** A corridor reply's body - or, for the console's own failure (HTTP 5xx: do_POST's catch, a proxy's), a throw naming it:
  *  no answer to take, asked again (corridorAsk). Its refusal (4xx, {error}) is an answer. */
 async function corridorReply(r){
@@ -15412,8 +15434,9 @@ function corridorFailure(e){
  *  30 min (12 of 18 tile(s) read)" at CORRIDOR_WAIT_MAX_MS, or, `mutedMs` given, "had no answer it could use from the
  *  console for 2 min (12 of 18 tile(s) read when it last answered; the last ask: HTTP 500 - ...)", `why` what the last ask
  *  got - from `st` the last status heard (null when the console never answered the ask itself). `kept` only when a tile is
- *  known to be read: the ones read are on the console's disk. */
-function corridorLate(st, mutedMs, why){
+ *  known to be read: the ones read are on the console's disk. `lost`: how many times the console lost the read while it
+ *  was waited on (corridorWait) - said, since a read lost over and over is why it did not finish. */
+function corridorLate(st, mutedMs, why, lost){
   const mute = mutedMs != null, said = [];
   // (the console counts a tile `done` when it is finished with it, read or FAILED - the third 2026-11-14 review: two
   // builds cut at their limit were said "2 of 9 read, kept")
@@ -15421,6 +15444,7 @@ function corridorLate(st, mutedMs, why){
   if(st) said.push(read + " of " + (st.total || 0) + " tile(s) read" + (mute ? " when it last answered" : "")
                    + (failed ? ", " + failed + " could not be" : ""));
   if(mute && why) said.push("the last ask: " + why);
+  if(lost) said.push("the console lost the read " + (lost > 1 ? lost + " times" : "once") + " and was asked for it again");
   const min = mute ? Math.max(1, Math.floor(mutedMs / 60000)) : Math.round(CORRIDOR_WAIT_MAX_MS / 60000);
   const late = (mute ? "had no answer it could use from the console for " : "did not finish in ") + min + " min"
              + (said.length ? " (" + said.join("; ") + ")" : "");
@@ -15444,12 +15468,15 @@ function corridorReadLine(c){
 }
 /** ONE ASK of the console - `ask(signal)`, postCorridor's or getCorridor's: its answer, or null when there is none to take -
  *  no answer in CORRIDOR_ASK_MS (aborted), a failure (the network, a reply that is not JSON, the console's own HTTP 5xx),
- *  or an answer that is not a status - and then `note.why` says which (corridorLate). */
-async function corridorAsk(ask, note){
+ *  or an answer that is not a status - and then `note.why` says which (corridorLate). `ms`: another bound than
+ *  CORRIDOR_ASK_MS, for the console's other answers a plan waits on (2026-11-15: a tile's planning grid - passageGrids -
+ *  and a passage end's chart - passageEndWorld; each answers an object), so there is ONE bounded, aborted ask. */
+async function corridorAsk(ask, note, ms = CORRIDOR_ASK_MS){
   const ac = typeof AbortController === "function" ? new AbortController() : null;
   let timer = null, why = null;
   const bound = new Promise((r) => { timer = setTimeout(() => {
-    why = "unanswered in " + Math.round(CORRIDOR_ASK_MS / 1000) + " s"; try{ if(ac) ac.abort(); }catch(e){} r(null); }, CORRIDOR_ASK_MS); });
+    why = "unanswered in " + (ms >= 120000 ? Math.round(ms / 60000) + " min" : Math.round(ms / 1000) + " s");
+    try{ if(ac) ac.abort(); }catch(e){} r(null); }, ms); });
   try{
     const st = await Promise.race([Promise.resolve().then(() => ask(ac ? ac.signal : undefined))
       .catch((e) => { why = why || corridorFailure(e); return null; }), bound]);   // (the abort's own rejection is not the why)
@@ -15462,11 +15489,13 @@ async function corridorAsk(ask, note){
  *  CORRIDOR_POLL_MS while there is no answer to take (corridorAsk - the console rejoins a read of the same tiles), to its
  *  answer: a status, or the console's refusal {error}. corridorLate(null, ...) once the console has answered nothing for
  *  CORRIDOR_MUTE_MS and CORRIDOR_MUTE_ASKS asks, or the wall clock has passed `until`; {gone: true} when `gone()`, asked
- *  after each wait, no longer wants it. */
+ *  after each wait, no longer wants it. A status carries what was asked (`asked`, not enumerable: no spread, log or
+ *  JSON copies it), so corridorWait can ask for a read the console has lost again. */
 async function corridorStart(body, until, gone){
   const t0 = Date.now(), note = {};
   for(let n = 1;; n++){
     const st = await corridorAsk((signal) => postCorridor(body, signal), note);
+    if(st && st.id && !st.error) Object.defineProperty(st, "asked", {value: body, configurable: true});
     if(st) return st;
     const muted = Date.now() - t0;
     if(Date.now() >= until || (n >= CORRIDOR_MUTE_ASKS && muted >= CORRIDOR_MUTE_MS)) return corridorLate(null, muted, note.why);
@@ -15479,22 +15508,38 @@ async function corridorStart(body, until, gone){
  *  polled again - to its last status (done, canceled, {error}). corridorLate's, the last status heard, when it is still
  *  running on a poll asked once the wall clock has passed `until`, or the console has answered nothing for
  *  CORRIDOR_MUTE_MS and CORRIDOR_MUTE_ASKS polls; {gone: true} when `gone()`, asked after each wait and before the poll,
- *  no longer wants it. */
+ *  no longer wants it. A read the console no longer holds (getCorridor's {lost}: it was restarted) is asked for again as
+ *  it was first asked (`st.asked`, corridorStart's), in the same poll, and that post's answer is taken as the poll's
+ *  would be - ONE loop, one clock and one count of the asks with no answer, so the loss adds no wait of its own; with
+ *  nothing to ask it again by, the loss is the answer, in this page's words. An answer that ends the wait without the
+ *  read (the console's refusal, the loss) leaves that read's line "given up", not "reading" (corridorGivenUp). */
 async function corridorWait(st, until, each, gone){
-  let heard = Date.now(), unheard = 0;                // (`st` the ask's answer, just heard)
-  const note = {};
+  let heard = Date.now(), unheard = 0, lost = 0, id = st ? st.id : null;   // (`st` the ask's answer, just heard)
+  const note = {}, asked = st ? st.asked : null;
   while(st && !st.error && st.state === "running"){
     if(each) each(st);
     await new Promise(r => setTimeout(r, CORRIDOR_POLL_MS));
     // (asked while the chart is read too - the 2026-11-13 review: a read of new tiles takes minutes, and the withdrawal waited
     // them out. The read itself goes on: the server shares a read of the same tiles with any other asking - corridor_start)
     if(gone && gone()) return {gone: true};
-    const over = Date.now() >= until, id = st.id;     // past the clock: this poll is the last, and its answer is taken
-    const ans = await corridorAsk((signal) => getCorridor(id, signal), note);
+    const over = Date.now() >= until; id = st.id;     // past the clock: this poll is the last, and its answer is taken
+    let ans = await corridorAsk((signal) => getCorridor(id, signal), note);
+    if(ans && ans.lost){
+      // THE CONSOLE HAS LOST THE READ (restarted under it): posted again as first asked, and what THAT answers is this
+      // poll's answer - running again (the tiles read answer at once), done, the console's refusal, or none to take, which
+      // counts as a poll with none does (the same mute rule, said with the progress last heard - the 2026-11-15 review: a
+      // wait of its own there said a silence that had not happened, and dropped what had been read).
+      if(!asked){ st = {id, error: ans.error}; break; }
+      lost++;
+      logClient("corridor_read", {id, state: "lost", done: st.done || 0, tiles: st.total || 0, n: lost});
+      ans = await corridorAsk((signal) => postCorridor(asked, signal), note);
+    }
     if(ans){ st = ans; heard = Date.now(); unheard = 0; }
-    else if(++unheard >= CORRIDOR_MUTE_ASKS && Date.now() - heard >= CORRIDOR_MUTE_MS) return corridorLate(st, Date.now() - heard, note.why);
-    if(over && st && !st.error && st.state === "running") return corridorLate(st);
+    else if(++unheard >= CORRIDOR_MUTE_ASKS && Date.now() - heard >= CORRIDOR_MUTE_MS) return corridorLate(st, Date.now() - heard, note.why, lost);
+    if(over && st && !st.error && st.state === "running") return corridorLate(st, null, null, lost);
   }
+  const ended = st ? st.error : null;                 // (a read's own answer, not a command's landing: took() is for those)
+  if(ended) corridorGivenUp(id);
   return st;
 }
 function toCorridor(st){
@@ -15556,15 +15601,18 @@ function routeAhead(here, rr, i0, aheadM){
 }
 /** THE READ-AHEAD (on every state frame): in the supervising window, while she runs a route, the tiles along its next
  *  CORRIDOR_AHEAD_M are asked for once she has made good CORRIDOR_AHEAD_EVERY_M since the last ask, or the route has
- *  changed - fire and forget; read tiles answer at once. */
+ *  changed - fire and forget; read tiles answer at once. The ask is corridorAsk's (2026-11-15): bounded by
+ *  CORRIDOR_ASK_MS and ABORTED - posted bare, one a stalled console never answered held one of the browser's few
+ *  connections to it for good, and each 2 km made good added another. */
 function corridorAheadTick(s){
   if(!asv || !(s && s.run === "running") || !supervising()) return;
   const rr = indexedRoute(); if(!rr || !rr.length) return;
   const here = {lat: asv.lat, lon: asv.lon};
   if(corridorAhead.route === rr && corridorAhead.at && distTo(corridorAhead.at, here) < CORRIDOR_AHEAD_EVERY_M) return;
   corridorAhead = {at: here, route: rr};
-  postCorridor({route: routeAhead(here, rr, window._wpIndex || 0, CORRIDOR_AHEAD_M), half_km: NOGO_RADIUS_M / 1000})
-    .catch(() => {});                          // a read that fails is read again by the box reads themselves
+  const body = {route: routeAhead(here, rr, window._wpIndex || 0, CORRIDOR_AHEAD_M), half_km: NOGO_RADIUS_M / 1000};
+  corridorAsk((signal) => postCorridor(body, signal))   // a read that fails is read again by the box reads themselves
+    .catch(() => {});
 }
 // ── THE PASSAGE, PLANNED COARSE (2026-10-12, step 4 of the long-transit plan) ──────────────────────────────────────
 // Andy: "Step 4" - a passage planner for the DIESEL hulls, with FUEL STOPS and a check that every leg between them
@@ -15590,6 +15638,29 @@ function passageHalfKm(points){
   return Math.max(PASSAGE_HALF_KM, Math.min(PASSAGE_HALF_MAX_KM, Math.round(L / 1000 / 5)));
 }
 const PASSAGE_GRID_FETCHES = 6;                // grids fetched at once
+// ⚠ THE REST OF A PLAN HAS AN END TOO (2026-11-15, residual 2 of the corridor wait's reviews). With the chart read
+// bounded (CORRIDOR_WAIT_MAX_MS), what followed it was not: each grid's fetch, the coarse search in its worker, and each
+// end's own chart read waited for an answer with no end - and passagePlanFor holds passageBusy (every far RTH "busy")
+// and homeFlight (every far RTH joins it) for as long as it runs, the coarse build its `busy`. Each has a limit now,
+// and a give-up is `late`, as the read's is: said by its own cause, and asked again by the end-of-plan chain and the
+// low-fuel monitor RTH_BUSY_RETRY_MS on - a refused way home is worse than a slow one.
+// SIZED FROM WHAT WAS MEASURED, GENEROUSLY (2026-11-15: a lab console over the 106 grids and the Portsmouth tiles on
+// disk; the session logs' 293 coarse builds and two passage plans). A limit is a timer, which a hidden tab fires up to a
+// minute late and never early; a page the browser froze fires it on waking, and that give-up is asked again like any.
+//   A GRID (393 KB off the console's disk): 636 fetches, six at a time - median 28-32 ms, the slowest 1.2 s (the first
+//   106 from a cold disk took 7.5 s in all, then 0.6-0.8 s); beside chart box reads the slowest was 149 ms. One ask
+//   PASSAGE_GRID_ASK_MS, 25 times that slowest; all of them PASSAGE_GRIDS_MAX_MS of wall clock, 40 times the slowest
+//   whole fetch - the corridor's largest read (600 tiles) at the cold rate is ~42 s.
+//   THE COARSE SEARCH: the logged plans took 245 ms (8 tiles) and 641 ms (17); over all 106 grids a 119 nm plan took
+//   4.5 s. The field home: median 168 ms of 293, the slowest 12.5 s; at its own limit of 60 tiles 5.5-6.6 s.
+//   COARSE_WORKER_MS is 24 times the slowest search logged.
+//   AN END'S CHART (/api/enc over its box): nine reads of three 20 km boxes at Portsmouth, every tile on disk: 11.3-15.9 s
+//   each (a 25 MB tile is parsed for each); a tile not on disk is read from NOAA at ~13-20 s. PASSAGE_END_READ_MS is 19
+//   times the slowest measured; the console goes on reading after the abort, and the tiles it reads are kept for the
+//   next ask.
+const PASSAGE_GRID_ASK_MS = 30000, PASSAGE_GRIDS_MAX_MS = 5 * 60 * 1000;
+const COARSE_WORKER_MS = 5 * 60 * 1000;
+const PASSAGE_END_READ_MS = 5 * 60 * 1000;
 let passage = null;                            // the last plan (drawn and summarized); an edit of the line drops it
 let passageBusy = false, passageStatus = "";
 let passageWorker = null, passageSeq = 0;
@@ -15721,28 +15792,90 @@ function passageLine(plan){
     + (bad ? " · " + bad + " leg(s) NOT planned" : "") + (short ? " · " + short + " short of the 20% reserve" : "")
     + (unchecked ? " · " + unchecked + " fuel leg(s) NOT checked" : short ? "" : " · all arrive above 20%");
 }
-/** The plan, in the worker (coarse_worker.js): {legs, lengthM, ports, ms} or {error}. The grids are transferred. */
+/** The plan, in the worker (coarse_worker.js): {legs, lengthM, ports, ms} or {error}. The grids are transferred.
+ *  {error, late: true} when it has not answered in COARSE_WORKER_MS: the worker is STOPPED (terminated - it answers one
+ *  plan at a time, and one stuck in a search would answer no other) and a new one is made for the next plan. */
 function passageInWorker(msg){
   return new Promise((resolve) => {
     try{
       if(!passageWorker) passageWorker = new Worker("/static/js/coarse_worker.js", {type: "module"});
     }catch(e){ resolve({error: "no worker to plan the passage in (" + e + ")"}); return; }
     const id = ++passageSeq, w = passageWorker;
-    const done = (r) => { w.onmessage = null; w.onerror = null; resolve(r); };
+    let timer = null;
+    const done = (r) => { clearTimeout(timer); w.onmessage = null; w.onerror = null; resolve(r); };
     w.onmessage = (ev) => { const d = (ev && ev.data) || {}; if(d.id === id) done(d); };
     w.onerror = (e) => { passageWorker = null; done({error: "the passage's worker failed: " + ((e && e.message) || "error")}); };
-    w.postMessage({id, ...msg}, msg.grids);
+    timer = setTimeout(() => {
+      if(passageWorker === w) passageWorker = null;
+      try{ w.terminate(); }catch(e){}
+      done({error: "the coarse plan did not finish in " + Math.round(COARSE_WORKER_MS / 60000) + " min in its worker (stopped)", late: true});
+    }, COARSE_WORKER_MS);
+    // (a plan that cannot be sent - a grid's bytes already handed over - is said; thrown from here it left the bound armed)
+    try{ w.postMessage({id, ...msg}, msg.grids); }
+    catch(e){ done({error: "the plan could not be sent to its worker (" + ((e && e.message) || e) + ")"}); }
   });
 }
-async function passageGrids(tiles){
-  const grids = [];
-  let missing = 0;
-  for(let k = 0; k < tiles.length; k += PASSAGE_GRID_FETCHES){
-    const got = await Promise.all(tiles.slice(k, k + PASSAGE_GRID_FETCHES).map(t =>
-      fetch("/api/enc/grid?tile=" + t.join(",")).then(r => r.ok ? r.arrayBuffer() : null).catch(() => null)));
-    for(const b of got){ if(b) grids.push(b); else missing++; }
+/** THE TILES' PLANNING GRIDS, FETCHED (passagePlanFor, coarseHomeBuild): PASSAGE_GRID_FETCHES at a time, each ask bounded
+ *  by PASSAGE_GRID_ASK_MS and aborted (corridorAsk). {grids, missing} - `missing` the tiles the console says it has no
+ *  grid for (HTTP 4xx: the tile could not be read - that water counts as unread); or {late}, the clause its callers say
+ *  it by, when the console has answered none for CORRIDOR_MUTE_MS and CORRIDOR_MUTE_ASKS asks in a row, or they are not
+ *  all in by PASSAGE_GRIDS_MAX_MS of wall clock; or {gone: true} when `gone()`, asked after each batch and each wait, no
+ *  longer wants them.
+ *  ⚠ NO ANSWER IS NOT A MISSING GRID. Each fetch was bare - a stalled console held the plan (passageBusy, homeFlight,
+ *  the coarse build's `busy`) for good - and one that FAILED (the network, the console's own HTTP 5xx) was counted
+ *  `missing`: unread water, so a console that hiccuped planned "part of it could not be planned", a FINAL refusal of the
+ *  far RTH naming the chart. Now a grid with no answer to take is asked again every CORRIDOR_POLL_MS, and a batch in
+ *  which the console answered nothing ends the round - the rest are not asked of a console that is not answering.
+ *  ⚠ AND AFTER SUCH A BATCH THE GRIDS ARE ASKED ONE AT A TIME (the 2026-11-15 review). The bound is on the whole of a
+ *  grid, headers and 393 KB of body, and six at once share the link: where each took 40 s of it (a browser away from
+ *  the console, on a slow link) every batch was cut at its bound and asked again whole, for good - the fetch with no
+ *  bound had planned that passage in two minutes. Alone, a grid has the link to itself (six times the rate), and a
+ *  console that is not answering is asked one request a round, not six. It stays one at a time for the rest of this
+ *  fetch: on the console's own machine a grid is ~30 ms, so nothing is lost by it.
+ *  ⚠ AND "NO GRID" IS ASKED ONCE MORE before the tile counts as missing: the console answers 404 for a grid it cannot
+ *  OPEN as well as for one never made, and it swaps a tile's grid in when it reads the tile again - on Windows a reader
+ *  that meets the swap is refused. A round on, the grid is there. */
+async function passageGrids(tiles, gone){
+  const grids = new Array(tiles.length).fill(null), t0 = Date.now(), note = {}, twice = new Set();
+  let missing = 0, todo = tiles.map((t, i) => i), heard = t0, unheard = 0, width = PASSAGE_GRID_FETCHES;
+  const ask = (t) => corridorAsk(async (signal) => {
+    const r = await fetch("/api/enc/grid?tile=" + t.join(","), {signal});
+    if(r.status >= 500){ const e = new Error("HTTP " + r.status); e.corridor = true; throw e; }   // (its own failure: no answer - corridorFailure)
+    return r.ok ? {grid: await r.arrayBuffer()} : {none: true};
+  }, note, PASSAGE_GRID_ASK_MS);
+  for(;;){
+    const left = [];
+    for(let k = 0; k < todo.length; ){
+      const part = todo.slice(k, k + width);
+      k += part.length;
+      note.why = null;                                // (what THIS batch's asks got, for the words below)
+      const got = await Promise.all(part.map(i => ask(tiles[i])));
+      let any = false;
+      got.forEach((g, q) => {
+        const i = part[q];
+        if(!g){ left.push(i); return; }
+        any = true;
+        if(g.grid) grids[i] = g.grid;
+        else if(twice.has(i)) missing++;              // (the console's "no grid", a second time: the tile is missing)
+        else{ twice.add(i); left.push(i); }
+      });
+      if(gone && gone()) return {gone: true};
+      if(any){ heard = Date.now(); unheard = 0; } else{ unheard++; width = 1; }
+      // (nothing answered, or the wall clock has passed: the rest are not asked in this round - the limit is judged below)
+      if(!any || Date.now() - t0 >= PASSAGE_GRIDS_MAX_MS){ left.push(...todo.slice(k)); break; }
+    }
+    if(!left.length) return {grids: grids.filter(Boolean), missing};
+    const now = Date.now(), mute = unheard >= CORRIDOR_MUTE_ASKS && now - heard >= CORRIDOR_MUTE_MS;
+    if(mute || now - t0 >= PASSAGE_GRIDS_MAX_MS){
+      const got = tiles.length - left.length;
+      return {late: (mute ? "had no answer it could use from the console for " + Math.max(1, Math.floor((now - heard) / 60000)) + " min"
+                          : "were not all fetched in " + Math.round(PASSAGE_GRIDS_MAX_MS / 60000) + " min")
+                    + " (" + got + " of " + tiles.length + " answered" + (note.why ? "; the last ask: " + note.why : "") + ")"};
+    }
+    await new Promise(r => setTimeout(r, CORRIDOR_POLL_MS));
+    if(gone && gone()) return {gone: true};
+    todo = left;
   }
-  return {grids, missing};
 }
 /** THE PASSAGE PLANNED for `points` (passagePoints' shape: her position first, a port; the last the arrival): the chart
  *  along it with its grids, the coarse plan in the worker, the fuel leg by leg, and its two ends in detail. `say(text)` is
@@ -15791,10 +15924,21 @@ async function passagePlanFor(points, say, gone){
     return {error: "the chart read along it failed: " + ((st && st.error) || "no answer")};
   corridorRead = toCorridor(st);
   say("planning the passage…");
-  const g = await passageGrids(st.tiles || []);
+  // ⚠ WHAT FOLLOWS THE READ IS GIVEN UP AS THE READ IS (2026-11-15; PASSAGE_GRID_ASK_MS' block): the grids not fetched,
+  // the coarse search not answered, an end's chart not answered or its route search run past its limit - each {late},
+  // in words naming that cause, so the far RTH answers "late" (asked again), not "refused". The chart read IS done by
+  // then, so its tiles are kept (`kept`): the next ask reads them at once. A withdrawal outranks each, as it does the clock.
+  const lateRest = (what, why) => {
+    logClient("passage_plan", {state: "late", what, id: readId, why: String(why).slice(0, 300)});
+    return {error: why, late: true, kept: true};
+  };
+  const g = await passageGrids(st.tiles || [], gone);
+  if(g.gone || gone()) return {gone: true};
+  if(g.late) return lateRest("grids", "the chart along it is read, but its planning grids " + g.late);
   const res = await passageInWorker({grids: g.grids, floorDm: Math.round(floorM * 10), airDm: Math.round(airNeedM() * 10), points,
                                      openWater: V.OPEN_WATER !== false});
   if(gone()) return {gone: true};
+  if(res.late) return lateRest("worker", res.error);
   if(res.error) return {error: res.error};
   const fuelLegs = passageFuelLegs(points, res.legs);
   const level0 = asv ? energyLevel(model, S && S.status) : null;
@@ -15806,8 +15950,12 @@ async function passagePlanFor(points, say, gone){
   plan.reserveAt = fuel.map((x, k) => !x || x.ok ? null : passageAlong(plan, fuelLegs[k], x.reachM));
   // ENDS FIRST: the harbor she leaves and the one she makes for, in detail, before the passage is offered to sail
   say("planning its two ends in detail…");
-  plan.ends = await planPassageEnds(plan);
+  plan.ends = await planPassageEnds(plan, gone);
   if(gone()) return {gone: true};
+  // (an end GIVEN UP: late, like the rest - and the coarse plan handed back with it, so Plan passage can still show what
+  // it has, NOT SAILABLE, rather than nothing: the 2026-11-15 review. The far RTH takes the late and asks again.)
+  if(plan.ends && [plan.ends.dep, plan.ends.arr].some(e => e && e.late))
+    return {...lateRest("ends", "its ends could not be planned in detail - " + passageEndsSay(plan.ends)), plan, id: st.id};
   logClient("passage_plan", {state: "planned", id: st.id, nm: +(plan.lengthM / 1852).toFixed(1), kn: twKn, floor_m: floorM,
     points: points.map(p => [+p.lat.toFixed(5), +p.lon.toFixed(5), p.port ? 1 : 0]),
     legs: res.legs.length, not_planned: res.legs.filter(x => x.error).map(x => ({i: x.i, why: x.error})),
@@ -15818,6 +15966,7 @@ async function passagePlanFor(points, say, gone){
 }
 /** PLAN PASSAGE: the chart along the line with its grids, the coarse plan in the worker, the fuel leg by leg (passagePlanFor). */
 async function planPassageNow(again){
+  const own = !again;                                // Plan passage's own press, not a far Go-To's
   again = again || "press Plan passage again";       // what asks again, in the refusal's words (a far Go-To's: goToOrPassage)
   // (said, not silent - the 2026-11-13 review: the way home planned as a passage holds the planner for minutes)
   if(passageBusy){ flashNote("Plan passage: " + (homeFlight ? "the way home is being planned as a passage - plan this when it is done."
@@ -15833,13 +15982,16 @@ async function planPassageNow(again){
   try{
     const out = await passagePlanFor(points, (t) => { passageStatus = t; updateTransitPanel(); }, () => gen !== passageGen);
     if(out.gone){ showBanner("Passage NOT planned: the line was edited while it was being planned - plan it again."); return; }
-    if(out.error){ showBanner("Passage NOT planned: " + out.error
+    // (an end GIVEN UP comes with the coarse plan - passagePlanFor: Plan passage keeps it, NOT SAILABLE and said why; a
+    // far Go-To's, which is planned to be sailed, is refused with the Go-To's own advice, as any give-up is)
+    if(out.error && !(out.plan && own)){ showBanner("Passage NOT planned: " + out.error
                      + (out.late && out.kept ? " - the tiles read are kept: " + again + " to go on from them"
                         : out.late ? " - " + again + " to ask again" : "") + "."); return; }
     const plan = out.plan;
     passage = plan;
     const endsBad = passageEndsSay(plan.ends);
-    showBanner(passageSummary(plan) + (endsBad ? " ⚠ NOT SAILABLE - its ends could not be planned in detail: " + endsBad + "."
+    showBanner(passageSummary(plan) + (endsBad ? " ⚠ NOT SAILABLE - its ends could not be planned in detail: " + endsBad
+                                                   + (out.late ? " - given up, not judged: " + again + " to plan them again" : "") + "."
       : plan.ends ? " Both ends planned in detail (leaving " + fmtDist(plan.ends.dep.km * 1000, 1)
                      + (plan.ends.arr ? ", arriving " + fmtDist(plan.ends.arr.km * 1000, 1) : "") + ")." : ""));
     if(!endsBad) passagePreRead = preReadFirstSection(plan);
@@ -15879,11 +16031,17 @@ async function passageEndWorld(pts){
   const b = {W: W0 - dlon, S: S0 - dlat, E: E0 + dlon, N: N0 + dlat};
   const big = encSpanRefusal(b);
   if(big) return {error: "its chart would take " + big};
-  let d = null;
-  try{
-    d = await (await fetch(`/api/enc?bbox=${b.W.toFixed(5)},${b.S.toFixed(5)},${b.E.toFixed(5)},${b.N.toFixed(5)}&min_depth=${V.NOGO_MIN_DEPTH_M}`)).json();
-  }catch(e){ return {error: "its chart could not be read (" + ((e && e.message) || e) + ")"}; }
-  if(!d || d.error || !d.band) return {error: "its chart could not be read" + (d && d.error ? " (" + d.error + ")" : "")};
+  // ⚠ THE READ HAS AN END, AND NO ANSWER IS NOT A REFUSAL (2026-11-15; PASSAGE_GRID_ASK_MS' block). The fetch was bare: a
+  // console that never answered held the plan for good, and one that failed (the network, its own HTTP 5xx) was said
+  // "could not be read" - an end not planned, a FINAL refusal of the far RTH. Now the ask is corridorAsk's, bounded by
+  // PASSAGE_END_READ_MS and aborted, and no answer to take is {late}: said as that, and the plan asked for again. What the
+  // console answers of the chart itself (a refusal in words, a layer missing) stays an answer.
+  const note = {}, url = `/api/enc?bbox=${b.W.toFixed(5)},${b.S.toFixed(5)},${b.E.toFixed(5)},${b.N.toFixed(5)}&min_depth=${V.NOGO_MIN_DEPTH_M}`;
+  const d = await corridorAsk(async (signal) => corridorReply(await fetch(url, {signal})), note, PASSAGE_END_READ_MS);
+  if(!d) return {error: "its chart had no answer it could use from the console (" + (note.why || "no answer") + ")", late: true};
+  // (the console's own reason said: with NOAA unreachable it answers no `band` and a `note` - "ENC offline (no cache for
+  // this tile)" - which was dropped, the refusal naming no cause: the 2026-11-15 review)
+  if(d.error || !d.band) return {error: "its chart could not be read" + (d.error ? " (" + d.error + ")" : d.note ? " (" + d.note + ")" : "")};
   if((d.partial || []).length) return {error: "its chart arrived without " + d.partial.join(", ")};
   const feats = d.features || [];
   const frame = planeFrame(featuresBboxRef(feats) || {lat: mid, lon: (b.W + b.E) / 2});
@@ -15935,15 +16093,23 @@ function portSectionLine(P, c, bo, pts, model){
   return {line: bo ? [bo.at, ...v, c.to] : [...v, c.to], ow: "detours"};
 }
 /** One section planned in detail on its own chart read: {ok: true, km, wpts} or {ok: false, why}. (Its ends are a
- *  port's: the harbor as a Go-To is, the passage line from its join point - portSectionLine.) */
+ *  port's: the harbor as a Go-To is, the passage line from its join point - portSectionLine.) {ok: false, why, late:
+ *  true} for a GIVE-UP, not a judgment of the water (2026-11-15): its chart not answered (passageEndWorld), or its route
+ *  search run past ROUTE_WORKER_TIMEOUT_MS (planOffThread hands `here` that reason) - it had made the end "not planned in
+ *  the route worker", final. The only two such timeouts in the session logs (Go-To searches, 2026-10-17) were both said
+ *  as the page woke from the browser's sleep, 8 and 93 minutes after the search was sent: a limit met asleep, not a
+ *  search too long. A worker that is gone for good, or a search that threw, is no give-up: asking again cannot help. */
 async function planPassageEnd(c, plan){
   const world = await passageEndWorld([c.from, ...c.via, c.to]);
-  if(world.error) return {ok: false, why: world.error};
+  if(world.error) return world.late ? {ok: false, why: world.error, late: true} : {ok: false, why: world.error};
   const ps = portSectionLine(plan, c, null, [...c.via, c.to], world), via = ps.line.slice(0, -1);
   const r = await planOffThread({op: "holdRoute", world, args: {target: c.to, holdOpts: holdOpts(), start: c.from, via,
                                                                   keepRightAll: true, standoffM: transitStandoffM(),
                                                                   ropts: {openWater: ps.ow}}},
-                                () => null, (x) => x);
+                                (ranPast) => (ranPast ? {ranPast} : null), (x) => x);
+  // (the limit that stopped the worker may be a search's AHEAD of this one in its lane - every search waiting on that
+  // worker is ended with it, routeWorkerLost - so it is said as the worker's stop, with that reason)
+  if(r && r.ranPast) return {ok: false, why: "its route search was given up - the route worker was stopped at a search's limit (" + r.ranPast + ")", late: true};
   if(!r) return {ok: false, why: "it could not be planned in the route worker"};
   if(r.ht && r.ht.error) return {ok: false, why: (r.ht.reason && r.ht.reason.mode === "chart_failed") ? r.ht.error : "its end is not clear water to hold at"};
   const pl = r.plan;
@@ -15953,11 +16119,14 @@ async function planPassageEnd(c, plan){
   if(pl.unroutable && pl.unroutable.length) return {ok: false, why: "no route clear of the chart's keep-outs on " + pl.unroutable.length + " leg(s)"};
   return {ok: true, km: routeLenM(c.from, pl.route) / 1000, wpts: pl.route.length};
 }
-/** The passage's first and last sections planned in detail: {dep, arr} (arr null for a passage of one section). */
-async function planPassageEnds(plan){
+/** The passage's first and last sections planned in detail: {dep, arr} (arr null for a passage of one section - and
+ *  where the first was GIVEN UP (`late`: the plan is asked for again whole) or `gone()` no longer wants the plan: the
+ *  second is not waited on behind a console that is not answering, or for a press withdrawn). */
+async function planPassageEnds(plan, gone){
   const secs = plan.sections || [];
   if(!secs.length) return null;
   const dep = await planPassageEnd(secs[0], plan);
+  if(dep.late || (gone && gone())) return {dep, arr: null};
   const arr = secs.length > 1 ? await planPassageEnd(secs[secs.length - 1], plan) : null;
   return {dep, arr};
 }
@@ -18918,7 +19087,9 @@ function routeWorkerLost(L, why, forGood){
   if(lane.w){ try{ lane.w.terminate(); }catch(e){} }
   lane.w = null; lane.held = new Set();
   if(forGood) lane.dead = why;
-  for(const j of [...lane.jobs.values()]) j.done({ok: false, error: why});
+  // (`late`: the lane's worker was stopped at a search's limit and is made again for the next - a give-up, where one
+  // gone for good is not: planOffThread tells a world's `here` so, 2026-11-15)
+  for(const j of [...lane.jobs.values()]) j.done({ok: false, error: why, late: !forGood});
 }
 /** The search on THIS thread, as it always ran: the console told first that this tab is busy (supervisorBusy). */
 async function planHere(here){
@@ -18983,7 +19154,9 @@ async function planOffThread(job, here, adopt = (out) => out, L = "cmd"){
   if(d.ok !== true){                                         // (the worker's answer, not a command's: took() is for those)
     logClient("route_worker", {op: job.op, lane: L, ok: false, error: String(d.error || "no answer").slice(0, 300),
                                ms: Date.now() - t0});
-    return Wd ? here() : planHere(here);
+    // (a world's `here` is told when the search was GIVEN UP at its limit - `d.late`, routeWorkerLost - so a passage's end
+    // can say so and be asked again: planPassageEnd, 2026-11-15)
+    return Wd ? here(d.late ? String(d.error || "the route search was stopped at its limit") : null) : planHere(here);
   }
   sea.laneUsed = d.sea.laneUsed; sea.lanePartial = d.sea.lanePartial;
   if(L === "cmd")                                            // (an ETA row's searches are not recorded: every 50 m of her)

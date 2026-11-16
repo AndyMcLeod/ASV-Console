@@ -1595,7 +1595,8 @@ console.log("The passage, sailed:");
     planNow: /if\(passageBusy\)\{ flashNote\("Plan passage: "/.test(grab("planPassageNow")),
     corridor: [cw.indexOf("if(gone && gone()) return {gone: true};"), cw.indexOf("const over = Date.now() >= until"),
                cw.indexOf("await corridorAsk((signal) => getCorridor(id, signal), note);"),
-               cw.indexOf("if(over && st && !st.error && st.state === \"running\") return corridorLate(st);")].every((k, i, a) => k > 0 && (i === 0 || k > a[i - 1]))
+               // (the give-up at the clock says how many times the console LOST the read too, since 2026-11-15: its 4th argument)
+               cw.indexOf("if(over && st && !st.error && st.state === \"running\") return corridorLate(st, null, null, lost);")].every((k, i, a) => k > 0 && (i === 0 || k > a[i - 1]))
               && /st = await corridorStart\(\{[\s\S]*?\}, until, gone\);\s*if\(\(st && st\.gone\) \|\| gone\(\)\) return \{gone: true\};[^\n]*\s*if\(st && st\.late\) return late\(st\);/.test(pf)
               && /st = await corridorWait\(st, until, \(s\) => \{[\s\S]*?\}, gone\);\s*\/\/[^\n]*\s*if\(\(st && st\.gone\) \|\| gone\(\)\)\{ corridorGivenUp\(readId\); return \{gone: true\}; \}\s*if\(st && st\.late\) return late\(st\);/.test(pf),
   };

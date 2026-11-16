@@ -12,6 +12,14 @@
 //        a new route; never from a window that does not supervise, a boat not running, or one with no fix; the width the
 //        guard's own box reaches;
 //   5    the wiring: the panel's button and its line, the frame handler (caught), the unread squares drawn with the zones.
+//   1c-1g  (2026-11-14) THE WAIT HAS AN END: the 30 min of wall clock, each ask bounded and aborted, a failed ask asked
+//        again, the console's own failure no answer, a failed tile not read.
+//   1f, 1h, 1i, 4b  (2026-11-15) the bound is the caller's when it gives one (a grid's fetch, an end's chart), a long
+//        one said in minutes; a POLL's 404 is a read the console LOST (restarted) - posted again in the same poll as first
+//        asked (an ask like any: bounded, aborted, counted with the polls that have no answer), never said with the
+//        console's usage string, the line left "given up" when the wait ends on a refusal; a read lost over and over
+//        ends at the same 30 min, said with how many times; the read-ahead's ask bounded and aborted, its route taken at
+//        the tick. Mutants: scratchpad mut_round2.py (the page copied per mutant, ASV_HTML), all caught.
 //
 //   node tests/corridor_read.js   # exit 0 = pass
 //
@@ -87,16 +95,22 @@ const world = (o) => {
     + "const CORRIDOR_SCALES = [\"harbour\", \"approach\", \"coastal\", \"general\"];\n"
     + [grab("corridorFailure"), grab("corridorLate"), grab("corridorAsk"), grab("corridorStart"), grab("corridorWait"),
        grab("bandWord"), grab("toCorridor"), grab("corridorGivenUp"), grab("corridorReadLine"), grab("corridorSummary"), grab("readCorridor"), grab("routeAhead"), grab("corridorAheadTick")].join("\n")
-    + "\nreturn {readCorridor, corridorReadLine, corridorSummary, routeAhead, corridorAheadTick, toCorridor, ASK: CORRIDOR_ASK_MS, MUTE: CORRIDOR_MUTE_MS, state: () => ({corridorRead, corridorBusy, corridorAhead})};";
+    + "\nreturn {readCorridor, corridorReadLine, corridorSummary, routeAhead, corridorAheadTick, toCorridor, corridorWait, ASK: CORRIDOR_ASK_MS, MUTE: CORRIDOR_MUTE_MS, state: () => ({corridorRead, corridorBusy, corridorAhead})};";
   w.api = new Function("w", "asv", "passageWps", "postCorridor", "getCorridor", "updateTransitPanel", "render", "showBanner", "flashNote",
     "logClient", "fmtMS", "distTo", "supervising", "indexedRoute", "window", "NOGO_RADIUS_M", src)(
-    // (`postHang`: the console never answers the ask - 1d; `sigs`: each ask's abort signal)
-    w, w.asv, w.passageWps, async (b, sig) => { w.posts.push(b); (w.sigs = w.sigs || []).push(sig); if (w.postHang) return new Promise(() => {}); return w.seq.length ? w.seq.shift() : { id: "j1", state: "done", total: 1, done: 1 }; },
+    // (`postHang`: the console never answers the ask - 1d; `sigs`: each ask's abort signal; `postFail`: the posts that
+    // fail, by number - 1h; `postHangFrom`: from that post on it never answers - 1h's post again)
+    w, w.asv, w.passageWps, async (b, sig) => { w.posts.push(b); (w.sigs = w.sigs || []).push(sig); if (w.postHang || (w.postHangFrom && w.posts.length >= w.postHangFrom)) return new Promise(() => {});
+      if (w.postFail && w.postFail.indexOf(w.posts.length) >= 0) throw new TypeError("Failed to fetch");
+      if (w.postAnswer) return w.postAnswer(b);
+      return w.seq.length ? w.seq.shift() : { id: "j1", state: "done", total: 1, done: 1 }; },
     // (`running`: the world's read never leaves "running" - until 400 polls, so a page that never gives up FAILS 1c, not
     // hangs; `getFail`: the polls that fail, by number - 1e; past the world's answers a refusal in words, never undefined:
     // a page that asks again on no answer would ask for good)
     async (id, sig) => { w.gets.push(id); (w.sigs = w.sigs || []).push(sig);
       if (w.getFail && w.getFail.indexOf(w.gets.length) >= 0) throw new TypeError("Failed to fetch");
+      // (`lostFrom`: from that poll on the console no longer holds the read - restarted: 1h, 1i)
+      if (w.lostFrom && w.gets.length >= w.lostFrom) return { lost: true, id, error: "the console no longer holds that read (it was restarted, or the read made way for newer ones)" };
       if (w.running) return w.polls > 400 ? { id, state: "done", total: 4, done: 4, failed: [], bands: {}, unread: [], unread_n: 0, half_km: 5, seconds: 9 } : w.running;
       return w.seq.length ? w.seq.shift() : { error: "the world has no more answers" }; },
     () => {}, () => { w.renders++; }, (t) => w.banners.push(t),
@@ -185,12 +199,12 @@ const world = (o) => {
   // throws it, named (asked again: corridorAsk, which says what the ask got); a refusal (4xx) and a status (200) stay
   // answers, and the signal goes with each request. And an ask aborted at its bound is said as unanswered - not as the
   // abort's own rejection, which a real fetch makes on the abort (here the bound fires in 5 ms of real time)
-  const Fx = { calls: [], next: null };
+  const Fx = { calls: [], next: null, bounds: [] };
   const reply = (status, body) => ({ status, json: async () => { if (body instanceof Error) throw body; return body; } });
   const fapi = new Function("fetch", "setTimeout", /const CORRIDOR_ASK_MS = [^;]+;/.exec(H)[0] + "\n"
     + [grab("corridorReply"), grab("corridorFailure"), grab("postCorridor"), grab("getCorridor"), grab("corridorAsk")].join("\n")
     + "\nreturn {postCorridor, getCorridor, corridorAsk};")(async (url, opts) => { Fx.calls.push({ url, opts }); return Fx.next; },
-                                                           (fn, ms) => setTimeout(fn, Math.min(ms, 5)));
+                                                           (fn, ms) => { Fx.bounds.push(ms); return setTimeout(fn, Math.min(ms, 5)); });
   const outcome = async (p) => { try { return { ok: await p }; } catch (e) { return { threw: e.message, corridor: !!e.corridor }; } };
   const sig = { tag: "the caller's signal" };
   const SAID500 = "the console failed handling /api/enc/corridor: OSError: disk full";
@@ -201,30 +215,129 @@ const world = (o) => {
   const f502 = await outcome(fapi.getCorridor("j 1", sig));
   Fx.next = reply(400, { error: "a route needs two points" });
   const f400 = await outcome(fapi.postCorridor({ route: [] }, sig));
-  Fx.next = reply(404, { error: "no such corridor read" });
+  // (a POLL's 404 is a read the console no longer holds - {lost}, 1h - where a post's is its refusal: a cancel of no read)
+  Fx.next = reply(404, { error: "no such corridor read (usage: /api/enc/corridor?id=<job>)" });
   const f404 = await outcome(fapi.getCorridor("j1", sig));
+  Fx.next = reply(404, { error: "no such corridor read" });
+  const f404p = await outcome(fapi.postCorridor({ cancel: "j1" }, sig));
   Fx.next = reply(200, { id: "j1", state: "running", total: 3, done: 1 });
   const f200 = await outcome(fapi.getCorridor("j1", sig));
-  const whyOf = async (ask) => { const n = {}; const st = await fapi.corridorAsk(ask, n); return st === null ? n.why : "ANSWERED"; };
+  const whyOf = async (ask, ms) => { const n = {}; const st = await (ms == null ? fapi.corridorAsk(ask, n) : fapi.corridorAsk(ask, n, ms)); return st === null ? n.why : "ANSWERED"; };
   const wNet = await whyOf(async () => { throw new TypeError("Failed to fetch"); });
   const wJson = await whyOf(async () => { throw new SyntaxError("Unexpected token <"); });
   const wStr = await whyOf(async () => "<html>");
-  const wAbort = await whyOf((signal) => new Promise((_, rej) => signal.addEventListener("abort",
-    () => rej(Object.assign(new Error("This operation was aborted"), { name: "AbortError" })))));
+  const hung = (signal) => new Promise((_, rej) => signal.addEventListener("abort",
+    () => rej(Object.assign(new Error("This operation was aborted"), { name: "AbortError" }))));
+  const wAbort = await whyOf(hung);
+  // (2026-11-15: the bound is the caller's when it gives one - a grid's fetch, an end's chart - and a long one said in minutes)
+  Fx.bounds.length = 0;
+  const wAbort5 = await whyOf(hung, 300000), wAbort45 = await whyOf(hung, 45000);
+  const bounds1f = Fx.bounds.slice();
   const c0 = Fx.calls[0], c1 = Fx.calls[1], c2 = Fx.calls[2];
   check("1f. THE CONSOLE'S OWN FAILURE IS NO ANSWER: HTTP 500 and 502 thrown, named (and the ask says it got that); a "
-        + "refusal (400, 404) and a status (200) answers; the signal sent with each; the words for an unreachable console, "
-        + "a reply not JSON, a reply not a status; an ask aborted at its bound said unanswered, not by the abort",
+        + "refusal (400; a post's 404) and a status (200) answers; a POLL's 404 is a read LOST, in the page's words - the "
+        + "console's usage string not carried; the signal sent with each; the words for an unreachable console, "
+        + "a reply not JSON, a reply not a status; an ask aborted at its bound said unanswered, not by the abort - at the "
+        + "caller's own bound when it gives one, a long one said in minutes",
         () => f500.threw === "HTTP 500 - " + SAID500 && f500.corridor && a500 === null && n500.why === "HTTP 500 - " + SAID500
               && f502.threw === "HTTP 502" && f502.corridor
-              && f400.ok && f400.ok.error === "a route needs two points" && f404.ok && f404.ok.error === "no such corridor read"
+              && f400.ok && f400.ok.error === "a route needs two points"
+              && f404.ok && f404.ok.lost === true && f404.ok.id === "j1" && /^the console no longer holds that read/.test(f404.ok.error) && !/usage/.test(f404.ok.error)
+              && f404p.ok && f404p.ok.error === "no such corridor read" && !f404p.ok.lost
               && f200.ok && f200.ok.state === "running"
               && c0.url === "/api/enc/corridor" && c0.opts.method === "POST" && c0.opts.signal === sig && JSON.parse(c0.opts.body).route.length === 2
               && c1.opts.signal && c1.opts.signal !== sig && c1.opts.signal.aborted === false
               && c2.url === "/api/enc/corridor?id=j%201" && c2.opts.signal === sig
               && wNet === "the console could not be reached" && wJson === "a reply that was not JSON" && wStr === "a reply that was not a status"
-              && wAbort === "unanswered in 30 s",
-        () => JSON.stringify({ f500, why500: n500.why, f502, f400, f404, f200: f200.ok && f200.ok.state, urls: Fx.calls.map((c) => c.url), wNet, wJson, wStr, wAbort }));
+              && wAbort === "unanswered in 30 s" && wAbort5 === "unanswered in 5 min" && wAbort45 === "unanswered in 45 s"
+              && JSON.stringify(bounds1f) === "[300000,45000]",
+        () => JSON.stringify({ f500, why500: n500.why, f502, f400, f404, f404p, f200: f200.ok && f200.ok.state, urls: Fx.calls.map((c) => c.url), wNet, wJson, wStr, wAbort, wAbort5, wAbort45, bounds1f }));
+
+  // 1h. A READ THE CONSOLE HAS LOST IS ASKED FOR AGAIN (2026-11-15, residual 3): restarted, the console answers the poll
+  // of the old read 404 - it was said "Chart NOT read ... no such corridor read (usage: ...)". The read is posted again as
+  // it was first asked and goes on to its end; a refusal of that post is the console's own words; one never answered is
+  // given up as any ask is, the Passage tab's line no longer "reading"; and a status with no ask to repeat (not
+  // corridorStart's) answers the loss in the page's words, nothing posted
+  const LOST = { lost: true, id: "j1", error: "the console no longer holds that read (it was restarted, or the read made way for newer ones)" };
+  const Lo = world({ passageWps: [{ lat: 43.0, lon: -70.6 }, { lat: 42.5, lon: -70.0 }] });
+  Lo.seq = [run(0), run(1), LOST, run(2), { id: "j1", state: "done", total: 4, done: 4, failed: [], bands: { coastal: 4 }, unread: [], unread_n: 0, half_km: 5, seconds: 12 }];
+  await Lo.api.readCorridor();
+  const loLog = Lo.logs.find((l) => l[1] && l[1].state === "lost");
+  const Lr = world({ passageWps: [{ lat: 43, lon: -70 }] });
+  Lr.seq = [run(0), LOST, { error: "that corridor reaches 900 chart tiles; at most 600 are read at once - read it in parts" }];
+  await Lr.api.readCorridor();
+  // (lost, and the console then DOWN: the post again fails, and so does every poll after - one count of asks with no answer)
+  const Ln = world({ passageWps: [{ lat: 43, lon: -70 }] });
+  Ln.clock = 1.8e12; Ln.step = 60000; Ln.polls = 0; Ln.seq = [run(1), LOST]; Ln.postFail = [2, 3, 4, 5, 6, 7, 8, 9]; Ln.getFail = [2, 3, 4, 5, 6, 7, 8, 9];
+  await Ln.api.readCorridor();
+  // (lost, and the post again NEVER ANSWERED: it is an ask like any - bounded by CORRIDOR_ASK_MS and aborted - where a
+  // bare post would hold the read, and Read chart, for good. Given 2 s of real time after its bound, a page that waited
+  // on the request itself is said HUNG here, and fails)
+  const Lh = world({ passageWps: [{ lat: 43, lon: -70 }] });
+  Lh.clock = 1.8e12; Lh.step = 60000; Lh.polls = 0; Lh.seq = [run(1), LOST]; Lh.postHangFrom = 2; Lh.getFail = [2, 3, 4, 5, 6, 7, 8, 9];
+  const pLh = Lh.api.readCorridor();
+  for (let i = 0; i < 200 && Lh.posts.length < 2; i++) await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+  const openLh = (Lh.races || []).filter((t) => !t.cleared), heldLh = !!(Lh.sigs[2] && Lh.sigs[2].aborted === false);
+  Lh.clock += 30000; openLh.forEach((t) => t.fn());
+  const endLh = await Promise.race([pLh.then(() => "settled"), new Promise((r) => setTimeout(() => r("HUNG"), 2000))]);
+  const Lw = world({});
+  Lw.seq = [LOST];
+  const bare = await Lw.api.corridorWait({ id: "j1", state: "running", total: 4, done: 1 }, Date.now() + 60000);
+  // (the ask rides on the POST's answer, not enumerable: a read done at once is kept from that answer, and carries none of it)
+  const Ld = world({ passageWps: [{ lat: 43, lon: -70 }] });
+  await Ld.api.readCorridor();
+  const keptKeys = Object.keys(Ld.api.state().corridorRead || { asked: "NOT KEPT" });
+  check("1h. A READ THE CONSOLE HAS LOST (a poll's 404, after a restart) IS POSTED AGAIN as it was first asked, and read to its "
+        + "end - logged, never said 'NOT read'; that post refused: the console's own words, the Passage tab's line 'given up', "
+        + "not 'reading'; the console then down: ONE count of asks with no answer - given up at the 3rd, said with the progress "
+        + "last heard, the loss, and the tiles kept; with no ask to repeat, the loss in the page's words",
+        () => Lo.posts.length === 2 && JSON.stringify(Lo.posts[1]) === JSON.stringify(Lo.posts[0]) && Lo.posts[1].route.length === 3
+              && Lo.gets.length === 3 && Lo.api.state().corridorRead.state === "done"
+              && /^Chart read along the line: 4 tile/.test(Lo.banners[Lo.banners.length - 1] || "")
+              && loLog && loLog[1].id === "j1" && loLog[1].done === 1 && loLog[1].tiles === 4 && loLog[1].n === 1
+              && Ld.posts.length === 1 && Ld.gets.length === 0 && keptKeys.indexOf("state") >= 0 && keptKeys.indexOf("asked") < 0
+              && Lr.posts.length === 2 && (Lr.banners[Lr.banners.length - 1] || "") === "Chart NOT read along the line: that corridor reaches 900 chart tiles; at most 600 are read at once - read it in parts."
+              && Lr.api.state().corridorRead.state === "given up" && Lr.api.corridorReadLine(Lr.api.state().corridorRead) === "chart read given up at 0 of 4 tiles"
+              && Ln.posts.length === 2 && Ln.gets.length === 3
+              && (Ln.banners[Ln.banners.length - 1] || "") === "Chart NOT read along the line: the read had no answer it could use from the console for 3 min"
+                 + " (1 of 4 tile(s) read when it last answered; the last ask: the console could not be reached; the console lost the read once and was asked for it again)"
+                 + " - the tiles read are kept: press Read chart again to go on from them."
+              && Ln.api.state().corridorRead.state === "given up" && Ln.api.state().corridorBusy === false
+              && endLh === "settled" && Lh.posts.length === 2 && openLh.length === 1 && openLh[0].ms === Lh.api.ASK && heldLh && Lh.sigs[2].aborted === true
+              && (Lh.banners[Lh.banners.length - 1] || "") === "Chart NOT read along the line: the read had no answer it could use from the console for 3 min"
+                 + " (1 of 4 tile(s) read when it last answered; the last ask: the console could not be reached; the console lost the read once and was asked for it again)"
+                 + " - the tiles read are kept: press Read chart again to go on from them."
+              && bare && bare.id === "j1" && bare.error === LOST.error && !/usage/.test(bare.error) && Lw.posts.length === 0,
+        () => JSON.stringify({ posts: Lo.posts.length, gets: Lo.gets.length, last: Lo.banners[Lo.banners.length - 1], log: loLog && loLog[1],
+                               refused: [Lr.banners[Lr.banners.length - 1], Lr.api.state().corridorRead && Lr.api.state().corridorRead.state],
+                               mute: [Ln.posts.length, Ln.gets.length, Ln.banners[Ln.banners.length - 1], Ln.api.state().corridorRead && Ln.api.state().corridorRead.state], bare, barePosts: Lw.posts.length }).slice(0, 1100));
+  // 1i. A READ LOST OVER AND OVER HAS THE SAME END (the 2026-11-15 review: nothing pinned it). A console that answers every
+  // post "running" and every poll "no such read" is asked again each poll - and given up at the SAME 30 min of wall clock,
+  // said with how many times it lost the read; lost on the poll asked PAST the 30 min with the post again failing, it is
+  // given up there, with the progress last heard and the tiles kept - not as a silence that did not happen
+  const runI = { id: "j1", state: "running", total: 4, done: 0, failed: [], bands: {}, unread: [], unread_n: 0, half_km: 5, seconds: 1 };
+  const Li = world({ passageWps: [{ lat: 43, lon: -70 }] });
+  // (past 400 posts the world's read is done, so a page that never gives up FAILS here - not spins, as a mutant did)
+  Li.clock = 1.8e12; Li.step = 60000; Li.polls = 0; Li.lostFrom = 1;
+  Li.postAnswer = () => (Li.posts.length > 400 ? { ...runI, state: "done", done: 4 } : { ...runI });
+  await Li.api.readCorridor();
+  const Lf = world({ passageWps: [{ lat: 43, lon: -70 }] });
+  Lf.clock = 1.8e12; Lf.step = 60000; Lf.polls = 0; Lf.seq = [{ ...runI }]; Lf.running = { ...runI, done: 2 }; Lf.lostFrom = 30; Lf.postFail = [2];
+  await Lf.api.readCorridor();
+  check("1i. A READ LOST OVER AND OVER is given up at the same " + MAXW / 60000 + " min of wall clock (30 polls a minute apart, 31 "
+        + "posts), said with how many times the console lost it, the line 'given up'; lost on the poll past the limit with the "
+        + "post again failing: given up there with the progress last heard and the tiles kept, no silence said",
+        () => Li.polls === 30 && Li.gets.length === 30 && Li.posts.length === 31 && Li.posts.every((p) => JSON.stringify(p) === JSON.stringify(Li.posts[0]))
+              && (Li.banners[Li.banners.length - 1] || "") === "Chart NOT read along the line: the read did not finish in 30 min (0 of 4 tile(s) read; "
+                 + "the console lost the read 30 times and was asked for it again) - press Read chart again to ask again."
+              && Li.api.state().corridorRead.state === "given up" && Li.api.state().corridorBusy === false
+              && Li.logs.filter((l) => l[1] && l[1].state === "lost").length === 30
+              && Lf.polls === 30 && Lf.posts.length === 2
+              && (Lf.banners[Lf.banners.length - 1] || "") === "Chart NOT read along the line: the read did not finish in 30 min (2 of 4 tile(s) read; "
+                 + "the console lost the read once and was asked for it again) - the tiles read are kept: press Read chart again to go on from them."
+              && Lf.api.state().corridorRead.state === "given up",
+        () => JSON.stringify({ again: [Li.polls, Li.gets.length, Li.posts.length, Li.banners[Li.banners.length - 1]], atLimit: [Lf.polls, Lf.posts.length, Lf.banners[Lf.banners.length - 1]] }));
 
   // 1g. A TILE THAT FAILED IS NOT READ (the third 2026-11-14 review): the console counts a tile `done` when it is finished
   // with it, read or failed - two builds cut at their limit were said "2 of 4 read" and kept. The read count leaves the
@@ -288,26 +401,47 @@ const world = (o) => {
             + fromIdx.length + "; from wp 4 " + farLeg.length + " pts; short " + short.length);
 
   // ── 4. the read-ahead ───────────────────────────────────────────────────────────────────────────────────────────
+  // (the ask is corridorAsk's since 2026-11-15, made a turn after the tick: each count is read a turn on)
+  const turn = () => new Promise((r) => setTimeout(r, 0));
   const B = world({ route: rr, asv: { lat: 43.0, lon: -70.0 } });
   const running = { run: "running" };
   B.api.corridorAheadTick(running);
   B.api.corridorAheadTick(running);                                   // same place: nothing
   B.asv.lon += 1500 / (M * Math.cos(43 * Math.PI / 180));               // 1.5 km on: nothing yet
   B.api.corridorAheadTick(running);
+  await turn();
   const before = B.posts.length;
   B.asv.lon += 600 / (M * Math.cos(43 * Math.PI / 180));                // 2.1 km on: asked again
   B.api.corridorAheadTick(running);
   B.route = rr.slice(1); B.api.corridorAheadTick(running);            // a new route: asked at once
+  await turn();
   const n4 = B.posts.length;
   const V = world({ route: rr, sup: false }); V.api.corridorAheadTick(running);
   const I = world({ route: rr }); I.api.corridorAheadTick({ run: "idle" });
   const F = world({ route: rr, asv: null }); F.api.corridorAheadTick(running);
+  await turn();
   check("4. THE READ-AHEAD asks once, then again only after " + EVERY / 1000 + " km made good or for a new route; at the "
         + "width the guard's own box reaches (" + NOGO_R / 1000 + " km); never from a window that does not supervise, a "
         + "boat not running, or one with no fix",
         () => before === 1 && n4 === 3 && B.posts[0].half_km === NOGO_R / 1000 && Math.abs(lenOf(B.posts[0].route) - AHEAD) < 1
               && V.posts.length === 0 && I.posts.length === 0 && F.posts.length === 0,
         () => JSON.stringify({ before, n4, half: B.posts[0] && B.posts[0].half_km, v: V.posts.length, i: I.posts.length, f: F.posts.length }));
+  // 4b. THE READ-AHEAD'S ASK HAS AN END (2026-11-15, residual 2): posted bare, one a stalled console never answered held
+  // one of the browser's few connections to it for good. It is corridorAsk's: bounded by CORRIDOR_ASK_MS and ABORTED - and
+  // the route asked is the one ahead of her AT THE TICK, though she moves before the ask is made
+  const Bh = world({ route: rr, asv: { lat: 43.0, lon: -70.0 }, postHang: true });
+  Bh.clock = 1.8e12; Bh.step = 60000;
+  Bh.api.corridorAheadTick(running);
+  Bh.asv.lon += 0.5;                                                    // (she moves on before the ask is made)
+  await turn();
+  const raceBh = (Bh.races || [])[0], sigBh = (Bh.sigs || [])[0], heldBh = !!(sigBh && sigBh.aborted === false);
+  (Bh.races || []).filter((t) => !t.cleared).forEach((t) => t.fn());
+  await turn();
+  check("4b. THE READ-AHEAD'S ASK HAS AN END: sent with an abort signal, bounded by CORRIDOR_ASK_MS, and aborted when the "
+        + "console never answers - the route ahead taken at the tick",
+        () => Bh.posts.length === 1 && raceBh && raceBh.ms === Bh.api.ASK && heldBh && sigBh.aborted === true
+              && Math.abs(Bh.posts[0].route[0].lon - (-70.0)) < 1e-9 && (Bh.races || []).length === 1,
+        () => JSON.stringify({ posts: Bh.posts.length, race: raceBh && raceBh.ms, held: heldBh, aborted: sigBh && sigBh.aborted, from: Bh.posts[0] && Bh.posts[0].route[0] }));
 
   // ── 5. the wiring ───────────────────────────────────────────────────────────────────────────────────────────────
   const panel = H.slice(H.indexOf('id="transitPanel"'), H.indexOf("<!-- ROC / HOME card"));
