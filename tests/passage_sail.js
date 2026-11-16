@@ -47,6 +47,16 @@
 //         a chained RTH refused - no passage, too little fuel - is recorded, so the cards stop promising one. And (the
 //         review): along the passage from the ARRIVAL only - a far chain from a hold no record names is refused as
 //         before; in a view-only tab nothing is planned, sent or claimed; a lost reply is not a refusal.
+// THE CHART READ STOPPED UNDER THE WAY HOME (2026-11-15, a SAFETY defect an adversarial review found):
+//   17w   the page's own coarse field home canceled the read it shared with the way home (the same tiles are the same
+//         job: tests/passage_plan.js 16s drives the two against the console's own job code), and the planner answered
+//         "canceled" as a plain error - final for the end-of-plan chain and the monitor. The page sends no cancel now,
+//         and the planner ITSELF (passagePlanFor lifted, the console's read answering "canceled") answers a read
+//         stopped from elsewhere late, not kept, naming the cause; handed that, the chain is asked again and not
+//         recorded refused, the monitor told late, the operator told to press again.
+//         TEETH (scratchpad mut_cc.py, the page on scratch copies through ASV_HTML), each caught by 17w (and by
+//         passage_plan 16t): the stopped-read branch dead; answered without late; said kept; not logged; said in the
+//         old words. (The Passage tab's line left "reading" is passage_plan 16t's alone: this suite stubs the line.)
 //
 //   node tests/passage_sail.js   # exit 0 = pass
 
@@ -1865,6 +1875,55 @@ console.log("The passage, sailed:");
                                mon: oMon, joined: [jo1, jo2, (vJ.homeAsked || []).length, (vJ.later || []).length, (vJ.banners[vJ.banners.length - 1] || "").slice(-60)],
                                err: [vErr.api.st().rthChainFailed, (vErr.later || []).length],
                                fenceFirst: [oFL, said17(vFL).slice(0, 90)], joinedFence: [jf1, jf2, vJF.api.st().rthChainFailed, (vJF.later || []).length, said17(vJF).slice(0, 90)] }));
+
+  // 17w. THE CHART READ STOPPED UNDER THE WAY HOME (2026-11-15, a SAFETY defect an adversarial review found): the page's
+  // own coarse field home posted the console {cancel: id} for a read past its 60 tiles - and that read was this way
+  // home's (the same line the other way: the same tiles, the same job - tests/passage_plan.js 16s drives the two against
+  // the console's own job code). passagePlanFor answered "canceled" as a plain error, so past 60 tiles of way home (a
+  // few hundred km) the end-of-plan chain was recorded REFUSED (rthChainFailed) and the monitor's latch kept: no way
+  // home asked again. The
+  // page sends no cancel now; the console's door stays (a window on an older page, a request of the operator's own), so
+  // the planner's answer to a read stopped under it is {late}. Here the planner ITSELF answers (passagePlanFor lifted,
+  // the console's read answering "canceled" - every tile counted done, as corridor_status says a stopped read), and its
+  // answer is handed to the far RTH: asked again by the chain and the monitor, the operator told to press again
+  const logs17w = [];
+  const planFor17w = new Function("fuelModel", "V", "roleSpeed", "nogoDR", "corridorGivenUp", "logClient", "corridorStart", "corridorWait",
+    "passageHalfKm", "corridorSummary", "toCorridor", "updateTransitPanel", "render", "fmtMS",
+    "let passageGen = 0, corridorRead = null;\n" + decl("CORRIDOR_WAIT_MAX_MS") + "\n" + grab("passagePlanFor") + "\nreturn passagePlanFor;")(
+    () => ({ kind: "fuel" }), { SPEED_KN: { transit: 7 } }, () => "transit", () => ({ min: 3 }), () => {}, (k, dd) => logs17w.push([k, dd]),
+    async () => ({ id: "h", state: "running", total: 70, done: 0, failed: [] }),
+    async () => ({ id: "h", state: "canceled", total: 70, done: 70, failed: [] }),
+    () => 25, () => "SUMMARY", (st) => st, () => {}, () => {}, (s) => s + "s");
+  const stop17 = await planFor17w([{ ...HER17, port: true, t: 0 }, { ...HERE, port: true, t: 1 }], () => {}, () => false);
+  const STOP17 = "the chart read along it was stopped by a cancel from elsewhere";
+  const wCh = farWorld17({ S: S17q(HOLDING), homePlan: () => stop17 }); wCh.api.set("rthChained", true);
+  const oChW = await wCh.api.doRTH({ chained: true });
+  const wMon = lowWorld17({ homePlan: () => stop17 });
+  const oMonW = await wMon.api.doRTH({ why: LOWF, breakWhy: "fuel" });
+  const wOp = farWorld17({ homePlan: () => stop17 });
+  const oOpW = await wOp.api.doRTH({});
+  const opSaidW = said17(wOp), opCmdsW = wOp.cmds.length;
+  wOp.homePlan = homePlanFor17();
+  const oOpW2 = await wOp.api.doRTH({});
+  const w17 = {
+    planner: stop17 && stop17.late === true && stop17.kept === false && stop17.error === STOP17 && !stop17.plan
+             && logs17w.some((l) => l[0] === "passage_plan" && l[1].state === "stopped" && l[1].id === "h"),
+    chain: oChW === undefined && wCh.cmds.length === 0 && !wCh.api.st().rthChainFailed && (wCh.later || []).length === 1 && wCh.later[0].ms === 15000
+           && said17(wCh) === "RTH WAITING: " + BODY17 + STOP17 + "; the way home is asked again in 15 s.",
+    monitor: nt17(oMonW).late === true && !nt17(oMonW).refused && wMon.cmds.length === 0 && said17(wMon).indexOf("RTH WAITING: ") === 0
+             && /stopped by a cancel from elsewhere; the way home is asked again in 15 s\.$/.test(said17(wMon)),
+    operator: nt17(oOpW).late === true && !nt17(oOpW).refused && opCmdsW === 0
+              && opSaidW === "RTH refused: " + BODY17 + STOP17 + ". Press RTH again to ask again.",
+    again: oOpW2 === undefined && wOp.cmds.length === 1 && wOp.cmds[0][0] === "/api/cmd/rth",
+  };
+  check("17w. THE CHART READ STOPPED UNDER THE WAY HOME (a cancel put to the console from elsewhere): the planner itself "
+        + "answers {error, late, kept: false} naming the cause, logged - and the far RTH is NOT refused for good: the "
+        + "end-of-plan chain asked again 15 s on and not recorded refused, the low-fuel monitor told late (WAITING), the "
+        + "operator told to press again - and a press after it plans and sends; nothing said kept",
+        () => Object.values(w17).every(Boolean),
+        () => JSON.stringify({ bad: Object.entries(w17).filter(([, v]) => !v).map(([k]) => k), planner: stop17,
+                               chain: [oChW, wCh.api.st().rthChainFailed, (wCh.later || []).map((t) => t.ms), said17(wCh).slice(-110)],
+                               mon: oMonW, op: [oOpW, opSaidW.slice(-110)], again: [oOpW2, wOp.cmds.length] }));
 
   console.log("\n" + (fails ? fails + " CHECK(S) FAILED (" + ran + " ran)" : "all checks passed (" + ran + ")"));
   process.exit(fails ? 1 : 0);

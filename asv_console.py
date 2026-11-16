@@ -4430,34 +4430,66 @@ def _corridor_parse(body):
     return route, half
 
 
+class CorridorOver(ValueError):
+    """A corridor past the limit its own asker set (`max_tiles`): refused with the count - nothing started, nothing
+    joined, nothing stopped."""
+
+    def __init__(self, total, cap):
+        ValueError.__init__(self, "that corridor reaches %d chart tiles, past the %d its asker reads at most "
+                                  "(max_tiles) - not read" % (total, cap))
+        self.total, self.cap = total, cap
+
+
 def corridor_start(body):
-    """Start (or rejoin) the read of the tiles along a route: (200, status) or (400, {error}). The SAME tiles are the
-    same job: one already running is rejoined, one finished is read again - its cached tiles answer at once and the
-    ones that failed are tried again."""
+    """Start (or rejoin) the read of the tiles along a route: its status, or ValueError in words (corridor_post: a
+    400). The SAME tiles are the same job, whoever asks - and a two-point route's tiles are the same whichever way it
+    runs: one already running is rejoined (and that ask counted on it: `asks`, corridor_cancel), one finished is read
+    again - its cached tiles answer at once and the ones that failed are tried again. A read being STOPPED is not
+    rejoined: the ask is a new read under the same name, and the stopped one winds down on its own.
+
+    ⚠ `max_tiles`, THE ASKER'S OWN LIMIT (2026-11-15): a corridor of more tiles than it is refused BEFORE anything is
+    looked up (CorridorOver, with the count). The page's coarse field home has no use for a read past 60 tiles; it
+    asked without a limit, got the job, and STOPPED it ({cancel}) - and because a job is named by its tiles, that job
+    was the far RTH's own read of the way home (her position to home, the same line the other way: the same tiles),
+    whose "canceled" was a final refusal of the way home. An asker that would not use the read now says so in the ask
+    and is told the count; it never holds a job it would have to stop. The limit is the asker's, not the job's: it is
+    no part of the job's name, so an ask within its limit still shares the one read."""
     route, half = _corridor_parse(body)
     grids = bool(body.get("grids"))              # each tile's planning grid made too (THE PASSAGE GRID)
+    cap = body.get("max_tiles")
+    if cap is not None and (isinstance(cap, bool) or not isinstance(cap, int) or cap < 1):
+        raise ValueError("max_tiles must be a whole number of chart tiles, 1 or more")
     tiles = _corridor_tiles(route, half * 1000.0)
+    if cap is not None and len(tiles) > cap:     # (first: past the console's own limit too, the asker is told its count)
+        raise CorridorOver(len(tiles), cap)
     if len(tiles) > ENC_CORRIDOR_MAX_TILES:
         raise ValueError("that corridor reaches %d chart tiles; at most %d are read at once - read it in parts"
                          % (len(tiles), ENC_CORRIDOR_MAX_TILES))
     jid = hashlib.sha1((json.dumps(tiles) + ("|grids" if grids else "")).encode("utf-8")).hexdigest()[:12]
     # ⚠ THE STATUS IS READ AFTER THE LOCK IS LET GO: corridor_status takes the same lock, which is not reentrant - a
     # running job rejoined from inside it hung the request for good (tests/enc_corridor.py 4 found it).
+    # ⚠ JOINED OR MADE UNDER ONE HOLD OF THE LOCK, AND NEVER A READ BEING STOPPED (2026-11-15, the adversarial review of
+    # the asker's limit). A job stays "running" after its cancel until the tiles in flight land - seconds, or a build's
+    # 15 minutes - and an ask in that time REJOINED it: the asker waited those tiles out and was then told "canceled",
+    # for a cancel made before it asked. It is a new read now (the dying job keeps its own record and winds down; the
+    # per-tile locks keep the two from reading one tile twice at once). Each ask that joins is counted (`asks`), so a
+    # cancel knows whether anyone else is waiting (corridor_cancel).
     with _corridor_lock:
         job = _corridor_jobs.get(jid)
-        rejoin = job is not None and job["state"] == "running"
-    if rejoin:
-        return corridor_status(jid)
-    with _corridor_lock:
-        # the last few jobs are kept for their status; the oldest FINISHED ones make way
-        for old in [k for k, j in sorted(_corridor_jobs.items(), key=lambda kv: kv[1]["started"])
-                    if j["state"] != "running"][:max(0, len(_corridor_jobs) - 19)]:
-            _corridor_jobs.pop(old, None)
-        job = {"id": jid, "tiles": tiles, "route": route, "half_m": half * 1000.0, "total": len(tiles), "done": 0,
-               "failed": [], "bands": {}, "unread": [], "unread_n": 0, "state": "running", "cancel": False,
-               "started": time.time(), "finished": None, "grids": grids}
-        _corridor_jobs[jid] = job
-    threading.Thread(target=_corridor_run, args=(job,), daemon=True, name="corridor-" + jid).start()
+        rejoin = job is not None and job["state"] == "running" and not job["cancel"]
+        if rejoin:
+            job["asks"] += 1
+        else:
+            # the last few jobs are kept for their status; the oldest FINISHED ones make way
+            for old in [k for k, j in sorted(_corridor_jobs.items(), key=lambda kv: kv[1]["started"])
+                        if j["state"] != "running"][:max(0, len(_corridor_jobs) - 19)]:
+                _corridor_jobs.pop(old, None)
+            job = {"id": jid, "tiles": tiles, "route": route, "half_m": half * 1000.0, "total": len(tiles), "done": 0,
+                   "failed": [], "bands": {}, "unread": [], "unread_n": 0, "state": "running", "cancel": False,
+                   "started": time.time(), "finished": None, "grids": grids, "asks": 1}
+            _corridor_jobs[jid] = job
+    if not rejoin:
+        threading.Thread(target=_corridor_run, args=(job,), daemon=True, name="corridor-" + jid).start()
     return corridor_status(jid)
 
 
@@ -4526,17 +4558,53 @@ def _corridor_one(job, tile):
 
 
 def corridor_cancel(jid):
+    """{cancel: id}: ONE ASK TAKEN BACK - the read is stopped when no ask is left on it, and goes on for whoever else
+    asked. Its status (`asks`: the asks still on it), or None for no such job.
+    ⚠ A CANCEL USED TO STOP THE READ FOR EVERYONE (2026-11-15). A job is named by its tiles, so two askers of the same
+    tiles hold ONE job - and one of them stopping it stopped it under the other: the page's coarse field home, canceling
+    the read it shared with the far RTH's way home, whose "canceled" was a final refusal of the way home. The page asks
+    with its limit now and sends no cancel; but a window left on an OLDER page still sends its ask and its cancel, every
+    minute, and an older page still takes "canceled" as final - so the console keeps the count. An asker's cancel takes
+    back the ask it made: with another's ask still on the read, nothing is stopped. It errs one way only - an ask
+    counted twice (posted again when its answer was lost) or never taken back (a withdrawn RTH, a closed window) leaves
+    a read running to its end, which is tiles kept, never a way home refused. A request of the operator's own stops a
+    shared read by canceling until `asks` is 0."""
     with _corridor_lock:
         job = _corridor_jobs.get(jid)
         if job is None:
             return None
-        job["cancel"] = True
+        job["asks"] = max(0, job["asks"] - 1)
+        if job["asks"] == 0:
+            job["cancel"] = True
     return corridor_status(jid)
+
+
+def corridor_post(body):
+    """POST /api/enc/corridor, whole: (HTTP status, answer). {cancel: id} takes back one ask on a read; anything else
+    asks for one (corridor_start), a request it refuses a 400 in words - and a corridor past the asker's own
+    `max_tiles` a 400 that carries the count ({error, over: true, total, max_tiles}). One function for the handler and
+    for the suites that put the page's own asks to the console's own job code (tests/lib/corridor_console.py).
+    ⚠ {cancel} TAKES BACK ONE ASK (corridor_cancel) - a job is named by its tiles, the same tiles asked by two are one
+    job, and a cancel used to stop it under both. The page sends none since 2026-11-15 (see corridor_start); the door
+    stays for a window still on an older page and a request of the operator's own, and the page's planner takes a read
+    stopped under it as one to ask for again, not a refusal."""
+    if body.get("cancel"):
+        st = corridor_cancel(str(body.get("cancel")))
+        if st is None:
+            return 404, {"error": "no such corridor read"}
+        return 200, st
+    try:
+        return 200, corridor_start(body)
+    except CorridorOver as e:
+        return 400, {"error": str(e), "over": True, "total": e.total, "max_tiles": e.cap}
+    except ValueError as e:
+        return 400, {"error": str(e)}
 
 
 def corridor_status(jid):
     """What a job has read so far: {id, state, total, done, failed: [{tile, note}], bands: {finest band: tiles},
-    unread: [[W, S, E, N]] (the first ENC_CORRIDOR_UNREAD_MAX), unread_n, seconds, eta_s} - or None for no such job."""
+    unread: [[W, S, E, N]] (the first ENC_CORRIDOR_UNREAD_MAX), unread_n, seconds, eta_s, asks: the asks still on it
+    (corridor_cancel)} - or None for no such job."""
     with _corridor_lock:
         job = _corridor_jobs.get(jid)
         if job is None:
@@ -4547,7 +4615,7 @@ def corridor_status(jid):
         st = {"id": job["id"], "state": job["state"], "total": job["total"], "done": job["done"],
               "failed": list(job["failed"]), "bands": dict(job["bands"]), "unread": list(job["unread"]),
               "unread_n": job["unread_n"], "half_km": job["half_m"] / 1000.0, "seconds": round(secs, 1),
-              "eta_s": round(eta, 1) if eta is not None else None}
+              "eta_s": round(eta, 1) if eta is not None else None, "asks": job["asks"]}
         if job.get("grids"):                     # the tiles whose grids the passage planner fetches (/api/enc/grid)
             st["grids"] = True
             st["tiles"] = [list(t) for t in job["tiles"]]
@@ -10601,17 +10669,11 @@ class Handler(BaseHTTPRequestHandler):
             return 200, {"ok": True, "rev": rev}
         if path == "/api/enc/corridor":
             # READ THE CHART ALONG A ROUTE (2026-10-11, step 3 of the long-transit plan): {route: [{lat, lon}], half_km}
-            # starts - or rejoins - the read of every tile within half_km of it; {cancel: id} stops one. Not a command:
-            # it moves nothing, and any tab may ask. (corridor_start's block header.)
-            if body.get("cancel"):
-                st = corridor_cancel(str(body.get("cancel")))
-                if st is None:
-                    return 404, {"error": "no such corridor read"}
-                return 200, st
-            try:
-                return 200, corridor_start(body)
-            except ValueError as e:
-                return 400, {"error": str(e)}
+            # starts - or rejoins - the read of every tile within half_km of it ({max_tiles}: refused with the count
+            # past the asker's own limit); {cancel: id} takes back one ask on one (it stops when none is left). Not a
+            # command: it moves nothing, and any tab may ask. (corridor_start's block header; corridor_post.)
+            code, out = corridor_post(body)
+            return code, out             # (a literal pair, as every return here is: tests/http_contract.py 2)
         if path == "/api/supervisor":
             # A tab reporting in (review #14). `take` claims the post; `release` gives it up on unload.
             cid = body.get("id")

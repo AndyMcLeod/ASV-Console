@@ -10490,10 +10490,13 @@ function homeHowSay(h, withWhy){
 // grids in the coarse worker - at the coarse planner's own costs, ~100 m cells - for her length home from every cell.
 // In the background, one build at a time, again when home or her floor changes or she leaves what it holds; a build
 // that fails is tried again after COARSE_HOME_RETRY_MS, and the field it had is kept meanwhile.
+// ⚠ ITS READ IS SHARED, AND IT STOPS NONE (2026-11-15): the console names a read by its tiles, so this read and the far
+// RTH's way home - the same line the other way - are one job. The build asks with its own limit (`max_tiles`) and sends
+// no cancel; coarseHomeBuild's note has the defect that was.
 const COARSE_HOME_HALF_MIN_KM = 5;      // the read either side of the line home-to-her: at least this,
 const COARSE_HOME_HALF_FRAC = 0.4;      // ... and this fraction of her distance home (the way round a headland),
 const COARSE_HOME_HALF_MAX_KM = 25;     // ... at most the corridor's own limit (asv_console.py ENC_CORRIDOR_MAX_HALF_KM)
-const COARSE_HOME_MAX_TILES = 60;       // a read past this many tiles is not made (the search is ~50 ms a tile)
+const COARSE_HOME_MAX_TILES = 60;       // a read past this many tiles is not made (the search is ~50 ms a tile): the ask's own `max_tiles`
 const COARSE_HOME_RETRY_MS = 60000;
 // `key` the field's, `tried` the last build's (one that failed keeps the field it had), `note` why that failed, or "ready"
 let coarseHome = {key: null, hf: null, at: 0, tried: null, note: null, busy: false};
@@ -10534,12 +10537,24 @@ async function coarseHomeBuild(key, here){
   const home = {lat: S.home.lat, lon: S.home.lon}, t0 = Date.now(), until = t0 + CORRIDOR_WAIT_MAX_MS;
   const halfKm = Math.min(COARSE_HOME_HALF_MAX_KM, Math.max(COARSE_HOME_HALF_MIN_KM, COARSE_HOME_HALF_FRAC * distTo(here, home) / 1000));
   const fail = (note) => { coarseHome = {...coarseHome, busy: false, at: Date.now(), note}; logClient("coarse_home", {ok: false, note}); };
-  let st = await corridorStart({route: [home, here], half_km: halfKm, grids: true}, until);
-  if(!st || st.error) return fail("the chart along the way could not be read (" + ((st && st.error) || "no answer") + ")");
-  if((st.total || 0) > COARSE_HOME_MAX_TILES){                  // the read is stopped, not left reading for nothing
-    if(st.id && st.state === "running") postCorridor({cancel: st.id}).catch(() => {});
+  // ⚠ THE LIMIT GOES IN THE ASK, AND NO READ IS EVER STOPPED FROM HERE (2026-11-15, a SAFETY defect an adversarial review
+  // found). This build asked with no limit, was handed the job, and past COARSE_HOME_MAX_TILES posted {cancel: id} -
+  // "stopped, not left reading for nothing". But the console names a read by its TILES (corridor_start), and the far
+  // RTH's way home (sailHomeFreshRun -> passagePlanFor) reads the same line the other way - her position to home - the
+  // same 25 km either side from ~125 km out: the SAME job. So past 60 tiles (330-400 km from home at 43 N by heading,
+  // measured on the console's own tiles) this build, again every COARSE_HOME_RETRY_MS, stopped the read the way home
+  // was waiting on: "RTH refused: ... the chart read along it was stopped", FINAL for the end-of-plan chain
+  // (rthChainFailed) and for the monitor (its latch kept) - tests/passage_plan.js 16s drives the two against the
+  // console's own job code. Now the ask carries the limit (`max_tiles`): past it the
+  // console answers with the count and starts nothing, joins nothing, stops nothing. And a read past the limit that is
+  // running all the same - a console OLDER than this page, which does not know the limit (the page is read from disk on
+  // every request, the console's code only at its start) - may be the way home's: who else waits on it cannot be told
+  // from here, so it is not waited on, and LEFT ALONE (on such a console the build's own ask starts that read, and it
+  // runs to its end: tiles nobody asked for, until the console is restarted - never a way home refused).
+  let st = await corridorStart({route: [home, here], half_km: halfKm, grids: true, max_tiles: COARSE_HOME_MAX_TILES}, until);
+  if(st && (st.total || 0) > COARSE_HOME_MAX_TILES)             // (the refusal's count, or that read's; BEFORE the error: it is said as the count)
     return fail("the way home is " + st.total + " chart tiles, past the " + COARSE_HOME_MAX_TILES + " it is measured over");
-  }
+  if(!st || st.error) return fail("the chart along the way could not be read (" + ((st && st.error) || "no answer") + ")");
   // (a read that never finished held `busy` for good, and the monitor measured home in a straight line from then on -
   // CORRIDOR_WAIT_MAX_MS: given up, said, and built again COARSE_HOME_RETRY_MS on)
   st = await corridorWait(st, until);
@@ -15734,7 +15749,8 @@ async function passageGrids(tiles){
  *  told where it has got to; `gone()` is asked after each long wait whether the caller still wants it. {plan, id} -
  *  `id` the chart read's - or {error} in words, or {gone: true}; {error, late: true, kept} when the chart read along it did
  *  not finish in CORRIDOR_WAIT_MAX_MS (the read goes on in the console: the far RTH asks again; `kept` false when the
- *  console never answered the ask, so nothing is known to be read). ONE planner for Plan passage
+ *  console never answered the ask, so nothing is known to be read) or was STOPPED under it by a cancel from elsewhere
+ *  (2026-11-15: asked again too - a new ask is a new read; nothing said kept). ONE planner for Plan passage
  *  (planPassageNow) and the way home past RTH_MAX_M with no passage to go home along (sailHomeFresh, 2026-11-13), so the
  *  two cannot plan differently. The caller holds `passageBusy`: the worker answers one plan at a time (passageInWorker). */
 async function passagePlanFor(points, say, gone){
@@ -15758,8 +15774,21 @@ async function passagePlanFor(points, say, gone){
   // (and asked again after it: an edit in the poll that decided it is the edit, not a read too slow - the third review)
   if((st && st.gone) || gone()){ corridorGivenUp(readId); return {gone: true}; }
   if(st && st.late) return late(st);
+  // ⚠ A READ STOPPED UNDER HER IS ASKED FOR AGAIN, NOT A REFUSAL (2026-11-15). "canceled" was answered as a plain error -
+  // FINAL for the far RTH (the chain's rthChainFailed, the monitor's latch kept) - and the one sender of a cancel was this
+  // page's own coarse field home, stopping the read it shared with the way home (coarseHomeBuild). This page sends none
+  // now, and the console takes back ONE ask for each cancel (corridor_cancel: a window still on an older page no longer
+  // stops her read); what is left is a request of the operator's own, or a console older than this page - and a read is
+  // shared by its tiles, so one stopped there is stopped here. Answered as a read given up is ({late}): the chain and the
+  // monitor ask again RTH_BUSY_RETRY_MS on, the operator presses again, and the new ask is a new read - the tiles already
+  // read answer at once. No count is said and nothing said kept: the console counts a tile it SKIPPED as done.
+  if(st && !st.error && st.state === "canceled"){
+    corridorRead = toCorridor(st);                              // (the Passage tab's line: stopped, not "reading" for good)
+    logClient("passage_plan", {state: "stopped", id: st.id, tiles: st.total});
+    return {error: "the chart read along it was stopped by a cancel from elsewhere", late: true, kept: false};
+  }
   if(!st || st.error || st.state !== "done")
-    return {error: "the chart read along it " + (st && st.state === "canceled" ? "was stopped" : "failed: " + ((st && st.error) || "no answer"))};
+    return {error: "the chart read along it failed: " + ((st && st.error) || "no answer")};
   corridorRead = toCorridor(st);
   say("planning the passage…");
   const g = await passageGrids(st.tiles || []);
@@ -16745,7 +16774,8 @@ let homeFlight = null;
  *  home moved, another command; `how.by` names it), said, nothing sent; "busy" - a passage is being planned on the Passage
  *  tab, or a section sent, and this one cannot start (said; doRTH and the monitor ask again); "overridden" - the low-fuel
  *  monitor's, withdrawn because the energy override was turned on while it planned (as the boxed RTH's is); "late" - the
- *  chart read along the way home did not finish in CORRIDOR_WAIT_MAX_MS (said; doRTH and the monitor ask again). `how`:
+ *  chart read along the way home did not finish in CORRIDOR_WAIT_MAX_MS, or was stopped under it by a cancel from
+ *  elsewhere (said; doRTH and the monitor ask again). `how`:
  *  {lowFuel, fence, lockWas, brkAgain}, and handed back on it `by` and `post` (sailHome). Until the first section is sent
  *  she carries on as she was: a survey, or her hold at the end of the plan.
  *  ⚠ ONE AT A TIME, AND JOINED (the 2026-11-13 review): a second far RTH - the chain at the survey's end while the monitor's

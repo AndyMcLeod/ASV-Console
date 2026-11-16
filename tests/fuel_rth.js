@@ -99,6 +99,19 @@
 //   than she has" / no "above its alarm"                        -> 10g
 //   the click: no busy guard, no took(), the request's state,
 //   busy never released, the same value posted                  -> 9i
+// and seven for the coarse field's shared read (2026-11-15; scratchpad mut_cc.py: the page on scratch copies through
+// ASV_HTML, the real page's sha1 unchanged), all caught by 11f:
+//   THE ORIGINAL DEFECT - no limit in the ask, the read past 60
+//   tiles canceled                                              -> 11f (and tests/passage_plan.js 16s)
+//   the cancel restored, the limit kept in the ask              -> 11f (16s green BY DESIGN: the console refuses the
+//                                                                  ask before a job is held - each layer earned apart)
+//   the limit dropped from the ask                              -> 11f (and 16s)
+//   the error judged before the count                           -> 11f (and 16s)
+//   only the console's refusal counted: a read past the limit
+//   found running is waited on                                  -> 11f (16s green BY DESIGN: the console's own code
+//                                                                  never hands the build such a read)
+//   the limit itself refused (>=)                               -> 11f
+//   the ask's limit one more than the build's                   -> 11f (and 16s)
 
 function __crash(e) {
   console.log("  FAIL 0. the suite itself CRASHED before finishing - " +
@@ -1503,17 +1516,35 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
         () => JSON.stringify({ half: [halfOf(bNear), halfOf(b1) && +halfOf(b1).toFixed(2), halfOf(bFar) && +halfOf(bFar).toFixed(2)],
                                worker: b1.workerMsgs[0] && [b1.workerMsgs[0].kind, b1.workerMsgs[0].floorDm, b1.workerMsgs[0].airDm], now: [ok1.key, ok1.note] }));
   const bErr = buildWorld({ st0: { error: "refused" } }); await bErr.api.build("K2", mid);
-  const bBig = buildWorld({ st0: { id: "c", state: "running", total: 400 } }); await bBig.api.build("K2", mid);
+  // TOO MANY TILES (2026-11-15): the ask carries the build's limit (`max_tiles`), and the console's answer past it is the
+  // count and no read (asv_console.py CorridorOver: its own code is driven under this build in tests/passage_plan.js 16s) ...
+  const OVER = { error: "that corridor reaches 400 chart tiles, past the 60 its asker reads at most (max_tiles) - not read", over: true, total: 400, max_tiles: 60 };
+  const bBig = buildWorld({ st0: OVER }); await bBig.api.build("K2", mid);
+  // ... and a read past the limit that is RUNNING all the same - a console that did not take the limit - is whoever asked
+  // for it's: not waited on, and NEVER CANCELED. It was stopped ({cancel: id}), and that read was the far RTH's own way
+  // home - the same tiles are the same job (the SAFETY defect of 2026-11-15)
+  const bRun = buildWorld({ st0: { id: "c", state: "running", total: 400 } }); await bRun.api.build("K2", mid);
+  // (the limit itself is within it: 60 tiles running are waited out and searched)
+  const bEdge = buildWorld({ st0: { id: "c1", state: "running", total: 60 } }); await bEdge.api.build("K2", mid);
   const bStop = buildWorld({ stDone: { id: "c", state: "canceled" } }); await bStop.api.build("K2", mid);
   const bWk = buildWorld({ res: { error: "unread" } }); await bWk.api.build("K2", mid);
-  const failed = [bErr, bBig, bStop, bWk].map((w) => w.api.now());
-  check("11f. A BUILD THAT FAILS says why - the read refused, too many tiles (the read STOPPED, not left reading), the read "
-        + "not done, home's own tile unread - is tried again later (`at`), and KEEPS the field it had",
+  const failed = [bErr, bBig, bStop, bWk, bRun].map((w) => w.api.now());
+  const TOO = "the way home is 400 chart tiles, past the 60 it is measured over";
+  const allPosts = [b1, bNear, bFar, bErr, bBig, bRun, bEdge, bStop, bWk].reduce((a, w) => a.concat(w.posts), []);
+  check("11f. A BUILD THAT FAILS says why - the read refused, too many tiles, the read not done, home's own tile unread - is "
+        + "tried again later (`at`), and KEEPS the field it had. TOO MANY TILES: every ask carries the build's limit "
+        + "(max_tiles 60); the console's refusal past it is said as the count; a read past it found RUNNING is said the same, "
+        + "not polled, the worker not asked - and NEVER CANCELED (no build posts a cancel, and the page has no sender of "
+        + "one); 60 tiles exactly are waited out and searched",
         () => failed.every((c) => c.busy === false && c.at > 0 && c.key === "old" && c.hf && c.note !== "ready")
-              && /could not be read \(refused\)/.test(failed[0].note) && /400 chart tiles/.test(failed[1].note) && bBig.gets === 0
-              && bBig.posts.length === 2 && bBig.posts[1].cancel === "c" && bErr.posts.length === 1
+              && /could not be read \(refused\)/.test(failed[0].note) && failed[1].note === TOO && bBig.gets === 0 && bBig.posts.length === 1
+              && failed[4].note === TOO && bRun.gets === 0 && bRun.posts.length === 1 && bRun.workerMsgs.length === 0 && bBig.workerMsgs.length === 0
+              && allPosts.length === 9 && allPosts.every((b) => b.max_tiles === 60 && b.grids === true && !("cancel" in b))
+              && !/postCorridor\(\s*\{\s*cancel\b/.test(H)
+              && bEdge.api.now().note === "ready" && bEdge.gets >= 1 && bEdge.workerMsgs.length === 1 && bErr.posts.length === 1
               && /canceled/.test(failed[2].note) && /home's own chart tile could not be read/.test(failed[3].note),
-        () => JSON.stringify(failed.map((c) => c.note)));
+        () => JSON.stringify({ notes: failed.map((c) => c.note), posts: [bBig.posts.length, bRun.posts.length], gets: [bBig.gets, bRun.gets, bEdge.gets],
+                               asks: allPosts.map((b) => b.cancel ? "CANCEL " + b.cancel : b.max_tiles), edge: bEdge.api.now().note }));
   // 11j. THE WAIT HAS AN END (2026-11-14): a read along the way home that never left "running" held the build's `busy` for
   // good - the monitor measuring home in a straight line from then on, past RTH_MAX_M too. Polled a minute apart, it is
   // given up at CORRIDOR_WAIT_MAX_MS of wall clock: said why, the field it had kept, and tried again later (`at`)
