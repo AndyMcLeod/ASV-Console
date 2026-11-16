@@ -32,6 +32,10 @@
 // counter and 2 fails. Fold the no-chart state back into the clear-water wording and 5, 13
 // and 14 fail. Drop the article strip from the kind tally and 7 fails. Return the raw note
 // untruncated and 6 fails. Leave the thrown-extract path without a note and 14 fails.
+// And 35-35f (2026-11-16, the read's bound; 7 page mutants RUN on scratch copies through ASV_HTML, all killed): a give-up that
+// never keeps the model (35, 35c), one that keeps it wherever she is (35b), the command's record not marked late or its
+// short-circuit dropped (35e), a withdrawal taken for a give-up during the read or while queued (35f), and the Nogo row left
+// without the failure said beside the zones it kept (35).
 //
 // NOTE: this suite evaluates page code SLOPPY - a direct eval, so the page's function declarations bind into this
 // file. The page itself is <script type="module">, which runs STRICT: an assignment to an undeclared name passes
@@ -372,7 +376,11 @@ function buildMargin() { return { polys: [], lines: [], points: [] }; }
 var FETCH = null;
 // ⚠ THE BOX IS PASSED THROUGH, because check 19 asks WHICH box a caller fetched - and a
 // stub that swallowed its argument would let a refresh fetch the wrong water and stay green.
-function fetchENCBbox(b, floor) { return FETCH(b, floor); }
+// ... AND THE NOTE AND THE WITHDRAWAL POLL (2026-11-16, the read's bound): the real fetchENCBbox answers null when the
+// console gave no answer to take, with `note.why` the cause in words, or `note.gone` when `gone()` withdrew it - and
+// refreshNogo says it by that note. A stub answers null to say exactly that (check 35); "no chart here" is the server's
+// own answer, `{band: null}` (check 13).
+function fetchENCBbox(b, floor, note, gone) { return FETCH(b, floor, note, gone); }
 // ⚠ rebuildNogo NOW FOLDS THE CHART-READ STRUCTURES, through a helper punchOut shares -
 // so foldChartInk and the two kinds it stamps have to resolve here too, for the same
 // reason planeFrame and chartInk do. THE REAL ONE, not a stub: a stub would keep this
@@ -419,6 +427,10 @@ eval("const NOGO_QUEUE_MAX_MS = " + NOGO_QUEUE_MAX_MS + ";" + "\n" +
      // (rebuildNogo records what it folded - inkFoldNow, 2026-11-14: a read that changes nothing rebuilds nothing)
      grab("foldChartInk") + "\n" + grab("inkFoldNow") + "\n" + grab("rebuildNogo") + "\n" + grab("nogoStatus") + "\n" +
      grab("updateNogoUI") + "\n" + grab("refreshNogo") + "\n" +
+     // a read given up is logged with its bound (encReadMs, 2026-11-16) - the page's own, and its constants READ from the page;
+     // and a command's read record is the real one (commandReads), its Stop mark here to press (check 35)
+     H.match(/const ENC_READ_MIN_MS = [^;]*;/)[0] + "\n" + H.match(/const ENC_READ_TILE_DEG = [^;]*;/)[0] + "\n" +
+     grab("encReadMs") + "\n" + "var routeStopGen = 0, routeStopName = null;" + "\n" + grab("commandReads") + "\n" +
      "const featLLBoxes = new WeakMap(), eachRingF = _eR;\n" +
      grab("featureLLBox").replace(/eachRing\(/g, "_eR(").replace(/eachPath\(/g, "_eP(").replace(/eachPoint\(/g, "_ePt(") + "\n" +
      grab("skinOffThread") + "\n" +
@@ -469,7 +481,7 @@ async function drive(fetchResult) {
           && /OLDER CHART IN USE: the chart could not be read again/.test(bOld),
         JSON.stringify([bInc.slice(-110), bExtra.slice(-60), bOld.slice(-90)]));
 
-  const off = await drive(() => null);
+  const off = await drive(() => ({ band: null }));
   check("13. an extract that returns no coverage lands on the no-chart warning",
         !/reading chart/.test(off.last) && /offline|coverage/.test(off.last),
         "final paint: " + JSON.stringify(off.last));
@@ -478,6 +490,102 @@ async function drive(fetchResult) {
   check("14. and a THROWN extract does too, naming the failure",
         !/reading chart/.test(bad.last) && /failed/.test(bad.last) && nogo.busy === false,
         "final paint: " + JSON.stringify(bad.last));
+
+  // 35-35f. A READ GIVEN UP IS NOT A CHART, AND NOT A REASON TO BLIND THE GUARD (2026-11-16, the read's bound). fetchENCBbox
+  // answers null when the console gave none to take (none in time, the network, its own 5xx, not JSON), `note.why` the
+  // cause. The earlier model STANDS where it will do - the operating area's own read while she is in the water it read (and
+  // that read is asked again: nogo.failed), and any box a caller handed in (its plan is refused by its coverage test); it
+  // is dropped, said, where it will not. The command's record (commandReads) carries the give-up: its later reads are
+  // answered at once, not asked. A press withdrawn (note.gone) - during the read or while it queued - is only that.
+  {
+    const logs = [], logWas = logClient, asvWas = asv;
+    logClient = (k, o) => { logs.push({ k, o }); };
+    const reads = () => logs.filter((l) => l.k === "chart_read").map((l) => l.o);
+    const noAnswer = (why) => { const f = (b, floor, note) => { f.n++; note.why = why; return null; }; f.n = 0; return f; };
+    const built = async () => { asv = asvWas; await drive(() => ({ band: "enc_5" })); banners = []; logs.length = 0; };
+    // (what was said, less the "Extracting ENC..." every read opens with)
+    const seen = (ask) => ({ ready: nogo.ready, failed: nogo.failed && nogo.failed.why, note: nogo.note,
+                             said: banners.filter((t) => !/^Extracting ENC/.test(t)),
+                             ask: ask && { failed: ask.failed, late: ask.late }, log: reads() });
+    const BOX = { W: 2, S: 2, E: 2.2, N: 2.2 };             // water the earlier model (bboxAround's 0..1) did not read
+    try {
+      // a. the operating area's own read, she in the water the earlier one read (`asv` null here: the area is hers)
+      await built(); FETCH = noAnswer("unanswered in 30 min"); const askA = {};
+      await refreshNogo(null, null, askA); const a = seen(askA);
+      // b. ... she OUTSIDE it: the earlier model is not hers to keep
+      await built(); asv = { lat: 5, lon: 5 }; FETCH = noAnswer("the console could not be reached");
+      await refreshNogo(); const b = seen();
+      // c. a box handed in, she outside the earlier one: it stands, and is not marked to be read again (the caller's business)
+      await built(); asv = { lat: 5, lon: 5 }; FETCH = noAnswer("HTTP 502 - bad gateway"); const askC = {};
+      await refreshNogo(null, BOX, askC); const c = seen(askC);
+      // d. no model at all: nothing stands
+      asv = asvWas; logs.length = 0; const d0 = await drive(noAnswer("a reply that was not JSON")); const d = Object.assign(seen(), { last: d0.last });
+      check("35. a read GIVEN UP over the water she is in keeps the earlier model (ready), marks the read to be asked again "
+            + "(nogo.failed, every 30 s) and says so with its cause; the ask is told it was late; the give-up is logged with its bound",
+            a.ready === true && /the console gave no answer it could use to the chart read \(unanswered in 30 min\)/.test(a.failed || "")
+            && /^2 nogo zone\(s\) .* the chart over her could NOT be read \(the console gave no answer.*\): these zones are the earlier read's/.test(a.note || "")
+            && a.said.length === 1 && /could NOT be read again - the console gave no answer.*unanswered in 30 min.*zones are kept.*every 30 s/.test(a.said[0])
+            && a.ask.late === true && /unanswered in 30 min/.test(a.ask.failed || "")
+            && a.log.length === 1 && a.log[0].state === "given up" && a.log[0].kept === true && a.log[0].own === true
+            && a.log[0].ms === encReadMs({ W: 0, S: 0, E: 1, N: 1 }) && a.log[0].why === "unanswered in 30 min",
+            JSON.stringify(a));
+      check("35b. ... over water she is NOT in, the earlier model is dropped (not ready), the read marked failed and asked again, "
+            + "said with its cause - never 'route DIRECT'",
+            b.ready === false && /^chart read failed: the console gave no answer.*could not be reached/.test(b.note || "")
+            && /could not be reached/.test(b.failed || "") && b.said.length === 1 && /Nogo extraction failed: .*could not be reached.*every 30 s/.test(b.said[0])
+            && !/DIRECT/.test(b.said[0]) && b.log.length === 1 && b.log[0].kept === false,
+            JSON.stringify(b));
+      check("35c. a BOX a caller handed in, given up: the earlier model stands (the caller's coverage test refuses its plan by "
+            + "this cause), not marked to be read again; the ask says late and why",
+            c.ready === true && c.failed === null && c.said.length === 1 && /^Chart NOT read over that water: .*HTTP 502 - bad gateway.*kept/.test(c.said[0])
+            && c.ask.late === true && /HTTP 502 - bad gateway/.test(c.ask.failed || "") && c.log.length === 1 && c.log[0].own === false,
+            JSON.stringify(c));
+      check("35d. with NO model, a given-up read leaves none, said as a failed read with its cause (not 'no coverage')",
+            d.ready === false && /chart read failed: .*not JSON/.test(d.note || "") && /failed/.test(d.last || "") && !/coverage/.test(d.last || ""),
+            JSON.stringify(d));
+      // e. ONE COMMAND'S READS (commandReads): the first given up, the next on the same record is answered at once, not asked
+      await built(); asv = asvWas; const rd = commandReads(); const fE = noAnswer("unanswered in 30 min"); FETCH = fE;
+      const askE1 = { read: rd }; await refreshNogo(null, BOX, askE1);
+      const askE2 = { read: rd }; await refreshNogo(null, { W: 3, S: 3, E: 3.1, N: 3.1 }, askE2);
+      const e = { fetched: fE.n, late: rd.late, ask1: { failed: askE1.failed, late: askE1.late }, ask2: { failed: askE2.failed, late: askE2.late },
+                  ready: nogo.ready, log: reads().length };
+      check("35e. one command's reads: the first given up marks its record late; the next read on that record is answered at "
+            + "once - not asked of the console - late, with the first read's cause",
+            e.fetched === 1 && e.late === "unanswered in 30 min" && e.ask1.late === true && e.ask2.late === true
+            && /gave no answer it could use to the chart read \(unanswered in 30 min\)/.test(e.ask2.failed || "") && e.ready === true && e.log === 1,
+            JSON.stringify(e));
+      // f. WITHDRAWN during the read: the poll it was handed is the record's own; a Stop pressed ends it, and it is only that
+      await built(); const rdF = commandReads(); let handed = null;
+      FETCH = (b, floor, note, gone) => { handed = gone; routeStopGen++; routeStopName = "STOP";
+                                          if (gone()) { note.gone = true; note.why = "withdrawn"; } return null; };
+      const askF = { read: rdF }; await refreshNogo(null, BOX, askF);
+      const f = Object.assign(seen(askF), { handed: handed === rdF.gone, late: rdF.late, by: rdF.withdrawn && rdF.withdrawn.by });
+      // g. ... and WITHDRAWN WHILE IT QUEUED behind another read: not asked at all
+      await built(); const rdG = commandReads(); const fG = noAnswer("never"); FETCH = fG; let rel;
+      nogoPending = new Promise((r) => { rel = r; }); nogo.busy = true;
+      setTimeout(() => { routeStopGen++; routeStopName = "STOP"; nogo.busy = false; nogoPending = null; rel(); }, 50);
+      const askG = { read: rdG }; await refreshNogo(null, BOX, askG);
+      const g = Object.assign(seen(askG), { fetched: fG.n, late: rdG.late });
+      check("35f. a read WITHDRAWN (a Stop) - during it, through the record's own poll, or while it queued - is only withdrawn: "
+            + "said by the press, not late, the model untouched, nothing logged or bannered as a failure; one queued is not asked",
+            f.handed && f.ready === true && f.failed === null && f.ask.failed === "STOP was pressed" && f.ask.late === false
+            && f.late === null && f.by === "STOP" && f.said.length === 0 && f.log.length === 0
+            && g.fetched === 0 && g.ask.failed === "STOP was pressed" && g.late === null && g.ready === true && g.said.length === 0,
+            JSON.stringify({ f, g }));
+      // h. ANOTHER READ LANDED THIS WATER WHILE THIS ONE WAITED (the review, finding 7): the give-up is moot - nothing said,
+      //    nothing marked late or failed, the model that landed kept. (A re-read of the SAME water is not moot: 35, above.)
+      await built(); const rdH = commandReads();
+      FETCH = (b, floor, note) => { nogo.bbox = { W: 1.9, S: 1.9, E: 2.3, N: 2.3 }; nogo.ready = true;
+                                    note.why = "unanswered in 30 min"; return null; };
+      const askH = { read: rdH }; await refreshNogo(null, BOX, askH);
+      const h = Object.assign(seen(askH), { late: rdH.late });
+      check("35g. a read given up AFTER another read landed its water meanwhile is moot: not said, not late, nothing failed or "
+            + "logged, the model that landed kept",
+            h.ready === true && h.failed === null && h.ask.failed === null && h.ask.late === false && h.late === null
+            && h.said.length === 0 && h.log.length === 0,
+            JSON.stringify(h));
+    } finally { logClient = logWas; asv = asvWas; routeStopName = null; }
+  }
 
   // 21-21c. REFRESHNOGO FOLDS THE SEABED'S GAPS IN AS FEATURES (2026-09-30). A depth area with a float-shaped hole,
   // inside the box this world's bboxAround answers (0..1 degrees each way).
@@ -950,6 +1058,22 @@ async function drive(fetchResult) {
             rebuilt.ready === true && /could NOT be read \(x\)/.test(rebuilt.note) && /reading it again every 30 s/.test(rebuilt.note)
             && rebuilt.failed === "x" && retried && !/!nogo\.ready && !nogo\.busy && nogo\.failed/.test(onState),
             JSON.stringify(rebuilt));
+      // 35h. A READ GIVEN UP KEEPS THE MODEL AND ITS CENTER (refreshNogo, 35) - so onState's 3 km branch, first, asked it
+      //      again EVERY FRAME while she was past 0.6 R of that center (the 2026-11-16 review, finding 2). Its two branches
+      //      run here, frame by frame, as the page has them: a failed read waits out NOGO_RETRY_MS, then is asked once.
+      const nb = onState.slice(onState.indexOf("if(!nogoInit)"), onState.indexOf("if(supervising())"));
+      const frames = (failedAt, n) => { let calls = 0;
+        const w = { ready: true, busy: false, center: { lat: 0, lon: 0 }, failed: failedAt == null ? null : { at: failedAt, why: "x" } };
+        const f = new Function("nogo", "asv", "distTo", "NOGO_RADIUS_M", "NOGO_RETRY_MS", "refreshNogo", "let nogoInit = true;\n" + nb);
+        // (each read asked is given up at once, as a dead console's is: the model and center kept, `failed` stamped now)
+        for (let i = 0; i < n; i++) f(w, { lat: 0.1, lon: 0.1 }, () => 9000, 5000, NOGO_RETRY_MS,
+                                      () => { calls++; w.failed = { at: Date.now(), why: "x" }; });
+        return calls; };
+      const fr = { waiting: frames(Date.now() - 1000, 10), due: frames(Date.now() - NOGO_RETRY_MS - 1000, 10), clear: frames(null, 1),
+                   cut: nb.length };
+      check("35h. a read given up waits out NOGO_RETRY_MS before it is asked again - the 3 km branch does not ask it every frame; "
+            + "once due it is asked once (the retry stamps its time), and a model with no failure is re-read past 0.6 R as before",
+            fr.cut > 0 && fr.cut < 2000 && fr.waiting === 0 && fr.due === 1 && fr.clear === 1, JSON.stringify(fr));
       // 27h. A CLIPPED PIECE IS ITS OWN OBJECT to keepEarlierClasses (the 2026-10-18 review): a coarse-band feature the server cut
       //      across tiles is several pieces of one oid, each with its `clip`; the piece that arrived must not remove its siblings
       const pieces = (() => {

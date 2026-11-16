@@ -151,7 +151,7 @@ const FINGER = () => dock(24.5, 25.5, 100, 240);       // between runs 3 and 4, 
 const FINGER_NEAR = () => dock(24.5, 25.5, 185, 240);  // the same pier 10 m into the run ends - what the trim rung fixes
 const FAR = () => dock(124.5, 125.5, 185, 240);         // the same pier, 100 m east of the pattern
 
-const PAGE_FUNCS = ["punchOut", "currentPattern", "surveyPattern", "patSourceLines", "boundaryActive", "clipLine",
+const PAGE_FUNCS = ["punchOut", "lateKeeps", "currentPattern", "surveyPattern", "patSourceLines", "boundaryActive", "clipLine",
   "patStrikeKey", "strikeKeyChart", "punchSpeedSig", "activeStruck", "keptRuns", "distToRunM", "isStruckRun", "runMid", "extendLead", "runWithLeads", "patCoverSeg", "patCoverMid",
   "patIdentSeg", "trimEnd", "judgeJoin",
   // patClipBufM IS THE PLANNER/GUARD SEAM (2026-09-19) and punchOut calls it twice - for the
@@ -211,7 +211,8 @@ function makeWorld(opts) {
     + "let surveyBounded = false;\n"            // the Survey tab's switch (2026-10-16): no area here either way
     + "let planKind = null, asv = null;\n"
     + "const mission = {lines: [], waypoints: [], approach_radius_m: 1, speeds: {}, speed: 'survey'};\n"
-    + "const applyNogoControls = () => {}; const ensureNogoArea = async () => true; const render = () => {};\n"
+    // (log.area: a read over the survey that did not land - 14f; its `ask` is refreshNogo's, handed back with why)
+    + "const applyNogoControls = () => {}; const ensureNogoArea = async (ask) => (log.area ? log.area(ask) : true); const render = () => {};\n"
     + "const foldChartInk = () => {};             // no chart image in this world\n"
     // ⚠ AND THE CHART-READ STATE IT LEAVES BEHIND. patStrikeKey names the READ - its key
     // and its line/area counts - since 2026-09-22, so without this the key is a bare
@@ -587,6 +588,31 @@ const redList = (w) => redOf(w.get().patRed);
               && !c14e.err && bare.mission.lines.length === 5,
         () => "refused after the tide: " + !!refBare + "; banner: " + bareBanner.slice(0, 60) + "; committed "
               + bare.mission.lines.length + " lines");
+  // 14f (2026-11-16, the chart read's bound). A READ OVER THE SURVEY THAT DID NOT LAND - given up for no answer, or refused
+  // for its size - keeps the model of the water already read (refreshNogo), whose note is about OTHER water: the punch says
+  // the read's own cause, trims nothing, and a read given up is asked for again by punching again.
+  const gave = makeWorld({ features: [FAR()] });
+  gave.log.area = (ask) => { ask.failed = "the console gave no answer it could use to the chart read (unanswered in 30 min)"; ask.late = true; return false; };
+  await safely(() => gave.punchOut());
+  const gaveB = gave.log.banners.slice(-1)[0] || "", gaveH = gave.$("#sp_hint").textContent;
+  const big = makeWorld({ features: [FAR()] });
+  big.log.area = (ask) => { ask.failed = "it would take 120 tiles"; ask.late = false; return false; };
+  await safely(() => big.punchOut());
+  const bigB = big.log.banners.slice(-1)[0] || "";
+  // ... and a read given up for a cause the console does NOT go on reading through (the network: nothing reached it) says
+  // only to punch again - the "goes on reading" is a timeout's alone (lateKeeps; the 2026-11-16 review, finding 4)
+  const net = makeWorld({ features: [FAR()] });
+  net.log.area = (ask) => { ask.failed = "the console gave no answer it could use to the chart read (the console could not be reached)"; ask.late = true; return false; };
+  await safely(() => net.punchOut());
+  const netB = net.log.banners.slice(-1)[0] || "";
+  check("14f. a punch whose read over the survey did NOT LAND (given up, or too big) says the read's own cause, trims "
+        + "nothing - not 'no ENC coverage' with the kept model's note - and a given-up read is asked for by punching again "
+        + "(the console reading on only where the read timed out)",
+        () => /^Punch Out: the chart could not be read over the survey \(the console gave no answer it could use to the chart read \(unanswered in 30 min\)\) — survey lines were NOT trimmed\. Punch Out again to ask for it again - the console goes on reading it meanwhile, and keeps what it reads\.$/.test(gaveB)
+              && gave.get().patClip === null       // (the hint is the readout's again by the end, as on every path that trims nothing)
+              && /^Punch Out: the chart could not be read over the survey \(it would take 120 tiles\) — survey lines were NOT trimmed\.$/.test(bigB)
+              && /^Punch Out: the chart could not be read over the survey \(.*could not be reached\)\) — survey lines were NOT trimmed\. Punch Out again to ask for it again\.$/.test(netB),
+        () => JSON.stringify({ gave: gaveB, hint: gaveH, clip: gave.get().patClip, big: bigB, net: netB }));
   S.sea.waterOffset = 0;
 
   // ── 15. THE TRIM RUNG (Andy, 2026-09-24): "incrementally shorten each line on the threat side by 1 m until the

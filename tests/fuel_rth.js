@@ -916,6 +916,21 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
   check("8y2. A LATE ANSWER FROM AN OLD LINK (boot_id) does not hold the new link's watch: its crossing is sent the next frame",
         () => loHeld && Lo.sent.length === 2 && /LOW FUEL/.test(Lo.sent[1].why),
         () => JSON.stringify({ held: loHeld, sent: Lo.sent.length }));
+  // 8y3 (2026-11-16). A LOST REPLY IS ASKED AGAIN, NOT KEPT AS ANSWERED: the far RTH's first section posted and its reply
+  // lost (doRTH "unknown": the console cannot say whether she took it). Kept, the latch held for good - below her point.
+  // Now as LATE: nothing sent for RTH_BUSY_RETRY_MS, then asked again; and if she DID take it, the frames say she is going
+  // home (behavior rth) and nothing more is sent.
+  const Uk = world(); Uk.hang = true; Uk.S.armed = true; Uk.frame(60);
+  Uk.outcome = { notTaken: { unknown: true } }; Uk.land();
+  Uk.frame(59.9); const ukHeld = Uk.sent.length === 1;
+  Uk.clock += BUSY_MS + 1000; Uk.frame(59.8);
+  const Ut = world(); Ut.hang = true; Ut.S.armed = true; Ut.frame(60);
+  Ut.outcome = { notTaken: { unknown: true } }; Ut.land();
+  Ut.clock += BUSY_MS + 1000; Ut.frame(59.9, { behavior: "rth" }); Ut.frame(59.8, { behavior: "rth" });
+  check("8y3. A FAR RTH WHOSE REPLY WAS LOST (unknown) IS ASKED AGAIN after RTH_BUSY_RETRY_MS, not kept as answered - and one "
+        + "she took (her frames say rth) is not sent again",
+        () => ukHeld && Uk.sent.length === 2 && /LOW FUEL/.test(Uk.sent[1].why) && Ut.sent.length === 1,
+        () => JSON.stringify({ held: ukHeld, sent: Uk.sent.length, tookIt: Ut.sent.length }));
   check("8m. ONE LOW-FUEL RTH IN FLIGHT: while the RTH she was sent is still being routed, a latch re-armed and a point "
         + "reached again send NO second one (no banner, no log either) - it sent 20 in 26 s on 2026-11-08. The crossing it "
         + "holds back is not counted as answered: when the one in flight settles WITHOUT her going home (refused, lost) the "

@@ -236,6 +236,12 @@ console.log("The seabed's own gaps - the objects the ENC charts and the vector s
   const grabFn = (name) => { const st = H.search(new RegExp("(^|\\n)(async )?function " + name + "\\(")); if (st < 0) throw new Error(name + " not found");
     let k = H.indexOf("{", st), d = 0; for (;;) { const c = H[k]; if (c === "{") d++; else if (c === "}") { d--; if (!d) break; } k++; }
     return H.slice(st, k + 1).replace(/^\n/, ""); };
+  // THE READ'S BOUND (2026-11-16): fetchENCBbox asks through corridorAsk, waited encReadMs - the page's own, lifted (the bound
+  // itself is tests/unread_water.js 7b's subject; here every read answers at once)
+  const declOf = (re) => { const m = H.match(re); if (!m) throw new Error(re + " not found"); return m[0]; };
+  const READ_BOUND = [declOf(/^const ENC_READ_MIN_MS = [^\n]*;/m), declOf(/^const ENC_READ_TILE_DEG = [^;]*;/m),
+                      declOf(/^const CHART_READ_GONE_MS = [^;]*;/m),
+                      ...["encReadMs", "corridorFailure", "corridorReply", "corridorAsk"].map(grabFn)].join("\n") + "\n";
   // the extract: a harbour depth area with a 40 x 40 m hole in it (a float); and, layered, an approach-band depth area over
   // the hole too - which fills it, so the layered answer has no gap
   const hole = poly("Depth_Area", rect(-500, -500, 1000, 1000), rect(-20, -20, 40, 40, true));
@@ -292,6 +298,7 @@ import(${JSON.stringify(pathToFileURL(WPATH).href)}).then(() => parentPort.postM
     const realParse = JSON.parse;
     const src = "const SKIN_WORKER_TIMEOUT_MS = 60;\nlet skinWorker = null, skinWorkerOff = false, skinJobSeq = 0;\nconst skinJobWaiting = new Map();\n"
       + "const encLayer = {}, nogoLayer = {}, lawLayer = {};\n"           // the layers the worker draws (none asked here)
+      + READ_BOUND
       + ["skinWorkerUsable", "skinWorkerDown", "skinWorkerGet", "skinJobStart", "skinOffThread", "fetchENCBbox"].map(grabFn).join("\n")
       + "\nreturn {fetchENCBbox, skinOffThread};";
     const api = new Function("Worker", "TextDecoder", "fetch", "sea", "skinOverHarbour", "logClient", "JSON", src)(
@@ -313,6 +320,7 @@ import(${JSON.stringify(pathToFileURL(WPATH).href)}).then(() => parentPort.postM
       const sea2 = { enc: null };
       const src2 = "const SKIN_WORKER_TIMEOUT_MS = 60;\nlet skinWorker = null, skinWorkerOff = false, skinJobSeq = 0;\nconst skinJobWaiting = new Map();\n"
         + "const encLayer = {}, nogoLayer = {}, lawLayer = {};\n"
+        + READ_BOUND
         + ["skinWorkerUsable", "skinWorkerDown", "skinWorkerGet", "skinJobStart", "skinOffThread", "fetchENCBbox"].map(grabFn).join("\n")
         + "\nreturn {fetchENCBbox, skinOffThread};";
       const api2 = new Function("Worker", "TextDecoder", "fetch", "sea", "skinOverHarbour", "logClient", "JSON", src2)(

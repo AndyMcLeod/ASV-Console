@@ -220,8 +220,11 @@ console.log("The passage, sailed:");
         + " render = () => {}, applyCmdState = () => {}, updateTransitPanel = () => {}, updateMissionCard = () => { w.cards = (w.cards || 0) + 1; };",
       // (asked counted, and refused when the world says so: the rejoin at a Go-To's end asks nothing, 7d)
       // (`duringCover`: run while a section's chart is read - a Stop pressed there, 17l)
-      "const guiConfirm = async () => { w.confirms = (w.confirms || 0) + 1; return w.confirm !== false; }, ensureNogoCovers = async () => { if (w.duringCover) w.duringCover(w, api); return true; }, holdOpts = () => ({}), transitStandoffM = () => 20;",
-      "const planInsideChart = async (pts, opts, plan) => { if (w.duringPlan) w.duringPlan(w, api); return plan(); };",
+      // (`duringCover` is handed the read's `opts` - the command's read record, `opts.read` (commandReads, 2026-11-16) - and
+      //  may answer: false, or a promise of it, is a read that did not land; 17y gives one up and hangs one)
+      "const guiConfirm = async () => { w.confirms = (w.confirms || 0) + 1; return w.confirm !== false; }, ensureNogoCovers = async (pts, pad, opts) => { if (w.duringCover){ const r = w.duringCover(w, api, opts); if (r && typeof r.then === 'function'){ if ((await r) === false) return false; } else if (r === false) return false; } return true; }, holdOpts = () => ({}), transitStandoffM = () => 20;",
+      "const planInsideChart = async (pts, opts, plan) => { if (w.duringPlan) w.duringPlan(w, api, opts); return plan(); };",
+      decl("CHART_READ_GONE_MS"),
       "const holdTarget = (to) => ({to, heldOff: null, holdClear: 40});",
       "const holdClearWithContacts = (p, m) => m, routeTooLong = () => false, solveCoastFor = () => ({groundM: 55});",
       "const routePlan = (from, line, kr, std, ta, ro) => { w.planned.push({from, line, ow: ro && ro.openWater}); return {route: line.map((p) => ({lat: p.lat, lon: p.lon})), unroutable: Array(w.unroutable).fill(0)}; };",
@@ -291,13 +294,13 @@ console.log("The passage, sailed:");
        "sailFuelShort", "continueRefusal", "continuePassage", "continueSend", "divertPassage", "dropPassage", "renderPassageControls", "sailLine", "sailOwnsHold", "sailArrival", "sailArrived", "drawSail",
        "rthTooFar", "doRTH", "passageHome", "homeRecord", "sailHome",
        "passageHomeRefusal", "homePassageRecord", "homePassageRefusal", "sailHomeFresh", "sailHomeFreshRun", "rthFence", "rthChainRetry",
-       "rthNotCalledOff", "rthChainAgain", "chainRunKey", "rearmRthChain", "reapproachIfSetOff"].map(grab).join("\n"),
+       "rthNotCalledOff", "rthChainAgain", "chainRunKey", "rearmRthChain", "reapproachIfSetOff", "commandReads", "lateKeeps"].map(grab).join("\n"),
       "const api = {sailRecord, sailRefusal, sectionRest, sailPassage, passageTick, sailAtEnd, continuePassage, continueRefusal, divertPassage,",
       "  dropPassage, renderPassageControls, sailOwnsHold, sailLine, drawSail, doRTH, homeRecord, rthPending, chainFires, setPlanIntent, rearmRthChain,",
       "  reapproachIfSetOff,",
       "  passageHomeRefusal, homePassageRecord, stop: (name) => { routeStopGen++; routeStopName = name; },",
       "  showBanner, takeDownBanner, swapBanner, RTH_WAITING_RE,",
-      "  st: () => ({mission, runRoute, planIntent, planGen, cmdGen, escapeGen, cmdUnstamped, cmdPressedMax, passage, sailBusy, passageBusy, rthChainFailed, rthChained, rthChainBusyAt, homeFlight}), set: (k, v) => { eval(k + ' = v'); }};",
+      "  st: () => ({mission, runRoute, planIntent, planGen, cmdGen, escapeGen, cmdUnstamped, cmdPressedMax, passage, sailBusy, passageBusy, rthChainFailed, rthChained, rthChainBusyAt, homeFlight, passagePreRead}), set: (k, v) => { eval(k + ' = v'); }};",
       "return api;",
     ].join("\n");
     w.dom = {}; w.F = F; w.C = C; w.model = model; w.distTo = distTo;
@@ -305,6 +308,8 @@ console.log("The passage, sailed:");
     return w;
   };
   const settle = () => new Promise((r) => setTimeout(r, 0));
+// the page's own withdrawal poll while a read is waited on (4c2) - read from the page
+const CHART_READ_GONE_MS = +(/const CHART_READ_GONE_MS = (\d+);/.exec(H) || [])[1];
 
   // ── 2. the record, and what is refused ──────────────────────────────────────────────────────────────────────────
   const W2 = world();
@@ -378,6 +383,28 @@ console.log("The passage, sailed:");
         + "one begun for another plan, is not waited on",
         () => waited && W4c.cmds.length === 1 && W4c.planned.length === 1 && W4d.cmds.length === 1 && W4e.cmds.length === 1,
         () => JSON.stringify({ waited, after: W4c.cmds.length, over: W4d.cmds.length, other: W4e.cmds.length }));
+  // 4c2 (2026-11-16, the chart read's bound). ... AND THE WAIT ENDS: a Stop pressed while it waits withdraws the Sail within
+  // CHART_READ_GONE_MS (the read never answering - capped here), sailBusy released; a read GIVEN UP for no answer refuses the
+  // Sail by that cause - nothing planned or sent, the pre-read dropped so the next Sail reads again.
+  const PL4f = PLAN(), W4f = world({ passage: PL4f, preRead: { plan: PL4f, over: false, done: new Promise(() => {}), read: { late: null } } });
+  const sail4f = W4f.api.sailPassage(); await settle();
+  const t4f = Date.now(); W4f.api.stop("STOP");
+  const out4f = await Promise.race([sail4f.then(() => "returned"), new Promise((r) => setTimeout(() => r("STILL WAITING"), CHART_READ_GONE_MS * 4))]);
+  const ms4f = Date.now() - t4f;
+  let release4g = null; const read4g = { late: null };
+  const PL4g = PLAN(), W4g = world({ passage: PL4g, preRead: { plan: PL4g, over: false, done: new Promise((r) => { release4g = r; }), read: read4g } });
+  const sail4g = W4g.api.sailPassage(); await settle();
+  read4g.late = "unanswered in 30 min"; release4g(); await sail4g;
+  check("4c2. ... AND THE WAIT ENDS: a Stop pressed while it waits withdraws the Sail at once (said, nothing sent, sailBusy "
+        + "released); a pre-read GIVEN UP for no answer refuses the Sail by that cause - nothing planned or sent - and is dropped",
+        () => out4f === "returned" && ms4f < CHART_READ_GONE_MS * 2 && W4f.cmds.length === 0 && W4f.planned.length === 0
+              && W4f.api.st().sailBusy === false
+              && /^Passage NOT sailed: STOP was pressed while section 1's chart was being read\. Nothing was sent\.$/.test(W4f.banners.slice(-1)[0] || "")
+              && W4g.cmds.length === 0 && W4g.planned.length === 0 && W4g.api.st().sailBusy === false
+              && W4g.api.st().passagePreRead === null && W4f.api.st().passagePreRead !== null   // (a Stop drops nothing: the read goes on)
+              && /^Passage NOT sailed: the console gave no answer it could use to section 1's chart read \(unanswered in 30 min\)\. Nothing was sent: Sail passage again/.test(W4g.banners.slice(-1)[0] || ""),
+        () => JSON.stringify({ stop: [out4f, ms4f, W4f.cmds.length, W4f.api.st().sailBusy, W4f.banners.slice(-1)[0]],
+                               late: [W4g.cmds.length, W4g.planned.length, W4g.banners.slice(-1)[0]] }));
 
   // ── 5. ahead of her ─────────────────────────────────────────────────────────────────────────────────────────────
   const running = (o) => {
@@ -400,7 +427,20 @@ console.log("The passage, sailed:");
               && W5.logs.some((l) => l[0] === "passage_section" && l[1].ok && l[1].water_m === 0.35)
               && W5.notes.some((n) => /^Passage: section 2 of 3 planned at \+0\.35 m, .*and sent ahead of her\.$/.test(n)),
         () => JSON.stringify({ planned: W5.planned.length, route: c5 && c5[1].route.map((p) => Math.round(distTo(HERE, p) / 1000)), P: [P5.sent, P5.base] }));
-  const quietOf = (o, pre) => { const w = running(o); if (pre) pre(w); w.api.passageTick(w.S); return w; };
+  // 5w. A STOP PRESSED WHILE THE NEXT SECTION'S CHART IS READ withdraws it (the 2026-11-16 review, finding 5): she was stopped,
+  //     and the Stop says so - it is not a section that "could NOT be planned", no note held on the passage; logged withdrawn
+  const W5w = running();
+  W5w.duringCover = (w, api) => { api.stop("STOP"); };
+  W5w.api.passageTick(W5w.S);
+  await settle(); await settle();
+  const P5w = W5w.api.st().mission.passage, log5w = W5w.logs.filter((l) => l[0] === "passage_section");
+  check("5w. a Stop pressed while the next section's chart is read withdraws it QUIETLY - nothing sent, no 'could NOT be planned' "
+        + "banner or note, logged as withdrawn by the Stop; sailBusy free",
+        () => W5w.cmds.length === 0 && W5w.planned.length === 0 && !W5w.banners.some((b) => /could NOT be planned/.test(b))
+              && !/could not be planned/.test(P5w.note || "") && log5w.length === 1 && log5w[0][1].ok === false
+              && log5w[0][1].withdrawn === "STOP" && P5w.sent === 0 && W5w.api.st().sailBusy === false,
+        () => JSON.stringify({ cmds: W5w.cmds.length, banners: W5w.banners, note: P5w.note, log: log5w, sent: P5w.sent }));
+  const quietOf =(o, pre) => { const w = running(o); if (pre) pre(w); w.api.passageTick(w.S); return w; };
   // a whole section still queued beyond hers: section 1 with section 2 behind it in the route she flies (sent 1, its
   // waypoints from 4 on), and she on section 1's third waypoint
   const QROUTE = [east(HERE, 5000), east(HERE, 10000), east(HERE, 15000), { ...P1 }, east(HERE, 30000), { ...P2 }];
@@ -1150,11 +1190,13 @@ console.log("The passage, sailed:");
   for (const w of [V16, L16, R16, U16]) await w.api.doRTH({ chained: true });
   const saidRefused = (w) => w.banners.some((t) => /RTH refused/.test(t));
   check("16g. THE THREE ANSWERS: in a VIEW-ONLY tab the chain plans nothing, sends nothing and claims nothing (the card still "
-        + "promises the return); a reply LOST is said as NOT ACKNOWLEDGED, never as refused, and not recorded; a REFUSAL is "
-        + "said and recorded; a post never sent claims nothing",
+        + "promises the return); a reply LOST is said as NOT ACKNOWLEDGED, never as refused, and not recorded - and asked "
+        + "again 15 s on (2026-11-16: it neither retried nor failed; 17y); a REFUSAL is said and recorded; a post never sent "
+        + "claims nothing",
         () => V16.cmds.length === 0 && V16.planned.length === 0 && V16.waterAsked.length === 0 && !V16.api.st().rthChainFailed
               && V16.api.rthPending() && !saidRefused(V16) && V16.api.st().mission.passage.kind !== "rth"
-              && L16.cmds.length === 1 && !L16.api.st().rthChainFailed && !saidRefused(L16)
+              && L16.cmds.length === 1 && !L16.api.st().rthChainFailed && !saidRefused(L16) && (L16.later || []).length === 1
+              && (R16.later || []).length === 0 && (U16.later || []).length === 0
               && /RTH NOT ACKNOWLEDGED: no answer from the console after 15 s.* - the way home along the passage, 60\.0 km\./.test(L16.banners.join("\n"))
               && L16.logs.some((l) => l[0] === "passage_rth" && l[1].why === "unanswered")
               && R16.api.st().rthChainFailed && /RTH refused: home is 60\.0 km away, and the first section .*RTH REFUSED: ARM before/.test(R16.banners.join("\n"))
@@ -1770,7 +1812,8 @@ console.log("The passage, sailed:");
              // (and open water first on every leg of it, 2026-10-14 - tests/open_water.js)
              && /planOffThread\(\{op: "holdRoute", ko: koLv, args: \{target: c\.to, holdOpts: o, start: from, via, keepRightAll: true, standoffM: std,\s*\n\s*ropts: \{openWater: ow\}\}\},[^\n]*\n\s*\(\) => atWaterLevel\(lv\.m, \(\) => \{\s*\n\s*ht = holdTarget\(c\.to, o\);/.test(grab("sailSend")),
     // its chart read along it as a ROUTE, where the read can find something - and any wider read the planning makes
-    routeInk: /await ensureNogoCovers\(\[from, \.\.\.pts\], null, \{route: true\}\);/.test(grab("sailSend")),
+    // (with the section's reads as one since 2026-11-16 - `read: rd`, commandReads - and the read given up answered at once)
+    routeInk: /await ensureNogoCovers\(\[from, \.\.\.pts\], null, \{route: true, read: rd\}\);/.test(grab("sailSend")),
     oneWriter: (H.match(/sea\.waterOffset\s*=(?!=)/g) || []).length === 1,
     // (the read is waterAlongRead since 2026-11-07 - one read for a section and a survey's punch, sectionWater asks it)
     endpoint: /"\/api\/water\/along\?pts="/.test(grab("waterAlongRead")) && /await waterAlongRead\(line, t0, t1\)/.test(grab("sectionWater")),
@@ -2103,7 +2146,8 @@ console.log("The passage, sailed:");
   // 16m and 16o drive the order)
   const ft = grab("fuelTick"), pf = grab("passagePlanFor"), cw = grab("corridorWait");
   const wiring17o = {
-    monitor: /if\(nt && \(nt\.busy \|\| nt\.late\) && fuelBoot === bootAt\)\{ fuelRth\.acted = false; fuelRetryAt = Date\.now\(\) \+ RTH_BUSY_RETRY_MS; \}/.test(ft)
+    // (and a far RTH's lost post reply, "unknown", since 2026-11-16 - 17y)
+    monitor: /if\(nt && \(nt\.busy \|\| nt\.late \|\| nt\.unknown\) && fuelBoot === bootAt\)\{ fuelRth\.acted = false; fuelRetryAt = Date\.now\(\) \+ RTH_BUSY_RETRY_MS; \}/.test(ft)
              && /\|\| Date\.now\(\) < fuelRetryAt \|\| waitGuard;/.test(ft),   // (and, 2026-11-16, after an escape withdrew it: once the guard is quiet - fuel_rth 8x2)
     // (2026-11-16: and the escape's once-per-run mark with them, at both - rthChainAgain, 16i)
     rearm: /rthChained=false; rthChainFailed=false; rthChainBusyAt=0; rthChainEscapeRun=null; \}/.test(grab("rearmRthChain"))
@@ -2561,6 +2605,85 @@ console.log("The passage, sailed:");
         () => JSON.stringify({ bad: Object.entries(w17x).filter(([, v]) => !v).map(([k]) => k), planner: stop17,
                                chain: [oChW, wCh.api.st().rthChainFailed, (wCh.later || []).map((t) => t.ms), said17(wCh).slice(-110)],
                                mon: oMonW, op: [oOpW, opSaidW.slice(-110)], again: [oOpW2, wOp.cmds.length] }));
+
+  // 17y. THE FIRST SECTION'S CHART READ, BOUNDED (2026-11-16). With the way home in, its send reads the chart along section 1
+  // (sailSend -> ensureNogoCovers -> fetchENCBbox), and that read was a bare `fetch`: a console that never answered held
+  // the send - sailBusy and the one flight home every later far RTH joins - for good, the chain neither failed nor asked
+  // again, and a Stop released nothing (the fence was asked only after the awaits). Now the read is bounded
+  // (tests/unread_water.js 7b) and handed the command's read record (commandReads): GIVEN UP, the send answers late -
+  // the chain asked again 15 s on, not recorded refused, the monitor told late, the operator told to press again, each
+  // said by that cause; a network failure of it was "refused", final for the chain. WAITED ON, a Stop or a fence that no
+  // longer stands ends it at once: withdrawn, nothing sent, the flight and sailBusy free. And (the brief's second
+  // neighbor) the post's reply LOST: "unknown" - the chain neither retried nor failed; asked again now, said so.
+  // Every "never answers" world here is capped: a page that waits for good fails the check.
+  const LATE17Y = "unanswered in 30 min";
+  const giveUp17y = (w, api, opts) => { if (opts && opts.read) opts.read.late = LATE17Y; return false; };
+  // a read that never answers - but ends when the command's read record says its press is gone (as corridorAsk's abort does)
+  const hang17y = (w, api, opts) => new Promise((res) => {
+    w.hung = (w.hung || 0) + 1;
+    if (!opts || !opts.read || typeof opts.read.gone !== "function") return;      // (the old page: nothing ends it)
+    const t = setInterval(() => { if (opts.read.gone()) { clearInterval(t); w.letGo = (w.letGo || 0) + 1; res(false); } }, 5);
+  });
+  const CAP17Y = 4000;
+  const capped17y = (p) => { let t; return Promise.race([p, new Promise((r) => { t = setTimeout(() => r("CAPPED"), CAP17Y); })]).finally(() => clearTimeout(t)); };
+  const SEC1 = "the first section of the way home as a passage could not be sent - the console gave no answer it could use to "
+    + "the chart read along it (" + LATE17Y + ")";
+  const gCh = farWorld17({ S: S17q(HOLDING), duringCover: giveUp17y }); gCh.api.set("rthChained", true);
+  const ogCh = await capped17y(gCh.api.doRTH({ chained: true }));
+  const gOp = farWorld17({ duringCover: giveUp17y });
+  const ogOp = await capped17y(gOp.api.doRTH({}));
+  const gMon = lowWorld17({ duringCover: giveUp17y });
+  const ogMon = await capped17y(gMon.api.doRTH({ why: LOWF, breakWhy: "fuel" }));
+  const gAl = arrived({ duringCover: giveUp17y }); gAl.api.set("rthChained", true);
+  const ogAl = await capped17y(gAl.api.doRTH({ chained: true }));
+  // ... hung, and a Stop pressed while it is waited on; and the fence (home moved) falling meanwhile
+  const hSt = lowWorld17({ duringCover: hang17y });
+  const phSt = capped17y(hSt.api.doRTH({ why: LOWF, breakWhy: "fuel" }));
+  for (let i = 0; i < 30 && !hSt.hung; i++) await settle();
+  hSt.api.stop("STOP");
+  const ohSt = await phSt;
+  const hHm = lowWorld17({ duringCover: hang17y });
+  const phHm = capped17y(hHm.api.doRTH({ why: LOWF, breakWhy: "fuel" }));
+  for (let i = 0; i < 30 && !hHm.hung; i++) await settle();
+  hHm.S.home = east(HERE, 800);
+  const ohHm = await phHm;
+  // ... and the post's reply lost: the chain asked again, the monitor told so
+  const lost17y = { ok: false, error: "no answer from the console after 15 s - it may or may not have been carried out", sent: true, refused: false };
+  const uCh = farWorld17({ S: S17q(HOLDING), post: lost17y }); uCh.api.set("rthChained", true);
+  const ouCh = await capped17y(uCh.api.doRTH({ chained: true }));
+  const uMon = lowWorld17({ post: lost17y });
+  const ouMon = await capped17y(uMon.api.doRTH({ why: LOWF, breakWhy: "fuel" }));
+  const free17y = (w) => w.api.st().homeFlight === null && w.api.st().sailBusy === false && !w.api.st().passageBusy;
+  const w17y = {
+    chain: ogCh === undefined && gCh.cmds.length === 0 && !gCh.api.st().rthChainFailed && (gCh.later || []).length === 1
+           && (gCh.later || [])[0].ms === 15000 && free17y(gCh)
+           && said17(gCh) === "RTH WAITING: home is 55.0 km away, and " + SEC1 + "; nothing was sent, and it is asked again in 15 s."
+           && gCh.logs.some((l) => l[0] === "passage_rth" && l[1].late === true && l[1].ok === false),
+    operator: nt17(ogOp).late === true && !nt17(ogOp).refused && gOp.cmds.length === 0 && free17y(gOp)
+              && said17(gOp) === "RTH refused: home is 55.0 km away, and " + SEC1 + ". Nothing was sent: press RTH again - the console goes on reading the chart meanwhile, and keeps what it reads.",
+    monitor: nt17(ogMon).late === true && gMon.cmds.length === 0 && free17y(gMon) && said17(gMon).indexOf("RTH WAITING: ") === 0,
+    along: ogAl === undefined && gAl.cmds.length === 0 && !gAl.api.st().rthChainFailed && (gAl.later || []).length === 1
+           && /^RTH WAITING: home is 60\.0 km away, and the first section of the way home along the passage could not be sent - the console gave no answer/.test(said17(gAl)),
+    stop: ohSt !== "CAPPED" && nt17(ohSt).withdrawn === true && nt17(ohSt).by === "STOP" && hSt.cmds.length === 0 && hSt.letGo === 1
+          && free17y(hSt) && /RTH withdrawn: STOP was pressed while the way home was being routed\. Nothing was sent\./.test(said(hSt)),
+    fence: ohHm !== "CAPPED" && nt17(ohHm).withdrawn === true && nt17(ohHm).by === "home moved" && hHm.cmds.length === 0 && hHm.letGo === 1
+           && free17y(hHm) && /RTH withdrawn: home was moved while the way home was being routed\. Nothing was sent\./.test(said(hHm)),
+    lostChain: ouCh === undefined && uCh.cmds.length === 1 && !uCh.api.st().rthChainFailed && (uCh.later || []).length === 1
+               && /RTH NOT ACKNOWLEDGED: .* - the way home as a passage, 55\.0 km\. If she did not take it, it is asked again in 15 s\.$/.test(said17(uCh)),
+    lostMonitor: nt17(ouMon).unknown === true && uMon.cmds.length === 1,
+  };
+  check("17y. THE FIRST SECTION'S CHART READ HAS AN END: given up for no answer, the send answers LATE - the end-of-plan chain "
+        + "(from here and along an arrived passage) asked again 15 s on and not recorded refused, the monitor told late, the "
+        + "operator told to press again, each said by that cause, nothing sent, the flight home and sailBusy free; WAITED ON, "
+        + "a Stop or a fence that no longer stands (home moved) ends it at once - withdrawn by what it names, nothing sent; "
+        + "and the post's reply LOST is asked again by the chain and the monitor, said so",
+        () => Object.values(w17y).every(Boolean),
+        () => JSON.stringify({ bad: Object.entries(w17y).filter(([, v]) => !v).map(([k]) => k),
+                               chain: [ogCh, gCh.cmds.length, gCh.api.st().rthChainFailed, (gCh.later || []).length, said17(gCh).slice(0, 200)],
+                               op: [ogOp, said17(gOp).slice(-120)], mon: [ogMon, said17(gMon).slice(0, 60)],
+                               along: [ogAl, gAl.cmds.length, gAl.api.st().rthChainFailed, (gAl.later || []).length, said17(gAl).slice(0, 160)],
+                               stop: [ohSt, hSt.cmds.length, hSt.letGo, said(hSt).slice(-160)], fence: [ohHm, hHm.letGo, said(hHm).slice(-160)],
+                               lost: [ouCh, uCh.cmds.length, (uCh.later || []).length, said17(uCh).slice(-120)], lostMon: ouMon }));
 
   console.log("\n" + (fails ? fails + " CHECK(S) FAILED (" + ran + " ran)" : "all checks passed (" + ran + ")"));
   process.exit(fails ? 1 : 0);

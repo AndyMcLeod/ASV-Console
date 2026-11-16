@@ -550,7 +550,7 @@ const goto = (from, to, o) => ({ op: "nogo", args: { from, to, opts: o } });
       "const showBanner = (m) => rec.banners.push(m), takeDownBanner = () => {};",
       "const logClient = (kind, data) => rec.logs.push({kind, data});",
       "const readPassageAis = async () => {}, aisKeepoutsNow = () => [], openWaterRead = async () => null;",
-      grab("planInsideChart"),
+      grab("commandReads"), grab("planInsideChart"),   // (a command's reads as one, 2026-11-16)
       "return { planInsideChart, routeStopPressed };"].join("\n");
     // eslint-disable-next-line no-new-func
     const w = new Function("nogo", "beyondChart", "beyondChartSay", "fmtDist", "rec", body)(
@@ -598,7 +598,10 @@ const goto = (from, to, o) => ({ op: "nogo", args: { from, to, opts: o } });
               && /routeStopPressed\("HOLD"\);[^\n]*\n\s*const r = await cmd\("\/api\/cmd\/hold"/.test(holdH)
               && estopH.indexOf("guiConfirm") < estopH.indexOf('if(on) routeStopPressed("E-STOP")')
               && /let p = await plan\(\)/.test(PIC) && /p = await plan\(\);/.test(PIC) && !/supervisorBusy/.test(PIC)
-              && (PIC.match(/routeStopGen !== stopWas/g) || []).length === 3
+              // (a Stop asked after EVERY await since 2026-11-16 - each read, the open water's, the plan, each widening - through
+              // `off()`, which also hands back the caller's own withdrawal: commandReads, tests/nogo_readout.js 35f)
+              && /const off = \(\) => routeStopGen !== stopWas \? withdrawn\(\)/.test(PIC)
+              && (PIC.match(/gone = off\(\); if\(gone\) return gone;/g) || []).length === 8
               && /await supervisorBusy\(\);\s*\n\s*try\{ return here\(\); \}\s*\n\s*finally\{ supPlanEnd = Date\.now\(\); \}/.test(PH),
         () => wiring.filter((w) => !(w.through && w.checks)).map((w) => w.fn + (w.through ? "" : " not through planOffThread")
               + (w.checks ? "" : " not checking withdrawn")).join("; ") || "all eight callers wired");
