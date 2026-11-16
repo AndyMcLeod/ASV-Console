@@ -14,6 +14,8 @@
 // model), the vessels not under way, and a passage section's model at another water. Then that the model goes over
 // ONCE; that the page's thread is FREE while the worker searches (and is not on its own thread - the control); every
 // way the worker can fail falls back to the page's own search; and a Stop pressed while a plan is searched withdraws it.
+// And (9f, 2026-11-15) a search on a WORLD of its own - a passage's end - tells its `here` when it was given up at the
+// search's limit, and nothing for a worker gone for good or a search refused: the first is asked again, the others not.
 //
 //   node tests/route_worker.js      # exit 0 = pass, 1 = fail   (stdlib Node, 18+)
 
@@ -490,6 +492,30 @@ const goto = (from, to, o) => ({ op: "nogo", args: { from, to, opts: o } });
               && madeT === 1,
         () => r9t + "; terminated " + termT + ", dead " + deadT + "; made " + p9t.rec.made.length);
   p9t.close(); p9b.close(); p9c.close();
+  // 9f. A WORLD'S `here` IS TOLD WHEN THE SEARCH WAS GIVEN UP AT ITS LIMIT (2026-11-15): a passage's end is planned on a
+  // chart read of its own (`job.world`), and with no worker's answer its `here` answers - which could not tell a search
+  // stopped at ROUTE_WORKER_TIMEOUT_MS (a give-up: the worker is made again, the plan asked for again - planPassageEnd)
+  // from a worker gone for good or a search the worker refused (asking again cannot help). Told the reason for the first,
+  // nothing for the others; and never through planHere - the page's thread holds the page's chart, not the world's
+  const WORLD = { ko: KO, frame: F, bbox: { W: SW.lon, S: SW.lat, E: NE.lon, N: NE.lat }, unread: null, buffer: 5 };
+  const told = async (pg, job) => { let got = "NOT ASKED"; const r = await pg.planOffThread({ ...job, world: WORLD }, (why) => { got = why; return "here"; }); return { r, got }; };
+  const p9f = makePage({ timeoutMs: 1 });
+  const t9f = await told(p9f, goto(from, up, o1));
+  const p9g = makePage({ brokenWorker: true });
+  const t9g = await told(p9g, goto(from, up, o1)), t9g2 = await told(p9g, goto(from, up, o1));
+  const p9h = makePage();
+  const t9h = await told(p9h, { op: "bogus", args: {} });
+  const p9i = makePage({ noWorker: true });
+  const t9i = await told(p9i, goto(from, up, o1));
+  check("9f. A WORLD'S `here` IS TOLD WHEN ITS SEARCH WAS GIVEN UP AT ITS LIMIT - the reason, in words - and told nothing for a "
+        + "worker that will not load (that search, and the next), a search the worker refuses, or no Worker at all; none of "
+        + "them through planHere",
+        () => t9f.r === "here" && t9f.got === "the route search ran past 0.001 s" && p9f.rec.terminated === 1
+              && t9g.r === "here" && t9g.got == null && t9g2.r === "here" && t9g2.got == null && !!p9g.routeLanes.cmd.dead
+              && t9h.r === "here" && t9h.got == null && t9i.r === "here" && t9i.got == null
+              && [p9f, p9g, p9h, p9i].every((pg) => pg.rec.busy === 0),
+        () => JSON.stringify({ past: t9f, broken: [t9g, t9g2], refused: t9h, none: t9i, busy: [p9f, p9g, p9h, p9i].map((pg) => pg.rec.busy) }));
+  p9f.close(); p9g.close(); p9h.close(); p9i.close();
 
   // 10. no chart: the planner answers at once, degraded - here, with no busy report and no worker
   const p10 = makePage();

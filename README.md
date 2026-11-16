@@ -3550,6 +3550,49 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    low-fuel monitor will ask again, the banner says RTH WAITING, not refused. A chain that joined a
    way home already being planned, whose End of plan was switched away meanwhile, is withdrawn when
    the read is given up, not asked again.
+   **The rest of the plan has an end too (2026-11-15).** With the chart read bounded, what
+   follows it was not: the fetch of each tile's planning grid, the coarse search in its worker,
+   and the chart read of each end. A console that stopped answering any of them held the way home
+   being planned, and Plan passage, for good. Each has a limit now. A grid's fetch is dropped at
+   30 s and asked again, and a batch the console answers nothing of ends the round, so the rest
+   are not asked of a console that is not answering. After such a batch the grids are asked one
+   at a time: six at once share the link, and a browser away from the console on a slow link
+   had every batch cut and asked again whole. The grids are given up when the console has
+   answered none for 2 minutes and 3 asks in a row, or when they are not all in after 5 minutes.
+   A grid that could not be fetched is no longer counted as a missing chart tile: that had
+   planned "part of it could not be planned", a final refusal that blamed the chart. Only the
+   console's own answer that it has no grid for a tile counts as missing, and that is asked once
+   more first (the console says the same of a grid it could not open while swapping in a new
+   one). The coarse search is stopped at 5 minutes (the worker is ended, and a new one is made
+   for the next plan). An end's chart read is dropped at 5 minutes, and an end whose route search
+   was stopped at the route worker's 2 minutes is no longer said "not planned in the route
+   worker". Each of these give-ups is answered as the slow chart read is: the banner names what
+   did not answer, End of plan and the low-fuel monitor ask again 15 s later, and the RTH button
+   says to press again. On the Passage tab an end that was given up leaves the coarse plan on
+   the chart, marked not sailable, with what did not answer and to press Plan passage again. The
+   second end is not waited on after the first was given up, and a line edited meanwhile is said
+   as the edit. Where the console itself says an end's chart could not be read, its reason is now
+   said with it. The water distance home the fuel monitor measures is
+   built the same way and bounded the same way: its grids and its search give up, and the build
+   is tried again a minute later with the distance it had kept. The limits
+   are sized from measurements: a grid arrives in about 30 ms (1.2 s the slowest of 636), the
+   coarse search took 0.2 to 4.5 s (12.5 s the slowest of 293 field builds), and an end's chart
+   read took 11 to 16 s with every tile on disk.
+   **A console restarted during a read (2026-11-15).** The console keeps its chart reads in
+   memory, so after a restart it no longer knows the read the page is polling. That was a final
+   refusal, said with a developer's usage string. Now the page asks for the read again as it
+   first asked, in the same poll: the console starts it again, and the tiles already read answer
+   at once. A read lost over and over still ends at the same 30 minutes, and the refusal says how
+   many times the console lost it. A read that ends with the console's refusal no longer leaves
+   the Passage tab saying "reading chart".
+   The read-ahead's ask, and the cancel of a way-home read too large to measure, are bounded at
+   30 s and dropped too: a request a stalled console never answered held one of the browser's
+   few connections to it. `tests/passage_plan.js` 16w-16z2, `tests/corridor_read.js` 1f, 1h, 1i,
+   4b, `tests/passage_tab.js` 4d, 5c, `tests/fuel_rth.js` 11l, 11m, `tests/route_worker.js` 9f.
+   **Still without an end (found by the review of this change, not fixed in it).** Once the way
+   home is planned, sending its first section reads the chart round it through the page's own
+   chart read, which has no limit: a console that never answers that read still holds the way
+   home, and a Stop does not release it. The same read is behind Go-To, Upload and the guard.
    **The 50 km stays as the line
    between the two planners, not as a refusal.** Within it the return is planned in one chart box,
    as before. A box of the water between stalls the page from not far past it: the Castine plan's

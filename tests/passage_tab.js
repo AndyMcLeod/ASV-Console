@@ -22,6 +22,9 @@
 //         one section - its one end
 //   5-5b  THE WORLD: a chart read of its own (padded, too-big and partial refused); planOffThread sends the world's chart,
 //         not the page's, and with no worker answers nothing rather than planning on the page's
+//   4d, 5c (2026-11-15) A GIVE-UP IS LATE, NOT A REFUSAL: an end's chart read bounded and aborted, no answer to take (none
+//         in time, the network, the console's own HTTP 5xx) said as that and {late}; an end's route search past its limit
+//         the same; the second end not waited on after a first given up, or for a plan no longer wanted
 //   6     THE DRAWING: P1..., FUEL, ARRIVAL; drawn after the transit draft and before the plan
 //
 //   node tests/passage_tab.js      # exit 0 = pass, 1 = fail   (stdlib Node)
@@ -200,7 +203,8 @@ function gotoWorld(o) {
     // eslint-disable-next-line no-new-func
     w.api = new Function("w", `"use strict";
       const passageEndWorld = async (pts) => { w.worlds.push(pts); return w.world; };
-      const planOffThread = async (job, here, adopt) => { w.jobs.push(job); return w.reply === undefined ? here() : adopt(w.reply); };
+      // (\`lost\`: what planOffThread tells a world's \`here\` when the search was given up at its limit - 4d)
+      const planOffThread = async (job, here, adopt) => { w.jobs.push(job); return w.reply === undefined ? here(w.lost) : adopt(w.reply); };
       const holdOpts = () => ({o: 1}), transitStandoffM = () => 20, routeLenM = (from, route) => route.length * 1000;
       const PASSAGE_PORT_R_M = 4000, distTo = (a, b) => Math.hypot((a.lat - b.lat) * 111320, (a.lon - b.lon) * 111320 * Math.cos(a.lat * Math.PI / 180));
       ${grab("sectionPorts")} ${grab("sectionAtPort")} ${grab("portSectionLine")}
@@ -271,23 +275,65 @@ function gotoWorld(o) {
               && okW.api.passageEndsSay({ dep: { ok: true }, arr: r.hold }) === "arriving: its end is not clear water to hold at"
               && okW.api.passageEndsSay({ dep: r.err, arr: r.hold }) === "leaving: no clear route to the target; arriving: its end is not clear water to hold at",
         () => JSON.stringify(r).slice(0, 300));
+  // 4d. A GIVE-UP IS NOT A JUDGMENT OF THE WATER (2026-11-15, residual 2 of the corridor wait's reviews): an end whose chart
+  // the console did not answer, or whose route search ran past its limit, is {late} - the plan is asked for again (the far
+  // RTH answers "late", not "refused": tests/passage_plan.js 16z) - where no route worker at all, and every refusal of 4c,
+  // is not. And the SECOND end is not waited on behind a first one given up, nor for a plan no longer wanted (`gone`)
+  const lateChart = "its chart had no answer it could use from the console (unanswered in 5 min)";
+  const g = {
+    chart: await why({ world: { error: lateChart, late: true } }),
+    past: await why({ reply: undefined, lost: "the route search ran past 120 s" }),
+    refused: await why({ world: { error: "its chart arrived without Depth_Area" } }),
+  };
+  const lateW = endWorld({ world: { error: lateChart, late: true } });
+  const lateEnds = await lateW.api.planPassageEnds({ points: [], sections: [S1, S2, S3] });
+  const goneW = endWorld({ reply: { ht: {}, plan: { route: [1] } } });
+  const goneEnds = await goneW.api.planPassageEnds({ points: [], sections: [S1, S2, S3] }, () => true);
+  const stayW = endWorld({ reply: { ht: {}, plan: { route: [1] } } });
+  const stayEnds = await stayW.api.planPassageEnds({ points: [], sections: [S1, S2, S3] }, () => false);
+  check("4d. A GIVE-UP IS LATE, NOT A REFUSAL: an end's chart not answered, its route search past its limit (the reason "
+        + "planOffThread hands on) - {late}, in those words; no route worker, and a chart refused, are not; the second end is "
+        + "not asked after a first given up, or for a plan no longer wanted - and is, for one still wanted",
+        () => g.chart.ok === false && g.chart.late === true && g.chart.why === lateChart
+              // (said as the WORKER's stop: the search past the limit may be one ahead of this in the worker's lane)
+              && g.past.ok === false && g.past.late === true
+              && g.past.why === "its route search was given up - the route worker was stopped at a search's limit (the route search ran past 120 s)"
+              && g.refused.ok === false && !("late" in g.refused) && !("late" in r.worker) && !("late" in r.chart) && !("late" in r.hold)
+              && lateW.worlds.length === 1 && lateW.jobs.length === 0 && lateEnds.dep.late === true && lateEnds.arr === null
+              && lateW.api.passageEndsSay(lateEnds) === "leaving: " + lateChart
+              && goneW.worlds.length === 1 && goneEnds.dep.ok === true && goneEnds.arr === null
+              && stayW.worlds.length === 2 && stayEnds.dep.ok === true && stayEnds.arr && stayEnds.arr.ok === true,
+        () => JSON.stringify({ g, late: [lateW.worlds.length, lateW.jobs.length, lateEnds], gone: [goneW.worlds.length, goneEnds], stay: [stayW.worlds.length, stayEnds] }).slice(0, 700));
 
   // ── 5. THE WORLD ─────────────────────────────────────────────────────────────────────────────────────────────────────
-  const worldOf = async (reply, pts) => {
-    const w = { urls: [], built: [] };
+  // (the read is corridorAsk's since 2026-11-15 - bounded, aborted, the console's own failure no answer: the page's ask
+  // and its helpers lifted; `o.fetch`: the world's own answer to the fetch, `o.fire`: its bound fired once the ask is
+  // made - 5c; each fetch's options kept, and each bound's ms)
+  const worldOf = async (reply, pts, o) => {
+    const w = { urls: [], built: [], opts: [], bounds: [] };
+    o = o || {};
     // eslint-disable-next-line no-new-func
-    const f = new Function("w", "reply", `"use strict";
+    const f = new Function("w", "reply", "o", `"use strict";
       const V = {NOGO_MIN_DEPTH_M: 3.15}, M_PER_DEG_LAT = 111320, nogo = {enf: {land: true}, buffer: 3};
       ${decl("PASSAGE_END_PAD_M")}
       ${decl("ENC_MAX_SPAN_DEG")}
+      ${decl("CORRIDOR_ASK_MS")}
+      ${decl("PASSAGE_END_READ_MS")}
       ${grab("encSpanRefusal")}
-      const fetch = async (u) => { w.urls.push(u); return {json: async () => reply}; };
+      const setTimeout = (fn, ms) => { const t = {fn, ms, cleared: false}; w.bounds.push(t); return t; };
+      const clearTimeout = (t) => { if(t) t.cleared = true; };
+      const fetch = async (u, opts) => { w.urls.push(u); w.opts.push(opts); return o.fetch ? o.fetch(u, opts) : {json: async () => reply}; };
       const planeFrame = (c) => ({ref: c}), featuresBboxRef = () => ({lat: 1, lon: 2}), nogoDR = () => ({min: 3.15, max: 0});
       const buildKeepouts = (fr, enf, dr, feats) => { w.built.push(feats.length); return {polys: feats}; };
       const buildMargin = () => "MARGIN";
+      ${grab("corridorReply")} ${grab("corridorFailure")} ${grab("corridorAsk")}
       ${grab("passageEndWorld")}
-      return passageEndWorld;`)(w, reply);
-    return { w, out: await f(pts) };
+      return passageEndWorld;`)(w, reply, o);
+    const p = f(pts);
+    // (the ask is made a turn after its bound is set: fired only once the fetch itself is out, its signal not yet aborted)
+    if (o.fire) { for (let i = 0; i < 50 && !w.opts.length; i++) await new Promise((r) => setTimeout(r, 0)); w.heldAt = w.opts[0] && w.opts[0].signal && w.opts[0].signal.aborted; w.bounds.filter((t) => !t.cleared).forEach((t) => t.fn()); }
+    const out = await Promise.race([p, new Promise((r) => setTimeout(() => r("HUNG"), 2000))]);
+    return { w, out };
   };
   const PTS = [{ lat: 43.6, lon: -70.25 }, { lat: 43.65, lon: -70.1 }];
   const good = await worldOf({ band: "harbour", features: [{}, {}], unread: [[-70.2, 43.6, -70.19, 43.61]], unread_failed: [[-70.1, 43.6, -70.09, 43.61]], partial: [] }, PTS);
@@ -305,6 +351,35 @@ function gotoWorld(o) {
               && part.out.error === "its chart arrived without Depth_Area" && part.w.built.length === 0
               && /could not be read \(ENC offline/.test(none.out.error),
         () => JSON.stringify({ good: good.out && { bbox, unread: good.out.unread }, big: big.out, part: part.out, none: none.out }).slice(0, 400));
+  // 5c. THE END'S CHART READ HAS AN END (2026-11-15, residual 2 of the corridor wait's reviews): the fetch was bare - a
+  // console that never answered held the plan (passageBusy, homeFlight) for good. Bounded by PASSAGE_END_READ_MS and
+  // ABORTED; and no answer to take - none in time, the network, a reply not JSON, the console's own HTTP 5xx - is {late},
+  // naming it (the plan asked for again), where the console's refusal of the chart (4xx, in words) stays final
+  const reply5 = (status, body) => ({ status, json: async () => { if (body instanceof Error) throw body; return body; } });
+  const hung5 = await worldOf(null, PTS, { fire: true, fetch: () => new Promise(() => {}) });
+  const net5 = await worldOf(null, PTS, { fetch: () => Promise.reject(new TypeError("Failed to fetch")) });
+  const e502 = await worldOf(null, PTS, { fetch: () => reply5(502, { error: "the chart service timed out" }) });
+  const html5 = await worldOf(null, PTS, { fetch: () => reply5(200, new SyntaxError("Unexpected token <")) });
+  const e400 = await worldOf(null, PTS, { fetch: () => reply5(400, { error: "the requested area spans 3.00 x 3.00 degrees" }) });
+  // (what the console REALLY answers with NOAA unreachable and no tile on disk - HTTP 200, no band, a `note` - is its
+  // answer about the chart: final, and said with that note, which was dropped: the 2026-11-15 review)
+  const off5 = await worldOf(null, PTS, { fetch: () => reply5(200, { band: null, bands: [], features: [], partial: [], unread_failed: [[-70.25, 43.5, -70, 43.75]],
+                                                                    note: "ENC offline (no cache for this tile)" }) });
+  const sig5 = good.w.opts[0] && good.w.opts[0].signal;
+  check("5c. THE END'S CHART READ HAS AN END: asked with an abort signal under a bound of PASSAGE_END_READ_MS (5 min); never "
+        + "answered - aborted, {late}, said unanswered in 5 min; the network, the console's HTTP 502, a reply not JSON - {late}, "
+        + "each named; the console's own refusal (400) final, in its words; a bound cleared when the read answers; nothing built",
+        () => hung5.out !== "HUNG" && hung5.out.late === true && hung5.out.error === "its chart had no answer it could use from the console (unanswered in 5 min)"
+              && hung5.w.bounds.length === 1 && hung5.w.bounds[0].ms === 300000 && hung5.w.heldAt === false && hung5.w.opts[0].signal.aborted === true
+              && net5.out.late === true && net5.out.error === "its chart had no answer it could use from the console (the console could not be reached)"
+              && e502.out.late === true && e502.out.error === "its chart had no answer it could use from the console (HTTP 502 - the chart service timed out)"
+              && html5.out.late === true && html5.out.error === "its chart had no answer it could use from the console (a reply that was not JSON)"
+              && e400.out.error === "its chart could not be read (the requested area spans 3.00 x 3.00 degrees)" && !("late" in e400.out)
+              && off5.out.error === "its chart could not be read (ENC offline (no cache for this tile))" && !("late" in off5.out) && off5.w.built.length === 0
+              && !("late" in none.out) && !("late" in part.out)
+              && sig5 && sig5.aborted === false && good.w.bounds.length === 1 && good.w.bounds[0].cleared === true
+              && [hung5, net5, e502, html5, e400].every((x) => x.w.built.length === 0),
+        () => JSON.stringify({ hung: hung5.out, bound: hung5.w.bounds.map((t) => t.ms), net: net5.out, e502: e502.out, html: html5.out, e400: e400.out }).slice(0, 700));
   // planOffThread with a world: driven with a stand-in worker
   const offThread = (o) => {
     const w = Object.assign({ posted: [], here: 0, planHere: 0, worker: true }, o);

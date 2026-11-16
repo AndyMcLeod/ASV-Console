@@ -32,6 +32,13 @@
 //        grid fetched; the worker given the floor in decimeters and the points; the plan kept, its fuel judged, the
 //        reserve marked, said on the banner and logged; an edit while it planned, a worker that failed, a read that
 //        stopped, a battery hull - refused and said, nothing kept;
+//   16j-16r  (2026-11-14) THE CHART READ'S WAIT HAS AN END: 30 min of wall clock, each ask bounded, a console gone mute;
+//   16w-16z2 (2026-11-15) THE REST OF THE PLAN HAS AN END TOO: a grid's fetch bounded and aborted, no answer asked again
+//        and never counted a missing tile (the console's own "no grid" asked once more first), one at a time after a
+//        batch with no answer, the grids given up by the console's silence or their own wall clock (16w-16y); the coarse
+//        search and the ends given up answered late, each in its own words, an end's with the plan (kept NOT SAILABLE by
+//        Plan passage), a withdrawal outranking each, and a read the console LOST posted again (16z); the worker's own
+//        bound - stopped, a new worker for the next plan (16z2);
 //   17   THE WORDS: planned in part, what could not be and why, a fuel leg NOT checked, the ports planned in detail;
 //   18   THE DRAWING: each planned leg's line, a failed leg straight and red, a mark per narrow stretch, a circle per
 //        port, the reserve mark;
@@ -519,6 +526,9 @@ const FLOOR = 30;
     const src = "let passage = null, passageBusy = false, passageStatus = \"\", passageGen = 0, corridorRead = null;\n"
       + "const PASSAGE_HALF_KM = 5, PASSAGE_HALF_MAX_KM = 25, PASSAGE_GRID_FETCHES = 6, CORRIDOR_POLL_MS = 0;\n"
       + /const CORRIDOR_WAIT_MAX_MS = [^;]+;/.exec(H)[0] + "\n" + /const CORRIDOR_ASK_MS = [^;]+;/.exec(H)[0] + "\n" + /const CORRIDOR_MUTE_MS = [^;]+;/.exec(H)[0] + "\n"
+      // (and PASSAGE_GRIDS_MAX_MS, the one statement: 16w-16y; `gridAskMs`: a world where a grid's bound is NOT the
+      // corridor ask's 30 s, so a fetch bounded by the wrong one of the two shows - 16w)
+      + /const PASSAGE_GRID_ASK_MS = [^;]+;/.exec(H)[0].replace(/PASSAGE_GRID_ASK_MS = \d+/, (m) => (w.gridAskMs ? "PASSAGE_GRID_ASK_MS = " + w.gridAskMs : m)) + "\n"
       + "const Date = class extends globalThis.Date { static now(){ return w.clock != null ? w.clock : globalThis.Date.now(); } };\n"
       + "const setTimeout = (fn, ms) => w.timer ? w.timer(fn, ms) : globalThis.setTimeout(fn, ms);\n"
       + "const clearTimeout = (t) => w.untimer ? w.untimer(t) : globalThis.clearTimeout(t);\n"
@@ -532,6 +542,7 @@ const FLOOR = 30;
       + "\nlet passagePreRead = null;"
       + "\nreturn {passageEdited, passagePointAt, toggleFuelStop, passageRefusal, passagePoints, passageFuelLegs, passageAlong,"
       + " passageSummary, passageLine, passageHalfKm, passageEndsSay, planPassageNow, drawPassage, passagePlanFor, MAX: CORRIDOR_WAIT_MAX_MS, ASK: CORRIDOR_ASK_MS, MUTE: CORRIDOR_MUTE_MS,"
+      + " GRID_ASK: PASSAGE_GRID_ASK_MS, GRIDS_MAX: PASSAGE_GRIDS_MAX_MS,"
       + " state: () => ({passage, passageBusy, passageGen, corridorRead}), setCorridorRead: (c) => { corridorRead = c; }, setPassage: (p) => { passage = p; }, bump: () => { passageGen++; },"
       + " preRead: () => passagePreRead};";
     const ctx = new Proxy({}, { get: (t, k) => (k in t ? t[k] : (...a) => { w.ops.push([k, ...a]); }), set: (t, k, v) => { t[k] = v; return true; } });
@@ -539,7 +550,8 @@ const FLOOR = 30;
       "fmtDist", "fmtDur", "fmtMS", "distTo", "PASSAGE_PORT_R_M", "M_PER_DEG_LAT", "nogoDR", "postCorridor", "getCorridor",
       "corridorSummary", "toCorridor", "fetch", "passageInWorker", "showBanner", "flashNote", "logClient", "updateTransitPanel",
       "render", "worldPx", "zoom", "ctx", "airNeedM", "ensureNogoCovers", "fmtVol", src)(
-      w, w.asv, w.transit, async () => { w.endsAsked = (w.endsAsked || 0) + 1; return w.ends; }, () => w.model, { SPEED_KN: { transit: w.kn } }, () => "transit", { status: w.status }, F.energyLevel,
+      // (`endsGone`: what the planner hands the ends to ask whether the plan is still wanted - 16z)
+      w, w.asv, w.transit, async (plan, gone) => { w.endsAsked = (w.endsAsked || 0) + 1; w.endsGone = typeof gone; if (w.duringEnds) w.duringEnds(w); return w.ends; }, () => w.model, { SPEED_KN: { transit: w.kn } }, () => "transit", { status: w.status }, F.energyLevel,
       F.passageFuel, F.FUEL_RESERVE_FRAC, fmtDist, fmtDur, (s) => s + "s", flat, C.PORT_R_M, 111320, () => ({ min: 3.15 }),
       // (`postAnswer` / `getAnswer`: the world's own answers to the post and to each poll - a read that never leaves
       // "running", a request never answered or failed, one answered late - 16j-16o; `sigs` each ask's abort signal. A poll
@@ -547,7 +559,11 @@ const FLOOR = 30;
       async (b, sig) => { w.posts.push(b); w.sigs.push(sig); if (w.postAnswer) return w.postAnswer(b); return w.seq.length ? w.seq.shift() : { id: "j", state: "done", total: 0, done: 0, tiles: [] }; },
       async (id, sig) => { w.gets.push(id); w.sigs.push(sig); if (w.getAnswer) return w.getAnswer(id); return w.seq.length ? w.seq.shift() : { error: "the world has no more answers" }; },
       (st) => "SUMMARY " + JSON.stringify(st), (st) => st,
-      async (url) => { w.fetches.push(url); const bad = w.grid404.some((t) => url.endsWith(t)); return { ok: !bad, arrayBuffer: async () => new ArrayBuffer(8) }; },
+      // (a grid's fetch: the console's 404 for a tile it has no grid for; `gridAnswer`: the world's own answer to one - a
+      // fetch never answered, failed, refused by the console's own HTTP 500 - 16w-16y; `gridSigs`: each fetch's abort signal)
+      async (url, opts) => { w.fetches.push(url); (w.gridSigs = w.gridSigs || []).push(opts && opts.signal);
+        if (w.gridAnswer) return w.gridAnswer(url, opts);
+        const bad = w.grid404.some((t) => url.endsWith(t)); return { ok: !bad, status: bad ? 404 : 200, arrayBuffer: async () => new ArrayBuffer(8) }; },
       async (msg) => { w.workerMsgs.push(msg); if (w.duringWorker) w.duringWorker(w); return w.worker; },
       (t) => w.banners.push(t), (t) => w.notes.push(t), (k, d) => w.logs.push([k, d]), () => {}, () => { w.renders++; },
       (lat, lon) => ({ x: lon * 1000, y: -lat * 1000 }), 9, ctx, () => 3.85,
@@ -620,13 +636,13 @@ const FLOOR = 30;
   const s16 = W16.api.state(), pl = s16.passage;
   const banner16 = W16.banners[W16.banners.length - 1] || "";
   check("16. PLAN PASSAGE end to end: the corridor read WITH grids along the points, 5 km either side, polled to done; "
-        + "each listed tile's grid fetched (one missing, counted); the worker given the floor in decimeters (3.15 m -> 32) "
+        + "each listed tile's grid fetched (one missing - asked once more, 2026-11-15, then counted); the worker given the floor in decimeters (3.15 m -> 32) "
         + "and what she needs overhead (3.85 m -> 39) "
         + "and the points; the plan kept - her position to T2 from the 120 L aboard, T2 to T4 from a full tank and SHORT, "
         + "its reserve marked - said, logged (reading, planned, with the points) and free after",
         () => W16.posts.length === 1 && W16.posts[0].grids === true && W16.posts[0].half_km === W16.api.passageHalfKm(P16)
-              && W16.posts[0].route.length === 5 && W16.gets.length === 2 && W16.fetches.length === 3
-              && /tile=-70.75,43,-70.5,43.25$/.test(W16.fetches[0]) && W16.workerMsgs.length === 1
+              && W16.posts[0].route.length === 5 && W16.gets.length === 2 && W16.fetches.length === 4
+              && /tile=-70.75,43,-70.5,43.25$/.test(W16.fetches[0]) && /tile=-70.5,43.25,-70.25,43.5$/.test(W16.fetches[3]) && W16.workerMsgs.length === 1
               && W16.workerMsgs[0].floorDm === 32 && W16.workerMsgs[0].airDm === 39
               && W16.workerMsgs[0].points.length === 5 && W16.workerMsgs[0].grids.length === 2
               && pl && pl.missing === 1 && pl.fuel.length === 2 && pl.fuel[0].start === 120 && pl.fuel[1].start === model.full
@@ -985,6 +1001,305 @@ const FLOOR = 30;
               && last(W16r2) === "Passage NOT planned: the chart read along it did not finish in " + MIN + " min (0 of 9 tile(s) read, 2 could not "
                                  + "be) - press Plan passage again to ask again.",
         () => JSON.stringify({ one: out16r, none: last(W16r2) }));
+
+  // ── THE REST OF THE PLAN HAS AN END TOO (2026-11-15, residuals 2 and 3 of the corridor wait's reviews) ───────────────
+  // With the chart read bounded, what followed it was not: each grid's fetch, the coarse search in its worker, each end's
+  // chart - a console that stopped answering held passageBusy and homeFlight for good. Each is bounded now, and a give-up
+  // is {late}, as the read's is. Here the read is done at the first poll (`readDone`), over nine tiles - two batches.
+  const tiles9 = Array.from({ length: 9 }, (_, k) => [-70.75 + 0.25 * k, 43, -70.5 + 0.25 * k, 43.25]);
+  const readDone = (w, tiles) => { w.done = (id) => ({ id, state: "done", total: tiles.length, done: tiles.length, tiles, failed: [] }); w.getAnswer = (id) => w.done(id); return w; };
+  const tileOf = (url) => url.slice(url.indexOf("tile=") + 5);
+  const gridOk = (n) => ({ ok: true, status: 200, arrayBuffer: async () => new ArrayBuffer(8 + n) });
+  // THE CONSOLE NOT ANSWERING A BATCH, DRIVEN: every ask of a batch is made in one turn, so each time the page waits with
+  // bounds open they ALL fire, the clock moved one bound on - to `p`'s end, or 200 bounds (a page that never gives up: HUNG)
+  const driveAll = async (w, p, onHang) => {
+    let end = null; p.then(() => { end = "settled"; }, () => { end = "threw"; });
+    const open = () => w.races.filter((t) => !t.cleared && !t.fired);
+    for (let n = 0; n < 200 && !end; n++) {
+      await new Promise((r) => setTimeout(r, 0));
+      await until(() => end || open().length);
+      await new Promise((r) => setTimeout(r, 0));
+      if (end || !open().length) break;
+      if (onHang) onHang(w, n);
+      w.clock += open()[0].ms; open().forEach((t) => { t.fired = true; t.fn(); });
+    }
+    return end || await within(p, 2000);
+  };
+  const GRID_ASK = W16.api.GRID_ASK, GRIDS_MAX = W16.api.GRIDS_MAX;
+  // 16w. A GRID NEVER ANSWERED: each fetch bounded by PASSAGE_GRID_ASK_MS and ABORTED; a batch the console answers nothing
+  // of ends the round (the other three tiles are not asked of it); asked again a poll on - ONE grid at a time from then
+  // on (the 2026-11-15 review) - and given up once it has answered none for CORRIDOR_MUTE_MS and 3 asks in a row - late,
+  // the read's tiles kept, the worker never asked, the tab free.
+  // And the line edited while a batch hangs is said as the edit after that one bound, nothing more fetched
+  const W16w = readDone(clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 60000), tiles9);
+  W16w.gridAnswer = () => hang(W16w);
+  let out16w = null;
+  const end16w = await driveAll(W16w, W16w.api.passagePlanFor(W16w.api.passagePoints(), () => {}, () => false).then((o) => { out16w = o; }));
+  const say16w = "the chart along it is read, but its planning grids had no answer it could use from the console for 3 min (0 of 9 answered; the last ask: unanswered in 30 s)";
+  const log16w = W16w.logs.find((l) => l[0] === "passage_plan" && l[1].state === "late");
+  const W16w2 = readDone(clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 60000), tiles9);
+  W16w2.gridAnswer = () => hang(W16w2);
+  const end16w2 = await driveAll(W16w2, W16w2.api.planPassageNow());
+  const W16w3 = readDone(clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 60000), tiles9);
+  W16w3.gridAnswer = () => hang(W16w3);
+  const end16w3 = await driveAll(W16w3, W16w3.api.planPassageNow(), (w, n) => { if (n === 0) w.api.bump(); });
+  // (... and edited in the WAIT between two rounds - as that wait begins, six fetches out: said after it, the second round not asked)
+  const W16w4 = readDone(clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 60000), tiles9);
+  W16w4.gridAnswer = () => hang(W16w4);
+  W16w4.timer = ((t) => (fn, ms) => { if (ms === 0 && W16w4.fetches.length === 6) W16w4.api.bump(); return t(fn, ms); })(W16w4.timer);
+  const end16w4 = await driveAll(W16w4, W16w4.api.planPassageNow());
+  // (... and a console DOWN - every fetch failing at once, a visible tab's rounds 2 s apart - is not given up at the third
+  // ask: mute is the 2 min AND the 3 asks, so at the 61st round, as a chart read's post is - 16p; six fetches in the first
+  // round, one in each after. The world answers past 2,000 fetches, so a page that never gives up FAILS here, not hangs)
+  const W16w5 = readDone(clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 2000), tiles9);
+  W16w5.gridAnswer = () => (W16w5.fetches.length > 2000 ? gridOk(0) : Promise.reject(new TypeError("Failed to fetch")));
+  const out16w5 = await W16w5.api.passagePlanFor(W16w5.api.passagePoints(), () => {}, () => false).catch((e) => ({ threw: String(e) }));
+  // (... and SIX AT ONCE TOO SLOW, ONE ALONE IN TIME - a browser on a slow link to the console, the 2026-11-15 review: every
+  // batch of six was cut at its bound and asked again whole, for good. After a batch with no answer the grids are asked
+  // one at a time: nine singles, each answered, and the passage is planned)
+  const W16w6 = readDone(clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 60000), tiles9);
+  let batch16w6 = [];
+  // (a batch's fetches are made in consecutive microtasks: the first queues the judging of the batch behind them all)
+  W16w6.gridAnswer = () => new Promise((res) => {
+    batch16w6.push(res);
+    if (batch16w6.length === 1) Promise.resolve().then(() => { const b = batch16w6; batch16w6 = []; if (b.length === 1) b[0](gridOk(0)); else W16w6.hung += b.length; });
+  });
+  const end16w6 = await driveAll(W16w6, W16w6.api.planPassageNow());
+  // (... and THREE IN A ROW means in a row: an ask with no answer, one ANSWERED, then two more with none over two minutes
+  // is not a console gone mute - the next is asked, answers, and the passage is planned)
+  const tiles3w = tiles9.slice(0, 3), on16w7 = [2, 4, 2], tries16w7 = {};
+  const W16w7 = readDone(clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 60000), tiles3w);
+  W16w7.gridAnswer = (url) => { const k = tiles3w.findIndex((t) => t.join(",") === tileOf(url)), n = tries16w7[k] = (tries16w7[k] || 0) + 1; return n >= on16w7[k] ? gridOk(k) : hang(W16w7); };
+  const end16w7 = await driveAll(W16w7, W16w7.api.planPassageNow());
+  // (... and THE BOUND IS THE GRID'S OWN: in a world where it is 20 s, not the corridor ask's 30, each fetch is cut at 20)
+  const W16w8 = readDone(clockOf(world({ transit: T3.map((p) => ({ ...p })), gridAskMs: 20000 }), 60000), tiles9);
+  W16w8.gridAnswer = () => hang(W16w8);
+  let out16w8 = null;
+  const end16w8 = await driveAll(W16w8, W16w8.api.passagePlanFor(W16w8.api.passagePoints(), () => {}, () => false).then((o) => { out16w8 = o; }));
+  check("16w. A GRID'S FETCH NEVER ANSWERED is bounded by PASSAGE_GRID_ASK_MS (" + GRID_ASK / 1000 + " s) and aborted; a batch with no "
+        + "answer ends the round (the rest not asked), asked again a poll on ONE AT A TIME, and given up at the 3rd ask (3.5 min, "
+        + "none answered): {late, kept} naming the grids and what the last ask got, logged, the worker never asked, the tab free; "
+        + "the line edited while a batch hangs said as the edit at that batch's bound (no wait more), nothing more fetched - and "
+        + "edited in the wait between rounds, said after it; a console down not given up before the 2 min; six at once too "
+        + "slow but one alone in time - planned; an answer between unanswered asks restarts the three",
+        () => GRID_ASK === 30000 && end16w === "settled" && out16w && out16w.late === true && out16w.kept === true && out16w.error === say16w && !out16w.plan
+              && W16w.fetches.length === 8 && W16w.hung === 8 && W16w.gridSigs.length === 8 && W16w.gridSigs.every((s) => s && s.aborted === true)
+              && W16w.races.filter((t) => t.fired).every((t) => t.ms === GRID_ASK) && W16w.workerMsgs.length === 0
+              && W16w.clock - W16w.t0 === 4.5 * 60000
+              && log16w && log16w[1].what === "grids" && log16w[1].id === "g" && log16w[1].why === say16w
+              && end16w2 === "settled" && last(W16w2) === "Passage NOT planned: " + say16w + keptSay
+              && W16w2.api.state().passage === null && !W16w2.api.state().passageBusy && W16w2.workerMsgs.length === 0
+              && end16w3 === "settled" && edited(W16w3) && W16w3.fetches.length === 6 && W16w3.workerMsgs.length === 0
+              && W16w3.clock - W16w3.t0 === 1.5 * 60000
+              && end16w4 === "settled" && edited(W16w4) && W16w4.fetches.length === 6 && W16w4.workerMsgs.length === 0
+              && W16w4.clock - W16w4.t0 === 2.5 * 60000
+              && out16w5 && !out16w5.threw && out16w5.late === true && W16w5.fetches.length === 6 + 60
+              && out16w5.error === "the chart along it is read, but its planning grids had no answer it could use from the console for 2 min (0 of 9 answered; the last ask: the console could not be reached)"
+              && end16w6 === "settled" && !!W16w6.api.state().passage && W16w6.fetches.length === 6 + 9 && W16w6.hung === 6
+              && W16w6.workerMsgs.length === 1 && W16w6.workerMsgs[0].grids.length === 9 && W16w6.clock - W16w6.t0 === 2.5 * 60000
+              && end16w7 === "settled" && !!W16w7.api.state().passage && W16w7.fetches.length === 8 && W16w7.workerMsgs.length === 1
+              && W16w7.workerMsgs[0].grids.length === 3 && !W16w7.logs.some((l) => l[1] && l[1].state === "late")
+              && end16w8 === "settled" && W16w8.api.GRID_ASK === 20000 && W16w8.races.filter((t) => t.fired).length === 8
+              && W16w8.races.filter((t) => t.fired).every((t) => t.ms === 20000)
+              && out16w8 && out16w8.error === "the chart along it is read, but its planning grids had no answer it could use from the console for 3 min (0 of 9 answered; the last ask: unanswered in 20 s)",
+        () => JSON.stringify({ ends: [end16w, end16w2, end16w3, end16w4, end16w6, end16w7], out: out16w, down: [W16w5.fetches.length, out16w5],
+                               slow: [!!W16w6.api.state().passage, W16w6.fetches.length, W16w6.hung, (W16w6.clock - W16w6.t0) / 60000, last(W16w6).slice(0, 90)],
+                               inARow: [!!W16w7.api.state().passage, W16w7.fetches.length, last(W16w7).slice(0, 120)], fetches: [W16w.fetches.length, W16w3.fetches.length, W16w4.fetches.length], aborted: (W16w.gridSigs || []).filter((s) => s && s.aborted).length,
+                               min: [W16w, W16w3, W16w4].map((w) => (w.clock - w.t0) / 60000), log: log16w && log16w[1].what, banner: last(W16w2).slice(0, 200), edit: [last(W16w3).slice(0, 80), last(W16w4).slice(0, 80)] }));
+  // 16x. NO ANSWER IS NOT A MISSING GRID: a fetch that failed (the network) or met the console's own HTTP 500 was counted
+  // `missing` - unread water, "part of it could not be planned", a FINAL refusal of the far RTH naming the chart. It is
+  // asked again; only the console's own "no grid for that tile" (404) is missing - and that asked ONCE more first (the
+  // console says it too of a grid it could not open, as when it swaps a new one in); the grids go to the worker in tile order
+  const tiles3 = tiles9.slice(0, 3), asks16x = {};
+  const W16x = world({ transit: T3.map((p) => ({ ...p })) });
+  W16x.seq = [{ id: "g1", state: "running", total: 3, done: 0, tiles: tiles3 }, { id: "g1", state: "done", total: 3, done: 3, tiles: tiles3, failed: [] }];
+  W16x.worker = W16.worker;
+  W16x.gridAnswer = (url) => {
+    const k = tiles3.findIndex((t) => t.join(",") === tileOf(url)), n = asks16x[k] = (asks16x[k] || 0) + 1;
+    if (k === 0) return n < 3 ? Promise.reject(new TypeError("Failed to fetch")) : gridOk(0);     // the network, twice
+    // (the console's own HTTP 500, TWICE: taken as its "no grid", the second would make the tile missing)
+    if (k === 1) return n < 3 ? { ok: false, status: 500, arrayBuffer: async () => new ArrayBuffer(8) } : gridOk(1);
+    // no grid for that tile (past 50 asks the world gives one, so a page that never counts it missing FAILS here, not spins)
+    return n > 50 ? gridOk(2) : { ok: false, status: 404, arrayBuffer: async () => new ArrayBuffer(8) };
+  };
+  await W16x.api.planPassageNow();
+  const g16x = (W16x.workerMsgs[0] || {}).grids || [];
+  // (... and a grid the console could not OPEN at the first ask - its 404 - is there at the second: not missing)
+  const W16x2 = world({ transit: T3.map((p) => ({ ...p })) });
+  W16x2.seq = [{ id: "g1", state: "running", total: 3, done: 0, tiles: tiles3 }, { id: "g1", state: "done", total: 3, done: 3, tiles: tiles3, failed: [] }];
+  W16x2.worker = W16.worker;
+  let swap16x2 = 0;
+  W16x2.gridAnswer = (url) => (tileOf(url) === tiles3[1].join(",") && !swap16x2++ ? { ok: false, status: 404, arrayBuffer: async () => new ArrayBuffer(8) }
+                                                                              : gridOk(tiles3.findIndex((t) => t.join(",") === tileOf(url))));
+  await W16x2.api.planPassageNow();
+  const g16x2 = (W16x2.workerMsgs[0] || {}).grids || [];
+  check("16x. NO ANSWER IS NOT A MISSING GRID: a fetch that failed (the network, twice) or met the console's HTTP 500 (twice) is asked "
+        + "again and its grid planned on; the console's own 404 is asked once more and then the one missing tile, said; a 404 "
+        + "answered with the grid at the second ask is not missing; the grids in tile order",
+        () => !!W16x.api.state().passage && W16x.api.state().passage.missing === 1 && g16x.length === 2
+              && g16x[0].byteLength === 8 && g16x[1].byteLength === 9
+              && asks16x[0] === 3 && asks16x[1] === 3 && asks16x[2] === 2 && W16x.fetches.length === 8
+              && /1 chart tile\(s\) could not be read/.test(last(W16x)) && !W16x.logs.some((l) => l[1] && l[1].state === "late")
+              && !!W16x2.api.state().passage && W16x2.api.state().passage.missing === 0 && W16x2.fetches.length === 4
+              && JSON.stringify(g16x2.map((b) => b.byteLength)) === "[8,9,10]" && !/could not be read/.test(last(W16x2)),
+        () => JSON.stringify({ planned: !!W16x.api.state().passage, missing: W16x.api.state().passage && W16x.api.state().passage.missing,
+                               grids: g16x.map((b) => b.byteLength), asks: asks16x, fetches: W16x.fetches.length, banner: last(W16x).slice(0, 120) }));
+  // 16y. THE GRIDS' OWN WALL CLOCK (PASSAGE_GRIDS_MAX_MS): a console that answers one grid of each batch and hangs the
+  // others never goes mute - it is given up at 5 min of wall clock, said with how many answered. And the clock is read
+  // INSIDE a round: 66 tiles, eleven batches of 30 s - the eleventh is not asked
+  const slow = (w, tiles, answersOn) => { const tries = {};
+    w.gridAnswer = (url) => { const k = tiles.findIndex((t) => t.join(",") === tileOf(url)), n = tries[k] = (tries[k] || 0) + 1; return answersOn(k) === n ? gridOk(k) : hang(w); };
+    return w; };
+  const on16y = { 0: 1, 6: 1, 1: 2, 8: 2, 2: 3, 3: 4 };
+  const W16y = slow(readDone(clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 60000), tiles9), tiles9, (k) => on16y[k]);
+  let out16y = null;
+  const end16y = await driveAll(W16y, W16y.api.passagePlanFor(W16y.api.passagePoints(), () => {}, () => false).then((o) => { out16y = o; }));
+  const tiles66 = Array.from({ length: 66 }, (_, k) => [-70.75 + 0.25 * (k % 11), 40 + 0.25 * Math.floor(k / 11), -70.5 + 0.25 * (k % 11), 40.25 + 0.25 * Math.floor(k / 11)]);
+  const W16y2 = slow(readDone(clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 60000), tiles66), tiles66, (k) => (k % 6 === 0 ? 1 : 0));
+  let out16y2 = null;
+  const end16y2 = await driveAll(W16y2, W16y2.api.passagePlanFor(W16y2.api.passagePoints(), () => {}, () => false).then((o) => { out16y2 = o; }));
+  // (... and MUTE IS COUNTED FROM THE LAST ANSWER, not from the first ask: two grids answered in the first minute, then
+  // nothing - given up 2 min after the second, at the third batch unanswered, said as 2 min with the two answered)
+  const W16y3 = slow(readDone(clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 10000), tiles9), tiles9, (k) => ({ 0: 1, 6: 1 })[k]);
+  let out16y3 = null;
+  const end16y3 = await driveAll(W16y3, W16y3.api.passagePlanFor(W16y3.api.passagePoints(), () => {}, () => false).then((o) => { out16y3 = o; }));
+  // (... and "THE LAST ASK" IS THE LAST BATCH'S: a console slow, not failing - each batch answered, 30 s a batch - but for
+  // one fetch lost in the first; past the 5 min the tenth batch had no failure, so none is said: the first batch's is stale)
+  const W16y4 = readDone(clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 60000), tiles66);
+  let lost16y4 = 0;
+  W16y4.gridAnswer = (url) => { const k = tiles66.findIndex((t) => t.join(",") === tileOf(url));
+    if (k % 6 === 0) W16y4.clock += 30000;
+    if (k === 1 && !lost16y4++) return Promise.reject(new TypeError("Failed to fetch"));
+    return gridOk(k); };
+  const out16y4 = await W16y4.api.passagePlanFor(W16y4.api.passagePoints(), () => {}, () => false).catch((e) => ({ threw: String(e) }));
+  check("16y. THE GRIDS' OWN WALL CLOCK (" + GRIDS_MAX / 60000 + " min): a console answering one grid a batch is never mute - given up "
+        + "past the 5 min, said with how many answered and what the last ask got, late and kept; and read inside a round - of "
+        + "66 tiles the eleventh batch is not asked; mute counted from the LAST answer",
+        () => GRIDS_MAX === 300000 && end16y === "settled" && out16y && out16y.late === true && out16y.kept === true
+              && out16y.error === "the chart along it is read, but its planning grids were not all fetched in 5 min (6 of 9 answered; the last ask: unanswered in 30 s)"
+              && W16y.clock - W16y.t0 === 6.5 * 60000 && W16y.workerMsgs.length === 0
+              && end16y2 === "settled" && out16y2 && out16y2.late === true && W16y2.fetches.length === 60
+              && out16y2.error === "the chart along it is read, but its planning grids were not all fetched in 5 min (10 of 66 answered; the last ask: unanswered in 30 s)"
+              && end16y3 === "settled" && out16y3 && out16y3.late === true && W16y3.fetches.length === 17 && W16y3.clock - W16y3.t0 === 190000
+              && out16y3.error === "the chart along it is read, but its planning grids had no answer it could use from the console for 2 min (2 of 9 answered; the last ask: unanswered in 30 s)"
+              && out16y4 && !out16y4.threw && out16y4.late === true && W16y4.fetches.length === 60 && lost16y4 === 1
+              && out16y4.error === "the chart along it is read, but its planning grids were not all fetched in 5 min (59 of 66 answered)",
+        () => JSON.stringify({ ends: [end16y, end16y2, end16y3], out: out16y, min: (W16y.clock - W16y.t0) / 60000, big: [W16y2.fetches.length, out16y2 && out16y2.error],
+                               thenMute: [W16y3.fetches.length, (W16y3.clock - W16y3.t0) / 1000, out16y3 && out16y3.error] }));
+  // 16z. THE COARSE SEARCH AND THE ENDS GIVEN UP ARE LATE TOO: the worker's own give-up ({error, late} - 16z2) and an end's
+  // (its chart not answered, its route search past its limit - tests/passage_tab.js 4d, 5c) are answered {late, kept} in
+  // their own words, logged; a worker's plain failure and an end that could not be planned stay what they were (16b,
+  // 16g). An end's give-up comes WITH the coarse plan (the 2026-11-15 review): Plan passage keeps it, NOT SAILABLE and
+  // said why, its section's chart image not read; a far Go-To's is refused with the Go-To's advice, nothing kept. The
+  // ends are handed the planner's own `gone`, and a withdrawal OUTRANKS a give-up of the worker or of an end. And a read
+  // the console LOST (a poll's 404, after a restart) is posted again and planned - not "failed: no such corridor read"
+  const wkLate = "the coarse plan did not finish in 5 min in its worker (stopped)";
+  const W16z = readDone(clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 60000), tiles9);
+  W16z.worker = { error: wkLate, late: true };
+  const out16z = await W16z.api.passagePlanFor(W16z.api.passagePoints(), () => {}, () => false);
+  const W16zn = readDone(clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 60000), tiles9);
+  W16zn.worker = { error: wkLate, late: true };
+  await W16zn.api.planPassageNow();
+  const endLate = { dep: { ok: false, why: "its chart had no answer it could use from the console (unanswered in 5 min)", late: true }, arr: null };
+  const W16ze = readDone(clockOf(world({ transit: T3.map((p) => ({ ...p })), ends: endLate }), 60000), tiles9);
+  const out16ze = await W16ze.api.passagePlanFor(W16ze.api.passagePoints(), () => {}, () => false);
+  const arrLate = "its route search was given up - the route worker was stopped at a search's limit (the route search ran past 120 s)";
+  const endsArr = () => ({ dep: { ok: true, km: 1, wpts: 2 }, arr: { ok: false, why: arrLate, late: true } });
+  const W16za = readDone(clockOf(world({ transit: T3.map((p) => ({ ...p })), ends: endsArr() }), 60000), tiles9);
+  await W16za.api.planPassageNow();
+  const W16zg = readDone(clockOf(world({ transit: T3.map((p) => ({ ...p })), ends: endsArr() }), 60000), tiles9);     // a far Go-To's
+  await W16zg.api.planPassageNow("give the Go-To again");
+  const logs16z = (w) => w.logs.filter((l) => l[0] === "passage_plan" && l[1].state === "late").map((l) => l[1].what);
+  // (a withdrawal outranks: the line edited while the worker searched, and while the ends were planned, with each then given up)
+  const W16zw = readDone(clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 60000), tiles9);
+  W16zw.worker = { error: wkLate, late: true }; W16zw.duringWorker = (w) => w.api.bump();
+  await W16zw.api.planPassageNow();
+  const W16zx = readDone(clockOf(world({ transit: T3.map((p) => ({ ...p })), ends: endsArr(), duringEnds: (w) => w.api.bump() }), 60000), tiles9);
+  await W16zx.api.planPassageNow();
+  const W16zl = clockOf(world({ transit: T3.map((p) => ({ ...p })) }), 60000);
+  W16zl.getAnswer = ((n) => (id) => (++n === 2 ? { lost: true, id, error: "the console no longer holds that read (it was restarted, or the read made way for newer ones)" } : n >= 4 ? W16zl.done(id) : { id, state: "running", total: 9, done: 2, tiles: [] }))(0);
+  W16zl.postAnswer = () => ({ id: "g", state: "running", total: 9, done: W16zl.posts.length > 1 ? 2 : 0, tiles: [] });
+  await W16zl.api.planPassageNow();
+  check("16z. THE COARSE SEARCH AND THE ENDS GIVEN UP ARE LATE TOO, each in its own words, kept, logged - the worker's "
+        + "give-up, an end's chart not answered, an end's route search past its limit; an end's comes with the coarse plan: "
+        + "Plan passage keeps it NOT SAILABLE and says to press again, a far Go-To's is refused with its own advice; the ends "
+        + "handed the planner's `gone`, a withdrawal outranking a give-up of the worker or an end; and a read the console LOST "
+        + "is posted again as first asked, and planned",
+        () => out16z && out16z.late === true && out16z.kept === true && out16z.error === wkLate && !out16z.plan && (W16z.endsAsked || 0) === 0
+              && JSON.stringify(logs16z(W16z)) === "[\"worker\"]"
+              && last(W16zn) === "Passage NOT planned: " + wkLate + keptSay && W16zn.api.state().passage === null && !W16zn.api.state().passageBusy
+              && out16ze && out16ze.late === true && out16ze.kept === true && W16ze.endsGone === "function"
+              && out16ze.plan && out16ze.plan.ends === endLate && out16ze.id === "g"
+              && out16ze.error === "its ends could not be planned in detail - leaving: its chart had no answer it could use from the console (unanswered in 5 min)"
+              && JSON.stringify(logs16z(W16ze)) === "[\"ends\"]"
+              && W16za.api.state().passage && W16za.api.state().passage.ends.arr.late === true && !W16za.api.state().passageBusy
+              && /^PASSAGE PLANNED, COARSE: /.test(last(W16za))
+              && last(W16za).endsWith(" ⚠ NOT SAILABLE - its ends could not be planned in detail: arriving: " + arrLate + " - given up, not judged: press Plan passage again to plan them again.")
+              && (W16za.preReads || []).length === 0 && JSON.stringify(logs16z(W16za)) === "[\"ends\"]"
+              && W16zg.api.state().passage === null && last(W16zg) === "Passage NOT planned: its ends could not be planned in detail - arriving: " + arrLate
+                 + " - the tiles read are kept: give the Go-To again to go on from them."
+              && edited(W16zw) && W16zw.api.state().passage === null && (W16zw.endsAsked || 0) === 0
+              && edited(W16zx) && W16zx.api.state().passage === null && W16zx.endsAsked === 1 && (W16zx.preReads || []).length === 0
+              && !!W16zl.api.state().passage && W16zl.posts.length === 2 && JSON.stringify(W16zl.posts[1]) === JSON.stringify(W16zl.posts[0])
+              && W16zl.posts[1].grids === true && W16zl.logs.some((l) => l[0] === "corridor_read" && l[1].state === "lost" && l[1].id === "g")
+              && !/usage|no such corridor/.test(W16zl.banners.join(" ")),
+        () => JSON.stringify({ worker: [out16z, W16z.endsAsked || 0, logs16z(W16z)], now: last(W16zn).slice(0, 140), ends: [out16ze, W16ze.endsGone, logs16z(W16ze)],
+                               arr: [!!W16za.api.state().passage, last(W16za).slice(-230)], goTo: last(W16zg).slice(0, 220), gone: [last(W16zw).slice(0, 70), last(W16zx).slice(0, 70)],
+                               lost: [!!W16zl.api.state().passage, W16zl.posts.length, last(W16zl).slice(0, 80)] }).slice(0, 1900));
+  // 16z2. THE WORKER'S OWN BOUND (passageInWorker, lifted, on a stand-in Worker and timers of the check's own): a plan
+  // answered clears its bound; one never answered is STOPPED at COARSE_WORKER_MS - the worker terminated, a new one made
+  // for the next plan - and answered {error, late}; an answer for another plan is not this one's; a plan that cannot be
+  // sent is said, its bound cleared (thrown, it left the bound armed to stop the NEXT plan's worker)
+  const wk16 = (o) => {
+    const w = Object.assign({ made: [], timers: [] }, o || {});
+    class FakeWorker { constructor(url, opts) { this.url = url; this.opts = opts; this.posted = []; this.terminated = 0; w.made.push(this); }
+      postMessage(m, tr) { if (w.postThrows) throw new Error("DataCloneError: a buffer already handed over"); this.posted.push([m, tr]); }
+      terminate() { this.terminated++; } }
+    w.api = new Function("w", "Worker", "setTimeout", "clearTimeout", "let passageWorker = null, passageSeq = 0;\n" + /const COARSE_WORKER_MS = [^;]+;/.exec(H)[0] + "\n"
+      + grab("passageInWorker") + "\nreturn {passageInWorker, worker: () => passageWorker, MS: COARSE_WORKER_MS};")(
+      w, FakeWorker, (fn, ms) => { const t = { fn, ms, cleared: false }; w.timers.push(t); return t; }, (t) => { if (t) t.cleared = true; });
+    return w;
+  };
+  const settled = async (p) => { let v = "PENDING"; p.then((x) => { v = x; }); await new Promise((r) => setTimeout(r, 0)); return v; };
+  const K1 = wk16();
+  const p1 = K1.api.passageInWorker({ grids: ["G"], points: [1] });
+  K1.made[0].onmessage({ data: { id: 99, legs: ["another plan's"] } });
+  const stale1 = await settled(p1);
+  K1.made[0].onmessage({ data: { id: 1, legs: ["L"], ms: 7 } });
+  const ans1 = await settled(p1);
+  const K2 = wk16();
+  const p2 = K2.api.passageInWorker({ grids: [], points: [] });
+  const before2 = await settled(p2), held2 = K2.api.worker() === K2.made[0];
+  K2.timers[0].fn();
+  const ans2 = await settled(p2), dropped2 = K2.api.worker() === null;
+  const p2b = K2.api.passageInWorker({ grids: [], points: [] });
+  K2.made[1] && K2.made[1].onmessage({ data: { id: 2, legs: [] } });
+  const ans2b = await settled(p2b);
+  const K3 = wk16({ postThrows: true });
+  const ans3 = await settled(K3.api.passageInWorker({ grids: [], points: [] }).catch((e) => ({ threw: String(e) })));
+  // (a worker that FAILS clears its plan's bound too, and is not a give-up; and a bound fires on ITS worker alone - fired
+  // late, after that worker failed and the next plan made a new one, it leaves the new one be: the 2026-11-15 review)
+  const KW4 = wk16();
+  const pw4 = KW4.api.passageInWorker({ grids: [], points: [] });
+  KW4.made[0].onerror({ message: "boom" });
+  const answ4 = await settled(pw4), droppedW4 = KW4.api.worker() === null, clearedW4 = KW4.timers[0].cleared;
+  const pw4b = KW4.api.passageInWorker({ grids: [], points: [] });
+  KW4.timers[0].fn();                                   // the first plan's bound, late
+  const keptW4 = KW4.api.worker() === KW4.made[1], beforeW4b = await settled(pw4b);
+  check("16z2. THE COARSE SEARCH HAS AN END (COARSE_WORKER_MS, " + K1.api.MS / 60000 + " min): a plan answered clears its bound (another "
+        + "plan's answer is not its own); one never answered is STOPPED - the worker terminated, a new one for the next plan - "
+        + "and answered {error, late}; one that cannot be sent is said, not thrown, its bound cleared; a worker that fails "
+        + "clears the bound, not late; and a bound stops its OWN worker only",
+        () => K1.api.MS === 300000 && stale1 === "PENDING" && ans1 && ans1.legs[0] === "L" && K1.timers.length === 1 && K1.timers[0].ms === 300000 && K1.timers[0].cleared
+              && K1.made[0].posted[0][0].id === 1 && K1.made[0].posted[0][1][0] === "G" && K1.made[0].onmessage === null && K1.made[0].terminated === 0
+              && before2 === "PENDING" && held2 && ans2 && ans2.late === true && ans2.error === wkLate
+              && K2.made[0].terminated === 1 && dropped2 && K2.made.length === 2 && ans2b && Array.isArray(ans2b.legs) && K2.made[1].terminated === 0
+              && ans3 && !ans3.threw && /^the plan could not be sent to its worker \(DataCloneError/.test(ans3.error) && !ans3.late
+              && K3.timers.length === 1 && K3.timers[0].cleared
+              && answ4 && answ4.error === "the passage's worker failed: boom" && !answ4.late && droppedW4 && clearedW4
+              && KW4.made.length === 2 && keptW4 && KW4.made[1].terminated === 0 && beforeW4b === "PENDING",
+        () => JSON.stringify({ stale1, ans1, timers: K1.timers.map((t) => [t.ms, t.cleared]), before2, ans2, term: K2.made.map((m) => m.terminated), dropped2, ans2b, ans3, t3: K3.timers.map((t) => t.cleared),
+                               failed: [answ4, droppedW4, clearedW4, KW4.made.length, keptW4, beforeW4b] }));
 
   // ── 17. the words ───────────────────────────────────────────────────────────────────────────────────────────────
   const plan17 = { points: P12, legs: [mkLeg(0, P12[0], P12[1], 20000), mkLeg(1, P12[1], P12[2], 0, { error: "blocked", pts: [] }),

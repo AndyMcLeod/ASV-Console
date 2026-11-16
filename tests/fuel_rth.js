@@ -39,6 +39,9 @@
 //   review of that change: 8o a view-only window does not count a crossing as answered (taking over, it sends her);
 //   8p a new link (boot_id) is a new watch. (The server's half - every new link told the override - is
 //   tests/run_link_control.py 21-21e and tests/energy_chartinfo.py 14-15; doRTH's withdrawal is tests/command_result.js 54b.)
+//   THE COARSE BUILD'S WAITS HAVE AN END (11j-11k, 2026-11-14: the chart read along the way; 11l-11m, 2026-11-15: the
+//   grids not fetched, the search stopped at COARSE_WORKER_MS in its worker - a new one for the next build - and the
+//   cancel of a read too large bounded and aborted).
 //
 // TEETH - twenty-one mutations RUN, each on a scratch copy of static/, tests/, vessels/ and asv_console.py, all caught:
 //   the reserve 25% (the Fuel planner's), not his 20%          -> 4, 5, 8
@@ -1462,10 +1465,12 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
       "const S = {home: w.home || HOME}, V = w.V || {};",
       "let coarseHome = w.coarse;",
       // (`postHang`: the console never answers the ask - 11k; `sigs`: each ask's abort signal)
-      "const postCorridor = async (b, sig) => { w.posts.push(b); (w.sigs = w.sigs || []).push(sig); if (w.postHang) return new Promise(() => {}); return w.st0; };",
+      // (`cancelHang`: the console never answers the build's cancel - 11l)
+      "const postCorridor = async (b, sig) => { w.posts.push(b); (w.sigs = w.sigs || []).push(sig); if (w.postHang || (b.cancel && w.cancelHang)) return new Promise(() => {}); return w.st0; };",
       // (`stillRunning`: the read never leaves "running" - 11j - until 400 polls, so a build that never gives up FAILS, not hangs)
       "const getCorridor = async (id) => { w.gets++; return w.stillRunning && w.gets <= 400 ? w.st0 : w.stDone; };",
-      "const CORRIDOR_POLL_MS = 0, passageGrids = async (tiles) => ({grids: tiles.map((t) => ({tile: t})), missing: 0});",
+      // (`gridsOut`: what the grids' fetch answers instead - its give-up, 11l; tests/passage_plan.js 16w-16y drive the fetch itself)
+      "const CORRIDOR_POLL_MS = 0, passageGrids = async (tiles) => w.gridsOut || ({grids: tiles.map((t) => ({tile: t})), missing: 0});",
       // (11j: the page's wait limit and its helpers; the world's own clock once a check sets `w.clock`, each poll's wait
       // moving it `w.step` on)
       d(/const CORRIDOR_WAIT_MAX_MS = [^;]+;/), d(/const CORRIDOR_ASK_MS = [^;]+;/), d(/const CORRIDOR_MUTE_MS = [^;]+;/),
@@ -1475,6 +1480,8 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
         + " if (ms === 0){ w.polls = (w.polls || 0) + 1; w.clock += w.step; return globalThis.setTimeout(fn, 0); }"
         + " const t = {fn, ms, cleared: false}; (w.races = w.races || []).push(t); return t; };",
       "const clearTimeout = (t) => { if (t && t.fn) t.cleared = true; else globalThis.clearTimeout(t); };",
+      // (corridorWait leaves a read ended without its status "given up" on the Passage tab's line: that line's state here)
+      "let corridorRead = w.corridorRead || null;", grab("corridorGivenUp"),
       grab("corridorFailure"), grab("corridorLate"), "async " + grab("corridorAsk"), "async " + grab("corridorStart"), "async " + grab("corridorWait"),
       "const coarseHomeInWorker = async (m) => { w.workerMsgs.push(m); return w.res || {tiles: [{tx: 1, ty: 2, len: new Float32Array(4)}], reached: 3, ms: 5}; };",
       "const nogoDR = () => ({min: 3.15}), airNeedM = () => 4.85, logClient = (k, dd) => w.logs.push([k, dd]);",
@@ -1542,6 +1549,84 @@ console.log("The mission's fuel, the RTH point, and the shift home at it:");
               && cHang.note === "the chart along the way could not be read (the read had no answer it could use from the console for 30 min (the last ask: unanswered in 30 s))"
               && bHang.gets === 0 && bHang.workerMsgs.length === 0,
         () => JSON.stringify({ end: endHang, race: raceHang && raceHang.ms, posts: bHang.posts.length, aborted: (bHang.sigs || []).map((x) => x && x.aborted), busy: cHang.busy, note: cHang.note }));
+  // 11l. THE REST OF THE BUILD HAS AN END TOO (2026-11-15, residual 2 of the corridor wait's reviews). The grids not
+  // fetched (passageGrids' give-up) and the search not answered (coarseHomeInWorker's, 11m) each end the build with the
+  // cause said, the field it had kept, tried again later - where either had held `busy` for good. And the build's CANCEL
+  // of a read too large is corridorAsk's: sent with an abort signal, not waited on, and aborted at CORRIDOR_ASK_MS when
+  // the console never answers it (bare, it held one of the browser's few connections to the console for good)
+  const gridLate = "had no answer it could use from the console for 2 min (0 of 2 answered; the last ask: unanswered in 30 s)";
+  const bGrid = buildWorld({ gridsOut: { late: gridLate } }); await bGrid.api.build("K5", mid);
+  const cGrid = bGrid.api.now();
+  const wkLateH = "the search for the way home did not finish in 5 min in its worker (stopped)";
+  const bWkLate = buildWorld({ res: { error: wkLateH, late: true } }); await bWkLate.api.build("K6", mid);
+  const cWkLate = bWkLate.api.now();
+  const bCan = buildWorld({ st0: { id: "c", state: "running", total: 400 }, cancelHang: true, clock: 1.8e12, step: 60000 });
+  const endCan = await Promise.race([bCan.api.build("K7", mid).then(() => "settled"), new Promise((r) => setTimeout(() => r("HUNG"), 2000))]);
+  await new Promise((r) => setTimeout(r, 0));          // (a turn: the cancel is asked, and hangs)
+  const cCan = bCan.api.now(), openCan = (bCan.races || []).filter((t) => !t.cleared);
+  const heldCan = !!(bCan.sigs[1] && bCan.sigs[1].aborted === false);
+  openCan.forEach((t) => t.fn());
+  await new Promise((r) => setTimeout(r, 0));
+  check("11l. THE REST OF THE BUILD HAS AN END: the grids not fetched, the search not answered in its worker - each said by "
+        + "its cause, the field kept, tried again later, the worker not asked for grids it has not; and the cancel of a read "
+        + "too large sent with an abort signal, not waited on, aborted at CORRIDOR_ASK_MS when never answered",
+        () => cGrid.busy === false && cGrid.at > 0 && cGrid.key === "old" && cGrid.hf && cGrid.note === "the planning grids along the way " + gridLate
+              && bGrid.workerMsgs.length === 0 && bGrid.logs.some((l) => l[0] === "coarse_home" && l[1].ok === false && l[1].note === cGrid.note)
+              && cWkLate.busy === false && cWkLate.key === "old" && cWkLate.note === wkLateH && bWkLate.workerMsgs.length === 1
+              && endCan === "settled" && cCan.busy === false && /400 chart tiles/.test(cCan.note)
+              && bCan.posts.length === 2 && bCan.posts[1].cancel === "c" && heldCan && openCan.length === 1 && openCan[0].ms === 30000
+              && bCan.sigs[1].aborted === true,
+        () => JSON.stringify({ grid: [cGrid.busy, cGrid.note, bGrid.workerMsgs.length], worker: [cWkLate.busy, cWkLate.note], cancel: [endCan, cCan.busy, bCan.posts.length, heldCan, openCan.map((t) => t.ms), bCan.sigs[1] && bCan.sigs[1].aborted] }));
+  // 11m. THE SEARCH'S OWN BOUND (coarseHomeInWorker, lifted, on a stand-in Worker and timers of the check's own): a search
+  // answered clears its bound; one never answered is STOPPED at COARSE_WORKER_MS - the worker terminated, a new one made
+  // for the next build - and answered {error, late}; one that cannot be sent is said, its bound cleared
+  const hw = (o) => {
+    const w = Object.assign({ made: [], timers: [] }, o || {});
+    class FakeWorker { constructor(url, opts) { this.url = url; this.opts = opts; this.posted = []; this.terminated = 0; w.made.push(this); }
+      postMessage(m, tr) { if (w.postThrows) throw new Error("DataCloneError: a buffer already handed over"); this.posted.push([m, tr]); }
+      terminate() { this.terminated++; } }
+    w.api = new Function("w", "Worker", "setTimeout", "clearTimeout", "let coarseHomeWorker = null, coarseHomeSeq = 0;\n" + d(/const COARSE_WORKER_MS = [^;]+;/) + "\n"
+      + grab("coarseHomeInWorker") + "\nreturn {ask: coarseHomeInWorker, worker: () => coarseHomeWorker, MS: COARSE_WORKER_MS};")(
+      w, FakeWorker, (fn, ms) => { const t = { fn, ms, cleared: false }; w.timers.push(t); return t; }, (t) => { if (t) t.cleared = true; });
+    return w;
+  };
+  const settledH = async (p) => { let v = "PENDING"; p.then((x) => { v = x; }); await new Promise((r) => setTimeout(r, 0)); return v; };
+  const H1 = hw(), ph1 = H1.api.ask({ kind: "home", grids: ["G"] });
+  H1.made[0].onmessage({ data: { id: 7, tiles: ["another search's"] } });
+  const staleH = await settledH(ph1);
+  H1.made[0].onmessage({ data: { id: 1, tiles: ["T"], reached: 3 } });
+  const ansH1 = await settledH(ph1);
+  const H2 = hw(), ph2 = H2.api.ask({ kind: "home", grids: [] });
+  const beforeH2 = await settledH(ph2);
+  H2.timers[0].fn();
+  const ansH2 = await settledH(ph2), droppedH2 = H2.api.worker() === null;
+  const ph2b = H2.api.ask({ kind: "home", grids: [] });
+  if (H2.made[1]) H2.made[1].onmessage({ data: { id: 2, tiles: [] } });
+  const ansH2b = await settledH(ph2b);
+  const H3 = hw({ postThrows: true });
+  const ansH3 = await settledH(H3.api.ask({ kind: "home", grids: [] }).catch((e) => ({ threw: String(e) })));
+  // (a worker that FAILS clears its search's bound too, and is not a give-up; and a bound fired late - after that worker
+  // failed and the next build made a new one - leaves the new one be: the 2026-11-15 review)
+  const H4 = hw(), ph4 = H4.api.ask({ kind: "home", grids: [] });
+  H4.made[0].onerror({ message: "boom" });
+  const ansH4 = await settledH(ph4), droppedH4 = H4.api.worker() === null, clearedH4 = H4.timers[0].cleared;
+  const ph4b = H4.api.ask({ kind: "home", grids: [] });
+  H4.timers[0].fn();
+  const keptH4 = H4.api.worker() === H4.made[1], beforeH4b = await settledH(ph4b);
+  check("11m. THE SEARCH FOR THE WAY HOME HAS AN END (COARSE_WORKER_MS, " + H1.api.MS / 60000 + " min): one answered clears its bound "
+        + "(another search's answer is not its own); one never answered is STOPPED - the worker terminated, a new one for the "
+        + "next build - and answered {error, late}; one that cannot be sent is said, not thrown, its bound cleared; a worker "
+        + "that fails clears the bound, not late; and a bound stops its OWN worker only",
+        () => H1.api.MS === 300000 && staleH === "PENDING" && ansH1 && ansH1.tiles[0] === "T" && H1.timers.length === 1 && H1.timers[0].ms === 300000 && H1.timers[0].cleared
+              && H1.made[0].posted[0][0].id === 1 && H1.made[0].posted[0][0].kind === "home" && H1.made[0].posted[0][1][0] === "G" && H1.made[0].terminated === 0
+              && beforeH2 === "PENDING" && ansH2 && ansH2.late === true && ansH2.error === wkLateH && H2.made[0].terminated === 1 && droppedH2
+              && H2.made.length === 2 && ansH2b && Array.isArray(ansH2b.tiles) && H2.made[1].terminated === 0
+              && ansH3 && !ansH3.threw && /^the search could not be sent to its worker \(DataCloneError/.test(ansH3.error) && !ansH3.late
+              && H3.timers.length === 1 && H3.timers[0].cleared
+              && ansH4 && ansH4.error === "the worker failed: boom" && !ansH4.late && droppedH4 && clearedH4
+              && H4.made.length === 2 && keptH4 && H4.made[1].terminated === 0 && beforeH4b === "PENDING",
+        () => JSON.stringify({ staleH, ansH1, timers: H1.timers.map((t) => [t.ms, t.cleared]), beforeH2, ansH2, term: H2.made.map((m) => m.terminated), droppedH2, ansH2b, ansH3,
+                               failed: [ansH4, droppedH4, clearedH4, H4.made.length, keptH4, beforeH4b] }));
 
   // 11g. the order: the field round home, the coarse grid, the passage, the straight line - and said
   const HOME = { lat: 43.07, lon: -70.71 };
