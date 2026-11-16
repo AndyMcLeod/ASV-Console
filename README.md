@@ -3318,6 +3318,11 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    again rejoin it) and `GET /api/enc/corridor?id=` for its progress; it reads at most 600 tiles at
    once and is not logged as a command. A read that has not finished 30 minutes after it was asked
    for is given up, and said so with how much was read (2026-11-14; see the passage home below).
+   An asker with a limit of its own sends `max_tiles`: a corridor of more tiles is answered with
+   the count (a 400 with `over`, `total` and `max_tiles`) and nothing is read, joined or stopped
+   (2026-11-15). The same tiles are one read, whoever asks, and the console counts the asks on it
+   (`asks` in the status). `{cancel: id}` takes back one ask: the read stops only when none is left,
+   and an ask never joins a read that is being stopped. The page sends no cancel.
 
    **A chart read no longer stops the console (2026-10-11).** Reading the chart used to stop the
    telemetry stream for seconds at a time. Opening a cached tile (one JSON file of up to 30 MB) held
@@ -3550,6 +3555,20 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    low-fuel monitor will ask again, the banner says RTH WAITING, not refused. A chain that joined a
    way home already being planned, whose End of plan was switched away meanwhile, is withdrawn when
    the read is given up, not asked again.
+   **The page never stops the way home's chart read (2026-11-15, a safety defect a review found).**
+   The coarse home field (below) reads the same chart the passage home does: home to her, where the
+   passage home reads her to home. The console names a read by its tiles, so from about 125 km out,
+   where both read 25 km either side, the two were one read. Past 60 tiles (330 to 400 km from home
+   at 43° N, by heading), the coarse field canceled the read it had no use for, and again every minute. That
+   read was the passage home's own, and the passage home took it as a refusal: final for End of
+   plan's return and for the low-fuel monitor. Now the coarse field sends its limit with the ask
+   (`max_tiles`). The console answers a longer way home with the count and reads nothing, and the
+   page sends no cancel at all. Within the limit the two still share the one read. The console
+   guards it too, because a window left open on an older page goes on sending its cancel every
+   minute: it counts the asks on a read, a cancel takes back one, and the read stops only when none
+   is left. An ask made while a read is being stopped starts a new read instead of joining it. A
+   read that is stopped all the same (a request of the operator's own) is asked for again as a read
+   given up is: RTH WAITING, not refused, and the next ask is a new read.
    **The 50 km stays as the line
    between the two planners, not as a refusal.** Within it the return is planned in one chart box,
    as before. A box of the water between stalls the page from not far past it: the Castine plan's
@@ -3559,7 +3578,7 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    where a passage home can be planned and a full tank reaches it with the 20% reserve. The coarse
    water distance home is built past 50 km there too, so the RTH point is measured by water. The
    Fuel row charges the way home from a far plan end when no passage is being sailed.
-   `tests/passage_sail.js` 13b, 17-17v, `tests/fuel_rth.js` 8v, 8w, 8x, 8y, 8y2, 9m, 11d, 11j, 11k, `tests/end_action.js` 18b, `tests/passage_plan.js` 16b, 16j-16r, `tests/corridor_read.js` 1c-1g, `tests/passage_tab.js` 3c. **Each section is planned at its own water.** The
+   `tests/passage_sail.js` 13b, 17-17w, `tests/fuel_rth.js` 8v, 8w, 8x, 8y, 8y2, 9m, 11d, 11f, 11j, 11k, `tests/end_action.js` 18b, `tests/passage_plan.js` 16b, 16j-16u (16s-16u run the page against the console's own job code, `tests/lib/corridor_console.py`), `tests/enc_corridor.py` 4c-4g, `tests/corridor_read.js` 1c-1g, `tests/passage_tab.js` 3c. **Each section is planned at its own water.** The
    live water level follows the boat: the stations nearest her, now. A section is planned ahead of
    her and sailed over the hours after, often tens of km from those stations. So each section is
    planned at the **lowest level predicted along it over the hours she is expected in it**, from
@@ -4350,7 +4369,10 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    home, the coarse grid, the passage, the straight line; the straight line says when the coarse
    grid is being read or why its build failed. It is built in the background, again at once when
    home or her floor moves, and a failed build keeps the field it had and is tried again after a
-   minute. Live (scratch console, DriX): off Plum Island with home in Gloucester Harbor, the far side
+   minute. A way home of more than 60 chart tiles is not measured this way. The ask carries that
+   limit, the console answers with the count and reads nothing, and the straight line says so
+   (2026-11-15: it used to start the read and cancel it, which stopped the passage home's own read
+   of the same tiles; see the passage home above). Live (scratch console, DriX): off Plum Island with home in Gloucester Harbor, the far side
    of Cape Ann, "home 34.67 km by water (coarse grid)" against a 24.51 km straight line - round the
    Cape, the Annisquam cut shut at her 3.15 m floor; 4 tiles, the search 0.1-0.2 s.
    `static/js/coarse.js` coarseHomeField / coarseHomeDistM, `tests/fuel_rth.js` 10f, 11-11h.

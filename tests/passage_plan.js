@@ -44,6 +44,44 @@
 //        level rule alone, on the same search's cells, cuts it back toward the headland;
 //   20c  NOT IN A PORT'S CIRCLE (the detail planner's water): the search's cells there are the level rules' own; off,
 //        no tile carries the cost; the worker is told, and says which it planned with.
+//   ONE READ, TWO READERS (2026-11-15, a SAFETY defect an adversarial review found: the page's coarse field home canceled
+//   the chart read it shared with the far RTH's way home - the same tiles are the same job - and the way home was
+//   refused for good). THE CONSOLE'S OWN JOB CODE IS UNDER THE PAGE HERE (tests/lib/corridor_console.py, a child running
+//   asv_console.corridor_post and corridor_status, the tile reads alone stubbed and held at a gate; python on the path):
+//   16s  400 km out the two asks are one job past the field's 60 tiles, the build sends no cancel and the way home is
+//        planned; 300 km out the build joins the one read, each tile read once; alone, its ask starts nothing;
+//   16t  a read stopped from elsewhere (the console's cancel) is answered late, not kept, naming the cause - not final -
+//        and asked again it is planned; Plan passage says to press again;
+//   16u  A WINDOW STILL ON THE OLD PAGE (the independent review ran the page of before this change against this console
+//        and got the whole defect back): its build's ask with no limit, then its cancel, put to the console as it sends
+//        them, in both orders - the way home's read is never stopped, and she is planned on her FIRST ask (the console
+//        counts the asks on a read; a cancel takes back one; an ask never joins a read being stopped).
+//   TEETH (scratchpad mut_cc.py: 13 page mutants on scratch copies through ASV_HTML, 17 of asv_console.py on a sidecar app
+//   through ASV_APP, 1 with both; killed = the suite red AND the named check red; the real sources' sha1 unchanged):
+//     THE ORIGINAL DEFECT (no limit in the ask, the read past 60 tiles canceled)      -> 16s (and 16u; fuel_rth 11f)
+//     the limit dropped from the ask (and 16u); the error judged before the count; the
+//     ask's limit one more than the build's                                           -> 16s
+//     the planner's stopped-read branch dead (also 16b); answered without late; said
+//     kept; the tab's line left "reading"; not logged; said in the old words          -> 16t
+//     the console: the limit ignored; the refusal stopping the other asker's read;
+//     the limit, or the route's direction, made part of the job's name; the refusal
+//     without its count                                                               -> 16s
+//     the console's cancel ignored (16t's own fixture: the read must really stop)     -> 16t
+//     the console: a cancel stopping the read whatever asks are on it; an ask
+//     rejoining a read being stopped; a joining ask not counted; a cancel taking back
+//     every ask                                                                       -> 16u
+//     BOTH LAYERS OUT - the old build on the page and the old cancel on the console    -> 16s, 16u, and the refusal ITSELF
+//                                                                                        is back: "the chart read along
+//                                                                                        it was stopped ..."
+//   GREEN BY DESIGN, each a second layer earned apart (their own checks are red): the cancel restored with the limit
+//   kept (fuel_rth 11f: the console refuses the ask before a job is held); a running read past the limit waited on
+//   (11f: the console's own code never hands the build one); the limit judged only after a rejoin (16s green - the
+//   page leaves a running read alone - enc_corridor 4d and 16u's count red); the refusal without its `over` flag (4d:
+//   the page judges the count); the handler answering beside corridor_post (enc_corridor 5: the child here calls
+//   corridor_post itself).
+//   ⚠ A PROBE THAT ASKS IS AN ASK. 16s's "the same read" probe was first posted while the way home waited - one more ask
+//   on her read, and on a read being stopped it STARTED A NEW ONE: with both layers out the way home read "planned". It
+//   is posted after her answer now. Found by that mutant, which is why it is kept.
 //
 //   node tests/passage_plan.js   # exit 0 = pass
 
@@ -530,7 +568,13 @@ const FLOOR = 30;
          "passageAlong", "passageSummary", "passageLine", "passageGrids", "passageHalfKm", "passageEndsSay", "passagePlanFor", "planPassageNow",
          "drawPassage", "preReadFirstSection"].map(grab).join("\n")
       + "\nlet passagePreRead = null;"
-      + "\nreturn {passageEdited, passagePointAt, toggleFuelStop, passageRefusal, passagePoints, passageFuelLegs, passageAlong,"
+      // (16s: the coarse field home's build beside the planner - the two ask the console for ONE read of the way home)
+      + "\nlet coarseHome = {key: null, hf: null, at: 0, tried: null, note: null, busy: false};\n"
+      + ["COARSE_HOME_HALF_MIN_KM", "COARSE_HOME_HALF_FRAC", "COARSE_HOME_HALF_MAX_KM", "COARSE_HOME_MAX_TILES"].map((n) => {
+        const m = new RegExp("const " + n + " = [^;]*;").exec(H); if (!m) throw new Error("anchor gone: " + n); return m[0]; }).join("\n")
+      + "\n" + grab("coarseHomeBuild")
+      + "\nconst coarseHomeApi = {build: coarseHomeBuild, now: () => coarseHome, MAX_TILES: COARSE_HOME_MAX_TILES};"
+      + "\nreturn {coarseHome: coarseHomeApi, passageEdited, passagePointAt, toggleFuelStop, passageRefusal, passagePoints, passageFuelLegs, passageAlong,"
       + " passageSummary, passageLine, passageHalfKm, passageEndsSay, planPassageNow, drawPassage, passagePlanFor, MAX: CORRIDOR_WAIT_MAX_MS, ASK: CORRIDOR_ASK_MS, MUTE: CORRIDOR_MUTE_MS,"
       + " state: () => ({passage, passageBusy, passageGen, corridorRead}), setCorridorRead: (c) => { corridorRead = c; }, setPassage: (p) => { passage = p; }, bump: () => { passageGen++; },"
       + " preRead: () => passagePreRead};";
@@ -538,8 +582,8 @@ const FLOOR = 30;
     w.api = new Function("w", "asv", "passageWps", "planPassageEnds", "fuelModel", "V", "roleSpeed", "S", "energyLevel", "passageFuel", "FUEL_RESERVE_FRAC",
       "fmtDist", "fmtDur", "fmtMS", "distTo", "PASSAGE_PORT_R_M", "M_PER_DEG_LAT", "nogoDR", "postCorridor", "getCorridor",
       "corridorSummary", "toCorridor", "fetch", "passageInWorker", "showBanner", "flashNote", "logClient", "updateTransitPanel",
-      "render", "worldPx", "zoom", "ctx", "airNeedM", "ensureNogoCovers", "fmtVol", src)(
-      w, w.asv, w.transit, async () => { w.endsAsked = (w.endsAsked || 0) + 1; return w.ends; }, () => w.model, { SPEED_KN: { transit: w.kn } }, () => "transit", { status: w.status }, F.energyLevel,
+      "render", "worldPx", "zoom", "ctx", "airNeedM", "ensureNogoCovers", "fmtVol", "coarseHomeInWorker", "coarseHomeDistM", src)(
+      w, w.asv, w.transit, async () => { w.endsAsked = (w.endsAsked || 0) + 1; return w.ends; }, () => w.model, { SPEED_KN: { transit: w.kn } }, () => "transit", { status: w.status, home: w.home || null }, F.energyLevel,
       F.passageFuel, F.FUEL_RESERVE_FRAC, fmtDist, fmtDur, (s) => s + "s", flat, C.PORT_R_M, 111320, () => ({ min: 3.15 }),
       // (`postAnswer` / `getAnswer`: the world's own answers to the post and to each poll - a read that never leaves
       // "running", a request never answered or failed, one answered late - 16j-16o; `sigs` each ask's abort signal. A poll
@@ -552,7 +596,10 @@ const FLOOR = 30;
       (t) => w.banners.push(t), (t) => w.notes.push(t), (k, d) => w.logs.push([k, d]), () => {}, () => { w.renders++; },
       (lat, lon) => ({ x: lon * 1000, y: -lat * 1000 }), 9, ctx, () => 3.85,
       async (pts, pad, opts) => { w.preReads.push({ pts, pad, opts }); return true; },
-      require("../static/js/units.js").fmtVol);   // the page's fuelFmt writes fuel through it (2026-10-17)
+      require("../static/js/units.js").fmtVol,    // the page's fuelFmt writes fuel through it (2026-10-17)
+      // (16s: the coarse field's search, answered - coarse.js's own is tests/fuel_rth.js 11a-11c)
+      async (m) => { (w.homeMsgs = w.homeMsgs || []).push(m); return { tiles: [{ tx: 1, ty: 2, len: new Float32Array(4) }], reached: 3, ms: 5 }; },
+      () => 1234);
     return w;
   };
 
@@ -985,6 +1032,229 @@ const FLOOR = 30;
               && last(W16r2) === "Passage NOT planned: the chart read along it did not finish in " + MIN + " min (0 of 9 tile(s) read, 2 could not "
                                  + "be) - press Plan passage again to ask again.",
         () => JSON.stringify({ one: out16r, none: last(W16r2) }));
+
+  // ── 16s-16t. ONE READ, TWO READERS (2026-11-15) ─────────────────────────────────────────────────────────────────
+  // The way home past RTH_MAX_M is planned as a passage from where she is (sailHomeFreshRun -> passagePlanFor: her
+  // position, then home), and the low-fuel monitor's water distance home is the coarse field's (coarseHomeBuild: home,
+  // then her position). Both read the chart along that one line with its grids; from ~125 km both read 25 km either
+  // side, and the console names a read by its TILES (corridor_start) - so the two asks are ONE job. Past
+  // COARSE_HOME_MAX_TILES (330-400 km at 43 N, by heading) the build STOPPED the read it had no use for ({cancel: id},
+  // and again every minute): the way home's own read, which answered "canceled" - "RTH refused: ... the chart read along it was
+  // stopped", FINAL for the end-of-plan chain (rthChainFailed) and the monitor (its latch kept). Driven here against the
+  // console's OWN job code (tests/lib/corridor_console.py: corridor_post and corridor_status in a child, the tile reads
+  // alone stubbed and held at a gate), because the defect is in neither side's stub - it is that the two are one job.
+  const corridorConsole = () => {
+    const child = require("child_process").spawn(process.env.PYTHON || "python", [path.join(__dirname, "lib", "corridor_console.py")],
+      { env: Object.assign({}, process.env, { ASV_APP: APP, PYTHONIOENCODING: "utf-8" }), stdio: ["pipe", "pipe", "pipe"] });
+    let buf = "", err = "", dead = false;
+    const waiting = [];
+    child.stdout.setEncoding("utf8"); child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (d) => {
+      buf += d;
+      for (let k = buf.indexOf("\n"); k >= 0; k = buf.indexOf("\n")) {
+        const line = buf.slice(0, k); buf = buf.slice(k + 1);
+        const r = waiting.shift(); if (r) { try { r(JSON.parse(line)); } catch (e) { r({ dead: "a line that was not JSON: " + line.slice(0, 120) }); } }
+      }
+    });
+    child.stderr.on("data", (d) => { err += d; });
+    const end = (why) => { dead = why; while (waiting.length) waiting.shift()({ dead: why + (err ? ": " + err.slice(-300) : "") }); };
+    child.on("error", (e) => end("the child did not start (" + e.message + ")"));
+    child.on("exit", (code) => end("the child ended (exit " + code + ")"));
+    // (an ask the child never answers is said, not waited on for good)
+    // (`ms`: the first ask waits out the child's start - the app's import, compiled afresh, took past 20 s on a busy
+    // machine, and three checks went red for a console that was only slow to start)
+    const ask = (o, ms) => {
+      if (dead) return Promise.resolve({ dead });
+      let timer = null;
+      return Promise.race([
+        new Promise((r) => { waiting.push(r); child.stdin.write(JSON.stringify(o) + "\n"); }),
+        new Promise((r) => { timer = setTimeout(() => r({ dead: "no answer in " + (ms || 20000) / 1000 + " s to " + JSON.stringify(o).slice(0, 80) }), ms || 20000); }),
+      ]).finally(() => clearTimeout(timer));
+    };
+    return { ask, quit: () => { try { child.stdin.end(); } catch (e) { /* gone */ } try { child.kill(); } catch (e) { /* gone */ } } };
+  };
+  const bounded = (p, ms) => Promise.race([Promise.resolve(p).catch((e) => ({ threw: String((e && e.message) || e) })),
+                                           new Promise((r) => setTimeout(() => r({ hung: true }), ms || 20000))]);
+  const HOME16 = { lat: 43.07, lon: -70.71 };
+  const eastOf = (p, m) => ({ lat: p.lat, lon: p.lon + m / (111320 * Math.cos(p.lat * Math.PI / 180)) });
+  // her world `m` meters east of home: the page's asks put to the console's own code, and the points the far RTH plans
+  // her way home over - her position then home, two ports (sailHomeFreshRun's own line, pinned below)
+  const homeWorld = (con, m) => {
+    const here = eastOf(HOME16, m), w = world({ asv: here, home: HOME16 });
+    w.here = here; w.answers = [];
+    w.postAnswer = async (b) => { const a = await con.ask({ op: "post", body: b }); if (a.dead) throw new Error(a.dead); w.answers.push(a); return a.body; };
+    w.getAnswer = async (id) => { const a = await con.ask({ op: "get", id }); if (a.dead) throw new Error(a.dead); return a.body; };
+    w.pts = [{ lat: here.lat, lon: here.lon, port: true, t: 0 }, { lat: HOME16.lat, lon: HOME16.lon, port: true, t: 1 }];
+    w.worker = { legs: [mkLeg(0, w.pts[0], w.pts[1], flat(w.pts[0], w.pts[1]))], lengthM: flat(w.pts[0], w.pts[1]), ms: 3 };
+    w.wayHome = () => w.api.passagePlanFor(w.pts, () => {}, () => false);
+    w.coarseAsk = () => w.posts.find((b) => b && b.route && flat(b.route[0], HOME16) < 1);      // the build's: home first
+    return w;
+  };
+  const con16 = corridorConsole();
+  const hello16 = await con16.ask({ op: "seen" }, 120000);
+  const MAXT = W16.api.coarseHome.MAX_TILES;
+  let one16 = null, stop16 = null, stale16 = null;
+  if (hello16 && hello16.jobs) {
+    // (A) 400 km out, past the limit: the way home's read running and waited on, then the build asks
+    const wA = homeWorld(con16, 400000);
+    const pA = bounded(wA.wayHome());
+    await until(() => wA.gets.length >= 2);
+    const readA = (wA.answers[0] || {}).body || {};
+    await bounded(wA.api.coarseHome.build("KA", wA.here));
+    const coarseA = wA.api.coarseHome.now(), askA = wA.coarseAsk() || {};
+    const seenA = await con16.ask({ op: "seen" });
+    await con16.ask({ op: "open" });
+    const outA = await pA;
+    // (the SAME read: the build's own ask, its limit left off, put to the console names the way home's job. Asked only
+    // AFTER the way home has its answer - asked while she waited, this probe was itself an ask on her read, and where a
+    // cancel had it being stopped the probe started it again: the old build and the old cancel together then read
+    // "planned", and the refusal this check exists for could not be seen)
+    const bareA = Object.assign({}, askA); delete bareA.max_tiles;
+    const sameA = ((await con16.ask({ op: "post", body: bareA })) || {}).body || {};
+    // (the probe's own read - the gate is open - ended before the next part shuts it and counts its tiles)
+    for (let i = 0; i < 2000 && sameA.id && ((((await con16.ask({ op: "get", id: sameA.id })) || {}).body || {}).state === "running"); i++) await new Promise((r) => setTimeout(r, 5));
+    // (B) the pair, 300 km out, within the limit: the build JOINS the way home's read - one job, each tile read once
+    await con16.ask({ op: "shut" });
+    const wB = homeWorld(con16, 300000), reads0 = ((await con16.ask({ op: "seen" })) || {}).reads;
+    const pB = bounded(wB.wayHome());
+    await until(() => wB.gets.length >= 2);
+    const pcB = bounded(wB.api.coarseHome.build("KB", wB.here));
+    await until(() => wB.answers.length >= 2);
+    const readB = (wB.answers[0] || {}).body || {}, joinB = (wB.answers[1] || {}).body || {};
+    await con16.ask({ op: "open" });
+    const outB = await pB; await pcB;
+    const coarseB = wB.api.coarseHome.now(), seenB = await con16.ask({ op: "seen" });
+    // (C) 400 km out and nobody else asking: the build's ask starts NOTHING on the console - no job, no tile read
+    await con16.ask({ op: "shut" });
+    const wC = homeWorld(con16, 400000), seenC0 = await con16.ask({ op: "seen" });
+    await bounded(wC.api.coarseHome.build("KC", wC.here));
+    await new Promise((r) => setTimeout(r, 100));          // (a job made in error has its first tiles in flight by now)
+    const coarseC = wC.api.coarseHome.now(), seenC = await con16.ask({ op: "seen" });
+    const jobA = (seenA.jobs || []).find((j) => j.id === readA.id) || {};
+    one16 = { readA, sameA, seenA, jobA, outA, coarseA, askA, wA, readB, joinB, outB, coarseB, seenB, reads0, wB, wC, coarseC, seenC0, seenC };
+    // 16t. (D) A READ STOPPED FROM ELSEWHERE - a window still on an older page, a request of the operator's own: the
+    // console's cancel door stays, and the page no longer sends one. 200 km out, the way home's read running; a cancel
+    // put to the console; the planner's answer is NOT final ({late}: the far RTH asks again) - and asked again, planned
+    await con16.ask({ op: "shut" });
+    const wD = homeWorld(con16, 200000);
+    const pD = bounded(wD.wayHome());
+    await until(() => wD.gets.length >= 2);
+    const readD = (wD.answers[0] || {}).body || {};
+    const stopD = await con16.ask({ op: "post", body: { cancel: readD.id } });
+    await con16.ask({ op: "open" });
+    const outD = await pD, stD = wD.api.state(), workerD = wD.workerMsgs.length;
+    const logD = wD.logs.find((l) => l[0] === "passage_plan" && l[1].state === "stopped");
+    const outD2 = await bounded(wD.wayHome());
+    // ... and Plan passage's own words for it (the operator's press)
+    await con16.ask({ op: "shut" });
+    const wE = homeWorld(con16, 150000); wE.transit.push({ lat: HOME16.lat, lon: HOME16.lon });
+    const pE = bounded(wE.api.planPassageNow());
+    await until(() => wE.gets.length >= 2);
+    await con16.ask({ op: "post", body: { cancel: ((wE.answers[0] || {}).body || {}).id } });
+    await con16.ask({ op: "open" });
+    await pE;
+    stop16 = { readD, stopD, outD, stD, logD, outD2, wD, wE, workerD };
+    // 16u. THE STALE PAGE (the adversarial review of 16s, which ran the page of before this change against this console
+    // and got the whole defect back). A window left on an older page still sends the old build's two posts every minute -
+    // its ask with NO limit, then {cancel: id} - and an older page still takes "canceled" as final. So the console counts
+    // the asks on a read (corridor_cancel: a cancel takes back ONE) and never joins an ask to a read being stopped. The
+    // stale window's two posts are put to the console here as it sends them: the build's own ask without its limit.
+    const bare = (w) => { const b = Object.assign({}, w.coarseAsk() || {}); delete b.max_tiles; return b; };
+    // (F) THE WAY HOME FIRST: her read running and waited on; the stale ask JOINS it (2 asks), its cancel takes that one
+    // back - nothing stopped, and the way home is planned on its FIRST ask, never told "canceled"
+    await con16.ask({ op: "shut" });
+    const wF = homeWorld(con16, 430000);
+    const pF = bounded(wF.wayHome());
+    await until(() => wF.gets.length >= 2);
+    const readF = (wF.answers[0] || {}).body || {};
+    await bounded(wF.api.coarseHome.build("KF", wF.here));         // (this page's own ask, refused with the count)
+    const joinF = ((await con16.ask({ op: "post", body: bare(wF) })) || {}).body || {};
+    const cancelF = ((await con16.ask({ op: "post", body: { cancel: joinF.id } })) || {}).body || {};
+    const seenF = await con16.ask({ op: "seen" });
+    await con16.ask({ op: "open" });
+    const outF = await pF;
+    // (G) THE STALE WINDOW FIRST: its ask starts the read, tiles in flight (held at the gate), its cancel - the read is
+    // BEING stopped, running still - and THEN the way home asks: a new read under the same name, not the one being
+    // stopped; planned on its first ask
+    await con16.ask({ op: "shut" });
+    const wG = homeWorld(con16, 460000);
+    await bounded(wG.api.coarseHome.build("KG", wG.here));
+    const readsG0 = ((await con16.ask({ op: "seen" })) || {}).reads || 0;
+    const startG = ((await con16.ask({ op: "post", body: bare(wG) })) || {}).body || {};
+    for (let i = 0; i < 400 && (((await con16.ask({ op: "seen" })) || {}).reads || 0) <= readsG0; i++) await new Promise((r) => setTimeout(r, 5));
+    const cancelG = ((await con16.ask({ op: "post", body: { cancel: startG.id } })) || {}).body || {};
+    const pG = bounded(wG.wayHome());
+    await until(() => wG.gets.length >= 2);
+    const readG = (wG.answers[1] || {}).body || {};                // ([0] is this page's build, refused; [1] the way home's)
+    const seenG = await con16.ask({ op: "seen" });
+    await con16.ask({ op: "open" });
+    const outG = await pG;
+    stale16 = { readF, joinF, cancelF, seenF, outF, wF, startG, cancelG, readG, seenG, outG, wG };
+  }
+  con16.quit();
+  const sfr16 = grab("sailHomeFreshRun");
+  check("16s. ONE READ, TWO READERS, the console's own job code under both (corridor_post): 400 km from home the way home's "
+        + "read (passagePlanFor) and the coarse field's (coarseHomeBuild) are the SAME job, past the " + MAXT + " tiles the "
+        + "field is measured over - and the build asking while the way home waits on it sends NO cancel, the read goes on, "
+        + "and the way home is PLANNED; the build says the count and never searches. THE PAIR: 300 km out, within the "
+        + "limit, the build JOINS that one read (each tile read once) and both are served. ALONE at 400 km the build's "
+        + "ask starts nothing on the console: no job, no tile read, no poll",
+        () => one16 && one16.readA.state === "running" && one16.readA.total > MAXT && one16.sameA.id === one16.readA.id
+              && one16.askA.max_tiles === MAXT && one16.askA.grids === true
+              && !one16.seenA.posts.some((b) => b && b.cancel) && one16.jobA.state === "running" && one16.jobA.cancel === false
+              && one16.outA && one16.outA.plan && !one16.outA.error && one16.wA.workerMsgs.length === 1
+              && one16.coarseA.busy === false && one16.coarseA.hf === null && !one16.wA.homeMsgs
+              && one16.coarseA.note === "the way home is " + one16.readA.total + " chart tiles, past the " + MAXT + " it is measured over"
+              && one16.readB.total <= MAXT && one16.readB.total > 0 && one16.joinB.id === one16.readB.id && one16.outB && one16.outB.plan
+              && one16.coarseB.note === "ready" && (one16.wB.homeMsgs || []).length === 1
+              && one16.seenB.reads - one16.reads0 === one16.readB.total && !one16.seenB.posts.some((b) => b && b.cancel)
+              && one16.wC.posts.length === 1 && one16.wC.gets.length === 0 && one16.seenC.reads === one16.seenC0.reads
+              && one16.seenC.jobs.length === one16.seenC0.jobs.length && one16.seenC.jobs.every((j) => j.state !== "running")
+              && /^the way home is \d+ chart tiles, past the /.test(one16.coarseC.note || "")
+              && /const points = \[\{lat: asv\.lat, lon: asv\.lon, port: true, t: 0\}, \{lat: S\.home\.lat, lon: S\.home\.lon, port: true, t: 1\}\];/.test(sfr16)
+              && /passagePlanFor\(points, /.test(sfr16),
+        () => !one16 ? "the console's code did not start: " + JSON.stringify(hello16).slice(0, 300)
+          : JSON.stringify({ A: { tiles: one16.readA.total, same: one16.sameA.id === one16.readA.id, max_tiles: one16.askA.max_tiles,
+                                  cancels: one16.seenA.posts.filter((b) => b && b.cancel).length, job: [one16.jobA.state, one16.jobA.cancel],
+                                  wayHome: one16.outA && (one16.outA.plan ? "planned" : one16.outA), coarse: one16.coarseA.note },
+                             B: { tiles: one16.readB.total, joined: one16.joinB.id === one16.readB.id, wayHome: one16.outB && (one16.outB.plan ? "planned" : one16.outB),
+                                  coarse: one16.coarseB.note, read: one16.seenB.reads - one16.reads0 },
+                             C: { posts: one16.wC.posts.length, gets: one16.wC.gets.length, read: one16.seenC.reads - one16.seenC0.reads,
+                                  jobs: [one16.seenC0.jobs.length, one16.seenC.jobs.length], coarse: one16.coarseC.note } }));
+  const STOP16 = "the chart read along it was stopped by a cancel from elsewhere";
+  check("16t. A READ STOPPED FROM ELSEWHERE (the console's cancel, put to its own job code while the way home waits on the "
+        + "read) is NOT a final refusal: the planner answers {error, late, kept: false} - the far RTH asks again on late - "
+        + "in words naming the cause, logged, the worker never asked, the Passage tab's line 'stopped', not 'reading'; asked "
+        + "again, the way home is PLANNED; Plan passage says to press again",
+        () => stop16 && stop16.stopD.status === 200 && stop16.outD && stop16.outD.late === true && stop16.outD.kept === false && stop16.outD.error === STOP16
+              && !stop16.outD.plan && stop16.workerD === 0 && stop16.wD.workerMsgs.length === 1 && stop16.logD && stop16.logD[1].id === stop16.readD.id
+              && stop16.stD.corridorRead && stop16.stD.corridorRead.state === "canceled"
+              && stop16.outD2 && stop16.outD2.plan && !stop16.outD2.error
+              && last(stop16.wE) === "Passage NOT planned: " + STOP16 + " - press Plan passage again to ask again." && stop16.wE.workerMsgs.length === 0,
+        () => !stop16 ? "the console's code did not start: " + JSON.stringify(hello16).slice(0, 300)
+          : JSON.stringify({ stop: stop16.stopD.status, out: stop16.outD, log: stop16.logD && stop16.logD[1], line: stop16.stD.corridorRead && stop16.stD.corridorRead.state,
+                             again: stop16.outD2 && (stop16.outD2.plan ? "planned" : stop16.outD2), worker: [stop16.workerD, stop16.wD.workerMsgs.length], press: last(stop16.wE) }));
+  const jobOf = (seen, id) => ((seen && seen.jobs) || []).find((j) => j.id === id) || {};
+  const asksOk = (w) => w.answers.filter((a) => a.status === 200).length === 1;       // the way home asked ONCE: planned on that ask
+  const neverStopped = (w) => !w.logs.some((l) => l[0] === "passage_plan" && (l[1].state === "stopped" || l[1].state === "late"));
+  check("16u. A WINDOW STILL ON THE OLD PAGE (its build's ask with no limit, then its cancel, put to the console's own job "
+        + "code as it sends them) DOES NOT STOP THE WAY HOME'S READ. The way home first: the stale ask JOINS her read (2 "
+        + "asks), its cancel takes that one back (1 left, the read running, not being stopped) and the way home is planned "
+        + "on its FIRST ask. The stale window first: its read is being stopped, running still, when the way home asks - a "
+        + "NEW read under the same name (1 ask, not being stopped), planned on its first ask. Neither is ever told "
+        + "'canceled' - the answer an older page takes as final",
+        () => stale16 && stale16.readF.state === "running" && stale16.joinF.id === stale16.readF.id && stale16.joinF.asks === 2
+              && stale16.cancelF.state === "running" && stale16.cancelF.asks === 1 && jobOf(stale16.seenF, stale16.readF.id).cancel === false
+              && stale16.outF && stale16.outF.plan && !stale16.outF.error && asksOk(stale16.wF) && neverStopped(stale16.wF)
+              && stale16.startG.state === "running" && stale16.cancelG.asks === 0 && stale16.cancelG.state === "running"
+              && stale16.readG.id === stale16.startG.id && stale16.readG.state === "running" && stale16.readG.asks === 1
+              && jobOf(stale16.seenG, stale16.readG.id).cancel === false
+              && stale16.outG && stale16.outG.plan && !stale16.outG.error && asksOk(stale16.wG) && neverStopped(stale16.wG),
+        () => !stale16 ? "the console's code did not start: " + JSON.stringify(hello16).slice(0, 300)
+          : JSON.stringify({ F: { joined: stale16.joinF.id === stale16.readF.id, asks: [stale16.joinF.asks, stale16.cancelF.asks], after: [stale16.cancelF.state, jobOf(stale16.seenF, stale16.readF.id).cancel],
+                                  wayHome: stale16.outF && (stale16.outF.plan ? "planned" : stale16.outF), herAsks: stale16.wF.answers.filter((a) => a.status === 200).length },
+                             G: { stopping: [stale16.cancelG.state, stale16.cancelG.asks], hers: [stale16.readG.id === stale16.startG.id, stale16.readG.state, stale16.readG.asks, jobOf(stale16.seenG, stale16.readG.id).cancel],
+                                  wayHome: stale16.outG && (stale16.outG.plan ? "planned" : stale16.outG), herAsks: stale16.wG.answers.filter((a) => a.status === 200).length } }));
 
   // ── 17. the words ───────────────────────────────────────────────────────────────────────────────────────────────
   const plan17 = { points: P12, legs: [mkLeg(0, P12[0], P12[1], 20000), mkLeg(1, P12[1], P12[2], 0, { error: "blocked", pts: [] }),
