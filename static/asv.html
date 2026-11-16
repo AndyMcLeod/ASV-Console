@@ -10805,8 +10805,9 @@ function fuelTick(s){
       // given after it does. ⚠ AND WITHDRAWN BY NO ONE'S WORD AGAINST GOING HOME (the 2026-11-14 review): home moved (a
       // nearer port set - the way home is to a new place, not called off) or the guard's in-extremis escape (she is sent
       // home the frame it ends, as from any escape - rthDecision) kept the latch for good, below her point, nothing sent.
+      // (rthNotCalledOff: ONE answer with the end-of-plan chain, which asks again for the same two - rthChainAgain, 2026-11-16)
       const nt = out && out.notTaken, ns = nt && nt.state && typeof nt.state === "object" ? nt.state : S;
-      if(nt && fuelBoot === bootAt && (nt.sent === false || (nt.withdrawn && ["E-STOP", "home moved", "the guard's escape"].includes(nt.by))
+      if(nt && fuelBoot === bootAt && (nt.sent === false || (nt.withdrawn && (nt.by === "E-STOP" || rthNotCalledOff(nt.by)))
                                        || (nt.refused && (!ns.armed || ns.estop)))) fuelRth.acted = false;
       // BUSY (far: one passage plan at a time) or LATE (far: the chart read along the way home did not finish in
       // CORRIDOR_WAIT_MAX_MS) - asked again RTH_BUSY_RETRY_MS on, not answered (above, at RTH_BUSY_RETRY_MS)
@@ -15001,8 +15002,11 @@ async function doRTH(opts){
       // one sends her; here a whole section was planned for a post cmd() refuses before the wire, then said as a
       // refusal of a return that is coming - and the chain marked refused under it
       if(chained && !supervising()) return;
-      const out = await sailHome(H, brk, far, missionAt, {fence: rthFence(chained), chained});
-      if(chained && out === "busy"){ rthChainRetry(); return; }   // (a section being sent: the chain fires again shortly)
+      const how = {fence: rthFence(chained), chained};          // (handed back on it: `by`, what withdrew it - sailHome)
+      const out = await sailHome(H, brk, far, missionAt, how);
+      // (a section being sent, or - 2026-11-16 - withdrawn because home moved or by the guard's escape, no one's word
+      // against going home: the chain fires again shortly - rthChainAgain)
+      if(chained && rthChainAgain(out, how.by)) return;
       if(chained && (out === "refused" || out === "withdrawn")) rthChainFailed = true;   // said: she holds, and the cards stop promising a return
       return;
     }
@@ -15017,8 +15021,10 @@ async function doRTH(opts){
       const how = {lowFuel: !!why, chained, fence: rthFence(chained), lockWas, brkAgain: () => surveyBreakNow(opts && opts.breakWhy)};
       const out = await sailHomeFresh(brk, far, missionAt, how);
       // (one plan at a time, or the chart read along the way home not finished in CORRIDOR_WAIT_MAX_MS: the chain fires
-      // again shortly - "late" is not a refusal of the way home, and recorded as one she would hold far out for good)
-      if(chained && (out === "busy" || out === "late")){ rthChainRetry(); return; }
+      // again shortly - "late" is not a refusal of the way home, and recorded as one she would hold far out for good. And
+      // WITHDRAWN because home moved or by the guard's escape, 2026-11-16: no one's word against going home - rthChainAgain;
+      // every other withdrawal - a Stop, another command, End of plan switched away - is the chain's, recorded)
+      if(chained && rthChainAgain(out, how.by)) return;
       if(chained && (out === "refused" || out === "withdrawn")) rthChainFailed = true;
       // (the low-fuel monitor asks why it was not taken - fuelTick: never sent, refused - with the console's own state
       // when it was the console that refused - withdrawn by which stop, busy, or late; the override's withdrawal is an answer)
@@ -16908,33 +16914,145 @@ function homePassageRefusal(plan, lowFuel){
  *  withdrawn too when End of plan is no longer RTH (the operator's over-ride of the end-of-mission return).
  *  ⚠ THE ESCAPE WAS WAITED THROUGH (the 2026-11-14 review): the press's fence let the far RTH be posted off the guard's
  *  own escape - the one maneuver the monitor itself never sends her home from (fuel.js rthDecision) - and a new survey
- *  uploaded meanwhile, or End of plan switched to LOITER, left the way home to be sent over the operator's word. */
+ *  uploaded meanwhile, or End of plan switched to LOITER, left the way home to be sent over the operator's word.
+ *  ⚠ THE OPERATOR'S WORD IS ASKED FIRST (the 2026-11-16 review). The planner asks this only now and then (at the corridor's
+ *  polls, after the worker, twice at the send), so two things can have happened by one ask, and it names ONE: home moved
+ *  and the escape were asked ahead of another command and End of plan - and those two are asked again (rthNotCalledOff),
+ *  so a new plan uploaded in the same window as a moved home was answered by an RTH sent over it. A stop, a new link,
+ *  another command this console gave and End of plan switched away outrank them now; and the escape outranks a moved home
+ *  (what is said of when it is asked again is the escape's). The escape is said as COMMANDED: it counts from the guard's
+ *  ask (escapeGen), whether or not she took the helm - "steered her clear" was said of one the vessel had refused. */
 function rthFence(chained){
   const stop = routeStopGen, boot = S.boot_id, src = S.home_source, beh = S.behavior, cg = cmdGen, eg = escapeGen,
         home = S.home ? {lat: S.home.lat, lon: S.home.lon} : null;
   return () => routeStopGen !== stop ? {by: routeStopName || "a stop", say: (routeStopName || "a stop") + " was pressed"}
     : S.boot_id !== boot ? {by: "a new link", say: "a new link came up (a Spawn, a vessel or port switch, a reconnect)"}
-    : !S.home || !home || S.home.lat !== home.lat || S.home.lon !== home.lon || S.home_source != src
-      ? {by: "home moved", say: "home was moved"}
-    : escapeGen !== eg || (S.behavior === "escape" && beh !== "escape")
-      ? {by: "the guard's escape", say: "the guard steered her clear in extremis (an escape)"}
+    // (the chain's: she is no longer RUNNING the plan it fired at the end of. A Pause or a Stop from ANOTHER window moves no
+    // count in this one - routeStopGen is this page's own, and a press here was answered above - and so does a disarm, a
+    // lost link, or the console standing an unwatched boat down: said as what the frame shows, her run, not as whose press)
+    : chained && S.run !== "running"
+      ? {by: "her run stopped", say: "her run was " + (S.run === "paused" ? "paused" : "stopped")}
+    // (the kind named is the command's, never the guard's escape that came after it: planIntent is the LAST picture)
     : cmdGen !== cg ? {by: "another command", say: "this console commanded her elsewhere ("
-                                                   + ((planIntent && planIntent.kind) || "a new plan") + ")"}
+                                                   + ((planIntent && planIntent.kind !== "escape" && planIntent.kind) || "a new plan") + ")"}
     : chained && S.completion !== "rth"
       ? {by: "End of plan", say: "End of plan was changed to " + String(S.completion || "none").toUpperCase()}
+    : escapeGen !== eg || (S.behavior === "escape" && beh !== "escape")
+      ? {by: "the guard's escape", say: "the guard commanded an escape in extremis"}
+    : !S.home || !home || S.home.lat !== home.lat || S.home.lon !== home.lon || S.home_source != src
+      ? {by: "home moved", say: "home was moved"}
     : S.behavior !== beh && (chained || (S.behavior !== "hold" && beh !== "hold"))
       ? (S.behavior === "hold" ? {by: "a hold", say: "she was put on station-keeping"}
                                : {by: "another command", say: "she was commanded elsewhere (" + (S.behavior || "a new plan") + " now)"})
     : null;
 }
 /** THE END-OF-PLAN CHAIN, ASKED AGAIN: its RTH answered "busy" (one passage plan at a time - sailHomeFresh) or "late" (the
- *  chart read along the way home not finished in CORRIDOR_WAIT_MAX_MS - the read goes on in the console), so the one-shot
- *  is re-armed RTH_BUSY_RETRY_MS on and the chain's own condition (onState) fires it again if it still holds. A run
- *  commanded meanwhile re-arms the chain itself (rearmRthChain), and takes this retry with it (`rthChainBusyAt`). */
+ *  chart read along the way home not finished in CORRIDOR_WAIT_MAX_MS - the read goes on in the console), or was withdrawn
+ *  by no one's word against going home (rthChainAgain, 2026-11-16), so the one-shot is re-armed RTH_BUSY_RETRY_MS on and
+ *  the chain's own condition (onState) fires it again if it still holds. A run commanded meanwhile re-arms the chain
+ *  itself (rearmRthChain), and takes this retry with it (`rthChainBusyAt`).
+ *  ⚠ THE WAIT IS FENCED AS THE PLANNING IS (the 2026-11-16 review). The withdrawn way home's fence ends with it, and the
+ *  next is taken only when the chain fires again - so for RTH_BUSY_RETRY_MS nothing was asking. A new plan UPLOADED in the
+ *  wait (staged while she holds: her run, behavior and hold as they were) was answered by an RTH sent over it, and a
+ *  PAUSE pressed in the wait, then Start, by one on the frame she resumed her hold - where the same press while it planned
+ *  ends the chain. So the retry takes the chain's own fence (rthFence(true)) as it is armed and asks it when the wait is
+ *  over: the operator's word meanwhile - a Stop, Pause, Hold or E-STOP, another command, End of plan switched away - and
+ *  a new link or a hold END the chain there, recorded and said, exactly as while it planned. Busy's and late's waits too.
+ *  ⚠ AND AFTER THE GUARD'S ESCAPE, ONLY A QUIET GUARD (`by` the escape, or one commanded in the wait). TAKEN, she is on the
+ *  escape's own hold: the one-shot is handed back, and nothing chains off that hold (CHAINABLE_BEHAVIORS: the operator
+ *  re-commands, and that plan's end goes home). NOT TAKEN - a refused or unanswered escape still moves escapeGen - she
+ *  still holds at the end of her plan, and re-armed blindly the chain planned a way home on every lap of the guard's
+ *  re-solve: three banners a lap over the in-extremis alarm, the card promising a return, and the routed re-approach stood
+ *  down (rthPending) for as long as it went on. So it is re-armed only if the guard reads CLEAR and has not been in
+ *  extremis again - an escape commanded, or her found boxed in (guardEscapeAt) - since the wait began; otherwise the chain
+ *  ends there, recorded and said, as every escape's withdrawal did before - the operator re-commands, as after any
+ *  in-extremis episode. And ONCE per run (rthChainAgain): a second escape while the way home it was asked again for
+ *  plans ends it at that withdrawal.
+ *  ⚠ THE END IS SAID WHERE THE PROMISE STOOD (the second review, the same day): in the banner slot, in place of the waiting
+ *  banner if that is still the one standing (swapBanner) - a 4 s note was all that said the return was over for good,
+ *  where the same event while it planned leaves a sticky "RTH withdrawn". Over anything raised since (the guard's alarm)
+ *  it is a note, and the alarm stands. A run commanded meanwhile takes the waiting banner down with the wait; and a tab
+ *  that no longer supervises takes its own down and claims nothing - the promise is not its to keep, nor the end its to say. */
+const RTH_WAITING_RE = /^(End of plan )?RTH WAITING: /;
 let rthChainBusyAt = 0;
-function rthChainRetry(){
-  const at = rthChainBusyAt = Date.now();
-  setTimeout(() => { if(rthChainBusyAt === at){ rthChainBusyAt = 0; if(!rthChainFailed) rthChained = false; } }, RTH_BUSY_RETRY_MS);
+function rthChainRetry(by){
+  const at = rthChainBusyAt = Date.now(), fence = rthFence(true);
+  setTimeout(() => {
+    // (a later retry is the wait now - its banner is its own; or a run under way meanwhile took the wait, rearmRthChain,
+    // and its banner with it - but not an escape's: the run that takes THAT wait is the escape, and the banner's last
+    // clause, "from an escape's own hold she waits for your next command", is the one true thing left to say)
+    if(rthChainBusyAt !== at){ if(!rthChainBusyAt && by !== "the guard's escape") takeDownBanner(RTH_WAITING_RE); return; }
+    rthChainBusyAt = 0;
+    if(rthChainFailed){ takeDownBanner(RTH_WAITING_RE); return; }       // (recorded meanwhile, said by what recorded it: no promise left up)
+    const g = fence(), word = !!g && !rthNotCalledOff(g.by);
+    // (a tab that no longer supervises keeps the operator's word - recorded, should the post come back to it - and says nothing)
+    if(!supervising()){ takeDownBanner(RTH_WAITING_RE); if(word) rthChainFailed = true; else rthChained = false; return; }
+    const escaped = by === "the guard's escape" || (!!g && g.by === "the guard's escape");
+    const loud = !word && escaped && S.behavior !== "escape" && !(guardLevel === "clear" && guardEscapeAt <= at);
+    if(word || loud){
+      rthChainFailed = true;
+      const say = "End of plan RTH is not asked again: " + (word ? g.say + " while it waited to be asked again. Nothing was sent."
+        : (guardEscapeAt > at ? "the guard was in extremis again while it waited"
+                              : "after its escape the guard reads " + String(guardLevel).toUpperCase() + ", not clear")
+          + ". Nothing was sent - command her when it is safe.");
+      if(!swapBanner(RTH_WAITING_RE, say)) flashNote(say);
+      logClient("plan_withdrawn", {what: "End of plan RTH", by: word ? g.by : "the guard not quiet", waiting: true});
+      updateMissionCard();
+      return;
+    }
+    rthChained = false;
+  }, RTH_BUSY_RETRY_MS);
+}
+/** WITHDRAWN, BUT NOT CALLED OFF (2026-11-16): the two things rthFence withdraws a far RTH for that are no one's word
+ *  against going home - HOME MOVED (a nearer port set while the way home planned: the return is to a new place) and THE
+ *  GUARD'S ESCAPE (the guard commanded one in extremis, taken or not: the return is still owed). `by` is the fence's own
+ *  name for what withdrew it. ONE answer for the two that ask again: the low-fuel monitor (fuelTick - its latch dropped,
+ *  so the next frame decides again, and sends nothing in an escape: rthDecision) and the end-of-plan chain (rthChainAgain,
+ *  and its wait: rthChainRetry). NOT here: a Stop, Pause, Hold or E-STOP, another command, End of plan switched away -
+ *  the operator's word - nor a new link (she is not the boat it was asked for) nor a hold (the chain never sends her home
+ *  off a maneuver it did not see her end on). */
+function rthNotCalledOff(by){ return by === "home moved" || by === "the guard's escape"; }
+/** THE END-OF-PLAN CHAIN'S FAR RTH, NOT TAKEN - IS IT ASKED AGAIN? doRTH's two ways home past RTH_MAX_M ask it: along the
+ *  passage (sailHome) and planned from here (sailHomeFresh). True, with the retry armed (rthChainRetry), for "busy" and
+ *  "late" - said where they are answered - and for a WITHDRAWAL that is no one's word against going home (rthNotCalledOff),
+ *  said here. False for every other answer: doRTH records a refusal, and any other withdrawal, as the chain's (rthChainFailed).
+ *  ⚠ EVERY WITHDRAWAL WAS THE CHAIN'S REFUSAL (the 2026-11-14 review's residual, fixed 2026-11-16; Andy, 2026-11-12: "all
+ *  end of mission should RTH unless over-ridden by user"). The operator set a nearer home while the way home planned, and
+ *  the end-of-mission return was over for good - the card reading "REFUSED, will hold instead" - where the low-fuel
+ *  monitor asks again; and the same after an escape she did not take (refused, or its reply lost - one she TOOK re-arms
+ *  the chain by getting under way, and nothing chains off its hold). Asked again now by the chain's own condition,
+ *  RTH_BUSY_RETRY_MS on, if nothing called it off in the wait (rthChainRetry): for the home she has now (within
+ *  RTH_MAX_M the boxed return, past it a way home planned again); and after the escape only with the guard quiet since.
+ *  ⚠ AFTER AN ESCAPE, ONCE PER RUN (the second review, the same day). The quiet guard is asked of the WAIT; an escape the
+ *  guard commands while the way home it was asked again for PLANS - minutes - withdrew it again, and with the guard clear
+ *  15 s later it was asked again, lap after lap, each with its banners over the alarm. `rthChainEscapeRun` is the run
+ *  (this link's boot_id and run_seq) at whose end a wait has been armed after an escape: the second such withdrawal at
+ *  that end is the chain's, recorded and said in a banner - the operator re-commands, and that run's end is a new one.
+ *  Dropped wherever the chain itself is re-armed (rearmRthChain, a fresh run): she has been under way since. */
+let rthChainEscapeRun = null;
+function rthChainAgain(out, by){
+  const notOff = out === "withdrawn" && rthNotCalledOff(by), esc = notOff && by === "the guard's escape";
+  if(!(out === "busy" || out === "late" || notOff)) return false;
+  if(esc){
+    const run = String(S.boot_id) + "/" + String(S.run_seq);
+    if(rthChainEscapeRun === run){
+      showBanner("End of plan RTH withdrawn: the guard commanded an escape again while the way home was being planned. It has waited "
+        + "once on the guard since she held here, and is not asked again. Nothing was sent - command her when it is safe.");
+      logClient("plan_withdrawn", {what: "End of plan RTH", by: "a second escape"});
+      return false;
+    }
+    rthChainEscapeRun = run;
+  }
+  rthChainRetry(notOff ? by : null);
+  if(notOff){
+    showBanner("End of plan RTH WAITING: the way home was withdrawn (" + by + ") while it was being planned, and nothing was sent. It is "
+      + "asked again in " + Math.round(RTH_BUSY_RETRY_MS / 1000) + " s"
+      + (esc ? ", once, if the guard has been quiet since and she still holds at the end of her plan" : by === "home moved" ? " for the home she has now" : "")
+      + ", unless she is stopped, held or commanded or End of plan is changed meanwhile"
+      + (esc ? "; from an escape's own hold she waits for your next command" : "") + ".");
+    logClient("passage_rth", {state: "waiting", by, chained: true});
+  }
+  return true;
 }
 /** THE WAY HOME BEING PLANNED: {lowFuel, how, done} - one at a time, and a far RTH asked meanwhile JOINS it (sailHomeFresh). */
 let homeFlight = null;
@@ -20191,6 +20309,13 @@ function showBanner(t){ const b=$("#encbanner");
 // the boat. Matched on the text so it can only ever lift the banner it means.
 function takeDownBanner(re){ const b=$("#encbanner");
   if(b && re.test(b.textContent||"")) b.style.display="none"; }
+// SAY IT IN PLACE OF A BANNER THIS PAGE RAISED - only while that banner is still the one standing, and answer whether it
+// was (2026-11-16). The slot is ONE: the end of something a banner promised belongs where the promise stood, but said
+// over whatever has been raised since - the guard's alarm, a refusal - it would take THAT down. The caller says it in a
+// note instead when this answers false (rthChainRetry).
+function swapBanner(re, t){ const b=$("#encbanner");
+  if(!(b && b.style.display === "block" && re.test(b.textContent||""))) return false;
+  showBanner(t); return true; }
 
 // --- survey plan editing (drag / delete waypoints & lines) --------------- //
 // mission.waypoints is the run plan; mission.lines is the drawn survey structure.
@@ -21490,7 +21615,8 @@ function endAction(){
 // HOLDING - including the seconds doRTH spends routing - nothing is cleared, so the
 // one-shot still does its job.
 function rearmRthChain(s, st){
-  if(s.run==="running" && !(st||{}).holding){ rthChained=false; rthChainFailed=false; rthChainBusyAt=0; }   // (and a busy retry with it: rthChainRetry)
+  // (and a retry's wait with it - rthChainRetry - and the escape's once-per-run mark: rthChainAgain)
+  if(s.run==="running" && !(st||{}).holding){ rthChained=false; rthChainFailed=false; rthChainBusyAt=0; rthChainEscapeRun=null; }
 }
 // THE ROUTED RE-APPROACH. A station-keeping vessel that has been set beyond the water the
 // console certified clear round its hold point takes the way off and says so
@@ -26264,7 +26390,7 @@ function onState(s){
   vesselFollows(s.vessel_id);                    // the hull the console flies, followed if switched elsewhere (2026-11-09)
   const freshRun = prevRun!=="running" && prevRun!=="paused" && s.run==="running";
   if(freshRun){ resetLineStats(); resetRunTimer();
-    if(s.behavior!=="rth"){ rthChained=false; rthChainFailed=false; rthChainBusyAt=0; } }  // fresh run re-arms the RTH chain (but not the chained RTH itself)
+    if(s.behavior!=="rth"){ rthChained=false; rthChainFailed=false; rthChainBusyAt=0; rthChainEscapeRun=null; } }  // fresh run re-arms the RTH chain (but not the chained RTH itself)
   // A command given while the boat is already running never makes that transition, so the MOTION is taken from the
   // console's own counter (review #23). A page that opened mid-run adopts the number it finds without resetting.
   // A FRAME THAT STARTS A MOTION CANNOT ALSO END IT (2026-09-27): read here, asked by the end-of-plan

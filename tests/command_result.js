@@ -579,6 +579,17 @@ console.log("-- 54: a new mission's history (newMission) --");
         () => byE.out.posts.length === 0 && !!outE && !!outE.notTaken && outE.notTaken.withdrawn === true && outE.notTaken.by === "E-STOP"
               && byS.out.posts.length === 0 && !!outS && !!outS.notTaken && outS.notTaken.by === "STOP",
         JSON.stringify({ outE, outS, posts: [byE.out.posts, byS.out.posts] }));
+  // 54e (2026-11-16). THE BOXED RETURN'S ONLY WITHDRAWAL IS A STOP'S, AND FOR THE END-OF-PLAN CHAIN IT IS FINAL. The far
+  // return is fenced and asked again when it is withdrawn by no one's word against going home (home moved, the guard's
+  // escape: passage_sail 16h, 17w); the boxed one is withdrawn only by planInsideChart, which reads the four stop-class
+  // presses and nothing else - the operator's word. So the chain it withdraws stays recorded, as it always was.
+  const byC = world({}); byC.W.searching = () => byC.routeStopPressed("STOP");
+  const outC = await byC.doRTH({ chained: true });
+  check("54e. the END-OF-PLAN chain's boxed RTH withdrawn by a STOP pressed while it is searched is recorded (the card stops "
+        + "promising a return) and nothing is posted - where one that is taken leaves the chain as it was",
+        () => byC.out.posts.length === 0 && byC.after().rthChainFailed === true && !!outC && outC.notTaken.by === "STOP"
+              && chain.out.posts.length > 0 && chain.after().rthChainFailed === false,
+        JSON.stringify({ stopped: [byC.out.posts, byC.after().rthChainFailed, outC], taken: [chain.out.posts, chain.after().rthChainFailed] }));
 }
 
 console.log("-- 1-2: cmd() answers THREE things, and the three are not the same thing --");

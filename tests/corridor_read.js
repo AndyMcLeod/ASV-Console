@@ -145,7 +145,7 @@ const world = (o) => {
               && R.api.state().corridorRead === null && R.api.state().corridorBusy === false,
         () => JSON.stringify({ n: N.notes, r: R.banners }).slice(0, 200));
   // 1c. THE WAIT HAS AN END (2026-11-14): a read that never leaves "running" held Read chart (and Plan passage, which it
-  // greys) for good. Polled a minute apart, it is given up at CORRIDOR_WAIT_MAX_MS of wall clock - said with how much
+  // grays) for good. Polled a minute apart, it is given up at CORRIDOR_WAIT_MAX_MS of wall clock - said with how much
   // was read and that the tiles are kept, logged, and the button free
   const MAXW = +new Function("return " + /const CORRIDOR_WAIT_MAX_MS = ([^;]+);/.exec(H)[1])();
   const L = world({ passageWps: [{ lat: 43, lon: -70 }] });

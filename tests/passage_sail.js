@@ -48,13 +48,13 @@
 //         review): along the passage from the ARRIVAL only - a far chain from a hold no record names is refused as
 //         before; in a view-only tab nothing is planned, sent or claimed; a lost reply is not a refusal.
 // THE CHART READ STOPPED UNDER THE WAY HOME (2026-11-15, a SAFETY defect an adversarial review found):
-//   17w   the page's own coarse field home canceled the read it shared with the way home (the same tiles are the same
+//   17x   the page's own coarse field home canceled the read it shared with the way home (the same tiles are the same
 //         job: tests/passage_plan.js 16s drives the two against the console's own job code), and the planner answered
 //         "canceled" as a plain error - final for the end-of-plan chain and the monitor. The page sends no cancel now,
 //         and the planner ITSELF (passagePlanFor lifted, the console's read answering "canceled") answers a read
 //         stopped from elsewhere late, not kept, naming the cause; handed that, the chain is asked again and not
 //         recorded refused, the monitor told late, the operator told to press again.
-//         TEETH (scratchpad mut_cc.py, the page on scratch copies through ASV_HTML), each caught by 17w (and by
+//         TEETH (scratchpad mut_cc.py, the page on scratch copies through ASV_HTML), each caught by 17x (and by
 //         passage_plan 16t): the stopped-read branch dead; answered without late; said kept; not logged; said in the
 //         old words. (The Passage tab's line left "reading" is passage_plan 16t's alone: this suite stubs the line.)
 //
@@ -193,6 +193,8 @@ console.log("The passage, sailed:");
       "let S = w.S, asv = w.asv, mission = w.mission, passage = w.passage, runRoute = w.runRoute, runUnsafe = [], planIntent = w.planIntent, planGen = w.planGen, cmdGen = 0, escapeGen = 0;",
       "const window = {get _wpIndex(){ return w.wpIndex; }};",
       "let routeCmdsInFlight = 0, escapeThrottle = !w.quiet, guardActedAt = 0, guardEdgeAt = 0, aisAroundBusy = false, heldResuming = false;",
+      // (the guard's level and when it last commanded an escape - rthChainRetry asks them after an escape's withdrawal, 16i)
+      "let guardLevel = 'clear', guardEscapeAt = 0;",
       "let lockTransit = null; const lockEnd = () => {};",     // a passage ends a lock transit before its sections plan (2026-10-18): none here
       "const clearance = {slowed: false}, EDGE_REASSESS_MS = 2000, M_PER_DEG_LAT = 111320;",
       "const distTo = w.distTo, FUEL_RESERVE_FRAC = w.F.FUEL_RESERVE_FRAC, passageFuel = w.F.passageFuel, energyLevel = w.F.energyLevel;",
@@ -203,7 +205,10 @@ console.log("The passage, sailed:");
       "const saveMission = () => { w.saves++; }, logClient = (k, d) => w.logs.push([k, d]);",
       // a new mission's history (2026-10-14, newMission): Sail passage starts one (4, 4b)
       "const newMission = (t0, what) => w.missions.push({t0, what});",
-      "const showBanner = (t) => w.banners.push(t), flashNote = (t) => w.notes.push(t), render = () => {}, applyCmdState = () => {}, updateTransitPanel = () => {}, updateMissionCard = () => {};",
+      // (a banner is kept in the world's list AND stands in the world's one slot - the element the page's own takeDownBanner
+      // and swapBanner read, lifted below; the Mission card's redraws are counted: 16i)
+      "const showBanner = (t) => { w.banners.push(t); const b = $('#encbanner'); b.textContent = t; b.style.display = 'block'; }, flashNote = (t) => w.notes.push(t),"
+        + " render = () => {}, applyCmdState = () => {}, updateTransitPanel = () => {}, updateMissionCard = () => { w.cards = (w.cards || 0) + 1; };",
       // (asked counted, and refused when the world says so: the rejoin at a Go-To's end asks nothing, 7d)
       // (`duringCover`: run while a section's chart is read - a Stop pressed there, 17l)
       "const guiConfirm = async () => { w.confirms = (w.confirms || 0) + 1; return w.confirm !== false; }, ensureNogoCovers = async () => { if (w.duringCover) w.duringCover(w, api); return true; }, holdOpts = () => ({}), transitStandoffM = () => 20;",
@@ -232,7 +237,9 @@ console.log("The passage, sailed:");
       grab("runCompletion"), grab("runHolds"), grab("rthPending"),
       "const chainFires = (s, st, seqMoved, rthChained) => (" + CHAIN[1] + ");",
       "const planNogoRoute = (from, to) => { w.nogoAsked = (w.nogoAsked || 0) + 1; return {route: [from, to], holdClear: 30}; };",
-      "const setViolation = () => {}, clearViolation = () => {}, unchartedTip = () => '', CHART_FAILED_TIP = '', takeDownBanner = () => {};",
+      "const setViolation = () => {}, clearViolation = () => {}, unchartedTip = () => '', CHART_FAILED_TIP = '';",
+      // (the page's own: a banner lifted by its text, and one said in place of another only while that one stands - 16i)
+      grab("takeDownBanner"), grab("swapBanner"), decl("RTH_WAITING_RE"),
       "const openWaterNote = () => '', buoyageNote = () => '', offshoreNote = () => '', deepNote = () => '', mooredNote = () => '', heldOffWhy = () => '';",
       "let fuelNow = null;",
       "let passagePreRead = w.preRead || null;",   // section 1's chart read, begun at planning (4c)
@@ -254,7 +261,8 @@ console.log("The passage, sailed:");
       "let passageBusy = !!w.passageBusy, passageStatus = '', routeStopGen = 0, routeStopName = null;",
       // (the review, 2026-11-13: one way home planned at a time and joined; the chain asked again after "busy" - its timer the
       // world's `later`, run by the check; the monitor's rule at the send; the press kept)
-      "let homeFlight = null, rthChainBusyAt = 0, rthChained = !!w.rthChained;", decl("RTH_BUSY_RETRY_MS"),
+      // (`rthChainEscapeRun`: the run whose end the chain has been asked again at once after an escape - rthChainAgain, 16i)
+      "let homeFlight = null, rthChainBusyAt = 0, rthChained = !!w.rthChained, rthChainEscapeRun = null;", decl("RTH_BUSY_RETRY_MS"),
       "const setTimeout = (fn, ms) => { if (ms !== RTH_BUSY_RETRY_MS) return globalThis.setTimeout(fn, ms); w.later = (w.later || []).concat([{fn, ms}]); };",
       "const passagePlanFor = async (points, say, gone) => { w.homeAsked = (w.homeAsked || []).concat([{points, busy: passageBusy}]); say('reading');"
         + " if (w.duringHomePlan) w.duringHomePlan(w, api); if (gone()) return {gone: true};"
@@ -263,10 +271,12 @@ console.log("The passage, sailed:");
        "sailPassage", "sailAppend", "sailAtEnd", "sailBreakOff", "sailRejoinHere", "sailRejoinTick", "passageTick", "sailRestM",
        "sailFuelShort", "continueRefusal", "continuePassage", "continueSend", "divertPassage", "dropPassage", "renderPassageControls", "sailLine", "sailOwnsHold", "sailArrival", "sailArrived", "drawSail",
        "rthTooFar", "doRTH", "passageHome", "homeRecord", "sailHome",
-       "passageHomeRefusal", "homePassageRecord", "homePassageRefusal", "sailHomeFresh", "sailHomeFreshRun", "rthFence", "rthChainRetry"].map(grab).join("\n"),
+       "passageHomeRefusal", "homePassageRecord", "homePassageRefusal", "sailHomeFresh", "sailHomeFreshRun", "rthFence", "rthChainRetry",
+       "rthNotCalledOff", "rthChainAgain", "rearmRthChain"].map(grab).join("\n"),
       "const api = {sailRecord, sailRefusal, sectionRest, sailPassage, passageTick, sailAtEnd, continuePassage, continueRefusal, divertPassage,",
-      "  dropPassage, renderPassageControls, sailOwnsHold, sailLine, drawSail, doRTH, homeRecord, rthPending, chainFires, setPlanIntent,",
+      "  dropPassage, renderPassageControls, sailOwnsHold, sailLine, drawSail, doRTH, homeRecord, rthPending, chainFires, setPlanIntent, rearmRthChain,",
       "  passageHomeRefusal, homePassageRecord, stop: (name) => { routeStopGen++; routeStopName = name; },",
+      "  showBanner, takeDownBanner, swapBanner, RTH_WAITING_RE,",
       "  st: () => ({mission, runRoute, planIntent, planGen, cmdGen, escapeGen, passage, sailBusy, passageBusy, rthChainFailed, rthChained, rthChainBusyAt, homeFlight}), set: (k, v) => { eval(k + ' = v'); }};",
       "return api;",
     ].join("\n");
@@ -1132,6 +1142,269 @@ console.log("The passage, sailed:");
         () => JSON.stringify({ view: [V16.cmds.length, V16.planned.length, V16.api.st().rthChainFailed], lost: [L16.api.st().rthChainFailed, L16.banners.slice(-1)],
                                ref: R16.api.st().rthChainFailed, unsent: [U16.api.st().rthChainFailed, saidRefused(U16)] }));
 
+  // ── 16h. WITHDRAWN, BUT NOT CALLED OFF (2026-11-16; the 2026-11-14 review's residual 4, against Andy's 2026-11-12 "all end
+  // of mission should RTH unless over-ridden by user"). The chain's way home along the passage is fenced (rthFence) and
+  // withdrawn while its first section is read and planned - and EVERY withdrawal was recorded as the chain's refusal: home
+  // moved (the operator set a nearer port: the way home is to a new place, not called off) ended the end-of-mission
+  // return for good, the card saying REFUSED, and so did an escape the guard commanded and she did not take. The low-fuel
+  // monitor asks again in exactly those two (fuelTick; fuel_rth 8x). Now the chain does: its one-shot re-armed
+  // RTH_BUSY_RETRY_MS on (rthChainRetry), said, and its own condition fires it again - for the home she has now; never off
+  // the escape's own hold (CHAINABLE_BEHAVIORS), from the end of the plan she is next on. A Stop, End of plan switched
+  // away - the operator's word - still end it.
+  // (`chain16`: the chain's RTH asked of a world, and what it left; `wait16`: what happens in the retry's wait - `during` -
+  // then the wait's end (its timer), and what THAT left; `fire16`: the world moved on by `before`, then the chain's own
+  // condition asked as onState asks it, and the chain fired when it holds; `underWay`: the frames of a run she is commanded
+  // on - under way, where the page's own rearmRthChain re-arms the chain, then holding at its end; `up`: the banner
+  // standing in the one slot - the world's element, written by its showBanner and the page's own takeDownBanner / swapBanner)
+  const up = (w) => { const b = w.dom["#encbanner"]; return b && b.style.display === "block" ? b.textContent : ""; };
+  const chain16 = async (w, first) => {
+    if (first) { first(w); await settle(); }
+    w.api.set("rthChained", true);
+    await w.api.doRTH({ chained: true });
+    const st = w.api.st();
+    return { w, sent: w.cmds.length, failed: !!st.rthChainFailed, chained: st.rthChained, later: (w.later || []).slice(), card: w.api.rthPending(),
+             asked: (w.homeAsked || []).length, at: st.rthChainBusyAt,
+             logged: w.logs.filter((l) => l[0] === "passage_rth" && l[1].state === "waiting").map((l) => l[1].by + (l[1].chained ? "" : " (not chained)")).join(","),
+             by: (w.logs.filter((l) => l[0] === "plan_withdrawn").pop() || [0, {}])[1].by || null, said: w.banners[w.banners.length - 1] || "" };
+  };
+  const wait16 = (r, during, timers) => {
+    const w = r.w, n0 = w.notes.length, c0 = w.cards || 0;
+    if (during) during(w, w.api);
+    // (a fault in the timer is DATA, said in the note's place, so the checks that follow still run and fail by name)
+    try { (timers || r.later).forEach((t) => t.fn()); } catch (e) { w.notes.push("THE TIMER THREW: " + e.message); }
+    const st = w.api.st();
+    return { rearmed: st.rthChained === false, failed: !!st.rthChainFailed, note: w.notes.slice(n0).join(" | "), up: up(w), cards: (w.cards || 0) - c0,
+             card: w.api.rthPending(), off: (w.logs.filter((l) => l[0] === "plan_withdrawn" && l[1].waiting).pop() || [0, {}])[1].by || null };
+  };
+  const fire16 = async (w, before) => {
+    if (before) before(w, w.api);
+    const fires = w.api.chainFires(w.S, w.S.status, false, w.api.st().rthChained);
+    if (fires) { w.api.set("rthChained", true); await w.api.doRTH({ chained: true }); }
+    return { fires, sent: w.cmds.length, failed: !!w.api.st().rthChainFailed, asked: (w.homeAsked || []).length, P: w.api.st().mission.passage,
+             timers: (w.later || []).length, said: w.banners[w.banners.length - 1] || "" };
+  };
+  const underWay = (w, beh) => { w.S.behavior = beh; w.S.status.holding = false; w.api.rearmRthChain(w.S, w.S.status); w.S.status.holding = true; };
+  // (an escape she TOOK - under way on it - and one the guard only ASKED: escapeGen moves at the ask, she holds as she was)
+  const tookEscape = (w, api) => { api.setPlanIntent("escape", null, []); w.S.behavior = "escape"; w.S.status.holding = false; };
+  const askedEscape = (w, api) => { api.setPlanIntent("escape", null, []); };
+  const NEWHOME16 = east(HERE, 2000);
+  const movedHome = (w) => { w.S.home = { ...NEWHOME16 }; };
+  const UNLESS = ", unless she is stopped, held or commanded or End of plan is changed meanwhile";
+  const WAIT16 = (by, tail) => new RegExp("^End of plan RTH WAITING: the way home was withdrawn \\(" + by + "\\) while it was being planned, and "
+    + "nothing was sent\\. It is asked again in 15 s" + tail + "\\.$");
+  const WAIT_HOME = WAIT16("home moved", " for the home she has now" + UNLESS);
+  const WAIT_ESC = WAIT16("the guard's escape", ", once, if the guard has been quiet since and she still holds at the end of her plan" + UNLESS
+    + "; from an escape's own hold she waits for your next command");
+  const hm16 = await chain16(arrived({ duringCover: movedHome }));                // home moved while its chart was read
+  const hm16w = wait16(hm16), hm16f = await fire16(hm16.w);
+  const es16 = await chain16(arrived({ duringPlan: tookEscape }));                 // an escape she took, while its route planned
+  const es16w = wait16(es16, (w) => { w.S.status.holding = true; });               // (she holds clear at the escape's point when the wait ends)
+  const es16f = await fire16(es16.w);                                              // nothing chains off the escape's hold
+  const es16g = await fire16(es16.w, (w) => { w.duringPlan = null; underWay(w, "goto"); });   // the plan she is next commanded on, flown to its end
+  // (... and with the wait's timer NOT yet run: getting under way re-arms the chain by itself, and takes the wait with it -
+  // its timer then does nothing, and leaves an ESCAPE's waiting banner up: its last clause is what is true of her now)
+  const ex16 = await chain16(arrived({ duringPlan: tookEscape }));
+  const ex16up = up(ex16.w);
+  underWay(ex16.w, "goto");
+  const ex16w = wait16(ex16), ex16g = await fire16(ex16.w, (w) => { w.duringPlan = null; });
+  const nt16 = await chain16(arrived({ duringPlan: askedEscape }));                // an escape she never took, the guard quiet after it
+  const nt16w = wait16(nt16), nt16f = await fire16(nt16.w, (w) => { w.duringPlan = null; });
+  const st16 = await chain16(arrived({ duringCover: (w, api) => api.stop("STOP") }));
+  const st16w = wait16(st16), st16f = await fire16(st16.w);
+  const ep16 = await chain16(arrived({ duringCover: (w) => { w.S.completion = "loiter"; } }));
+  const pw16 = await chain16(arrived({ duringCover: (w) => { w.S.run = "paused"; } }));       // a Pause from ANOTHER window, while it planned
+  // (the operator's OWN RTH along the passage, withdrawn the same way: said withdrawn - the retry and its words are the chain's)
+  const op16h = outbound({ duringCover: movedHome });
+  await op16h.api.doRTH({});
+  const h16 = {
+    press: op16h.cmds.length === 0 && (op16h.later || []).length === 0 && !op16h.api.st().rthChainFailed
+           && /^RTH withdrawn: home was moved while the way home was being routed\. Nothing was sent\.$/.test(op16h.banners[op16h.banners.length - 1] || ""),
+    homeMoved: hm16.by === "home moved" && hm16.sent === 0 && !hm16.failed && hm16.chained === true && hm16.card
+               && hm16.later.length === 1 && hm16.later[0].ms === 15000 && WAIT_HOME.test(hm16.said) && hm16.logged === "home moved",
+    homeAgain: hm16w.rearmed && !hm16w.failed && hm16w.note === "" && hm16w.up === hm16.said && hm16w.cards === 0 && hm16f.fires && hm16f.sent === 1
+               && !hm16f.failed && hm16f.P.kind === "rth" && distTo(hm16f.P.home, NEWHOME16) < 1,
+    escape: es16.by === "the guard's escape" && es16.sent === 0 && !es16.failed && es16.chained === true && es16.later.length === 1 && !es16.card
+            && WAIT_ESC.test(es16.said) && es16.logged === "the guard's escape",
+    escapeHold: es16w.rearmed && !es16w.failed && es16w.note === "" && es16w.up === es16.said && !es16f.fires && es16f.sent === 0,
+    escapeNext: es16g.fires && es16g.sent === 1 && !es16g.failed && es16g.P.kind === "rth"
+                && ex16.chained === true && ex16up === ex16.said && ex16w.rearmed && ex16w.up === ex16.said && ex16w.note === "" && !ex16w.failed
+                && ex16g.fires && ex16g.sent === 1,
+    notTaken: nt16.by === "the guard's escape" && !nt16.failed && nt16.chained === true && nt16.later.length === 1 && nt16.card
+              && nt16w.rearmed && !nt16w.failed && nt16w.note === "" && nt16f.fires && nt16f.sent === 1 && nt16f.P.kind === "rth",
+    stop: st16.by === "STOP" && st16.sent === 0 && st16.failed && st16.later.length === 0 && !st16.card
+          && /^RTH withdrawn: STOP was pressed while the way home was being routed\. Nothing was sent\.$/.test(st16.said)
+          && st16.logged === "" && !st16w.rearmed && !st16f.fires && st16f.sent === 0,
+    endPlan: ep16.by === "End of plan" && ep16.sent === 0 && ep16.failed && ep16.later.length === 0 && !ep16.card,
+    pausedElsewhere: pw16.by === "her run stopped" && pw16.sent === 0 && pw16.failed && pw16.later.length === 0
+                     && /^RTH withdrawn: her run was paused while the way home was being routed\. Nothing was sent\.$/.test(pw16.said),
+  };
+  check("16h. ⚠ WITHDRAWN, BUT NOT CALLED OFF: the chain's way home ALONG THE PASSAGE withdrawn because HOME MOVED or by the "
+        + "GUARD'S ESCAPE is not the chain's refusal - nothing sent, the one-shot NOT re-armed at once, the card still "
+        + "promising the return (not during an escape), said WAITING with when and on what it is asked again, re-armed 15 s "
+        + "on with its banner left standing: for a moved home the chain fires and she is sent home along the passage to the "
+        + "home she has now; from an escape she took nothing chains off its hold, and the plan she is next commanded on - "
+        + "under way, then at its end - goes home (with the wait run or not: under way takes the wait, the escape's banner left); "
+        + "an escape she never took, the guard quiet since, she is sent the same way. A STOP, End of plan switched to LOITER, "
+        + "and her run PAUSED from another window still end it: recorded, not asked again; and the operator's own RTH withdrawn by "
+        + "a moved home is said withdrawn, no retry armed",
+        () => Object.values(h16).every(Boolean),
+        () => JSON.stringify({ bad: Object.entries(h16).filter(([, v]) => !v).map(([k]) => k),
+                               home: [hm16.by, hm16.sent, hm16.failed, hm16.later.map((t) => t.ms), hm16.card, hm16.said.slice(0, 110), [hm16w.rearmed, hm16f.fires, hm16f.sent]],
+                               escape: [es16.by, es16.failed, es16.chained, es16.later.length, es16.card, [es16w.rearmed, es16f.fires], [es16g.fires, es16g.sent], [ex16w.rearmed, ex16w.up, ex16g.fires, ex16g.sent]],
+                               notTaken: [nt16.by, nt16.failed, nt16.later.length, [nt16w.rearmed, nt16f.fires, nt16f.sent]],
+                               stop: [st16.by, st16.failed, st16.later.length, st16.said.slice(0, 80)], endPlan: [ep16.by, ep16.failed, ep16.later.length],
+                               pausedElsewhere: [pw16.by, pw16.failed, pw16.said.slice(0, 70)] }));
+
+  // ── 16i. THE WAIT IS FENCED AS THE PLANNING IS, AND AFTER AN ESCAPE ONLY A QUIET GUARD, ONCE (the two 2026-11-16 reviews
+  // of 16h). The withdrawn way home's fence ends with it and the next is taken when the chain fires again: for the 15 s
+  // between nothing was asking. A new plan UPLOADED in the wait (staged while she holds: run, behavior and hold as they
+  // were) was answered by an RTH sent over it; a PAUSE in the wait, then Start, by one the frame she resumed her hold -
+  // the same press while it planned ends the chain. And an escape she did not take, re-armed blindly, planned a way home
+  // on every lap of the guard's re-solve, over the in-extremis alarm. So the retry carries the chain's own fence through
+  // the wait (rthChainRetry): the operator's word - from this window or, a Pause or Stop, from another - a new link, a
+  // hold END it there, recorded and SAID IN THE BANNER SLOT where the waiting banner stood (a note instead when something
+  // else has been raised since: the alarm stands); home moved again is asked for the newest home; after an escape it is
+  // re-armed only with the guard CLEAR and not in extremis again since the wait began, and ONCE per run - a second escape
+  // while the way home it was asked again for plans ends it. And the fence asks the operator's word FIRST: two things can
+  // have happened by one ask, and home moved or the escape was named ahead of another command.
+  const waitHome = () => chain16(arrived({ duringCover: movedHome }));
+  const waitEsc = () => chain16(arrived({ duringPlan: askedEscape }));
+  const LATER = (w, api) => api.set("guardEscapeAt", Date.now() + 60000);         // (the guard in extremis again after the wait began)
+  const up16 = await waitHome(), up16w = wait16(up16, (w, api) => api.setPlanIntent("survey", null, [])), up16f = await fire16(up16.w);
+  const pa16 = await waitHome(), pa16w = wait16(pa16, (w, api) => api.stop("PAUSE")), pa16f = await fire16(pa16.w);   // (then Start: she holds as she was)
+  const po16 = await waitHome(), po16w = wait16(po16, (w) => { w.S.run = "paused"; }), po16f = await fire16(po16.w, (w) => { w.S.run = "running"; });
+  const sw16 = await waitHome(), sw16w = wait16(sw16, (w) => { w.S.completion = "loiter"; }), sw16f = await fire16(sw16.w, (w) => { w.S.completion = "rth"; });
+  const lk16 = await waitHome(), lk16w = wait16(lk16, (w) => { w.S.boot_id = "b2"; });
+  const hd16 = await waitHome(), hd16w = wait16(hd16, (w) => { w.S.behavior = "hold"; });
+  const AGAIN16 = east(HERE, 2500);
+  const mv16 = await waitHome(), mv16w = wait16(mv16, (w) => { w.S.home = { ...AGAIN16 }; }), mv16f = await fire16(mv16.w, (w) => { w.duringCover = null; });
+  // a tab that no longer supervises when the wait ends: its banner down, nothing said - and a word in the wait kept, recorded
+  // without a sentence (should the post come back to it)
+  const vo16 = await waitHome(), vo16w = wait16(vo16, (w) => { w.sup = false; }), vo16f = await fire16(vo16.w);
+  const vw16 = await waitHome(), vw16w = wait16(vw16, (w, api) => { api.setPlanIntent("survey", null, []); w.sup = false; });
+  // the end said over something raised since (the guard's alarm): a note, and the alarm stands
+  const ALARM16 = "⚠⚠ IN EXTREMIS and BOXED IN — every heading enters a keep-out within 30 s. The console cannot find a way out; TAKE MANUAL CONTROL.";
+  const al16 = await waitEsc(), al16w = wait16(al16, (w, api) => { api.set("guardLevel", "helm"); w.dom["#encbanner"].textContent = ALARM16; });
+  const nq16 = await waitEsc(), nq16w = wait16(nq16, LATER), nq16f = await fire16(nq16.w, (w) => { w.duringPlan = null; });
+  const bx16 = await waitEsc(), bx16w = wait16(bx16, (w, api) => api.set("guardLevel", "helm"));     // (boxed in at the wait's end: the level)
+  const bl16 = await waitEsc(), bl16w = wait16(bl16, (w, api) => api.set("guardLevel", "blind"));    // (it cannot see: not clear either)
+  const eq16 = await waitEsc(), eq16w = wait16(eq16, (w, api) => api.set("guardEscapeAt", eq16.at));  // (the escape that withdrew it, at the wait's own start)
+  const eb16 = await waitEsc(), eb16w = wait16(eb16, (w, api) => { api.set("guardEscapeAt", eb16.at); api.set("guardLevel", "helm"); });   // (... and not clear: the level's words)
+  // ONCE PER RUN: quiet at the wait's end, she is asked again - and the guard commands another escape while THAT plans
+  // (`lap16`: a world taken that far - run 7 of link b1 - the chain ended at the second escape)
+  const lap16 = async () => { const w = arrived({ duringPlan: askedEscape }); w.S.run_seq = 7; w.S.boot_id = "b1";
+    const r = await chain16(w), ww = wait16(r), f = await fire16(w); return { w, r, ww, f }; };
+  const lp16 = await lap16(), lp16w = lp16.ww, lp16f = lp16.f;
+  const lp16log = (lp16.w.logs.filter((l) => l[0] === "plan_withdrawn").pop() || [0, {}])[1].by;
+  // ... and a NEW end asks again: she has been under way since (the same run number: the mark is dropped where the chain is
+  // re-armed); her next run's end with no frame under way between (run_seq); the same run number on a new link (boot_id)
+  const again16i = (w, api) => { api.set("rthChained", false); api.set("rthChainFailed", false); };
+  const lu16 = await lap16(), lu16n = await fire16(lu16.w, (w) => { underWay(w, "goto"); });
+  const ls16 = await lap16(), ls16n = await fire16(ls16.w, (w, api) => { w.S.run_seq = 8; again16i(w, api); });
+  const lb16 = await lap16(), lb16n = await fire16(lb16.w, (w, api) => { w.S.boot_id = "b2"; again16i(w, api); });
+  // an escape commanded IN a moved home's wait: not taken (the guard is not quiet), and taken (she is on its hold - the
+  // one-shot handed back whatever the guard reads there, since nothing chains off that hold)
+  const he16 = await waitHome(), he16w = wait16(he16, (w, api) => { askedEscape(w, api); LATER(w, api); });
+  const ht16 = await waitHome(), ht16w = wait16(ht16, (w, api) => { tookEscape(w, api); w.S.status.holding = true; LATER(w, api); api.set("guardLevel", "helm"); });
+  const ht16f = await fire16(ht16.w);
+  // a run commanded in the wait takes it: the timer then only takes the waiting banner down
+  const sr16 = await waitHome();
+  underWay(sr16.w, "goto");
+  const sr16w = wait16(sr16);
+  // a LATER wait is the wait now (home moved again while the way home it was asked again for... was asked early): the first
+  // timer leaves that one's banner and its one-shot alone, and the second re-arms
+  const tw16 = await waitHome();
+  await new Promise((r) => setTimeout(r, 5));                 // (the second wait's stamp is its own: a later millisecond)
+  tw16.w.duringCover = (w) => { w.S.home = { ...AGAIN16 }; };
+  await tw16.w.api.doRTH({ chained: true });
+  const tw16said = tw16.w.banners[tw16.w.banners.length - 1] || "", tw16timers = (tw16.w.later || []).slice();
+  const tw16a = wait16(tw16, null, tw16timers.slice(0, 1)), tw16b = wait16(tw16, null, tw16timers.slice(1));
+  // the monitor's own waiting banner is not the chain's to replace: the end goes to a note
+  const LOWFUEL16 = "Low-fuel RTH WAITING: home is 60.0 km away, and a passage is being planned on the Passage tab - the way home is planned as a passage, one at a time; it is asked again in 15 s.";
+  const lf16 = await waitHome(), lf16w = wait16(lf16, (w, api) => { api.setPlanIntent("survey", null, []); w.dom["#encbanner"].textContent = LOWFUEL16; });
+  // two things by ONE ask of the fence
+  const pc16 = await chain16(arrived({ duringCover: (w, api) => { movedHome(w); api.setPlanIntent("survey", null, []); } }));
+  const pe16 = await chain16(arrived({ duringCover: (w) => { movedHome(w); w.S.completion = "loiter"; } }));
+  const pu16 = await chain16(arrived({ duringCover: (w, api) => { askedEscape(w, api); api.setPlanIntent("survey", null, []); } }));
+  const pg16 = await chain16(arrived({ duringCover: (w, api) => { api.setPlanIntent("goto", null, []); askedEscape(w, api); } }));   // a Go-To, then the escape
+  const pl16 = await chain16(arrived({ duringCover: (w, api) => { askedEscape(w, api); w.S.completion = "loiter"; } }));
+  const px16 = await chain16(arrived({ duringCover: (w, api) => { movedHome(w); tookEscape(w, api); } }));
+  const pr16 = await chain16(arrived({ duringCover: (w, api) => { w.S.run = "paused"; api.setPlanIntent("survey", null, []); } }));   // her run paused, and an Upload
+  // THE ONE SLOT (the page's own swapBanner): said in place of the banner named only while that banner stands
+  const slot16 = (() => { const w = world(), R = w.api.RTH_WAITING_RE, W0 = "End of plan RTH WAITING: x";
+    w.api.showBanner(W0); const a = [w.api.swapBanner(R, "y"), up(w)];
+    w.api.showBanner(W0); w.api.takeDownBanner(R); const b = [w.api.swapBanner(R, "y"), up(w)];
+    w.api.showBanner("ALARM"); const c = [w.api.swapBanner(R, "y"), up(w)];
+    return JSON.stringify([a, b, c]); })();
+  const NOT_AGAIN = (why) => "End of plan RTH is not asked again: " + why;
+  const WORD = (say) => NOT_AGAIN(say + " while it waited to be asked again. Nothing was sent.");
+  const GUARD = (say) => NOT_AGAIN(say + ". Nothing was sent - command her when it is safe.");
+  const EXTREMIS = GUARD("the guard was in extremis again while it waited");
+  const ended = (x, by, text) => !x.rearmed && x.failed && x.off === by && x.up === text && x.note === "" && !x.card && x.cards === 1;
+  // (how the page writes what the wait reads: guardEscapeAt once, where the helm rung acts and BEFORE it finds her boxed in
+  // or commands the escape; guardLevel from the ladder's own answer)
+  const iAt = H.indexOf("guardEscapeAt = Date.now();"), iEsc = H.indexOf("const esc = escapeCourse("), iBox = H.indexOf("IN EXTREMIS and BOXED IN"),
+        iSet = H.indexOf('setPlanIntent("escape", null, runRoute);');
+  const i16 = {
+    upload: ended(up16w, "another command", WORD("this console commanded her elsewhere (survey)")) && !up16f.fires && up16f.sent === 0,
+    pauseStart: ended(pa16w, "PAUSE", WORD("PAUSE was pressed")) && !pa16f.fires && pa16f.sent === 0,
+    pauseElsewhere: ended(po16w, "her run stopped", WORD("her run was paused")) && !po16f.fires && po16f.sent === 0,
+    endPlan: ended(sw16w, "End of plan", WORD("End of plan was changed to LOITER")) && !sw16f.fires && sw16f.sent === 0,
+    link: ended(lk16w, "a new link", WORD("a new link came up (a Spawn, a vessel or port switch, a reconnect)")),
+    hold: ended(hd16w, "a hold", WORD("she was put on station-keeping")),
+    movedAgain: mv16w.rearmed && !mv16w.failed && mv16w.note === "" && mv16w.up === mv16.said && mv16f.fires && mv16f.sent === 1 && distTo(mv16f.P.home, AGAIN16) < 1,
+    viewOnly: vo16w.rearmed && !vo16w.failed && vo16w.note === "" && vo16w.up === "" && vo16w.cards === 0 && vo16f.fires && vo16f.sent === 0 && !vo16f.failed
+              && !vw16w.rearmed && vw16w.failed && vw16w.note === "" && vw16w.up === "" && vw16w.off === null && vw16w.cards === 0,
+    overAlarm: !al16w.rearmed && al16w.failed && al16w.up === ALARM16 && al16w.note === GUARD("after its escape the guard reads HELM, not clear") && al16w.cards === 1,
+    notQuiet: ended(nq16w, "the guard not quiet", EXTREMIS) && !nq16f.fires && nq16f.sent === 0,
+    notClear: ended(bx16w, "the guard not quiet", GUARD("after its escape the guard reads HELM, not clear"))
+              && ended(bl16w, "the guard not quiet", GUARD("after its escape the guard reads BLIND, not clear")),
+    atTheStart: eq16w.rearmed && !eq16w.failed && eq16w.note === "" && eq16.at > 0
+                && ended(eb16w, "the guard not quiet", GUARD("after its escape the guard reads HELM, not clear")),
+    oncePerRun: lp16w.rearmed && lp16f.fires && lp16f.sent === 0 && lp16f.failed && lp16f.timers === 1 && lp16log === "a second escape"
+                && lp16f.said === "End of plan RTH withdrawn: the guard commanded an escape again while the way home was being planned. It has waited "
+                                  + "once on the guard since she held here, and is not asked again. Nothing was sent - command her when it is safe."
+                && [lu16n, ls16n, lb16n].every((x) => x.fires && x.sent === 0 && !x.failed && x.timers === 2 && WAIT_ESC.test(x.said)),
+    escapeInWait: ended(he16w, "the guard not quiet", EXTREMIS),
+    tookInWait: ht16w.rearmed && !ht16w.failed && ht16w.note === "" && !ht16f.fires && ht16f.sent === 0,
+    runTookIt: sr16w.rearmed && !sr16w.failed && sr16w.up === "" && sr16w.note === "" && sr16w.off === null,
+    laterWait: tw16timers.length === 2 && WAIT_HOME.test(tw16said) && !tw16a.rearmed && !tw16a.failed && tw16a.up === tw16said && tw16a.note === ""
+               && tw16b.rearmed && !tw16b.failed && tw16b.up === tw16said,
+    notTheMonitors: !lf16w.rearmed && lf16w.failed && lf16w.up === LOWFUEL16
+                    && lf16w.note === WORD("this console commanded her elsewhere (survey)"),
+    both: pc16.by === "another command" && pc16.failed && pc16.later.length === 0 && pc16.sent === 0
+          && pe16.by === "End of plan" && pe16.failed && pe16.later.length === 0 && pe16.sent === 0
+          && pu16.by === "another command" && pu16.failed && pu16.later.length === 0
+          && pg16.by === "another command" && pg16.failed && /this console commanded her elsewhere \(a new plan\) while/.test(pg16.said)
+          && pl16.by === "End of plan" && pl16.failed && pl16.later.length === 0
+          && px16.by === "the guard's escape" && !px16.failed && px16.later.length === 1 && WAIT_ESC.test(px16.said)
+          && pr16.by === "her run stopped" && pr16.failed && pr16.later.length === 0,
+    slot: slot16 === JSON.stringify([[true, "y"], [false, ""], [false, "ALARM"]]),
+    wiring: iAt > 0 && iAt < iEsc && iEsc < iBox && iBox < iSet && H.split("guardEscapeAt = ").length === 3 && /\n\s*guardLevel = a\.level;/.test(H),
+  };
+  check("16i. ⚠ THE WAIT IS FENCED AS THE PLANNING IS: in the 15 s before the chain is asked again a plan UPLOADED, a PAUSE (then "
+        + "Start) from this window or another, End of plan switched away (then back), a new link, a hold each END it - recorded, "
+        + "the card no longer promising, nothing fired or sent, and SAID in the banner slot in place of the waiting banner (a "
+        + "note, the alarm left standing, when something was raised since); home moved AGAIN is asked for the newest home; a "
+        + "run commanded takes the wait and its banner; a tab that no longer supervises takes its banner down and claims "
+        + "nothing. AFTER AN ESCAPE, ONLY A QUIET GUARD, ONCE: in extremis again since the wait began, or reading HELM or "
+        + "BLIND at its end, ends it (the escape that withdrew it, at the wait's start, does not); quiet, she is asked again "
+        + "- and when the guard commands another while THAT plans it ends there, said, until her next run's end; an escape "
+        + "taken in a moved home's wait hands the one-shot back and nothing fires off its hold. And BY ONE ASK of the fence "
+        + "the operator's word is named first: home moved with an Upload or with End of plan switched away, an escape with "
+        + "an Upload, a Go-To or End of plan, ends it (the command named, never the escape); home moved with an escape is "
+        + "the escape's. And the page writes guardEscapeAt once, before it finds her boxed in or commands the escape",
+        () => Object.values(i16).every(Boolean),
+        () => JSON.stringify({ bad: Object.entries(i16).filter(([, v]) => !v).map(([k]) => k),
+                               upload: [up16w.failed, up16w.off, up16w.up.slice(0, 120), up16w.note, up16w.cards, up16f.fires], pause: [pa16w.off, pa16f.fires, po16w.off, po16w.up.slice(-80), po16f.fires],
+                               endPlan: [sw16w.off, sw16f.fires], link: lk16w.off, hold: hd16w.off, movedAgain: [mv16w.rearmed, mv16f.fires, mv16f.sent],
+                               viewOnly: [vo16w.rearmed, vo16w.up, vo16f.fires, vo16f.sent, vw16w.failed, vw16w.note], overAlarm: [al16w.failed, al16w.up.slice(0, 30), al16w.note.slice(-70)],
+                               notQuiet: [nq16w.failed, nq16w.off, nq16w.up.slice(-90)], notClear: [bx16w.up.slice(-70), bl16w.up.slice(-70)], atTheStart: [eq16w.rearmed, eq16.at > 0],
+                               once: [lp16w.rearmed, lp16f.fires, lp16f.sent, lp16f.failed, lp16f.timers, lp16log, [lu16n, ls16n, lb16n].map((x) => [x.fires, x.failed, x.timers])],
+                               inWait: [he16w.off, ht16w.rearmed, ht16f.fires], runTookIt: [sr16w.rearmed, sr16w.up],
+                               laterWait: [tw16timers.length, tw16a.rearmed, tw16a.up === tw16said, tw16b.rearmed], notTheMonitors: [lf16w.failed, lf16w.up.slice(0, 22), lf16w.note.slice(0, 50)],
+                               both: [pc16.by, pe16.by, pu16.by, pg16.by, pg16.said.slice(0, 80), pl16.by, px16.by, px16.failed, pr16.by], slot: slot16, wiring: [iAt > 0, iAt < iEsc, iEsc < iBox, iBox < iSet] }));
+
   // ── 14. the water a section is planned at ───────────────────────────────────────────────────────────────────────
   const lv = (() => {
     const src = ["const WATER_REMOTE_KM = 75;", "const fmtDist = (m, dp) => m < 1000 ? Math.round(m) + ' m' : (m / 1000).toFixed(dp == null ? 2 : dp) + ' km';",
@@ -1447,8 +1720,11 @@ console.log("The passage, sailed:");
 
   // 17h. BUSY IS ASKED AGAIN, NOT REFUSED: the Passage tab planning a passage (the planner answers one at a time). The first
   // build said "refused" - the chain marked refused for good (she held, the card said so), the monitor's latch kept
+  // (End of plan RTH on the world's state, as the chain fires under no other: the retry's wait asks the chain's own fence
+  // when it is over - rthChainRetry, 2026-11-16 - and a world without it reads as End of plan switched away)
   const ch17h = farWorld17({ passageBusy: true, rthChained: true,
-    S: { armed: true, estop: false, run: "running", status: { holding: true, fuel_l: 200 }, wp_total: 9, home: { ...HERE }, home_source: null } });
+    S: { armed: true, estop: false, run: "running", status: { holding: true, fuel_l: 200 }, wp_total: 9, home: { ...HERE }, home_source: null,
+         completion: "rth" } });
   const outCh17h = await ch17h.api.doRTH({ chained: true });
   const later17h = (ch17h.later || []).slice(), st17h0 = ch17h.api.st();
   later17h.forEach((t) => t.fn());
@@ -1590,8 +1866,9 @@ console.log("The passage, sailed:");
   const wiring17o = {
     monitor: /if\(nt && \(nt\.busy \|\| nt\.late\) && fuelBoot === bootAt\)\{ fuelRth\.acted = false; fuelRetryAt = Date\.now\(\) \+ RTH_BUSY_RETRY_MS; \}/.test(ft)
              && /\|\| Date\.now\(\) < fuelRetryAt;/.test(ft),
-    rearm: /rthChained=false; rthChainFailed=false; rthChainBusyAt=0;/.test(grab("rearmRthChain"))
-           && /if\(s\.behavior!=="rth"\)\{ rthChained=false; rthChainFailed=false; rthChainBusyAt=0; \}/.test(H),
+    // (2026-11-16: and the escape's once-per-run mark with them, at both - rthChainAgain, 16i)
+    rearm: /rthChained=false; rthChainFailed=false; rthChainBusyAt=0; rthChainEscapeRun=null; \}/.test(grab("rearmRthChain"))
+           && /if\(s\.behavior!=="rth"\)\{ rthChained=false; rthChainFailed=false; rthChainBusyAt=0; rthChainEscapeRun=null; \}/.test(H),
     planNow: /if\(passageBusy\)\{ flashNote\("Plan passage: "/.test(grab("planPassageNow")),
     corridor: [cw.indexOf("if(gone && gone()) return {gone: true};"), cw.indexOf("const over = Date.now() >= until"),
                cw.indexOf("await corridorAsk((signal) => getCorridor(id, signal), note);"),
@@ -1714,7 +1991,8 @@ console.log("The passage, sailed:");
   };
   const wq17 = {
     escape: ["escape", "escapeOver", "escapeElsewhere"].every((k) => q17[k].by === "the guard's escape" && q17[k].sent === 0)
-            && /RTH withdrawn: the guard steered her clear in extremis \(an escape\)/.test(q17.escape.said),
+            // (said as COMMANDED, 2026-11-16: it counts from the guard's ask, whether or not she took the helm)
+            && /RTH withdrawn: the guard commanded an escape in extremis while the way home was being planned\./.test(q17.escape.said),
     upload: q17.upload.by === "another command" && q17.upload.sent === 0 && /this console commanded her elsewhere \(survey\)/.test(q17.upload.said),
     sent: ["upkeep", "holdAtPress", "holdWhile", "endPlanPress", "chainSent"].every((k) => q17[k].by === null && q17[k].sent === 1)
           && !q17.chainSent.failed,
@@ -1877,7 +2155,120 @@ console.log("The passage, sailed:");
                                err: [vErr.api.st().rthChainFailed, (vErr.later || []).length],
                                fenceFirst: [oFL, said17(vFL).slice(0, 90)], joinedFence: [jf1, jf2, vJF.api.st().rthChainFailed, (vJF.later || []).length, said17(vJF).slice(0, 90)] }));
 
-  // 17w. THE CHART READ STOPPED UNDER THE WAY HOME (2026-11-15, a SAFETY defect an adversarial review found): the page's
+  // 17w. WITHDRAWN, BUT NOT CALLED OFF - THE WAY HOME PLANNED FROM HERE (2026-11-16; 16h and 16i are the way home along a
+  // passage, and the wait). The chain's far RTH plans for minutes behind its fence, and every withdrawal was the chain's
+  // refusal: with HOME MOVED (a nearer port set while it planned), or an escape the guard commanded and she did not take,
+  // she held at the end of her plan for good, the card saying REFUSED - where the low-fuel monitor asks again (fuel_rth
+  // 8x). Asked again now, RTH_BUSY_RETRY_MS on: for the home she has now - past RTH_MAX_M planned as a passage again,
+  // within it the boxed return; never off the escape's own hold. And a chain that JOINED the button's flight, withdrawn
+  // with it. The operator's word still ends it, each recorded - STOP, PAUSE, HOLD, E-STOP (the names the page's own
+  // presses give), a Pause from another window, another command, End of plan switched away - and a new link, and a hold
+  // (the chain's strict fence). And busy's and late's waits are fenced as these are (rthChainRetry is one function): a
+  // plan uploaded in one ends it. And the fence's order is every caller's: the operator's own press and the monitor's,
+  // home moved with a plan uploaded by one ask, are answered "another command" (the monitor's latch then stands).
+  // (`far17`: each world its own status object - S17q's HOLDING is ONE object, and an escape's frames write to it)
+  const far17 = (during) => farWorld17({ S: S17q({ status: { holding: true, fuel_l: 200 } }), duringHomePlan: during });
+  const NEAR17 = east(HERE, 30000), FAR17 = east(HERE, 800);
+  const hf = await chain16(far17((w) => { w.S.home = { ...FAR17 }; })), hfW = wait16(hf), hfF = await fire16(hf.w);
+  const hn = await chain16(far17((w) => { w.S.home = { ...NEAR17 }; })), hnW = wait16(hn), hnF = await fire16(hn.w);
+  const ec = await chain16(far17(tookEscape)), ecW = wait16(ec, (w) => { w.S.status.holding = true; }), ecF = await fire16(ec.w);
+  const ecG = await fire16(ec.w, (w) => { w.duringHomePlan = null; underWay(w, "goto"); });
+  const ex = await chain16(far17(tookEscape));
+  underWay(ex.w, "goto");                         // (the wait's timer not yet run: under way alone re-arms the chain and takes the wait)
+  const exW = wait16(ex), exG = await fire16(ex.w, (w) => { w.duringHomePlan = null; });      // (the escape's banner left up: 16h)
+  const en = await chain16(far17(askedEscape)), enW = wait16(en), enF = await fire16(en.w, (w) => { w.duringHomePlan = null; });
+  const gJ = gated17(homePlanFor17()), wJ = farWorld17({ S: S17q({ status: { holding: true, fuel_l: 200 } }), homePlan: gJ.plan });
+  let btnJ;
+  const jn = await chain16(wJ, (w) => { btnJ = w.api.doRTH({}); setTimeout(() => { w.S.home = { ...FAR17 }; gJ.open(); }, 5); });
+  const outBtnJ = await btnJ, jnW = wait16(jn), jnF = await fire16(jn.w);
+  const press17 = (name) => (w, api) => api.stop(name);
+  const no17 = {
+    stop: await chain16(far17(press17("STOP"))), pause: await chain16(far17(press17("PAUSE"))), holdPress: await chain16(far17(press17("HOLD"))),
+    estop: await chain16(far17(press17("E-STOP"))), elsewhere: await chain16(far17((w) => { w.S.run = "idle"; })),
+    command: await chain16(far17((w, api) => api.setPlanIntent("goto", null, []))), link: await chain16(far17((w) => { w.S.boot_id = "b2"; })),
+    endPlan: await chain16(far17((w) => { w.S.completion = "loiter"; })), hold: await chain16(far17((w) => { w.S.behavior = "hold"; })),
+  };
+  const noBy = { stop: "STOP", pause: "PAUSE", holdPress: "HOLD", estop: "E-STOP", elsewhere: "her run stopped", command: "another command", link: "a new link",
+                 endPlan: "End of plan", hold: "a hold" };
+  const noWait = {}, noFire = {};
+  for (const k of Object.keys(no17)) { noWait[k] = wait16(no17[k]); noFire[k] = await fire16(no17[k].w, (w) => { w.S.run = "running"; }); }
+  // (the operator's own press and the low-fuel monitor's, withdrawn because home moved: answered withdrawn, said so - the
+  // chain's retry and its words are not theirs; the monitor asks again itself, fuel_rth 8x. And with a plan UPLOADED by
+  // the same ask: "another command" - the operator's word named first for every caller of the fence)
+  const moved17 = (w) => { w.S.home = { ...FAR17 }; };
+  const movedAndUpload17 = (w, api) => { moved17(w); api.setPlanIntent("survey", null, []); };
+  const prOp = farWorld17({ S: S17q(), duringHomePlan: moved17 }), outPrOp = await prOp.api.doRTH({});
+  const prMon = lowWorld17({ homePlan: homePlanFor17(), duringHomePlan: moved17 });
+  const outPrMon = await prMon.api.doRTH({ why: LOWF, breakWhy: "fuel" });
+  const p2Op = farWorld17({ S: S17q(), duringHomePlan: movedAndUpload17 }), outP2Op = await p2Op.api.doRTH({});
+  const p2Mon = lowWorld17({ homePlan: homePlanFor17(), duringHomePlan: movedAndUpload17 });
+  const outP2Mon = await p2Mon.api.doRTH({ why: LOWF, breakWhy: "fuel" });
+  // BUSY'S WAIT (the Passage tab planning one): nothing in it - re-armed, its banner standing (17h); a plan uploaded in it
+  // - the chain ends there, said in its banner's place; and a chain recorded meanwhile is left recorded by its timer
+  const busy17w = () => chain16(farWorld17({ passageBusy: true, S: S17q({ status: { holding: true, fuel_l: 200 } }) }));
+  const bzA = await busy17w(), bzAw = wait16(bzA);
+  const bzU = await busy17w(), bzUw = wait16(bzU, (w, api) => api.setPlanIntent("survey", null, []));
+  const bzF = await busy17w(), bzFw = wait16(bzF, (w, api) => api.set("rthChainFailed", true));
+  // LATE'S WAIT (the chart read along the way home given up, 17v): a plan uploaded in it ends the chain, said in its banner's place
+  const lt = await chain16(farWorld17({ S: S17q({ status: { holding: true, fuel_l: 200 } }), homePlan: late17 }));
+  const ltW = wait16(lt, (w, api) => api.setPlanIntent("survey", null, []));
+  const w17 = {
+    press: [[prOp, outPrOp], [prMon, outPrMon]].every(([w, out]) => nt17(out).withdrawn === true && nt17(out).by === "home moved" && w.cmds.length === 0
+             && (w.later || []).length === 0 && !w.api.st().rthChainFailed
+             && said17(w) === "RTH withdrawn: home was moved while the way home was being planned. Nothing was sent."),
+    pressBoth: [[p2Op, outP2Op], [p2Mon, outP2Mon]].every(([w, out]) => nt17(out).withdrawn === true && nt17(out).by === "another command" && w.cmds.length === 0
+                 && said17(w) === "RTH withdrawn: this console commanded her elsewhere (survey) while the way home was being planned. Nothing was sent."),
+    homeFar: hf.by === "home moved" && hf.sent === 0 && !hf.failed && hf.chained === true && hf.card && hf.later.length === 1 && hf.later[0].ms === 15000
+             && WAIT_HOME.test(hf.said) && hf.logged === "home moved",
+    homeFarAgain: hfW.rearmed && !hfW.failed && hfW.note === "" && hfW.up === hf.said && hfF.fires && hfF.asked === 2 && hfF.sent === 1 && !hfF.failed && hfF.P
+                  && hfF.P.kind === "rth" && hfF.P.fromHere === true && distTo(hf.w.homeAsked[1].points[1], FAR17) < 1 && distTo(hfF.P.home, FAR17) < 1,
+    homeNear: hn.by === "home moved" && hn.sent === 0 && !hn.failed && hn.chained === true && hn.later.length === 1 && WAIT_HOME.test(hn.said),
+    homeNearAgain: hnW.rearmed && hnF.fires && hnF.asked === 1 && hnF.sent === 1 && !hnF.failed && hn.w.nogoAsked === 1 && hn.w.cmds[0][0] === "/api/cmd/rth"
+                   && distTo(hn.w.cmds[0][1].route[hn.w.cmds[0][1].route.length - 1], NEAR17) < 1 && !hnF.P,
+    escape: ec.by === "the guard's escape" && ec.sent === 0 && !ec.failed && ec.chained === true && ec.later.length === 1 && !ec.card && WAIT_ESC.test(ec.said)
+            && ec.logged === "the guard's escape",
+    escapeHold: ecW.rearmed && !ecW.failed && ecW.note === "" && !ecF.fires && ecF.sent === 0 && ecF.asked === 1,
+    escapeNext: ecG.fires && ecG.asked === 2 && ecG.sent === 1 && !ecG.failed
+                && ex.chained === true && exW.rearmed && exW.up === ex.said && exW.note === "" && !exW.failed && exG.fires && exG.asked === 2 && exG.sent === 1,
+    notTaken: en.by === "the guard's escape" && !en.failed && en.chained === true && en.later.length === 1 && en.card
+              && enW.rearmed && !enW.failed && enF.fires && enF.asked === 2 && enF.sent === 1,
+    joined: nt17(outBtnJ).withdrawn === true && nt17(outBtnJ).by === "home moved" && jn.sent === 0 && !jn.failed && jn.later.length === 1
+            && jn.asked === 1 && WAIT_HOME.test(jn.said) && jnW.rearmed && jnF.fires && jnF.asked === 2 && jnF.sent === 1,
+    final: Object.keys(no17).every((k) => no17[k].by === noBy[k] && no17[k].sent === 0 && no17[k].failed && no17[k].later.length === 0 && !no17[k].card
+                                          && /^RTH withdrawn: /.test(no17[k].said) && no17[k].logged === ""
+                                          && !noWait[k].rearmed && noWait[k].note === "" && !noFire[k].fires && noFire[k].sent === 0)
+           && no17.elsewhere.said === "RTH withdrawn: her run was stopped while the way home was being planned. Nothing was sent.",
+    busyWait: bzA.later.length === 1 && !bzA.failed && bzAw.rearmed && !bzAw.failed && bzAw.note === "" && bzAw.up === bzA.said
+              && /^End of plan RTH WAITING: home is 55\.0 km away, and a passage is being planned on the Passage tab/.test(bzA.said)
+              && !bzUw.rearmed && bzUw.failed && bzUw.off === "another command" && bzUw.note === "" && bzUw.cards === 1
+              && bzUw.up === "End of plan RTH is not asked again: this console commanded her elsewhere (survey) while it waited to be asked again. Nothing was sent."
+              && !bzFw.rearmed && bzFw.failed && bzFw.note === "" && bzFw.off === null && bzFw.up === "" && bzFw.cards === 0
+              && lt.later.length === 1 && !lt.failed && /^RTH WAITING: home is 55\.0 km away/.test(lt.said) && !ltW.rearmed && ltW.failed && ltW.note === ""
+              && ltW.up === "End of plan RTH is not asked again: this console commanded her elsewhere (survey) while it waited to be asked again. Nothing was sent.",
+  };
+  check("17w. ⚠ WITHDRAWN, BUT NOT CALLED OFF: the chain's way home PLANNED FROM HERE withdrawn because HOME MOVED or by the "
+        + "GUARD'S ESCAPE is asked again 15 s on, not recorded refused and not re-armed at once - said WAITING, the card still "
+        + "promising it (not during an escape): a home moved and still past 50 km is planned as a passage again, to it, and "
+        + "sent; one moved within 50 km is the boxed return; from an escape she took nothing chains off its hold and the plan "
+        + "she is next commanded on goes home at its end; an escape she never took, the guard quiet since, she is sent; a chain "
+        + "that JOINED the button's flight the same. STOP, PAUSE, HOLD, E-STOP, her run stopped from elsewhere, another command, "
+        + "End of plan switched away, a new link and a hold still END it - recorded, not asked again, the card no longer "
+        + "promising; the operator's press and the low-fuel monitor's are answered withdrawn, the chain's retry and words not "
+        + "theirs - and by another command when a plan was uploaded by the same ask. And BUSY'S WAIT is fenced the same: a "
+        + "plan uploaded in it ends the chain, said in its banner's place (LATE'S the same); one recorded meanwhile stays recorded, "
+        + "its promise taken down",
+        () => Object.values(w17).every(Boolean),
+        () => JSON.stringify({ bad: Object.entries(w17).filter(([, v]) => !v).map(([k]) => k),
+                               far: [hf.by, hf.failed, hf.later.map((t) => t.ms), hf.card, hf.said.slice(0, 100), [hfW.rearmed, hfF.fires, hfF.asked, hfF.sent]],
+                               near: [hn.by, hn.failed, hn.later.length, [hnF.fires, hnF.asked, hnF.sent, hn.w.nogoAsked]],
+                               escape: [ec.by, ec.failed, ec.chained, ec.later.length, ec.card, [ecW.rearmed, ecF.fires], [ecG.fires, ecG.asked, ecG.sent], [exW.rearmed, exW.up, exG.fires, exG.sent]],
+                               notTaken: [en.by, en.failed, [enW.rearmed, enF.fires, enF.asked, enF.sent]],
+                               joined: [nt17(outBtnJ), jn.failed, jn.later.length, jn.said.slice(0, 60), [jnF.fires, jnF.asked, jnF.sent]],
+                               final: Object.fromEntries(Object.keys(no17).map((k) => [k, [no17[k].by, no17[k].failed, no17[k].later.length, noFire[k].fires]])),
+                               both: [nt17(outP2Op).by, nt17(outP2Mon).by],
+                               busy: [bzAw.rearmed, bzUw.failed, bzUw.off, bzUw.up.slice(-80), bzFw.rearmed, bzFw.note] }));
+
+  // 17x. THE CHART READ STOPPED UNDER THE WAY HOME (2026-11-15, a SAFETY defect an adversarial review found): the page's
   // own coarse field home posted the console {cancel: id} for a read past its 60 tiles - and that read was this way
   // home's (the same line the other way: the same tiles, the same job - tests/passage_plan.js 16s drives the two against
   // the console's own job code). passagePlanFor answered "canceled" as a plain error, so past 60 tiles of way home (a
@@ -1906,7 +2297,7 @@ console.log("The passage, sailed:");
   const opSaidW = said17(wOp), opCmdsW = wOp.cmds.length;
   wOp.homePlan = homePlanFor17();
   const oOpW2 = await wOp.api.doRTH({});
-  const w17 = {
+  const w17x = {
     planner: stop17 && stop17.late === true && stop17.kept === false && stop17.error === STOP17 && !stop17.plan
              && logs17w.some((l) => l[0] === "passage_plan" && l[1].state === "stopped" && l[1].id === "h"),
     chain: oChW === undefined && wCh.cmds.length === 0 && !wCh.api.st().rthChainFailed && (wCh.later || []).length === 1 && wCh.later[0].ms === 15000
@@ -1917,12 +2308,12 @@ console.log("The passage, sailed:");
               && opSaidW === "RTH refused: " + BODY17 + STOP17 + ". Press RTH again to ask again.",
     again: oOpW2 === undefined && wOp.cmds.length === 1 && wOp.cmds[0][0] === "/api/cmd/rth",
   };
-  check("17w. THE CHART READ STOPPED UNDER THE WAY HOME (a cancel put to the console from elsewhere): the planner itself "
+  check("17x. THE CHART READ STOPPED UNDER THE WAY HOME (a cancel put to the console from elsewhere): the planner itself "
         + "answers {error, late, kept: false} naming the cause, logged - and the far RTH is NOT refused for good: the "
         + "end-of-plan chain asked again 15 s on and not recorded refused, the low-fuel monitor told late (WAITING), the "
         + "operator told to press again - and a press after it plans and sends; nothing said kept",
-        () => Object.values(w17).every(Boolean),
-        () => JSON.stringify({ bad: Object.entries(w17).filter(([, v]) => !v).map(([k]) => k), planner: stop17,
+        () => Object.values(w17x).every(Boolean),
+        () => JSON.stringify({ bad: Object.entries(w17x).filter(([, v]) => !v).map(([k]) => k), planner: stop17,
                                chain: [oChW, wCh.api.st().rthChainFailed, (wCh.later || []).map((t) => t.ms), said17(wCh).slice(-110)],
                                mon: oMonW, op: [oOpW, opSaidW.slice(-110)], again: [oOpW2, wOp.cmds.length] }));
 
