@@ -188,8 +188,10 @@ console.log("The passage, sailed:");
   {
     const spi = grab("setPlanIntent");
     // (the press time counted beside the name since the merge of 2026-11-16: cmdUnstamped, cmdPressedMax - 16t)
-    if (!/\n  if\(!guardOwn\)\{\r?\n    if\(kind === "escape"\) escapeGen\+\+;\r?\n    else \{\r?\n      cmdGen\+\+; cmdKind = kind;\r?\n      if\(pressedAt == null\) cmdUnstamped\+\+; else cmdPressedMax = Math\.max\(cmdPressedMax, pressedAt\);[^\n]*\r?\n    \}\r?\n  \}/.test(spi)
-        || (spi.match(/escapeGen|cmdGen|cmdKind|cmdUnstamped|cmdPressedMax/g) || []).length !== 6)
+    // (and since the merge review's residual 1, the same day: a plan drawn "unsent" counts nothing, and every other picture
+    // is one of something sent - sentGen, sentKind, what the press's fence asks when her behavior moves: command_result 54m)
+    if (!/\n  if\(guardOwn !== "unsent"\)\{\r?\n    sentGen\+\+; sentKind = kind;\r?\n    if\(!guardOwn\)\{\r?\n      if\(kind === "escape"\) escapeGen\+\+;\r?\n      else \{\r?\n        cmdGen\+\+; cmdKind = kind;\r?\n        if\(pressedAt == null\) cmdUnstamped\+\+; else cmdPressedMax = Math\.max\(cmdPressedMax, pressedAt\);[^\n]*\r?\n      \}\r?\n    \}\r?\n  \}/.test(spi)
+        || (spi.replace(/^\s*\/\/.*$/gm, "").match(/escapeGen|cmdGen|cmdKind|cmdUnstamped|cmdPressedMax|sentGen|sentKind/g) || []).length !== 8)
       throw new Error("test setup: setPlanIntent's counting line changed - this world's copy of it must follow");
   }
   const world = (o) => {
@@ -199,7 +201,7 @@ console.log("The passage, sailed:");
       gotoTakes: true, planIntent: null, planGen: 0, waterAsked: [], levels: [], banked: [],
       level: { m: 0.35, say: "+0.35 m, the lowest predicted along it over the next 4.0 h (Test Harbor, 3 km off)" } }, o || {});
     const src = [
-      "let S = w.S, asv = w.asv, mission = w.mission, passage = w.passage, runRoute = w.runRoute, runUnsafe = [], planIntent = w.planIntent, planGen = w.planGen, cmdGen = 0, escapeGen = 0, cmdUnstamped = 0, cmdPressedMax = 0, cmdKind = null;",
+      "let S = w.S, asv = w.asv, mission = w.mission, passage = w.passage, runRoute = w.runRoute, runUnsafe = [], planIntent = w.planIntent, planGen = w.planGen, cmdGen = 0, escapeGen = 0, cmdUnstamped = 0, cmdPressedMax = 0, cmdKind = null, sentGen = 0, sentKind = null;",
       "const window = {get _wpIndex(){ return w.wpIndex; }};",
       "let routeCmdsInFlight = 0, escapeThrottle = !w.quiet, guardActedAt = 0, guardEdgeAt = 0, aisAroundBusy = false, heldResuming = false;",
       // (the guard's level and when it last commanded an escape - rthChainRetry asks them after an escape's withdrawal, 16i)
@@ -236,9 +238,10 @@ console.log("The passage, sailed:");
       grab("took"), grab("notTookSay"), "const releaseEscapeClaim = () => {};",
       // (cmdGen and escapeGen as the page counts them - rthFence's, the 2026-11-14 review; the guard's own upkeep counts
       // neither, an escape's included - the second review of 2026-11-16. A COPY, so the page's own line is pinned below.)
-      "const setPlanIntent = (k, p, r, own, at) => { planGen++; if (!own) { if (k === 'escape') escapeGen++;",
+      // (and a plan drawn "unsent" counts nothing; every other picture is one of something sent - sentGen, sentKind)
+      "const setPlanIntent = (k, p, r, own, at) => { planGen++; if (own !== 'unsent') { sentGen++; sentKind = k; if (!own) { if (k === 'escape') escapeGen++;",
       // (and when each was PRESSED, as the page keeps it: one handed no time counts as a landing - cmdPressedMax, 16t)
-      "  else { cmdGen++; cmdKind = k; if (at == null) cmdUnstamped++; else cmdPressedMax = Math.max(cmdPressedMax, at); } }",
+      "  else { cmdGen++; cmdKind = k; if (at == null) cmdUnstamped++; else cmdPressedMax = Math.max(cmdPressedMax, at); } } }",
       "  planIntent = {kind: k, why: [], route: r.length}; };",
       "const legStartsHere = () => {}, setTip = (el, t) => { el.tip = t; };",
       // step 6: the water a section is planned at (stubbed here; 14 drives the real ones), and doRTH's way home
@@ -264,7 +267,7 @@ console.log("The passage, sailed:");
       "const surveyBreakNow = () => w.brk || null, bankBreak = (b) => w.banked.push(b);",
       decl("RTH_MAX_M"),
       "const ctx = new Proxy({}, {get: (t, k) => (k in t ? t[k] : (...a) => { w.ops.push([k, ...a]); }), set: (t, k, v) => { t[k] = v; return true; }});",
-      "const doGoTo = async (ll) => { w.cmds.push(['goto', ll]); if (w.gotoTakes) { planGen++; cmdGen++; cmdUnstamped++; cmdKind = 'goto'; planIntent = {kind: 'goto', why: []}; if (w.gotoRoute) runRoute = w.gotoRoute; } };",
+      "const doGoTo = async (ll) => { w.cmds.push(['goto', ll]); if (w.gotoTakes) { planGen++; sentGen++; sentKind = 'goto'; cmdGen++; cmdUnstamped++; cmdKind = 'goto'; planIntent = {kind: 'goto', why: []}; if (w.gotoRoute) runRoute = w.gotoRoute; } };",
       "const $ = (id) => w.dom[id] || (w.dom[id] = {style: {}, classList: {toggle(c, on){ this[c] = on; }}, disabled: false});",
       decl("PASSAGE_CASING"), grab("strokeCased"), grab("fillHaloed"),
       "const PASSAGE_PORT_R_M = w.C.PORT_R_M;", grab("sectionPorts"), grab("sectionAtPort"), grab("portSectionLine"),
@@ -300,7 +303,7 @@ console.log("The passage, sailed:");
       "  reapproachIfSetOff, rthFence,",
       "  passageHomeRefusal, homePassageRecord, stop: (name) => { routeStopGen++; routeStopName = name; },",
       "  showBanner, takeDownBanner, swapBanner, RTH_WAITING_RE,",
-      "  st: () => ({mission, runRoute, planIntent, planGen, cmdGen, escapeGen, cmdUnstamped, cmdPressedMax, passage, sailBusy, passageBusy, rthChainFailed, rthChained, rthChainBusyAt, homeFlight, passagePreRead}), set: (k, v) => { eval(k + ' = v'); }};",
+      "  st: () => ({mission, runRoute, planIntent, planGen, cmdGen, escapeGen, cmdUnstamped, cmdPressedMax, sentGen, sentKind, passage, sailBusy, passageBusy, rthChainFailed, rthChained, rthChainBusyAt, homeFlight, passagePreRead}), set: (k, v) => { eval(k + ' = v'); }};",
       "return api;",
     ].join("\n");
     w.dom = {}; w.F = F; w.C = C; w.model = model; w.distTo = distTo;

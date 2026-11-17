@@ -731,10 +731,19 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     // since"), so a stub that bumped it elsewhere would test a different rule.
     let planGen = 0;
     // (and the far RTH's two counts - rthFence's - which an Upload TAKEN moves whether or not its picture is drawn: 1n2.
-    // This stub counts nothing: what is asked of it here is the draw, and the counting is end_action 18b's, on the page's own.)
+    // The counting itself is end_action 18b's, on the page's own.)
     // (and the press-time counts rthFence takes at the press, since the merge with 3974bff: cmdUnstamped, cmdPressedMax)
-    let cmdGen = 0, escapeGen = 0, cmdKind = null, cmdUnstamped = 0, cmdPressedMax = 0;
-    const setPlanIntent = (kind) => { planGen++; planIntent = { kind, why: [] }; };
+    // (and sentGen / sentKind, the pictures of something SENT: every one but a plan blocked here, drawn "unsent" - 1n3)
+    let cmdGen = 0, escapeGen = 0, cmdKind = null, cmdUnstamped = 0, cmdPressedMax = 0, sentGen = 0, sentKind = null;
+    // (this stub COUNTED NOTHING until 2026-11-16: it counts as the page does now - a copy of setPlanIntent's counting, which
+    // passage_sail pins - because 1n3 asks what a draw is handed: a plan blocked here is drawn "unsent", and counts nothing.
+    // `spiCalls`: what each draw was handed)
+    const spiCalls = [];
+    const setPlanIntent = (kind, plan, route, own, at) => { spiCalls.push({ kind, own, at }); planGen++;
+      if (own !== "unsent") { sentGen++; sentKind = kind;
+        if (!own) { if (kind === "escape") escapeGen++;
+                    else { cmdGen++; cmdKind = kind; if (at == null) cmdUnstamped++; else cmdPressedMax = Math.max(cmdPressedMax, at); } } }
+      planIntent = { kind, why: [] }; };
     // The page's ONE success test and its operator wording, carried across verbatim so a
     // change to either is a change HERE rather than in a copy that can drift.
     // eslint-disable-next-line no-eval
@@ -1197,6 +1206,47 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
                 && unrouted.pressBy === "another command" && unrouted.pressSay === SAY
                 && refused.sent === 1 && refused.by === null && refused.moved === 0 && refused.pressBy === null,
           () => JSON.stringify({ routed, unrouted, refused }));
+
+    // ⚠⚠ 1n3. A PLAN BLOCKED HERE IS NO COMMAND (2026-11-16, the merge review's residual 1). An Upload with a leg no detour
+    // clears is refused before any post, and DRAWN - the blocked legs' highlight has no other source. Drawn as a command,
+    // it was one: the count and its press time moved, so an RTH planning meanwhile was withdrawn as "another command" - the
+    // low-fuel monitor's latch kept, End of plan's chain recorded as failed - by a plan this console had itself refused,
+    // with her still on the plan she had. DRIVEN: 1z7's blocked Upload (a survey's own leg refused), through the page's own
+    // doUpload, End of plan's fence and a press's taken before it: both stand, the draw is handed "unsent", and no count
+    // moves but the picture's own (planGen). AND IT IS NOT A PICTURE SHE CAN BE PUT ON: a Start pressed after it runs the
+    // OLD plan (Start is gated on the vessel's flag, which a blocked Upload does not clear), her behavior moves to survey,
+    // and the press is withdrawn by that - read as this picture's own (the blocked plan is a survey too), it withdrew
+    // nothing, and the RTH pressed before that Start was sent over the survey just started. THE PAIR: 1n2's Upload, TAKEN.
+    // TEETH, sidecar ASV_HTML (2026-11-16): the blocked draw handed its press again, as a command -> 1n3.
+    {
+      const LOWKO = { lowChart: true }, keptM = mission;
+      svLegs = () => ({ svKo: { S1: LOWKO }, levels: { S1: -0.3 }, cuts: { S1: -0.3 }, base: nogo.ko });
+      reasonHook = () => nogo.ko === LOWKO ? { mode: "leg", info: { kind: "Depth area 0.5 m" }, at: { lat: 43.0805, lon: -70.71 } } : null;
+      mission = { ...mission, surveys: [{ id: "S1", no: 1, name: "Ledge", water_m: -0.3 }],
+                  waypoints: [{ lat: 43.08, lon: -70.71, sv: "S1" }, { lat: 43.081, lon: -70.71, sv: "S1" }] };
+      // (she holds at a Go-To's end, End of plan RTH: the frame the chain fires on, and one a press is made from)
+      S = { ...S0, run: "running", behavior: "goto", completion: "rth", boot_id: "b1",
+            home: { lat: 43.07, lon: -70.71 }, home_source: "sim" };
+      const counts = () => [planGen, cmdGen, escapeGen, cmdKind, cmdUnstamped, cmdPressedMax, sentGen, sentKind];
+      const chain = rthFence(true), press = rthFence(false), c0 = counts();
+      spiCalls.length = 0;
+      await up(() => { nogo = { ready: true, busy: false, band: "enc_harbour" }; tideRisk = null; answer = false; reply = null; });
+      const c1 = counts(), d = spiCalls.slice(), sentN = calls.length, blockedSaid = /UPLOAD BLOCKED/.test(banners.join(" | "));
+      const stood = [chain(), press()];
+      S = { ...S, behavior: "survey" };          // (Start, pressed after it: the OLD plan runs - her behavior moves, no count)
+      const started = press();
+      svLegs = null; reasonHook = null; mission = keptM;
+      S = S0; nogo = { ready: true, busy: false, band: "enc_harbour" }; answer = false;
+      check("1n3. A PLAN BLOCKED HERE IS NO COMMAND: an Upload refused for a leg with no clear detour is drawn \"unsent\" - nothing "
+            + "posted, no count moved but the picture's own - and a way home planning meanwhile STANDS, End of plan's chain "
+            + "and a press alike (the button, the low-fuel monitor); and a Start pressed after it (the old plan) is another "
+            + "command to that press, never this picture's own",
+            () => sentN === 0 && blockedSaid && d.length === 1 && d[0].kind === "survey" && d[0].own === "unsent"
+                  && c1[0] === c0[0] + 1 && JSON.stringify(c1.slice(1)) === JSON.stringify(c0.slice(1))
+                  && stood[0] === null && stood[1] === null
+                  && !!started && started.by === "another command" && started.say === "she was commanded elsewhere (survey now)",
+            () => JSON.stringify({ sent: sentN, blockedSaid, drew: d, before: c0, after: c1, stood, started }));
+    }
   }
 
   // ⚠⚠ 1k-1m. NOTHING THE VESSEL DID NOT TAKE IS DRAWN. doUpload installed the route,

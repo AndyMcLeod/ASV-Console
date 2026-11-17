@@ -407,7 +407,8 @@ check("16g. ⚠ A NEW MOTION SEEN FIRST AT ITS HOLD - another run, a new link, t
   var deepWhy = () => [], openWaterWhy = () => [], fmtDist = (m) => Math.round(m) + " m";
   // (cmdGen, escapeGen and cmdKind are eval-scoped lets: read through the var below, never re-declared out here - 18b)
   eval(grabDecl("planGen") + "\n" + grabDecl("cmdGen") + "\n" + grab("offshoreWhy") + "\n" + grab("setPlanIntent") + "\n" + grab("wptRole")
-       + "\nvar gensNow = () => [cmdGen, escapeGen, cmdUnstamped, cmdPressedMax, cmdKind];");
+       // (and sentGen / sentKind, the pictures of something SENT, and planGen, every picture's own count: 18c)
+       + "\nvar gensNow = () => [cmdGen, escapeGen, cmdUnstamped, cmdPressedMax, cmdKind, sentGen, sentKind, planGen];");
   var planIntent = null;
   // (HOW SHE ARRIVES is arrivalSay's line, 2026-10-08 - it reads the vessel's speeds and laws, none of which this
   // world has; these checks are about the routing lines, and say nothing of the arrival)
@@ -460,6 +461,28 @@ check("16g. ⚠ A NEW MOTION SEEN FIRST AT ITS HOLD - another run, a new link, t
         && [gn1, gn2, gn3, gn3e].every((g) => g[4] === "goto") && gn4[4] === "goto" && gn5[4] === "transit" && gn6[4] === "transit"
         && ownSites.every(Boolean),
         JSON.stringify({gn0, gn1, gn2, gn3, gn3e, gn4, gn5, gn6, ownSites}));
+
+  // 18c (2026-11-16, the merge review's residual 1). A PICTURE OF A PLAN THAT WAS NOT SENT COUNTS NOTHING. A Transit or an
+  // Upload with a leg no detour clears is refused by this console before any post, and drawn for its blocked legs
+  // (doTransit, doUpload): handed as "unsent", it is a new picture (planGen) and no more - no command (cmdGen, its name,
+  // its press time), so an RTH planning meanwhile is not withdrawn by a plan that went nowhere; and no picture of something
+  // SENT (sentGen, sentKind), which is what the press's fence asks when her behavior moves (rthFence). Every other picture
+  // is one of something sent: a command's, the guard's own upkeep, its escape. The page's own setPlanIntent; the legs still
+  // drawn as blocked (the Intent card's count, its red line). command_result 54m and pause_resume 1n3 drive the two doors.
+  const gu0 = gensNow();
+  const blk = setPlanIntent("transit", {routed: false, unroutable: [[1, 2]]}, R(2), "unsent"); const gu1 = gensNow();
+  setPlanIntent("survey", {routed: false}, R(2), true); const gu2 = gensNow();
+  setPlanIntent("escape", null, R(1)); const gu3 = gensNow();
+  setPlanIntent("goto", {routed: false}, R(2), false, 9900); const gu4 = gensNow();
+  check("18c. a plan drawn \"unsent\" - blocked here, never posted - is a new picture and nothing else: no command counted, "
+        + "named or timed, and no picture of something sent; the guard's own upkeep, its escape and a command each are one - "
+        + "and the blocked legs are still drawn as blocked",
+        gu1[7] === gu0[7] + 1 && JSON.stringify(gu1.slice(0, 7)) === JSON.stringify(gu0.slice(0, 7))
+        && blk.kind === "transit" && blk.unsafe === 1 && blk.why.some(w => w.t === "bad" && /NO clear detour/.test(w.s))
+        && gu2[5] === gu1[5] + 1 && gu2[6] === "survey" && gu2[0] === gu1[0] && gu2[4] === gu1[4]
+        && gu3[5] === gu2[5] + 1 && gu3[6] === "escape" && gu3[1] === gu2[1] + 1
+        && gu4[5] === gu3[5] + 1 && gu4[6] === "goto" && gu4[0] === gu3[0] + 1 && gu4[4] === "goto",
+        JSON.stringify({gu0, gu1, gu2, gu3, gu4, blocked: [blk.kind, blk.unsafe]}));
 
   // 19. A PARTIAL lane must read differently from a full one - the distinction that matters
   // on the water: a route that rode the lane over part of itself and sat on a channel

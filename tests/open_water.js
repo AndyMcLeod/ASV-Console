@@ -397,7 +397,7 @@ const BA = gll(0, 11000), BB = gll(0, -11000);
   if (handler) { new Function("V", "$", "pathReadings", handler[0])(Vp, () => sw, () => readings++);
                  sw.onchange(); afterOff = Vp.OPEN_WATER; sw.value = "first"; sw.onchange(); }
   const banners = (H.match(/\[openWaterNote\(plan\.openWater, fmtDist\), buoyageNote\(/g) || []).length;
-  const SPI = new Function("deepWhy", "openWaterWhy", "fmtDist", ["let planGen = 0, cmdGen = 0, escapeGen = 0, cmdKind = null, cmdUnstamped = 0, cmdPressedMax = 0, planIntent = null, guardOverride, edgeSpentM, edgeCount, guardActedAt, holdWant, edgeSearchAt;",
+  const SPI = new Function("deepWhy", "openWaterWhy", "fmtDist", ["let planGen = 0, cmdGen = 0, escapeGen = 0, cmdKind = null, cmdUnstamped = 0, cmdPressedMax = 0, sentGen = 0, sentKind = null, planIntent = null, guardOverride, edgeSpentM, edgeCount, guardActedAt, holdWant, edgeSearchAt;",
     "const arrivalSay = () => null, offshoreWhy = () => [], wptRole = () => '';", grab("setPlanIntent"), "return setPlanIntent;"].join("\n"))(() => [], OW.openWaterWhy, fmt);
   const at10 = gll(0, 0);
   const piOW = SPI("goto", { routed: true, lane: false, openWater: one }, [at10, at10]), piNone = SPI("goto", { routed: true, lane: false }, [at10, at10]);

@@ -2350,7 +2350,18 @@ let planGen = 0;
 // by any command that lands (cmdGen) - it is the console's own, and the operator's every command outranks it.
 // (and `cmdKind`, the kind of the last command cmdGen counted: what a withdrawal names - the picture drawn last may be the
 // guard's, an escape or its routed re-approach, and an Upload whose draw was skipped draws none: the third review, 2026-11-16)
-let cmdGen = 0, escapeGen = 0, cmdKind = null, cmdUnstamped = 0, cmdPressedMax = 0;
+// ⚠ AND A PICTURE OF A COMMAND THAT SENT NOTHING COUNTS NOTHING (2026-11-16, the merge review's residual 1). A Transit with a
+// leg no detour clears, and an Upload with one, are refused HERE, before any post - and each DRAWS, because the blocked
+// legs' highlight has no other source (doTransit, doUpload). Drawn as a command, each was one: an RTH planning meanwhile was
+// withdrawn as "another command" - the button's lost, End of plan's chain recorded as failed, and the low-fuel monitor's
+// latch kept, so below her point she was never sent home - by a plan the console itself had refused, with her still on
+// the plan she had. Such a picture is handed as "unsent" (setPlanIntent's fourth argument): it moves planGen, being a new
+// picture, and none of these. `sentGen` and `sentKind` are the count and the kind of the pictures that ARE of something
+// sent - a command's, the guard's own upkeep, a passage's own section: what the press's fence asks when her behavior
+// moves (rthFence: onto a picture of this console's own, it is no new command). It asked the picture drawn LAST, which a
+// blocked plan's draw replaces: a Go-To pressed before the RTH and landed after it, then a Transit refused, and the frame
+// showing her on the Go-To withdrew the RTH as another window's command.
+let cmdGen = 0, escapeGen = 0, cmdKind = null, cmdUnstamped = 0, cmdPressedMax = 0, sentGen = 0, sentKind = null;
 /** The Intent card's lines for a plan's OFFSHORE MARKS (2026-10-12, routing.js offshoreDangerSide): those kept between her
  *  and the danger each marks, and a warning for any that were NOT - asked of every plan, laned or not. */
 function offshoreWhy(plan){
@@ -2372,11 +2383,16 @@ function setPlanIntent(kind, plan, route, guardOwn, pressedAt){
   // (the guard's own upkeep counts NEITHER, an escape's included: the re-approach draws under the run's own kind, "escape"
   // at an escape's hold, and counted as an escape it withdrew a far RTH asked from that hold every time she was set off and
   // routed back, nothing sent - the second review of 2026-11-16)
-  if(!guardOwn){
-    if(kind === "escape") escapeGen++;
-    else {
-      cmdGen++; cmdKind = kind;
-      if(pressedAt == null) cmdUnstamped++; else cmdPressedMax = Math.max(cmdPressedMax, pressedAt);   // (when it was pressed: above)
+  // (and "unsent" - a plan refused here before any post, drawn for its blocked legs - counts NOTHING, and is no picture of
+  // something sent: above, at sentGen)
+  if(guardOwn !== "unsent"){
+    sentGen++; sentKind = kind;
+    if(!guardOwn){
+      if(kind === "escape") escapeGen++;
+      else {
+        cmdGen++; cmdKind = kind;
+        if(pressedAt == null) cmdUnstamped++; else cmdPressedMax = Math.max(cmdPressedMax, pressedAt);   // (when it was pressed: above)
+      }
     }
   }
   // ⚠ A NEW COMMANDED MOTION IS A NEW DECISION. The operator's "proceed" was about one
@@ -17228,7 +17244,7 @@ function homePassageRefusal(plan, lowFuel){
  *  ask (escapeGen), whether or not she took the helm - "steered her clear" was said of one the vessel had refused. */
 function rthFence(chained){
   const stop = routeStopGen, boot = S.boot_id, src = S.home_source, beh = S.behavior, cg = cmdGen, eg = escapeGen,
-        cu = cmdUnstamped, pg = planGen, at = performance.now(), home = S.home ? {lat: S.home.lat, lon: S.home.lon} : null;
+        cu = cmdUnstamped, sg = sentGen, at = performance.now(), home = S.home ? {lat: S.home.lat, lon: S.home.lon} : null;
   // (ANOTHER COMMAND, for a press: one PRESSED after it - a command pressed before it that lands while it plans is the
   // older word, and the RTH is sent over it, as before this fence. For the chain: any that lands. cmdPressedMax, above)
   const f = () => routeStopGen !== stop ? {by: routeStopName || "a stop", say: (routeStopName || "a stop") + " was pressed"}
@@ -17256,10 +17272,11 @@ function rthFence(chained){
     // the press, put her on: a command pressed BEFORE it (the older word above), or the console's own upkeep of a plan -
     // the passage rejoined by itself at a Go-To's end, a guard's resume (no one's word: not another command). The next
     // frame showing her on it withdrew the RTH it was not to, the monitor's latch kept - the second review: a Go-To in
-    // flight at the press, a lock transit's leg, the rejoin's transit. planGen: every picture but the escape's, asked above.
-    // The chain: any behavior moved)
+    // flight at the press, a lock transit's leg, the rejoin's transit. sentGen and sentKind: every picture of something
+    // SENT since the press, the escape's asked above - never a blocked plan's, drawn and not sent ("unsent": the merge
+    // review's residual 1), which is no picture she can be put on. The chain: any behavior moved)
     : S.behavior !== beh && (chained || (S.behavior !== "hold" && beh !== "hold"))
-      && !(!chained && planGen !== pg && planIntent && S.behavior === planIntent.kind)
+      && !(!chained && sentGen !== sg && S.behavior === sentKind)
       ? (S.behavior === "hold" ? {by: "a hold", say: "she was put on station-keeping"}
                                : {by: "another command", say: "she was commanded elsewhere (" + (S.behavior || "a new plan") + " now)"})
     : null;
@@ -17782,7 +17799,10 @@ async function doTransit(){
     // the blocked legs are "highlighted", and the highlight is drawn from `runUnsafe` and
     // from nothing else - so the draw belongs here, in the branch that promises it, rather
     // than above the post where it also ran for a transit the vessel then refused.
-    runRoute = plan.route; runUnsafe = plan.unroutable; setPlanIntent("transit", plan, plan.route, false, pressedAt); updateMissionCard();
+    // ⚠ DRAWN AS "unsent": NOTHING WAS SENT, SO IT IS NO COMMAND (2026-11-16, the merge review's residual 1). Drawn as one, it
+    // withdrew an RTH planning meanwhile - the low-fuel monitor's with its latch kept, End of plan's recorded as failed -
+    // for a transit this console had itself refused: setPlanIntent, at sentGen.
+    runRoute = plan.route; runUnsafe = plan.unroutable; setPlanIntent("transit", plan, plan.route, "unsent"); updateMissionCard();
     const reasons=legReasons(plan.unroutable); setViolations(reasons); render();
     showBanner(plan.unroutable.length+" transit leg(s) blocked by "+kindsSummary(reasons)+" with NO clear detour (highlighted) — NOT started. Edit the line.");
     flashNote("Transit blocked: "+plan.unroutable.length+" leg(s) — "+kindsSummary(reasons)+".");
@@ -23988,7 +24008,11 @@ async function doUpload(opts){
     // never by a refusal, a Stop or a blocked upload. So from the second upload of a session
     // onward Start is LIVE and runs the OLD plan while this branch draws the new blocked one.
     // That is a real, unfixed cost of drawing here, written down rather than explained away.
-    runRoute = plan.route; runUnsafe = unsafe; setPlanIntent("survey", plan, plan.route, false, pressedAt);
+    // ⚠ DRAWN AS "unsent": NOTHING WAS SENT, SO IT IS NO COMMAND (2026-11-16, the merge review's residual 1) - doTransit's
+    // identical branch again. Drawn as one, a plan blocked here withdrew an RTH planning meanwhile, the low-fuel monitor's
+    // latch kept; and a Start pressed after it (the OLD plan, above) was read as this picture's own and withdrew nothing,
+    // so the RTH pressed before that Start was sent over the survey just started: setPlanIntent, at sentGen.
+    runRoute = plan.route; runUnsafe = unsafe; setPlanIntent("survey", plan, plan.route, "unsent");
     // (each refused leg's reason found on the chart that refused it: a survey's own at its own water - planLegReasons)
     const reasons=planLegReasons(plan, lk); setViolations(reasons); render();
     // ... AND WHERE THE REFUSED LEGS ARE A SURVEY'S, ITS ROW OFFERS "Unblock" (2026-11-06): ✎, Punch Out and the clearing.

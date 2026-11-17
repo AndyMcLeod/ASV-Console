@@ -3722,6 +3722,15 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    so a Start of that staged plan after an RTH press withdraws the RTH. When a lost reply's wait
    ends without asking again, the end replaces the "asked again in 15 s" banner. `tests/command_result.js`
    54k, 54l, 55d, `tests/pause_resume.js` 1n2, `tests/passage_sail.js` 16u, 17y, `tests/track_edge.js` 23.
+   **A plan this console refuses is not a command (2026-11-16, a defect the merge's review named).**
+   A Transit or an Upload with a leg that has no clear detour is refused here, before anything is
+   sent, and drawn so the blocked legs can be highlighted. It was counted as a command all the
+   same. An RTH being planned at that moment was withdrawn by it: the RTH button's was lost, End
+   of plan's return was recorded as failed, and the low-fuel monitor kept its latch, so below her
+   RTH point she was never sent home. A plan refused here now counts as nothing, and a way home
+   being planned stands. A Start pressed after a blocked Upload runs the plan already aboard, and
+   that still withdraws an RTH pressed before it. `tests/command_result.js` 54m,
+   `tests/pause_resume.js` 1n3, `tests/end_action.js` 18c.
    **The page never stops the way home's chart read (2026-11-15, a safety defect a review found).**
    The coarse home field (below) reads the same chart the passage home does: home to her, where the
    passage home reads her to home. The console names a read by its tiles, so from about 125 km out,

@@ -216,8 +216,10 @@ process.on("unhandledRejection", __crash);
 let avoiding = null; const avoidingRaise = (why, kind, rejoin) => { avoiding = {why, kind, rejoin}; }; const avoidingNow = () => avoiding;
 
 let fails = 0, ran = 0;
+const ids = new Map();               // (how often each check's id was used: 57 - one id names one check)
 function check(name, cond, detail) {
   ran++;
+  const id = /^([0-9]+[a-z0-9]*)\. /.exec(name); if (id) ids.set(id[1], (ids.get(id[1]) || 0) + 1);
   let ok;
   try { ok = !!(typeof cond === "function" ? cond() : cond); }
   catch (e) { ok = false; detail = (detail ? detail + " — " : "") + "THREW: " + e.message; }
@@ -251,7 +253,9 @@ const PRELUDE = [
   // rthChainRetry) are lifted, so what they read is here - the two counts setPlanIntent keeps (cmdGen, escapeGen: the
   // stub below counts them as the page does), the chain's one-shot and its retry, and the guard's level since an escape
   // (and cmdKind, the kind counted with each command - what rthFence's withdrawal names: since the merge with 4ea0276)
-  "let cmdGen = 0, escapeGen = 0, cmdKind = null, cmdUnstamped = 0, cmdPressedMax = 0, rthChained = false, rthChainBusyAt = 0, rthChainEscapeRun = null, guardLevel = 'clear', guardEscapeAt = 0;",
+  // (and sentGen / sentKind, the count and kind of the pictures of something SENT - every one but a blocked plan's, drawn
+  // "unsent": what the press's fence asks when her behavior moves - 54m, the merge review's residual 1)
+  "let cmdGen = 0, escapeGen = 0, cmdKind = null, cmdUnstamped = 0, cmdPressedMax = 0, sentGen = 0, sentKind = null, rthChained = false, rthChainBusyAt = 0, rthChainEscapeRun = null, guardLevel = 'clear', guardEscapeAt = 0;",
   // what the command-bar handlers touch beyond the three motions
   "let pauseMark = {line:0}, resumeSlow = true;",
   // markPause() is what #b_pause claims BEFORE the console answers: where she stopped.
@@ -312,9 +316,10 @@ const PRELUDE = [
   // (cmdGen and escapeGen as the page counts them: the guard's escape is escapeGen, its own upkeep - `own`, the routed
   // re-approach and its own resume, an escape's included - neither; every other commanded motion is cmdGen, its kind
   // cmdKind. rthFence reads them: 54f)
-  "const setPlanIntent = (k, p, r, own, at) => { planGen++; if (!own) { if (k === 'escape') escapeGen++;",
+  // (and a plan drawn "unsent" - blocked here, nothing posted - counts nothing and is no picture of something sent: 54m)
+  "const setPlanIntent = (k, p, r, own, at) => { planGen++; if (own !== 'unsent') { sentGen++; sentKind = k; if (!own) { if (k === 'escape') escapeGen++;",
   // (and when each was PRESSED, as the page keeps it: one handed no time counts as a landing - cmdPressedMax, 54i)
-  "  else { cmdGen++; cmdKind = k; if (at == null) cmdUnstamped++; else cmdPressedMax = Math.max(cmdPressedMax, at); } }",
+  "  else { cmdGen++; cmdKind = k; if (at == null) cmdUnstamped++; else cmdPressedMax = Math.max(cmdPressedMax, at); } } }",
   "  planIntent = {kind:k, route:(r||[]).length};",
   // setPlanIntent's OWN first statement, which is a consequence of calling it at all
   "  guardOverride = null; edgeSpentM = 0; edgeCount = 0; guardActedAt = 0; holdWant = null;",
@@ -371,6 +376,11 @@ const EPILOGUE = "\nconst bHold = " + grabHandler("b_hold") + ";"
   + " landed: (kind, at) => { runRoute = [{lat:9, lon:9}]; setPlanIntent(kind, null, [1,2], false, at); },"
   // (54i: the console's OWN upkeep of a plan landing - the passage rejoined by itself at a Go-To's end, a guard's resume)
   + " ownLanded: (kind) => { runRoute = [{lat:9, lon:9}]; setPlanIntent(kind, null, [1,2], true); },"
+  // (54m: a press's fence, or End of plan's, taken by the check itself - a command pressed after it is then driven whole;
+  // every count the fence reads; and a picture of a plan blocked here, drawn and not sent - "unsent")
+  + " fence: (chained) => rthFence(chained),"
+  + " counts: () => ({planGen, cmdGen, escapeGen, cmdKind, cmdUnstamped, cmdPressedMax, sentGen, sentKind}),"
+  + " unsent: (kind) => { runRoute = [{lat:9, lon:9}]; setPlanIntent(kind, null, [1,2], 'unsent'); },"
   + " chainSt: () => ({rthChainFailed, rthChained, rthChainBusyAt, cmdGen, escapeGen}),"
   + " setChained: (v) => { rthChained = v; },"
   + " bar: () => ({runRoute, planIntent, runUnsafe, guardHeld, pauseMark, resumeSlow,"
@@ -932,7 +942,9 @@ console.log("-- 54f-54h: the boxed return's press, kept (rthFence) --");
   // taken at the function's entry, before anything awaits (Sail passage's after its confirm: the operator's word). A new
   // command without one fails here until it is decided.
   const SPI = H.split("\n").filter((l) => /setPlanIntent\(/.test(l) && !/function setPlanIntent\(/.test(l));
+  // (and "unsent": a plan blocked HERE, drawn for its blocked legs and never posted - no command, no press: 54m pins where)
   const bare = SPI.filter((l) => !/setPlanIntent\("escape", /.test(l) && !/setPlanIntent\([^;]*, true\);/.test(l)
+                                  && !/setPlanIntent\([^;]*, "unsent"\);/.test(l)
                                   && !/setPlanIntent\([^;]*(pressedAt|fence\.press)\);/.test(l));
   const ENTRY = { doGoTo: 0, doTransit: 0, doUpload: 0, continueSurvey: 0, reflyStrike: 0, resumeHeldLeg: 0, continueSend: 0 };
   const late = Object.keys(ENTRY).filter((f) => {
@@ -992,6 +1004,76 @@ console.log("-- 54f-54h: the boxed return's press, kept (rthFence) --");
             button: [hB.letGo, hB.posts.length, hB.by, hB.banner.slice(0, 80)], monitor: [hM.letGo, hM.ret],
             chain: [hC.letGo, hC.posts.length, hC.failed, hC.by], stands: [hBk.letGo, hBk.posts.length, hBk.failed, hBk.later.length, hBk.by, hBk.banner.slice(0, 80)],
             sent: [hOk.letGo, hOk.posts, hOk.reads] }));
+  }
+
+  // 54m (2026-11-16, the merge review's residual 1). A PLAN BLOCKED HERE IS NO COMMAND. A Transit with a leg no detour
+  // clears is refused by this console before any post, and DRAWN - the blocked legs' highlight has no other source. Drawn
+  // as a command (its count, its press time), it withdrew an RTH planning meanwhile as "another command": the button's
+  // lost, End of plan's chain recorded as failed, and the low-fuel monitor's latch kept (fuel_rth 8x: another command's
+  // withdrawal stands) - below her RTH point, never sent home, for a transit that was never sent either. DRIVEN: the
+  // page's own doTransit on a plan with a blocked leg, a press's fence and End of plan's taken before it (w.fence): both
+  // stand, nothing is posted, the legs are drawn, and no count moves but the picture's own. THE PAIR: the same Transit
+  // routable - taken, and both are withdrawn by it.
+  // AND IT IS NOT A PICTURE OF SOMETHING SENT (sentGen, sentKind): the press's fence lets her behavior move onto a picture of
+  // this console's own - and asked the picture drawn LAST. (a) A Go-To pressed before the RTH lands after it, and the frame
+  // shows her on it: the RTH stands (54i) - then a Transit is refused here and drawn, and it must stand still: the last
+  // picture was the blocked one, so the frame read as another window's command. (b) A plan blocked here is drawn, then
+  // Start is pressed and the OLD plan runs: her behavior moves onto the blocked picture's kind, and that IS another command
+  // (pause_resume 1n3 drives it through doUpload). THE WIRING: "unsent" is handed in two places only, each a branch that
+  // returns having posted nothing - doTransit's and doUpload's blocked legs.
+  // TEETH, sidecar ASV_HTML (2026-11-16): doTransit's blocked draw handed its press again -> 54m; the fence asking the last
+  // picture's kind again -> 54m; a third "unsent" draw, on a path that posts -> 54m.
+  {
+    const BLOCKED = () => ({ route: [{ lat: 43.0, lon: -70.5 }, { lat: 43.01, lon: -70.49 }], holdClear: 12, routed: true, lane: null,
+                             partial: false, heldOff: null, degraded: false, error: null, reason: null,
+                             unroutable: [[{ lat: 43.0, lon: -70.5 }, { lat: 43.01, lon: -70.49 }]] });
+    // (a Transit pressed after an RTH's press, the way home still planning: what the two fences say once it has answered)
+    const T = async (plan) => {
+      const w = world(plan ? { plan } : {});
+      const fP = w.fence(false), fC = w.fence(true), c0 = w.counts();
+      await w.doTransit();
+      return { press: fP(), chain: fC(), c0, c1: w.counts(), posts: w.out.posts.slice(), banner: w.banner(), a: w.after() };
+    };
+    const same = (r, ks) => ks.every((k) => r.c1[k] === r.c0[k]);
+    const mBl = await T(BLOCKED()), mOk = await T(null);
+    // (a) the older Go-To landed and shown, then the Transit refused here
+    const wa = world({ S: { behavior: "survey" } }), fa = wa.fence(false);
+    wa.landed("goto", before); wa.setS({ behavior: "goto" });
+    const aLanded = fa();
+    wa.W.plan = BLOCKED(); await wa.doTransit();
+    const aBlocked = fa(), aPosts = wa.out.posts.length;
+    // (b) a blocked plan drawn, then her behavior on its kind (Start: the old plan)
+    const wb = world({ S: { behavior: "goto" } }), fb = wb.fence(false);
+    wb.unsent("survey"); const bDrawn = fb();
+    wb.setS({ behavior: "survey" }); const bStarted = fb();
+    const UNS = H.split("\n").filter((l) => /setPlanIntent\([^;]*, "unsent"\);/.test(l));
+    const branch = (fn) => { const s = grab(fn), i = s.indexOf('"unsent");');
+      if (i < 0 || s.indexOf('"unsent");', i + 1) >= 0) return false;
+      const j = s.indexOf("return;", i); return j > i && !/\b(routeCmd|cmd)\(/.test(s.slice(i, j)); };
+    const m = {
+      blockedStands: mBl.posts.length === 0 && /transit leg\(s\) blocked by /.test(mBl.banner) && mBl.press === null && mBl.chain === null,
+      blockedDrawn: !!mBl.a.planIntent && mBl.a.planIntent.kind === "transit" && !!mBl.a.runRoute && mBl.a.runRoute.length === 2,
+      blockedCountsNothing: mBl.c1.planGen === mBl.c0.planGen + 1
+                            && same(mBl, ["cmdGen", "escapeGen", "cmdKind", "cmdUnstamped", "cmdPressedMax", "sentGen", "sentKind"]),
+      takenWithdraws: mOk.posts.length === 1 && mOk.posts[0] === "/api/cmd/transit"
+                      && !!mOk.press && mOk.press.by === "another command" && mOk.press.say === "this console commanded her elsewhere (transit)"
+                      && !!mOk.chain && mOk.chain.by === "another command"
+                      && mOk.c1.cmdGen === mOk.c0.cmdGen + 1 && mOk.c1.sentGen === mOk.c0.sentGen + 1 && mOk.c1.sentKind === "transit",
+      olderWordStillStands: aLanded === null && aBlocked === null && aPosts === 0,
+      notHerOwnPicture: bDrawn === null && !!bStarted && bStarted.by === "another command"
+                        && bStarted.say === "she was commanded elsewhere (survey now)",
+      onlyWhereNothingIsSent: UNS.length === 2 && branch("doTransit") && branch("doUpload"),
+    };
+    check("54m. A PLAN BLOCKED HERE IS NO COMMAND: a Transit refused for a leg with no clear detour is drawn and posts nothing, no "
+          + "count moves but the picture's own, and a way home planning meanwhile STANDS - a press's fence and End of plan's - "
+          + "where the same Transit taken withdraws both; drawn after an older Go-To landed and shown, the RTH still stands; "
+          + "her behavior moving onto a blocked picture's kind is another command; and \"unsent\" is handed only in the two "
+          + "branches that return having posted nothing",
+          () => Object.values(m).every(Boolean),
+          JSON.stringify({ bad: Object.entries(m).filter(([, v]) => !v).map(([x]) => x),
+            blocked: [mBl.posts.length, mBl.press, mBl.chain, mBl.c0, mBl.c1, mBl.banner.slice(0, 60)],
+            taken: [mOk.posts, mOk.press, mOk.chain && mOk.chain.by, mOk.c1],
+            older: [aLanded, aBlocked, aPosts], own: [bDrawn, bStarted], unsent: UNS.map((l) => l.trim().slice(0, 90)) }));
   }
 }
 
@@ -2161,7 +2243,8 @@ const PAST = () => ({ route: [{ lat: 43.0, lon: -70.5 }, { lat: 43.01, lon: -70.
         w.out.posts.length + " post(s), chain retracted " + a.rthChainFailed + "; banner: " + w.banner());
 }
 
-{ // 54. A LOCK TRANSIT'S OWN POINT IS TAKEN EXACTLY OR NOT AT ALL (the 2026-10-18 review): holdTarget moves a hold point the water
+{ // 56. (a second "54" until 2026-11-16, beside the new-mission check's above: one id names one check)
+  //     A LOCK TRANSIT'S OWN POINT IS TAKEN EXACTLY OR NOT AT ALL (the 2026-10-18 review): holdTarget moves a hold point the water
   //     is too tight for to the nearest clear water - along a lock's axis, through a waived gate. `exact` refuses a moved point:
   //     nothing posted, said; the same plan without `exact` (the operator's own Go-To) is held off as before
   const moved = () => ({ route: [{ lat: 43.0, lon: -70.5 }, { lat: 43.0105, lon: -70.489 }], holdClear: 12, routed: true, lane: null, partial: false,
@@ -2170,7 +2253,7 @@ const PAST = () => ({ route: [{ lat: 43.0, lon: -70.5 }, { lat: 43.01, lon: -70.
   const tookEx = await ex.doGoTo({ lat: 43.01, lon: -70.49 }, { exact: true, noLockOffer: true });
   const plain = world({ plan: moved() });
   const tookPlain = await plain.doGoTo({ lat: 43.01, lon: -70.49 });
-  check("54. an `exact` Go-To (a lock transit's own point) whose hold point the planner MOVED is refused - nothing posted, the banner "
+  check("56. an `exact` Go-To (a lock transit's own point) whose hold point the planner MOVED is refused - nothing posted, the banner "
         + "saying the point is taken exactly or not at all - while the same moved plan as an ordinary Go-To is sent, held off, as before",
         tookEx === false && ex.out.posts.length === 0 && /taken exactly or not at all/.test(ex.banner())
         && tookPlain === true && plain.out.posts.length === 1 && /holding 110 m off it/.test(plain.banner()),
@@ -2254,6 +2337,15 @@ console.log("\n-- 55: a chart read the console gave no answer is not a refusal o
         JSON.stringify({ monitor: [pmOut, pm.out.posts.length, pm.banner().slice(0, 100)],
                          chain: [pcOut, pc.after().rthChainFailed, pc.out.later.length, pc.banner().slice(0, 100)],
                          override: [ovOut, ov.out.posts.length, ov.out.later.length, ov.banner().slice(0, 100)] }));
+}
+
+{ // 57. ONE ID NAMES ONE CHECK (2026-11-16, the merge review's residual 6). Two checks here were both "54" - the new
+  //     mission's history, and a lock transit's exact point (56 now) - so the manual, the hook's advice and a red line that
+  //     cited "54" each named two. Counted as the checks run (check, above), and asked last
+  const twice = [...ids].filter(([, n]) => n > 1).map(([id]) => id);
+  check("57. every check in this suite has an id of its own: a doc, the hook's advice or a red line citing one names ONE check",
+        twice.length === 0 && ids.size >= 60 && ids.size === ran,
+        "used twice: " + (twice.join(", ") || "none") + "; " + ids.size + " ids for " + ran + " checks run");
 }
 
 finished = true;
