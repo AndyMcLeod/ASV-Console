@@ -485,9 +485,9 @@ table becomes a **draggable, resizable card**; the layout is saved to `localStor
 (the chart's own buttons - `+`, `−`, `BOAT`, `CHRT`, `NOGO` - are on the command bar, left of
 ARM, since 2026-10-15, Andy: "They are used for the chart so they should live there"; they stay
 with the chart in either layout, and the column carries the rest; and since 2026-10-19 four more at
-the bar's left end - `QUICK`, `OPS`, `TECH`, `DEV` - open the four Word documents in `docs/`: on the
-console's own machine Word opens the document itself, from another machine the browser downloads
-it from `/docs/<id>`, and either way a note says which happened)
+the bar's left end - `QUICK`, `OPS`, `TECH`, `DEV` - each open its document as a PDF in a new tab
+(since 2026-11-19; the browser's own viewer shows it, from `/docs/<id>`, on this machine or any
+other, and a tab the browser blocks is said with the address)
 and restored next session. **The ALERTS card lives in the controls window** (2026-09-28, Andy:
 "the pop-up alert messages are blocking each other or covering standing messages at the bottom
 center of the chart screen"): the guard's bar with its buttons (PROCEED, CONTINUE AT LOW, RESUME,
@@ -4897,6 +4897,14 @@ cd tools && npm install && node build_docs.js
 
 Each generator is standalone (`build_quickstart.js`, `build_ops_manual.js`,
 `build_tech_manual.js`, `build_dev_guide.js`) if you only want to rebuild one.
+
+The `.docx` are the source; the command bar's buttons open each one's **PDF** beside it in
+`docs/`. `build_docs.js` ends by running `tools/build_pdfs.py`, which converts with LibreOffice
+headless (once per machine: `winget install --id TheDocumentFoundation.LibreOffice -e`, or set
+`ASV_SOFFICE` to its `soffice`). It converts only a document whose content changed - the hash of its
+text and images, kept in `docs/pdf_sources.json` - and the run fails if LibreOffice is missing, so a
+stale PDF is never left looking current; `tests/docs_valid.py` 8 checks each PDF against its `.docx`.
+After a single generator, run `python tools/build_pdfs.py` from the repository root.
 
 Then, from the repository root, check what was built:
 

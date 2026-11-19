@@ -4,8 +4,8 @@
 //   cd tools && npm install && node build_dev_guide.js     (node build_docs.js: all four)
 // Writes ../docs/asv-simulator-development-guide.docx (path is script-relative).
 // Then, from the repository root: python tests/docs_valid.py, node tests/spelling.js,
-// python tests/sanitization.py. Section 7.2 below is the whole procedure. No PDF, and no
-// Word automation in the loop.
+// python tests/sanitization.py. Section 7.2 below is the whole procedure. build_docs.js
+// ends with the PDFs (tools/build_pdfs.py, LibreOffice headless); no Word automation in the loop.
 //
 // AUDIENCE: whoever works on this codebase next. The Technical Manual describes WHAT
 // the system is; this describes HOW IT IS BUILT AND VERIFIED, and why the practices are
@@ -180,12 +180,13 @@ c.push(TBL(["Generator, in tools/", "Writes, in docs/"], [
   ["`build_tech_manual.js`", "`asv-simulator-technical-manual.docx`. Its suite table is read from `tests/` as it builds, so it changes when a suite does, and a new suite needs an entry in its GUARDS table."],
   ["`build_dev_guide.js`", "`asv-simulator-development-guide.docx`, this guide"],
 ], [2600, 6760]));
-c.push(P("The procedure is one command to build and three to check, and nothing in it opens Word. Build from `tools/`:"));
+c.push(P("The procedure is one command to build and three to check, and nothing in it opens Word. The command bar's buttons open each document's PDF, so the build ends by converting every document whose content changed, with LibreOffice headless: install it once per machine (`winget install --id TheDocumentFoundation.LibreOffice -e` on Windows, or set `ASV_SOFFICE` to its `soffice`). Build from `tools/`:"));
 c.push(CODE([
   "cd tools",
   "npm install               # once per clone: the docx library",
-  "node build_docs.js        # all four documents",
-  "node build_dev_guide.js   # or any one generator on its own",
+  "node build_docs.js        # all four documents, then their PDFs",
+  "node build_dev_guide.js   # or any one generator on its own ...",
+  "python build_pdfs.py      # ... and then its PDF",
 ]));
 c.push(P("Then check from the repository root:"));
 c.push(CODE([
@@ -194,16 +195,16 @@ c.push(CODE([
   "python tests/sanitization.py",
 ]));
 c.push(TBL(["Check", "Asks"], [
-  ["`docs_valid.py`", "Will each document OPEN: a readable ZIP, every part well-formed XML and declared in `[Content_Types].xml`, every relationship target present and every r:id resolving. These are the package rules a reader applies before it will open a file; 8.6's documents were refused for not being well-formed. And is its CONTENT in it: the code lines the generators ask for (parsed out of them), a full body of text, and no note addressed to a maintainer — a generator's to-do or fix-me marker, or the technical manual's placeholder for a suite with no GUARDS entry. (So a marker of that kind cannot be written into a document even to describe it.)"],
+  ["`docs_valid.py`", "Will each document OPEN: a readable ZIP, every part well-formed XML and declared in `[Content_Types].xml`, every relationship target present and every r:id resolving. These are the package rules a reader applies before it will open a file; 8.6's documents were refused for not being well-formed. And is its CONTENT in it: the code lines the generators ask for (parsed out of them), a full body of text, and no note addressed to a maintainer — a generator's to-do or fix-me marker, or the technical manual's placeholder for a suite with no GUARDS entry. (So a marker of that kind cannot be written into a document even to describe it.) And is each PDF current: a whole PDF with pages, converted from the `.docx` as it stands - the content hash `docs/pdf_sources.json` recorded for it must equal the document's own, or the PDF is STALE."],
   ["`spelling.js`", "American spelling in the generators, the only place a spelling fix survives the next rebuild, and in the page and the server."],
   ["`sanitization.py`", "No vendor identity in any source file, the generators included, nor in any generated document."],
 ], [2600, 6760]));
-c.push(B("COUNT THE `written:` LINES. Each generator prints `written: <file> <N> bytes` once its document is on disk, so a full rebuild prints four. A document that was not written is the OLD one, still valid, and the checks above can all pass on it."));
+c.push(B("COUNT THE `written:` LINES. Each generator prints `written: <file> <N> bytes` once its document is on disk, so a full rebuild prints four. A document that was not written is the OLD one, still valid, and the checks above can all pass on it. Then the PDFs: `written <name>.pdf` for each one converted, `same` for each whose document's content did not change, and `PDFs NOT REBUILT` - with a failed run - when LibreOffice is missing or a conversion fails."));
 c.push(B("CLOSE THE DOCUMENTS IN WORD FIRST. Windows will not let a file be replaced while a program such as Word holds it open against writing. Measured with one document held open that way: its write failed with EBUSY, the run stopped there, the documents still to finish were not written either, and `build_docs.js` still printed “Document set rebuilt (4 documents)” while exiting with status 1. Trust the `written:` lines and the exit status, not the summary."));
 c.push(B("READ THE TEXT OUT OF THE FILE. The checks ask whether a document opens and holds its content, never whether the text is RIGHT. To confirm a change, read the rebuilt text straight out of the `.docx`: python-docx does it in a line (`docx.Document(path).paragraphs`, each with its `.text`; the tables are under `.tables`, read by their `.rows` and each row's `.cells`). It is a reading aid only; nothing in the project depends on it."));
 c.push(B("A REBUILD REWRITES WHAT IT BUILDS, changed or not. Measured on this guide: rebuilt with no change to its text, it differs from the last build only in `docProps/core.xml`, which carries the time it was built. Compare `word/document.xml` to tell which documents really moved; one that did not need not be committed for a new timestamp."));
-c.push(NOTE("NO PDF, AND NO WORD IN THE LOOP", "Do not make PDFs of the documents, and do not drive Word to open, render or export one as a check. Nothing here needs it: the package rules a reader enforces are what `docs_valid.py` checks, and the text reads straight out of the `.docx`. Word driven from a script has hung the session driving it, leaving a hidden Word process that only Task Manager could end."));
-c.push(P("ADDING A DOCUMENT: write `tools/build_<name>.js` against `docx_kit.js`, add it to the list in `build_docs.js`, to the builders `tests/spelling.js` names in its first check (it reads no other), and to the document-set tables in the technical manual and the README, and raise the count in `docs_valid.py`'s first check, which expects four. `docs/` also holds a presentation, `ASV-Console-Programming-by-Conversation.pptx`, which is not part of this set: `node build_deck.js` rebuilds it on its own, `docs_valid.py` does not read it, and `sanitization.py` does."));
+c.push(NOTE("PDFs BY LIBREOFFICE, NEVER BY WORD", "The PDFs come from LibreOffice headless alone (`tools/build_pdfs.py`: its own profile folder, a time limit, and the whole process tree ended if it runs over). Never drive Word to open, render or export a document, for a PDF or as a check: Word driven from a script has hung the session driving it, leaving a hidden Word process that only Task Manager could end. The package rules a reader enforces are what `docs_valid.py` checks, and the text reads straight out of the `.docx`."));
+c.push(P("ADDING A DOCUMENT: write `tools/build_<name>.js` against `docx_kit.js`, add it to the list in `build_docs.js`, to the builders `tests/spelling.js` names in its first check (it reads no other), and to the document-set tables in the technical manual and the README, and raise the count in `docs_valid.py`'s first check, which expects four. If the command bar is to open it, add it to `NAMES` in `tools/build_pdfs.py`, to `DOC_FILES` in `asv_console.py` and to the bar's buttons. `docs/` also holds a presentation, `ASV-Console-Programming-by-Conversation.pptx`, which is not part of this set: `node build_deck.js` rebuilds it on its own, `docs_valid.py` does not read it, and `sanitization.py` does."));
 c.push(H2("7.3  The maintainer notes are the authoritative log"));
 c.push(P("The START HERE handoff at the top carries the current commit, the suite inventory, what changed this session, the recurring defect shapes and the open threads. Refresh it when it drifts. Two habits earn their keep: cite code by CONTENT rather than line number, because line numbers rot; and record a DIVERGENCE from the sibling console explicitly, because a future port will otherwise undo it silently."));
 c.push(H2("7.4  Write down where a rule's line falls"));

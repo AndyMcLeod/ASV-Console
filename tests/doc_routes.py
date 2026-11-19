@@ -1,18 +1,17 @@
 """tests/doc_routes.py - THE FOUR DOCUMENTS' ROUTES, LIVE (Andy, 2026-10-19: "In the chart window lower toolbar add 4
-buttons - each button opens one of the 4 asv simulator word documents"; the page half is tests/doc_buttons.js).
+buttons - each button opens one of the 4 asv simulator word documents"; AS PDFs IN THE BROWSER since 2026-11-19, Andy:
+"convert them from word to PDF"; the page half is tests/doc_buttons.js).
 
-A console started with ASV_DOC_OPEN=off (a suite must never open Word), on its own port and state folder:
-  1. GET /docs/<id> serves the document as a download: its own type, its file name, the file's own bytes;
-  2. an id the bar does not know, and no id at all, are a 404 in words;
-  3. POST /api/open_doc {doc} answers the download when the console's machine has no opener (the env), with its
-     URL and a note; an unknown id is a 400 naming the four; no id is a 400 too;
-  4. the opener itself, in process: a loopback browser's ask opens the file through DOC_OPEN and answers "word"; another
-     machine's ask never opens, answers the download and says why; an opener that fails answers the download with its
-     error; a file not on disk is a 404 naming the rebuild; never a path from the caller - the id picks the file;
-  5. a second, known, non-supervising tab is not refused the manuals (supervisor_refusal gates /api/cmd/ alone).
+A console on its own port and state folder:
+  1. GET /docs/<id> serves each document as a PDF, INLINE: the PDF type, its file name, the file's own bytes;
+  2. an id the bar does not know, no id at all, and a path are a 404 in words naming the four;
+  3. POST /api/open_doc - the route that opened Word on the console's machine - is gone: a 404, nothing opened;
+  4. a PDF not on disk is a 404 that names the rebuild (in process, over an empty docs folder);
+  5. a second, known, non-supervising tab is served the manuals like the first.
 
     python tests/doc_routes.py      # exit 0 = pass, 1 = fail   (stdlib only)
 """
+import io
 import json
 import os
 import shutil
@@ -68,9 +67,10 @@ def free_port():
     return p
 
 
-def get(port, path):
+def get(port, path, client=None):
+    req = urllib.request.Request("http://127.0.0.1:%d%s" % (port, path), headers={"X-ASV-Client": client} if client else {})
     try:
-        with urllib.request.urlopen("http://127.0.0.1:%d%s" % (port, path), timeout=10) as r:
+        with urllib.request.urlopen(req, timeout=10) as r:
             return r.status, dict(r.headers), r.read()
     except urllib.error.HTTPError as e:
         return e.code, dict(e.headers), e.read()
@@ -89,10 +89,9 @@ def post(port, path, body, client="tab-A"):
 IDS = ("quick", "ops", "tech", "dev")
 print("The four documents' routes:")
 
-# ---- the console, with no opener ------------------------------------------------------------------------------------ #
+# ---- the console ---------------------------------------------------------------------------------------------------- #
 STATE = ConsoleState()
 port = free_port()
-env = dict(os.environ, ASV_DOC_OPEN="off")
 srvlog = tempfile.TemporaryFile(mode="w+", encoding="utf-8")
 # ⚠ THE RECORDING CONSOLE ASKS AN AIS BASE EVERY 10 s (its TargetRecorder, since 2026-11-05): left at the default it
 # polled the OPERATOR'S bundled service on 127.0.0.1:8788 whenever his console was up, and filled this suite's
@@ -100,7 +99,7 @@ srvlog = tempfile.TemporaryFile(mode="w+", encoding="utf-8")
 NO_AIS = ["--ais", "http://127.0.0.1:1"]
 proc = subprocess.Popen([sys.executable, "asv_console.py", "--sim", "--browser", "none", "--port", str(port),
                          "--no-ais-service", "--no-tide-window", "--no-weather-window", *NO_AIS, *STATE.args()],
-                        cwd=APP, stdout=srvlog, stderr=subprocess.STDOUT, env=env)
+                        cwd=APP, stdout=srvlog, stderr=subprocess.STDOUT)
 try:
     up = False
     for _ in range(80):
@@ -111,20 +110,21 @@ try:
         except Exception:
             pass
         time.sleep(0.5)
-    check("0. a console comes up on its own port, its opener off (ASV_DOC_OPEN=off)", up)
+    check("0. a console comes up on its own port", up)
     if not up:
         raise SystemExit(1)
 
-    # ---- 1. GET /docs/<id>: the document as a download ---------------------------------------------------------- #
+    # ---- 1. GET /docs/<id>: the document as a PDF, inline -------------------------------------------------------- #
     got = {}
     for d in IDS:
         code, hdr, body = get(port, "/docs/" + d)
         disk = open(os.path.join(APP, "docs", A.DOC_FILES[d]), "rb").read()
-        got[d] = (code, hdr.get("Content-Type"), hdr.get("Content-Disposition"), body == disk, len(body))
-    check("1. GET /docs/<id> serves each of the four as a download: 200, the Word type, 'attachment' with its own file name, "
-          "and the file's own bytes, whole",
-          lambda: all(g[0] == 200 and g[1] == A.DOCX_MIME and g[2] == 'attachment; filename="%s"' % A.DOC_FILES[d]
-                      and g[3] and g[4] > 1000 for d, g in got.items()),
+        got[d] = (code, hdr.get("Content-Type"), hdr.get("Content-Disposition"), body == disk, len(body), body[:5])
+    check("1. GET /docs/<id> serves each of the four as a PDF for the browser's own viewer: 200, application/pdf, 'inline' "
+          "with its own .pdf file name, and the file's own bytes, whole - a PDF (%PDF-)",
+          lambda: all(g[0] == 200 and g[1] == "application/pdf" and g[2] == 'inline; filename="%s"' % A.DOC_FILES[d]
+                      and A.DOC_FILES[d].endswith(".pdf") and g[3] and g[4] > 1000 and g[5] == b"%PDF-"
+                      for d, g in got.items()),
           lambda: json.dumps({d: [g[0], g[1], g[2], g[3], g[4]] for d, g in got.items()}))
 
     # ---- 2. the refusals, in words ------------------------------------------------------------------------------ #
@@ -137,71 +137,61 @@ try:
                   and all(b"no such document" in b and b"dev, ops, quick, tech" in b for b in (b1, b2, b3)),
           lambda: "%d %r | %d %r | %d %r" % (c1, b1[:60], c2, b2[:60], c3, b3[:60]))
 
-    # ---- 3. POST /api/open_doc with no opener on this machine --------------------------------------------------- #
+    # ---- 3. the Word opener is gone ----------------------------------------------------------------------------- #
     c4, r4 = post(port, "/api/open_doc", {"doc": "tech"})
-    c5, r5 = post(port, "/api/open_doc", {"doc": "x"})
-    c6, r6 = post(port, "/api/open_doc", {})
-    check("3. POST /api/open_doc {doc} from this machine, its opener off: 200, opened 'download', the URL /docs/<id>, the "
-          "file's name and a note saying the console's machine has no opener; an unknown id is a 400 naming the four; "
-          "no id is a 400 too",
-          lambda: c4 == 200 and r4.get("ok") is True and r4.get("opened") == "download" and r4.get("url") == "/docs/tech"
-                  and r4.get("file") == A.DOC_FILES["tech"] and "no opener" in (r4.get("note") or "")
-                  and c5 == 400 and "no such document" in r5.get("error", "") and "dev, ops, quick, tech" in r5.get("error", "")
-                  and c6 == 400 and "no such document" in r6.get("error", ""),
-          lambda: json.dumps([c4, r4, c5, r5, c6, r6]))
+    check("3. POST /api/open_doc - which opened Word on the console's own machine - is gone: a 404, and the program "
+          "keeps no opener (no open_doc, no DOC_OPEN)",
+          lambda: c4 == 404 and not hasattr(A, "open_doc") and not hasattr(A, "DOC_OPEN"),
+          lambda: json.dumps([c4, r4]))
 
-    # ---- 5. another known tab is not refused ---------------------------------------------------------------------- #
+    # ---- 5. another known tab is served the same ---------------------------------------------------------------- #
     post(port, "/api/supervisor", {"op": "report"}, client="tab-A")        # tab-A makes itself known (and supervises)
     post(port, "/api/supervisor", {"op": "report"}, client="tab-B")        # tab-B known, not supervising
-    c7, r7 = post(port, "/api/open_doc", {"doc": "quick"}, client="tab-B")
-    check("5. A SECOND, KNOWN, NON-SUPERVISING TAB IS NOT REFUSED THE MANUALS (supervisor_refusal gates /api/cmd/ alone): "
-          "tab-B's ask answers 200 'download' like tab-A's - in process too",
-          lambda: c7 == 200 and r7.get("opened") == "download"
-                  and A.supervisor_refusal("/api/open_doc", "tab-B") is None,
-          lambda: json.dumps([c7, r7]))
+    c7, h7, b7 = get(port, "/docs/quick", client="tab-B")
+    check("5. A SECOND, KNOWN, NON-SUPERVISING TAB IS SERVED THE MANUALS (supervisor_refusal gates /api/cmd/ alone): "
+          "tab-B's GET answers 200 and the PDF, like tab-A's",
+          lambda: c7 == 200 and h7.get("Content-Type") == "application/pdf" and b7[:5] == b"%PDF-"
+                  and A.supervisor_refusal("/docs/quick", "tab-B") is None,
+          lambda: json.dumps([c7, h7.get("Content-Type"), len(b7)]))
 finally:
     proc.kill()
     proc.wait(timeout=10)
 
-# ---- 4. the opener itself, in process ------------------------------------------------------------------------------ #
-opened = []
-A.DOC_OPEN = lambda p: opened.append(p)
-cW, rW = A.open_doc("ops", "127.0.0.1")
-cW6, rW6 = A.open_doc("dev", "::1")
-cR, rR = A.open_doc("ops", "10.0.0.5")
-A.DOC_OPEN = None
-cN, rN = A.open_doc("ops", "127.0.0.1")
+
+# ---- 4. a PDF not on disk, in process ------------------------------------------------------------------------------ #
+class FakeHandler:
+    """Just what _serve_doc writes through: _send for a refusal, the header calls and wfile for a file."""
+    def __init__(self):
+        self.sent, self.code, self.wfile = None, None, io.BytesIO()
+
+    def _send(self, code, body, ctype="application/json"):
+        self.sent = (code, body)
+
+    def send_response(self, code):
+        self.code = code
+
+    def send_header(self, k, v):
+        pass
+
+    def end_headers(self):
+        pass
 
 
-def boom(p):
-    raise OSError("no application is associated with .docx")
-
-
-A.DOC_OPEN = boom
-cF, rF = A.open_doc("tech", "127.0.0.1")
-cX, rX = A.open_doc("nope", "127.0.0.1")
-cP, rP = A.open_doc("../asv_console.py", "127.0.0.1")
-A.DOC_OPEN = lambda p: opened.append(p)
 was = A.DOCS_DIR
 empty = tempfile.mkdtemp(prefix="asv_nodocs_")               # a docs folder with nothing in it
 A.DOCS_DIR = empty
-cM, rM = A.open_doc("quick", "127.0.0.1")
+fh = FakeHandler()
+A.Handler._serve_doc(fh, "ops")
 A.DOCS_DIR = was
 shutil.rmtree(empty, True)
-check("4. THE OPENER, IN PROCESS: a loopback browser's ask (IPv4 and IPv6) opens the file through DOC_OPEN - the file "
-      "under docs/ the id names - and answers 'word'; another machine's ask never opens, answers the download and says the "
-      "browser is not on the console's machine; no opener answers the download saying so; an opener that fails answers "
-      "the download with its error; an unknown id and a path are a 400 (nothing opened); a file not on disk is a 404 "
-      "naming the rebuild",
-      lambda: cW == 200 and rW["opened"] == "word" and rW["file"] == A.DOC_FILES["ops"]
-              and cW6 == 200 and rW6["opened"] == "word"
-              and opened[:2] == [os.path.join(was, A.DOC_FILES["ops"]), os.path.join(was, A.DOC_FILES["dev"])]
-              and cR == 200 and rR["opened"] == "download" and rR["url"] == "/docs/ops" and "not on the console's machine" in rR["note"]
-              and cN == 200 and rN["opened"] == "download" and "no opener" in rN["note"]
-              and cF == 200 and rF["opened"] == "download" and "no application is associated" in rF["note"]
-              and cX == 400 and cP == 400 and len(opened) == 2
-              and cM == 404 and "rebuild the documents" in rM["error"] and "build_docs.js" in rM["error"] and len(opened) == 2,
-      lambda: json.dumps([cW, rW, cR, rR, cN, rN, cF, rF, cX, rX, cP, rP, cM, rM, opened]))
+fh2 = FakeHandler()
+A.Handler._serve_doc(fh2, "ops")                             # ... and the real folder serves it
+check("4. A PDF NOT ON DISK IS A 404 THAT NAMES THE REBUILD (cd tools && node build_docs.js), in process over an empty "
+      "docs folder; the same id over the real folder is served (200, its bytes)",
+      lambda: fh.sent is not None and fh.sent[0] == 404 and "rebuild the documents" in fh.sent[1]
+              and "build_docs.js" in fh.sent[1] and fh.code is None
+              and fh2.sent is None and fh2.code == 200 and fh2.wfile.getvalue()[:5] == b"%PDF-",
+      lambda: json.dumps([fh.sent, fh.code, fh2.sent, fh2.code]))
 
 print(("\n%d CHECK(S) FAILED (%d ran)" % (fails, ran)) if fails else ("\nall checks passed (%d)" % ran))
 sys.exit(1 if fails else 0)

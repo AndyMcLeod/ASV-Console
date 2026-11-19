@@ -281,6 +281,41 @@ check("7. no document ships a note addressed to its own maintainer",
       lambda: "; ".join(leaked[:3]) if leaked
       else "no placeholder, TODO or FIXME reached a reader")
 
+# -- 8. THE PDFs (2026-11-19, Andy: "convert them from word to PDF") --------------------------------------------------
+# The chart's four buttons open these, not the .docx, so a reader is handed the PDF - and a PDF is only as current as
+# the document it was converted from. tools/build_pdfs.py records, in docs/pdf_sources.json, the CONTENT each PDF was
+# built from (content_sha256 - the same function, imported from it, never a copy); a .docx changed since and not
+# converted again is a stale PDF, and fails here. The text the PDFs carry is the .docx's, which sanitization.py reads.
+import importlib.util                                                 # noqa: E402
+import json                                                           # noqa: E402
+_spec = importlib.util.spec_from_file_location("build_pdfs", os.path.join(APP, "tools", "build_pdfs.py"))
+_bp = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_bp)
+try:
+    with open(os.path.join(DOCS, "pdf_sources.json"), encoding="utf-8") as _f:
+        _src = json.load(_f)
+except (OSError, ValueError) as _e:
+    _src = {"_unreadable": str(_e)}
+pdf_bad = []
+for d in docs:
+    n = os.path.basename(d)[:-len(".docx")]
+    pdf = os.path.join(DOCS, n + ".pdf")
+    if not os.path.isfile(pdf):
+        pdf_bad.append("%s.pdf missing" % n)
+        continue
+    with open(pdf, "rb") as _f:
+        raw = _f.read()
+    if not raw.startswith(b"%PDF-") or b"%%EOF" not in raw[-1024:] or len(re.findall(rb"/Type\s*/Page[^s]", raw)) < 1:
+        pdf_bad.append("%s.pdf is not a whole PDF (%d bytes)" % (n, len(raw)))
+    entry = _src.get(n + ".pdf") or {}
+    if entry.get("from") != n + ".docx" or entry.get("content_sha256") != _bp.content_sha256(d):
+        pdf_bad.append("%s.pdf is STALE: its document changed since it was converted - rebuild (cd tools && node "
+                       "build_docs.js)" % n)
+check("8. each document has its PDF: a whole PDF (header, end marker, pages), converted from the document's CURRENT "
+      "content (docs/pdf_sources.json, tools/build_pdfs.py)",
+      len(docs) == 4 and not pdf_bad,
+      lambda: "; ".join(pdf_bad[:4]) if pdf_bad else "four PDFs, each built from its document as it stands")
+
 print(("\n%d CHECK(S) FAILED (%d ran)" % (fails, ran)) if fails
       else ("\nall checks passed (%d)" % ran))
 sys.exit(1 if fails else 0)

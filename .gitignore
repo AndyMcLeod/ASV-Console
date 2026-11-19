@@ -18,6 +18,9 @@ logs/
 
 # proprietary vendor material - do not publish
 *.pdf
+# ... except the four manuals' PDFs, built from their .docx by tools/build_pdfs.py (2026-11-19) - the command
+# bar's buttons open these, and they are this project's own, as public as the .docx beside them
+!docs/asv-simulator-*.pdf
 reference/
 recordings/
 

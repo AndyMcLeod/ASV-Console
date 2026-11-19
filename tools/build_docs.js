@@ -27,12 +27,29 @@ for (const s of SCRIPTS) {
     failed++;
   }
 }
+// THE PDFs (2026-11-19, Andy: "convert them from word to PDF"): once every .docx is written - the generators write
+// asynchronously, so when the event loop has nothing left - tools/build_pdfs.py converts each document whose content
+// changed, by LibreOffice (never Word). Python as start_sim.bat finds it: `python`, else `py`.
+let pdfs = null;                 // null: not run (a generator failed); else build_pdfs.py's exit status
+process.on("beforeExit", () => {
+  if (pdfs !== null || failed) return;
+  console.log("\nThe PDFs (tools/build_pdfs.py, by LibreOffice):");
+  const { spawnSync } = require("child_process");
+  const script = path.join(__dirname, "build_pdfs.py");
+  let r = spawnSync("python", [script], { stdio: "inherit" });
+  if (r.error && r.error.code === "ENOENT") r = spawnSync("py", [script], { stdio: "inherit" });
+  pdfs = r.error ? 1 : r.status;
+  if (r.error) console.error("  PDFs NOT REBUILT: no Python to run build_pdfs.py (" + r.error.message + ")");
+});
 // The generators write asynchronously, so report on exit rather than here.
 process.on("exit", () => {
   if (failed) {
     console.error("\n" + failed + " generator(s) FAILED — the document set is incomplete.");
     process.exitCode = 1;
+  } else if (pdfs !== 0) {
+    console.error("\nDocument set rebuilt (" + SCRIPTS.length + " documents), but the PDFs were NOT: see above.");
+    process.exitCode = 1;
   } else {
-    console.log("\nDocument set rebuilt (" + SCRIPTS.length + " documents).");
+    console.log("\nDocument set rebuilt (" + SCRIPTS.length + " documents and their PDFs).");
   }
 });
