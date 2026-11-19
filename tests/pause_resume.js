@@ -794,6 +794,12 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     const certifyDeparture = eval("(" + grab("certifyDeparture") + ")");
     // eslint-disable-next-line no-eval
     const routeTooLong = eval("(" + grab("routeTooLong") + ")");
+    // A PLAN FAR FROM HER IS REFUSED (2026-11-19, 1c2-1c4): the page's own uploadTooFar, at the page's own RTH_MAX_M
+    const NOGO_RADIUS_M = Number(/^const NOGO_RADIUS_M = (\d+);/m.exec(H)[1]);
+    // eslint-disable-next-line no-eval
+    const RTH_MAX_M = eval(/^const RTH_MAX_M = ([^;]*);/m.exec(H)[1]);
+    // eslint-disable-next-line no-eval
+    const uploadTooFar = eval("(" + grab("uploadTooFar") + ")");
     // eslint-disable-next-line no-eval
     const stagedNote = eval("(" + grab("stagedNote") + ")");
     // THE TURN doUpload TAKES BETWEEN THE CHART READ AND THE ROUTING (2026-09-29, the routing freeze). The page's
@@ -863,6 +869,50 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     check("1c. Upload with no position fix is refused in words, and nothing is sent",
           () => calls.length === 0 && /No position fix/.test(unotes.join(" ")), () => JSON.stringify(unotes));
     asv = { lat: 43.07, lon: -70.71 };
+    // ── 1c2-1c4. A PLAN FAR FROM HER IS REFUSED BEFORE ANYTHING IS READ FOR IT (Andy, 2026-11-19: "refuse it with a
+    // message"). On 2026-11-16 the Castine survey was still loaded at New Castle, and Upload's chart read over [her, ...the
+    // plan] waited 20 minutes on one box spanning both ports. Past RTH_MAX_M from her to the first waypoint SENT, the page's
+    // own uploadTooFar refuses in words: no tide read, no chart read, nothing posted. Paired with the acceptances: just
+    // inside the distance, and an Upload from a near survey in a plan that starts far away.
+    {
+      const planWas = mission, far = 0.54, near = 0.44;          // degrees of latitude north of her: ~60 km, ~49 km
+      const at = (dLat, sv) => ({ lat: asv.lat + dLat, lon: asv.lon, ...(sv ? { sv } : {}) });
+      const mFar = distTo(asv, at(far)), mNear = distTo(asv, at(near));
+      tideAsked = null; clientLog.length = 0;
+      await up(() => { nogo = { ready: true, busy: false, band: "enc_harbour" }; answer = true;
+                       mission = { waypoints: [at(far), at(far + 0.01)] }; });
+      const farLog = clientLog.filter((e) => e.kind === "upload_far");
+      check("1c2. a plan whose first waypoint is past RTH_MAX_M from her is REFUSED in words: nothing posted, and neither "
+            + "the tide nor the chart read for it",
+            () => mFar > RTH_MAX_M && calls.length === 0 && covered === null && tideAsked === null && asked === null
+                  && /UPLOAD REFUSED/.test(banners.join(" ")) && banners.join(" ").includes(fmtDist(mFar))
+                  && /Nothing was read or sent/.test(banners.join(" ")) && /Upload refused/.test(unotes.join(" "))
+                  && farLog.length === 1 && farLog[0].o.wps === 2 && Math.abs(farLog[0].o.km - mFar / 1000) < 0.06,
+            () => "dist " + mFar.toFixed(0) + " m, sent " + calls.length + ", covered " + JSON.stringify(covered)
+                  + ", tide " + JSON.stringify(tideAsked) + ", banner: " + (banners[0] || "").slice(0, 90)
+                  + ", log " + JSON.stringify(farLog));
+      tideAsked = null; clientLog.length = 0;
+      await up(() => { nogo = { ready: true, busy: false, band: "enc_harbour" }; answer = true;
+                       mission = { waypoints: [at(near), at(near + 0.005)] }; });
+      check("1c3. ... and one just inside it is routed and sent as before (the same plan, 11 km nearer)",
+            () => mNear < RTH_MAX_M && calls.length === 1 && calls[0].p === "/api/cmd/upload" && covered !== null
+                  && !/UPLOAD REFUSED/.test(banners.join(" ")) && !clientLog.some((e) => e.kind === "upload_far"),
+            () => "dist " + mNear.toFixed(0) + " m, " + JSON.stringify(calls.map((c) => c.p)) + ", banner: "
+                  + (banners[0] || "").slice(0, 90));
+      tideAsked = null; clientLog.length = 0; calls.length = 0; unotes.length = 0; banners.length = 0; asked = null;
+      runRoute = null; reply = null; covered = null; routedAfterCover = null;
+      nogo = { ready: true, busy: false, band: "enc_harbour" }; answer = true;
+      mission = { waypoints: [at(far, "S1"), at(far + 0.01, "S1"), at(0.01, "S2"), at(0.02, "S2")] };
+      await doUpload({ fromSv: "S2" }); await Promise.resolve();
+      check("1c4. ... and it is measured to the first waypoint SENT: an Upload from a survey beside her, in a plan that "
+            + "starts past it, is sent",
+            () => calls.length === 1 && !!calls[0].b && Array.isArray(calls[0].b.route)
+                  && calls[0].b.route.some((p) => Math.abs(p.lat - at(0.02).lat) < 1e-9)
+                  && !calls[0].b.route.some((p) => p.lat > asv.lat + 0.1) && !/UPLOAD REFUSED/.test(banners.join(" ")),
+            () => JSON.stringify(calls.map((c) => ({ p: c.p, n: c.b && c.b.route && c.b.route.length })))
+                  + ", banner: " + (banners[0] || "").slice(0, 90));
+      mission = planWas; tideAsked = null; clientLog.length = 0;
+    }
     await up(() => { nogo = { ready: false, busy: true, band: null }; answer = false; });
     check("1d. with the chart model still loading, Upload ASKS - in the simulator too - and a no sends nothing",
           () => !!asked && !!asked.opts && asked.opts.always === true && /still loading/.test(asked.msg)

@@ -4413,7 +4413,13 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
 4. **Upload → Start** — push the plan to the boat, then start the run. An upload never
    changes what the boat is doing: under way on a plan it is refused (Hold or Stop first);
    station-keeping or paused, the plan is **staged** and the boat carries on until Start. With no
-   position fix Upload refuses; with the chart model not loaded it asks first (in the simulator
+   position fix Upload refuses. A plan whose first waypoint is more than 50 km from her (the
+   distance past which a Go-To becomes a passage) is refused in words before anything is read
+   for it. Switching ports keeps the plan in hand, and an Upload of a plan left from another
+   port asked the console for one chart box spanning both, which took about 20 minutes to read. So
+   clear that plan or load the one for here, or plan a passage to its start and sail it first.
+   An Upload from a survey is measured to that survey's first waypoint (`tests/pause_resume.js`
+   1c2-1c4). With the chart model not loaded it asks first (in the simulator
    too) and keeps an UNROUTED banner up. A plan goes whole or not at all: one whose routed path
    is longer than the console's waypoint limit is blocked before anything is sent, and the
    banner gives both numbers (the console used to keep the first 1000 waypoints and drop the

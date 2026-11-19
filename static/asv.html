@@ -23768,6 +23768,24 @@ function routeTooLong(n){
   flashNote("Upload blocked: " + n.toLocaleString() + " waypoints, the limit is " + maxW.toLocaleString() + ".");
   return true;
 }
+// ⚠ A PLAN FAR FROM HER IS REFUSED BEFORE ANYTHING IS READ FOR IT (Andy, 2026-11-19: "refuse it with a message"). A port
+// switch keeps the plan in hand, and on 2026-11-16 the Castine survey (1,500 waypoints) was still loaded at New Castle.
+// Upload's chart read over [her, ...the plan] asked the console for one box from New Castle to Castine - 1.98 degrees,
+// just inside its 2 - and the ~45 ENC tiles it had not read were built one at a time for 20 minutes, the page saying only
+// "reading chart". So a plan whose first waypoint is past RTH_MAX_M from her - the approach Upload routes, and the
+// distance past which a Go-To becomes a passage (goToOrPassage) - is refused in words, before the tide read and the chart
+// read: nothing is read or sent. Measured to the first waypoint SENT: an Upload from a survey, or the rest after a hold,
+// starts where that part starts. A distance that is not a number refuses nothing (the plan goes on as before).
+function uploadTooFar(wps){
+  const m = asv && wps && wps.length ? distTo({lat: asv.lat, lon: asv.lon}, wps[0]) : 0;
+  if(!(m > RTH_MAX_M)) return false;
+  showBanner("⚠ UPLOAD REFUSED — the plan starts " + fmtDist(m) + " from her, past the " + fmtDist(RTH_MAX_M)
+    + " an Upload routes its approach over. Nothing was read or sent. If it is a plan left from another port, clear it "
+    + "or load the one for here; to survey there, plan a passage to its start on the Passage tab and sail it first.");
+  flashNote("Upload refused: the plan starts " + fmtDist(m) + " from her.");
+  logClient("upload_far", {km: +(m / 1000).toFixed(1), wps: wps.length});
+  return true;
+}
 // UPLOAD. A named function, and async, because it may have to ASK - see the chart-model branch.
 async function doUpload(opts){
  try{
@@ -23828,6 +23846,7 @@ async function doUpload(opts){
   }
   if(!asv){ flashNote("No position fix yet — Upload routes the approach from the boat, so it needs one."); return; }
   if(routeTooLong(wps.length)) return;                // the saved plan itself - and before the question below
+  if(uploadTooFar(wps)) return;                       // past RTH_MAX_M from her: refused before anything is read for it
   // ⚠ A SURVEY CUT FOR DEEPER WATER THAN IT WILL BE FLOWN IN IS ASKED ABOUT (2026-11-07) - see uploadTideRisk. Fenced by
   // `was` like every await below it.
   // (a read of NOAA can take seconds: said, so a press that seems to do nothing is not pressed again - review 2026-11-07)
