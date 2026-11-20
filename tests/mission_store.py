@@ -725,6 +725,27 @@ check("16m. a floor mark or an anchor level that is not what it claims is REFUSE
       all(r3_said.values()) and all("S1" in v for v in r3_said.values()) and open(_C.MISSION_PATH, "rb").read() == r3_before,
       "; ".join("%s: %s" % (k, (v or "NOT REFUSED")[:40]) for k, v in r3_said.items()))
 
+# 16n-16o. THE WAIT (2026-11-20, the survey window phase 4; Andy: "Provide a hold point for the ASV to loiter while
+# waiting or offer a RTH for refuel/wait"). How a survey waits for its start is the survey's own - `wait`, "home" or
+# "loiter" (absent: loiter) - saved and loaded as it is, so a page reloaded mid-plan sends her where it was set to.
+W_SURVEYS = [dict(SURVEYS[0], wait="home"), dict(SURVEYS[1], wait="loiter")]
+_, w4_err = attempt(_C.save_mission, sv_plan(surveys=W_SURVEYS))
+w4_back = _C.load_mission().get("surveys")
+check("16n. how a survey waits for its start (at home, or loitering near it) is saved and loaded as it was",
+      w4_err is None and w4_back == W_SURVEYS, "save: %s; loaded %s" % (w4_err or "ok", json.dumps(w4_back)[:160]))
+w4_before = open(_C.MISSION_PATH, "rb").read()
+w4_bad = {"a place that is neither": sv_plan(surveys=[dict(SURVEYS[0], wait="dock")]),
+          "a wait as a bool": sv_plan(surveys=[dict(SURVEYS[0], wait=True)]),
+          "a wait as a number": sv_plan(surveys=[dict(SURVEYS[0], wait=1)]),
+          "a wait as a list": sv_plan(surveys=[dict(SURVEYS[0], wait=["home"])]),
+          "an empty wait": sv_plan(surveys=[dict(SURVEYS[0], wait="")])}
+w4_said = {k: refused(v) for k, v in w4_bad.items()}
+check("16o. a wait that is neither \"loiter\" nor \"home\" is REFUSED in words, naming the survey, and nothing is "
+      "written",
+      all(w4_said.values()) and all("S1" in v and "wait" in v for v in w4_said.values())
+      and open(_C.MISSION_PATH, "rb").read() == w4_before,
+      "; ".join("%s: %s" % (k, (v or "NOT REFUSED")[:40]) for k, v in w4_said.items()))
+
 # 17-17b. THE SURVEY BREAK-OFFS (2026-10-11, Andy: "When an ASV breaks off a survey to RTH for refueling the survey
 # departure point must be recorded"). The page banks each on the plan - so a page reloaded or a console restarted while
 # she is refueled still offers Continue - and they ride both dicts and are type-checked like the surveys.

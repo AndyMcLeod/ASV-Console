@@ -357,7 +357,7 @@ console.log("Saving the plan - against a revision, one at a time, and said when 
     // console. A stub would hold this green while the recording was broken.
     + "let routeGone = null;\n" + grab("giveUpRoute") + "\n"
     // a cleared plan takes the pending hold with it (sequenced surveys 3b) - the hold's Continue is tests/survey_table.js
-    + "const setPendingHold = () => {};\n"
+    + "const setPendingHold = () => {}, setPendingNext = () => {};\n"
     + grab("clearPlan") + "\nreturn { clearPlan, plan: () => mission, gone: () => routeGone,"
     + " empty: () => { mission = { waypoints: [], lines: [] }; } }; })()");
   const q0 = asked.length;

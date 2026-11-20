@@ -2030,16 +2030,13 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
      the start time). A start she cannot reach in time is read from her arrival and gets no hold.
      **Upload never judges a survey from its start time**: whatever it sends is flown at once,
      so a survey sent before its start (its hold turned off, or Continue pressed early) is asked
-     about against the water she flies it in now, and the question names its start. **The wait
-     itself is checked**: Upload refuses (nothing is sent) a split whose hold point the falling
-     tide leaves with less clear water than her hold radius while she waits, when that is at
-     least a meter tighter than at the level the survey was cut at. A start point that is
-     tight at its own cut is the hold as it always was. While its start is ahead, the water now
+     about against the water she flies it in now, and the question names its start. Where she
+     waits for the start is **the wait** (below). While its start is ahead, the water now
      does not drop the punch on the card, does not flag the survey's row, and does not price the
      hops between its lines; once the start has passed, it does all three again. The server's
      `GET /api/water/series` gives the strip its curve (the lowest of the lines' points at each
      6-minute slot, so its low is the low the punch cuts at). A second plan for the lines a
-     window defers is **Plan B** (below); a hold point chosen for the wait is a later phase.
+     window defers is **Plan B** (below).
    - *Which lines a survey's window flies* (2026-11-19, the survey window, phase 2: conservative,
      whole lines). With a **Start** or a **Duration** on the card, Punch Out also reads the
      **highest** water predicted over the 24 h from the window's start, and cuts each line at
@@ -2088,6 +2085,43 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
      for both), and a geometry edit on its card (Spacing, Align, a handle, the boundary) ends
      the Plan B, said: the card is then an ordinary survey of every line drawn. Punch all and
      Backwards do not put a discarded Plan B back on the empty card.
+   - *The wait* (2026-11-20, the survey window, phase 4; reviewed before the merge). A held
+     survey whose start is still ahead has a **Wait** button on its row. **Wait: loiter** (the
+     default): Upload sends the plan as far as a **wait point** near the survey's start, and she
+     holds there. It is the nearest water within 500 m of the start that holds her at the
+     **lowest** water predicted there from now until a full tide (12 h 25 min) after the start,
+     or the water now if that is lower: deep water first's margin over her floor where there is
+     room, else clear of every depth area shoaler than her floor (a coarse band counted by its
+     shallowest depth); out of navigation channels, charted and buoyed, while Shipping channels
+     is checked; clear of vessels the AIS feed shows there; only in water the chart was read
+     over; and with room for her hold against a set of at least 1 m/s. A level that could not be
+     read searches the deep tier only. Its hold disc is the one it was found with, never wider
+     than the water now allows. The chart rings it in amber, "S2 waits here". If no water holds
+     her, Upload is refused and nothing is sent; if the chart there could not be read, or where
+     she waits could not be judged, it says so and nothing is sent (press Upload again). The banner says where she waits, the level, what was **not**
+     checked (Depth or Shipping channels unchecked, no AIS answer), the fuel, and that a wait is
+     watched only while a chart window supervises her. **Wait: home**: Upload sends the plan as
+     far as the end of what comes before the survey, with no hold, so End of plan RTH takes her
+     home to wait and be refueled. It needs End of plan RTH and a fixed home in range. If she
+     would be home no sooner than she must leave (reckoned at the speeds she flies), she waits
+     near its start instead, and the banner says why; with the hold off or no start ahead the
+     button reads **Wait: home (off)**. With nothing before the survey, nothing is sent and the
+     wait is recorded. The **fuel** at Upload: the wait at the hold speed's burn, the survey and
+     the way home with the reserve, and HOME suggested when that is short. **The release is
+     the operator's press**: the row counts down to the start, or for a wait at home to the
+     **leave time** (the start less the straight way from where she is at her fastest with the
+     set where she is behind her; a stronger stream on the way brings her sooner). From then
+     Continue flashes and one banner says so (never over an advisory or a refusal: a note
+     then). **Continue** asks first if the fuel is short for the way out, its flight and the way
+     home, then Start's own question, uploads the rest (Upload reads the water again: the
+     released survey is judged over its own window from her arrival at her fastest once she is
+     more than five minutes from it, lowered by as much as the water now stands under the
+     prediction where she is) and starts it; if the plan it staged was replaced before it
+     started, nothing is started and it says so. Set
+     off her wait point, the guard's re-approach finds it again as Upload did, with the AIS
+     contacts, or says it could not. **Said, not changed**: the console pauses a boat no chart
+     window supervises, and a paused boat drifts; at home, Stop her and make her fast before
+     leaving the window. A survey's `wait` is saved with the plan (`"loiter"` or `"home"`).
    - *Upload* walks the waypoints in order from where the boat is **now**. The
      **approach** is routed clear of the chart and keeps to the starboard side of any
      channel, and so is the **leg into each later survey** (2026-10-02: routed exactly as a

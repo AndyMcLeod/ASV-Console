@@ -690,7 +690,9 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
       // (and the guard's routed re-approach to her hold, drawn as its own upkeep - guardOwn, counting nothing - under the
       // run's own kind: a Go-To's hold here, so a withdrawal that named the picture up would say "goto": 1n2)
       if(reply === "upkeep"){ runRoute = [{lat: 8, lon: 8}]; setPlanIntent("goto", null, runRoute, true); }
-      return Promise.resolve({ ok: true, state: {} }); };
+      return Promise.resolve({ ok: true, state: replyState }); };
+    // (what the console answers with: {} - an idle boat, the plan taken at once - or a STAGED one, 1t7)
+    let replyState = {};
     const flashNote = (m) => unotes.push(m), showBanner = (m) => banners.push(m);
     const violatedAll = [];                    // what Upload's refusal highlights (1z7)
     const render = () => {}, setViolations = (r) => { violatedAll.push(r); }, clearViolation = () => {};
@@ -724,7 +726,8 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     // rather than stubbed away: the sequence is the property worth being able to see.
     let uploadBusy = false; const busySeq = [];
     const applyCmdState = () => busySeq.push(uploadBusy);
-    const legReasons = () => [], kindsSummary = () => "", holdClearAt = () => 12;
+    let liveDisc = 12;                                   // (the water now round a point, this frame's contacts in it)
+    const legReasons = () => [], kindsSummary = () => "", holdClearAt = () => liveDisc;
     // ⚠ THE GENERATION LIVES WHERE THE PAGE PUTS IT - inside setPlanIntent, which is
     // called at every site that installs a NEW commanded route and at neither that amends
     // one. doUpload fences its draw on it now ("the draw may not overtake a command given
@@ -848,11 +851,27 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     const _eqLL = eval("(" + /^const _eqLL=([^;]*);/m.exec(H)[1] + ")");
     // eslint-disable-next-line no-eval
     const surveysUploadBlocked = eval("(" + grab("surveysUploadBlocked") + ")");
-    // THE WATER SHE WAITS IN AT A HOLD BEFORE A START (2026-11-19): holdWaitRisk's own body is tests/survey_window.js
-    // 9's; here its answer is this world's (null: nothing refused - every hold here before it) and how often it was asked
+    // WHERE SHE WAITS FOR A START (the survey window phase 4, 2026-11-20): waitPlan's own body - the level, the search -
+    // is tests/survey_wait.js's; here its answer is this world's (null: no wait - every hold here before it) and how
+    // often it was asked. The record, the part sent, the refusal's words, the home split and the banner are the PAGE's.
     let waitRisk = null, waitAsked = 0;
-    const holdWaitRisk = () => Promise.resolve().then(() => { waitAsked++; return waitRisk; });
-    const holdRadiusM = () => 2;
+    const waitPlan = () => Promise.resolve().then(() => { waitAsked++; return waitRisk; });
+    const waitFuelSay = () => "", waitHomeWater = () => Promise.resolve("");
+    const holdRadiusM = () => 2, WAIT_REACH_M = 500;
+    // (the page's own RTH_MAX_M is this world's already, above)
+    const rthTooFar = (a, b) => { const m = distTo(a, b); return m > RTH_MAX_M ? { m } : null; };
+    const chainableRun = () => true;
+    let rthComing = true; const rthPending = () => rthComing;   // (the chain's own answer: tests/end_action.js)
+    const fuelRth = { acted: true, alerted: true };             // (the low-fuel latch a release drops: tests/survey_wait.js 9)
+    let pendingNext = null; const setPendingNext = (v) => { pendingNext = v; };
+    // (her fastest with a set behind her - the page's own, on the page's setMsNow above - and the home wait's watch words)
+    const WAIT_SET_FLOOR_MS = +H.match(/const WAIT_SET_FLOOR_MS = ([\d.]+);/)[1];
+    // eslint-disable-next-line no-eval
+    const WAIT_WATCHED_HOME = eval("(" + H.match(/const WAIT_WATCHED_HOME = ([^;]*);/)[1] + ")");
+    // eslint-disable-next-line no-eval
+    const [holdRecordTaken, holdRec, holdUploadedSay, waitPart, waitRefused, waitHomeSplit, waitHomeNothing, waitDisc, waitFastMS] =
+      ["holdRecordTaken", "holdRec", "holdUploadedSay", "waitPart", "waitRefused", "waitHomeSplit", "waitHomeNothing", "waitDisc", "waitFastMS"]
+        .map((f) => eval("(" + grab(f) + ")"));
     // eslint-disable-next-line no-eval
     const [surveyStartT, surgeWhen] = ["surveyStartT", "surgeWhen"].map((f) => eval("(" + grab(f) + ")"));
     // eslint-disable-next-line no-eval
@@ -1018,32 +1037,161 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
           () => calls.length === 1 && calls[0].b.completion === "loiter" && calls[0].b.route.length === 1
                 && calls[0].b.route[0].lat === 43.09,
           () => JSON.stringify(calls.map((c) => [c.b && c.b.route && c.b.route.length, c.b && c.b.completion])));
-    // 1t2-1t3. THE WAIT AT A HOLD BEFORE A START (the survey window, 2026-11-19). S2 held with a start time: Upload asks
-    // holdWaitRisk, and its refusal sends NOTHING - the banner says so and why, the log carries it, no hold is pending.
-    // With no start the hold is the hold as it was: holdWaitRisk is never asked.
+    // 1t2-1t9. THE WAIT AT A HOLD BEFORE A START (the survey window, 2026-11-19; phase 4, 2026-11-20). S2 held with a
+    // start time: Upload asks where she waits (waitPlan). No point in reach is refused - NOTHING is sent, the banner
+    // says so and why, the log carries it, no hold is pending. With no start the hold is the hold as it was: never asked.
     const waitedBefore = waitAsked;
     await up(() => { nogo = { ready: true, busy: false, band: "enc_harbour" }; answer = false; });
     const askedNoStart = waitAsked - waitedBefore;
     mission.surveys[1].settings = { start_t: Date.now() / 1000 + 4 * 3600 };
-    waitRisk = { s: mission.surveys[1], p: { lat: 43.09, lon: -70.70 }, level: 0.2, say: "+0.20 m, the lowest predicted",
-                 waitM: 0.5, cutClearM: 12, cutM: 1.4, arrive: Date.now() / 1000 + 600, start: mission.surveys[1].settings.start_t };
+    const WAIT0 = { s: mission.surveys[1], p: { lat: 43.09, lon: -70.70 }, level: 0.2, say: "+0.20 m, the lowest predicted while she waits",
+                    read: true, arrive: Date.now() / 1000 + 600, start: mission.surveys[1].settings.start_t };
+    waitRisk = { ...WAIT0, refuse: "the target has under 20 m of clear water and nowhere within 500 m of it holds a boat clear", chans: 1 };
     clientLog.length = 0; pendingHold = null;
     await up(() => { nogo = { ready: true, busy: false, band: "enc_harbour" }; answer = false; });
-    check("1t2. a HELD survey with a START: Upload asks the water she waits in, and its refusal sends NOTHING - the "
-          + "banner says nothing was sent and why (the clear water left round its start, her hold radius, the level it "
-          + "was cut at), the log carries it, no hold is pending",
-          () => calls.length === 0 && /Upload refused - NOTHING WAS SENT: S2 Ledge's start/.test(banners.join(" "))
-                && /m of clear water round it at \+0\.20 m, the lowest predicted/.test(banners.join(" "))
-                && /under her 2 m hold radius/.test(banners.join(" "))
-                && /at the \+1\.40 m it was cut at/.test(banners.join(" ")) && pendingHold === null
-                && clientLog.some((l) => l.kind === "upload_wait" && l.o.refused === true && l.o.sv === "S2"),
-          () => "sent " + calls.length + "; " + banners.join(" | ").slice(0, 200));
+    check("1t2. a HELD survey with a START: Upload asks where she waits, and with no water in reach that holds her "
+          + "NOTHING is sent - the banner says so and why (the reach, the level it was judged at, what the search "
+          + "found, that channels are kept out) and names the two ways on; the log carries it; no hold is pending",
+          () => calls.length === 0
+                && /Upload refused - NOTHING WAS SENT: no water within 500 m of S2 Ledge's start holds her while she waits for it/.test(banners.join(" "))
+                && /\(judged at \+0\.20 m, the lowest predicted while she waits\): the target has under 20 m of clear water/.test(banners.join(" "))
+                && /navigation channels are kept out of a wait/.test(banners.join(" "))
+                && /Set its row's Wait to HOME, so she waits there; or Upload nearer its start/.test(banners.join(" "))
+                && pendingHold === null
+                && clientLog.some((l) => l.kind === "upload_wait" && l.o.refused === true && l.o.sv === "S2" && l.o.level_m === 0.2),
+          () => "sent " + calls.length + "; " + banners.join(" | ").slice(0, 300));
     waitRisk = null;
     await up(() => { nogo = { ready: true, busy: false, band: "enc_harbour" }; answer = false; });
-    check("1t3. ... with room to wait, the split goes as before (loiter at S2's start); and a hold with NO start never "
-          + "asks it",
-          () => calls.length === 1 && calls[0].b.completion === "loiter" && askedNoStart === 0 && waitAsked - waitedBefore === 2,
+    check("1t3. ... with no wait to plan (she is there at its start), the split goes as before (loiter at S2's start); "
+          + "and a hold with NO start never asks",
+          () => calls.length === 1 && calls[0].b.completion === "loiter" && askedNoStart === 0 && waitAsked - waitedBefore === 2
+                && calls[0].b.route[calls[0].b.route.length - 1].lat === 43.09
+                && /UPLOADED UP TO S2 Ledge'S START/.test(banners.join(" ")),
           () => "sent " + calls.length + ", asked " + (waitAsked - waitedBefore) + " (no start: " + askedNoStart + ")");
+    // 1t4. A WAIT POINT: the part ends THERE, not at the survey's start; the disc sent is the one it was found with; the
+    // record holds where the part ended and the level; the banner says where and how it was found
+    const W = { lat: 43.0893, lon: -70.7003 };
+    waitRisk = { ...WAIT0, to: W, movedM: 84, kind: "water too tight to hold in", tier: "deep", holdClear: 37.5, need: 20 };
+    pendingHold = null; liveDisc = 60;
+    await up(() => { nogo = { ready: true, busy: false, band: "enc_harbour" }; answer = false; });
+    liveDisc = 12;
+    const wp = calls.length === 1 && calls[0].b ? calls[0].b : null, end = wp && wp.route[wp.route.length - 1];
+    check("1t4. a WAIT POINT: Upload sends the plan as far as it - the survey's start is not in what is sent - asks the "
+          + "vessel to LOITER there with the disc the point was found with, records where the part ended and the level "
+          + "it was found at, and says where she waits, how it was found, and that a wait is watched",
+          () => wp && wp.completion === "loiter" && wp.hold_clear_m === 37.5 && end.lat === W.lat && end.lon === W.lon
+                && !wp.route.some((q) => q.lat === 43.09)
+                && pendingHold && pendingHold.sv === "S2" && pendingHold.mode === "loiter" && pendingHold.p.lat === W.lat
+                && pendingHold.level_m === 0.2 && pendingHold.ahead === true
+                && /UPLOADED UP TO S2 Ledge'S WAIT POINT \(\d+ waypoints\), 84 m from its start \(water too tight to hold in at the wait's low\)/.test(banners.join(" "))
+                && /Found at \+0\.20 m, the lowest predicted while she waits, in water with deep water first's margin over her floor, out of navigation channels/.test(banners.join(" "))
+                && /A wait is watched only while a chart window supervises her/.test(banners.join(" ")),
+          () => JSON.stringify(wp && { end, completion: wp.completion, disc: wp.hold_clear_m }) + " rec " + JSON.stringify(pendingHold)
+                + " | " + banners.join(" | ").slice(0, 260));
+    // 1t4b. ONE BANNER, ONE SLOT (the lab, 2026-11-20): an Upload FROM a survey that also splits at a hold says both -
+    // the second replaced the first whole, and where she waits, the fuel's answer and "a wait is watched" were gone
+    pendingHold = null; calls.length = 0; banners.length = 0;
+    await doUpload({ fromSv: "S2" }); await Promise.resolve();
+    const both = banners[banners.length - 1] || "";
+    check("1t4b. an Upload FROM a survey that splits at a hold says BOTH in its last banner (the banner is one slot): what "
+          + "was left out of the plan sent, and where she waits - the wait point, how it was found, that a wait is watched",
+          () => calls.length === 1 && /^UPLOADED FROM S2 Ledge \(\d+ waypoints\) - S1 is NOT in the plan sent\. Start runs it from that survey's first line\. UPLOADED UP TO S2 Ledge'S WAIT POINT/.test(both)
+                // (... and the disc sent is never wider than the water now gives with this frame's contacts: the review)
+                && calls[0].b.hold_clear_m === 12 && calls[0].b.completion === "loiter"
+                && /A wait is watched only while a chart window supervises her/.test(both),
+          () => both.slice(0, 260));
+    // 1t5-1t6. THE WAIT AT HOME: the part ends BEFORE the survey with NO loiter (a plan that ends: End of plan takes her
+    // home); refused without End of plan RTH or a home; and with nothing before it NOTHING is posted at all
+    mission.surveys[1].wait = "home";
+    S.completion = "rth"; S.home = { lat: 43.07, lon: -70.71 }; S.home_source = null;
+    pendingHold = null; waitRisk = null;
+    const askedHome = waitAsked;
+    await up(() => { nogo = { ready: true, busy: false, band: "enc_harbour" }; answer = false; });
+    const hp = calls.length === 1 && calls[0].b ? calls[0].b : null;
+    check("1t5. a survey that waits AT HOME: Upload sends the plan as far as the END OF WHAT COMES BEFORE it - its start "
+          + "is not sent - with NO loiter (a plan that ends: End of plan RTH takes her home), asks for no wait point, "
+          + "records the wait as at home, and says so with when to leave",
+          () => hp && !("completion" in hp) && JSON.stringify(hp.route.map((q) => q.lat)) === JSON.stringify([43.08, 43.081])
+                && waitAsked === askedHome && pendingHold && pendingHold.sv === "S2" && pendingHold.mode === "home" && !pendingHold.p
+                && /UPLOADED UP TO THE END OF WHAT COMES BEFORE S2 Ledge \(2 waypoints\): S2 Ledge WAITS AT HOME for its start/.test(banners.join(" "))
+                && /End of plan RTH takes her home from there\. Press Continue on its row when it is time to leave, about /.test(banners.join(" ")),
+          () => JSON.stringify(hp && { route: hp.route.map((q) => q.lat), completion: hp.completion }) + " rec " + JSON.stringify(pendingHold)
+                + " | " + banners.join(" | ").slice(0, 200) + " NOTES " + unotes.join(" / ").slice(0, 300));
+    // 1t5b. (the review) a Wait set to HOME that is NOT in effect is said in the Upload's own banner - as a note alone it
+    // was overwritten in the same task by the tide read's, before it was ever painted - and the home banner is told the
+    // wait is watched
+    const homeBanner = banners.join(" ");
+    const st0 = mission.surveys[1].settings.start_t;
+    mission.surveys[1].settings.start_t = Date.now() / 1000 + 90;      // she would be home no sooner than she must leave
+    pendingHold = null;
+    await up(() => { nogo = { ready: true, busy: false, band: "enc_harbour" }; answer = false; });
+    const lateHome = banners.find((b) => /^UPLOADED UP TO S2 Ledge'S START/.test(b)) || "";
+    mission.surveys[1].settings.start_t = st0;
+    check("1t5b. a Wait set to HOME she cannot wait at - home no sooner than she must leave - sends her to loiter, and the "
+          + "Upload's own banner says why; the wait at home's banner says a wait is watched only while a chart window "
+          + "supervises her, in home's own terms",
+          () => calls.length === 1 && calls[0].b && calls[0].b.completion === "loiter"
+                && /\. ⚠ S2 Ledge's Wait is HOME, but she would be home no sooner than she must leave for its start .*: she waits near its start instead\.$/.test(lateHome)
+                && /holding at home unwatched, the console pauses her, and a paused boat drifts - Stop her and make her fast/.test(homeBanner),
+          () => lateHome.slice(-200) + " || " + homeBanner.slice(-160));
+    S.completion = "loiter"; pendingHold = null;
+    await up(() => { nogo = { ready: true, busy: false, band: "enc_harbour" }; answer = false; });
+    const refusedEnd = calls.length === 0 && /is to wait AT HOME for its start, and End of plan is LOITER/.test(banners.join(" "))
+                       && /Set End of plan to RTH, or set its row's Wait to LOITER/.test(banners.join(" ")) && pendingHold === null;
+    S.completion = "rth"; S.home = null;
+    await up(() => { nogo = { ready: true, busy: false, band: "enc_harbour" }; answer = false; });
+    const refusedHome = calls.length === 0 && /no home is set/.test(banners.join(" "));
+    S.home = { lat: 43.07, lon: -70.71 }; S.home_source = "roc-1";
+    await up(() => { nogo = { ready: true, busy: false, band: "enc_harbour" }; answer = false; });
+    const refusedRoc = calls.length === 0 && /home is a ROC's, which moves/.test(banners.join(" "));
+    S.home_source = null;
+    // ... and with NOTHING before it (Upload from S2): no post of any kind - a bare upload loads the WHOLE saved plan
+    calls.length = 0; banners.length = 0; pendingHold = null;
+    await doUpload({ fromSv: "S2" }); await Promise.resolve();
+    check("1t6. a wait at home is REFUSED, nothing sent, without End of plan RTH (the console's own), a home, or with a "
+          + "ROC's moving home - each said with its fix; and with nothing before the survey to send NOTHING IS POSTED "
+          + "(a bare upload would load the whole saved plan): the wait is recorded and said",
+          () => refusedEnd && refusedHome && refusedRoc && calls.length === 0
+                && pendingHold && pendingHold.mode === "home" && pendingHold.sv === "S2" && pendingNext === null
+                && /S2 Ledge WAITS AT HOME for its start .* there is nothing before it to send, so NOTHING WAS SENT/.test(banners.join(" ")),
+          () => JSON.stringify({ refusedEnd, refusedHome, refusedRoc, posts: calls.length, rec: pendingHold }) + " | " + banners.join(" | ").slice(0, 200));
+    // 1t6b. NOTHING SENT leaves a plan staged earlier as it is (its banked record too), and says it; and the return
+    // it promises is the chain's own answer - with none coming it says to press RTH (the phase 4 review)
+    const BANK = { rec: { sv: "S2", mode: "loiter" }, n: 9, seq: 3, after: 5 };
+    calls.length = 0; banners.length = 0; pendingHold = null; pendingNext = BANK; S.plan_staged = true; rthComing = false;
+    S.run = "running"; S.behavior = "survey"; S.status = { ...(S.status || {}), holding: true };
+    await doUpload({ fromSv: "S2" }); await Promise.resolve();
+    const none1 = banners.join(" "), bankKept = pendingNext === BANK;
+    S.plan_staged = false; rthComing = true; banners.length = 0; pendingNext = null;
+    await doUpload({ fromSv: "S2" }); await Promise.resolve();
+    const none2 = banners.join(" ");
+    check("1t6b. ... and NOTHING SENT leaves a plan staged earlier aboard with its own record banked - said: Start would "
+          + "run that plan - and promises a return only when the End of plan chain is coming (its own answer); with none "
+          + "coming it says to press RTH",
+          () => calls.length === 0 && bankKept && /Press RTH to take her home if she is not there\./.test(none1)
+                && /A plan uploaded earlier is still STAGED aboard: Start would run THAT plan, not this\./.test(none1)
+                && !/End of plan RTH takes her home from it/.test(none1)
+                && /She is holding on a plan that ended: End of plan RTH takes her home from it\./.test(none2) && !/STAGED aboard/.test(none2),
+          () => JSON.stringify({ posts: calls.length, bank: pendingNext }) + " | " + none1.slice(-200) + " | " + none2.slice(-120));
+    S.run = "idle"; S.status = { ...(S.status || {}), holding: false };
+    delete mission.surveys[1].wait;
+    // 1t7. THE RECORD NAMES THE RUN SHE IS ON: an upload the console answers STAGED (she is holding) does not rewrite it
+    // - what it would have written is banked for the frame that shows that plan started (holdNextTick: survey_wait.js)
+    const onRun = { sv: "S2", at: 5, mode: "loiter", p: { lat: 43.09, lon: -70.70 } };
+    pendingHold = onRun; pendingNext = null;
+    replyState = { plan_staged: true, run_seq: 7, server_t: 1000.5 };
+    calls.length = 0;
+    await doUpload({ fromSv: "S2", release: "S2" }); await Promise.resolve();
+    const stagedRec = pendingHold, banked = pendingNext;
+    replyState = {};
+    await doUpload({ fromSv: "S2", release: "S2" }); await Promise.resolve();
+    check("1t7. CONTINUE's upload answered STAGED leaves the hold's record as it is - she is still on the split's run, "
+          + "and End of plan must not chain her home before Start - and banks what it would have written (none: the "
+          + "rest has no hold) with the staged plan's length, the run she was on and the reply's time; answered NOT "
+          + "staged it is written at once, as before",
+          () => stagedRec === onRun && banked && banked.rec === null && banked.n === 3 && banked.seq === 7
+                && banked.after === 1000.5 && banked.release === true && pendingHold === null && pendingNext === null,
+          () => JSON.stringify({ staged: stagedRec, banked, after: pendingHold }));
     delete mission.surveys[1].settings;
     mission.surveys[1].hold = false;
     // 1w-1x. THE UNROUTED UPLOAD OF A PART (found writing 3b: 3a's Upload from had the hole too). With no route the

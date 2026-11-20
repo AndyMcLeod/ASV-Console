@@ -211,6 +211,8 @@ function setViolations(v) { violations = v; }
 function updateMissionCard() { avoidingNow(); }
 function render() {}
 function holdClearAt() { return 12.3; }
+// (a tail that ends at a WAIT POINT ships the wait's disc - tailHoldClear, tests/survey_wait.js 24; none is aboard here)
+function tailHoldClear(r) { return holdClearAt(r[r.length - 1]); }
 // RESUME FROM HERE AND THE WAY ROUND (2026-09-27): the chart's scale for the snap (IDENTIFY_PX at zoom 16
 // and this latitude is ~24 m), the menu row and its key as stub elements a check can read back, and the
 // helpers the held path calls on its way in. The router stub below records what it was ASKED (from, to,

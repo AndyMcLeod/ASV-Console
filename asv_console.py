@@ -1947,6 +1947,10 @@ def _check_surveys(m):
                 raise PlanRefused("survey %s's water must be text of at most 400 characters - nothing was saved" % sid)
             if s.get("hold") is not None and not isinstance(s.get("hold"), bool):   # the hold before it (3b)
                 raise PlanRefused("survey %s's hold flag must be true or false - nothing was saved" % sid)
+            # how she waits for its start (the survey window phase 4): near it (loiter, the default) or at home
+            if s.get("wait") is not None and s.get("wait") not in ("loiter", "home"):
+                raise PlanRefused("survey %s's wait must be \"loiter\" or \"home\" (got %s) - nothing was saved"
+                                  % (sid, repr(s.get("wait"))[:40]))
             pa = s.get("punched_at")
             if pa is not None and not (isinstance(pa, str) and len(pa) <= 40):
                 raise PlanRefused("survey %s's punch time must be a time stamp (got %r) - nothing was saved" % (sid, pa))

@@ -11,7 +11,7 @@
 // while the start is ahead: not to the cut level (punchWaterM), not to the punch's survival (applyWaterOffset), not to
 // the hops between its lines (cardRouteLevel), not to its row's tide flag (surveyTideMoved). Upload asks of a survey
 // sent before its start (uploadTideRisk's `early`), and refuses a hold whose point the falling tide leaves too tight
-// while she waits (holdWaitRisk).
+// while she waits (phase 1: holdWaitRisk, a refusal; since phase 4 waitPlan, which finds her a wait point).
 //
 //   1   flightWindow: no start, no duration - the window as before, to the second; a start she waits for begins it,
 //       for the longer of the flight and the duration; late and passed read from her arrival; capped at 24 h
@@ -22,9 +22,10 @@
 //   6   commitWaitsForStart: the hold goes on only for a start she will wait for
 //   7   surveyTideMoved: no flag before its start; after it, as before
 //   8   the start and duration fields: datetime-local <-> epoch, a half-typed time is no start; settings round trip
-//   9   holdWaitRisk: refused when the wait's low leaves the disc under her hold radius AND a meter tighter than at
-//       its cut; read over [arrival, start]; the water now when she is there soon; none without a start or a wait;
-//       an error judged as no wait, logged
+//   9   waitPlan (phase 4, in place of holdWaitRisk's refusal): the wait point searched at the lower of the water
+//       now and the lowest predicted at the start from her arrival to one tide past it, the chart read over the
+//       reach first; no point a refusal; an unread level the deep tier only; none without a start, a wait or a
+//       chart; an error judged as no wait, logged (the search itself: tests/survey_wait.js)
 //   10  uploadTideRisk: a survey sent well before its start is `early`; Upload's question says so
 //   11  the tide strip: its words, its curve, stale when the card moved, and a refresh asked twice reads twice, never
 //       three times - on the promise, no timer
@@ -298,60 +299,106 @@ console.log("A survey's start time and duration:");
         () => JSON.stringify({ recB: [recB.only, recB.outline_m, recB.outline_low_m], backB, noneB, lone: [lone.only, lone.outline_low_m] }));
 }
 
-// ── 9. holdWaitRisk ─────────────────────────────────────────────────────────────────────────────────────────────
+// ── 9. waitPlan (the survey window phase 4: where she waits, in place of holdWaitRisk's refusal) ────────────────
 {
-  const reads = [], logs = [];
-  let clear = {}, readLow = 0.2, throwIn = false;
-  const W = new Function("distTo", "reads", "logs", "env", "\"use strict\";\n" + SPEEDS + WHEN
-    + decls("WAIT_NOW_S", "WATER_WINDOW_MAX_H")
+  const reads = [], logs = [], order = [];
+  const env = { readLow: 0.2, throwIn: false, cover: true, point: null, noRead: false, ais: true };
+  const W = new Function("distTo", "reads", "logs", "order", "env", "\"use strict\";\n" + SPEEDS + WHEN
+    + decls("WAIT_NOW_S", "WATER_WINDOW_MAX_H", "WAIT_REACH_M", "WAIT_TIDE_S")
     + "const WATER_REMOTE_KM = " + REMOTE_KM + "; let water = null; const sea = {waterOffset: 1.0};\n"
-    + "let asv = {lat: 43.0, lon: -70.70}; const nogo = {ready: true, ko: {lvl: 'chart'}, frame: {toEN: (p) => p}, buffer: 3};\n"
+    + "let asv = {lat: 43.0, lon: -70.70}; const nogo = {ready: true, ko: {}, frame: {}, buffer: 3};\n"
     + "let surveys = []; const surveyById = (id) => surveys.find((s) => s.id === id) || null;\n"
-    + "const fmtDist = (m) => Math.round(m) + ' m'; const holdRadiusM = () => 2;\n"
-    + "const koAtLevel = (m) => ({lvl: (+m).toFixed(2)});\n"
-    + "const holdClearM = (p, ko) => { if(env.throwIn) throw new Error('boom'); const v = env.clear[ko.lvl]; return v == null ? 50 : v; };\n"
+    + "const surveyLabel = (s) => 'S' + s.no; const fmtDist = (m) => Math.round(m) + ' m';\n"
     + "const logClient = (k, o) => logs.push([k, o]);\n"
+    + "const ensureNogoCovers = async (pts, pad, o) => { order.push(['cover', pad, o && o.keep, o && o.read]); return env.cover; };\n"
+    // (the ships' read: counted with how many water reads came BEFORE it, and answered or not as the world says)
+    + "const readPassageAis = async (pts) => { order.push(['ais', pts.length, reads.length]); nogo.ais = env.ais ? {vessels: []} : null;"
+    + " if(env.goneIn) nogo.ready = false; };\n"   // (the model rebuilt while NOAA and the ships were read)
     + "const waterAlongRead = async (line, t0, t1) => { reads.push({n: line.length, t0, t1});"
-    + "  return {points: [{low_m: env.readLow, km: 4, kind: 'predicted', name: 'Stn'}]}; };\n"
-    + fns("surveyStartT", "surveyCutM", "sectionLevel", "fmtLevel", "holdWaitRisk")
-    + "return { set surveys(v){ surveys = v; }, set asv(v){ asv = v; }, sea, nogo, holdWaitRisk };");
-  const env = { get clear() { return clear; }, get readLow() { return readLow; }, get throwIn() { return throwIn; } };
-  const w = W(distTo, reads, logs, env);
+    + "  return env.noRead ? {points: []} : {points: [{low_m: env.lows && env.lows.length ? env.lows.shift() : env.readLow, km: 4, kind: 'predicted', name: 'Stn'}]}; };\n"
+    + "const waitPointAt = (c, level, o) => { if(env.throwIn) throw new Error('boom'); order.push(['point', level, !!(o && o.deepOnly)]);"
+    + "  return env.point || {error: 'the target has under 20 m of clear water and nowhere within 500 m of it holds a boat clear', need: 20, chans: 2, level}; };\n"
+    + fns("surveyStartT", "sectionLevel", "fmtLevel", "waitLevelRead", "waitPlan")
+    + "return { set surveys(v){ surveys = v; }, set asv(v){ asv = v; }, set water(v){ water = v; }, sea, nogo, waitPlan };");
+  const w = W(distTo, reads, logs, order, env);
   const P = { lat: 43.01, lon: -70.70, sv: "S2" };            // ~1.1 km off: arrival a few minutes out
   const hold = { part: [{ lat: 43.005, lon: -70.70 }, P], held: "S2", cut: 1 };
-  const start = Date.now() / 1000 + 4 * 3600;
+  const start = Date.now() / 1000 + 4 * 3600, TIDE = 44700, RD = { tag: "rd" };
   const sv = (st) => [{ id: "S2", no: 2, water_m: 1.4, settings: st === undefined ? {} : { start_t: st } }];
+  const PT = { to: { lat: 43.0102, lon: -70.7003 }, movedM: 31, kind: "water too tight to hold in", tier: "floor", holdClear: 28, need: 20 };
   w.surveys = sv(start);
-  clear = { "0.20": 0.5, "1.40": 12 };
-  reads.length = 0;
-  const refuse = await w.holdWaitRisk(hold);
-  const rd = reads[0] || {};
-  clear = { "0.20": 2.5, "1.40": 12 };
-  const roomy = await w.holdWaitRisk(hold);
-  clear = { "0.20": 0.5, "1.40": 1.0 };
-  const tightAnyway = await w.holdWaitRisk(hold);
-  clear = { "0.20": 0.5, "1.40": 12 };
-  w.surveys = sv(undefined); const noStart = await w.holdWaitRisk(hold);
-  w.surveys = sv(Date.now() / 1000 + 60); const noWait = await w.holdWaitRisk(hold);
-  w.surveys = sv(start); w.nogo.ready = false; const noChart = await w.holdWaitRisk(hold); w.nogo.ready = true;
-  readLow = 1.3; w.sea.waterOffset = 0.2; clear = { "0.20": 0.5, "1.30": 12, "1.40": 12 };
-  const soon = await w.holdWaitRisk(hold);                     // she is there within WAIT_NOW_S: the water now counts
-  w.asv = { lat: 42.80, lon: -70.70 };                         // ~23 km off at 3 m/s: two hours away
-  const later = await w.holdWaitRisk(hold);
-  w.asv = { lat: 43.0, lon: -70.70 }; readLow = 0.2; w.sea.waterOffset = 1.0;
-  throwIn = true; logs.length = 0; const threw = await w.holdWaitRisk(hold); throwIn = false;
-  check("9. holdWaitRisk: REFUSED where the lowest water while she waits leaves her hold point 0.5 m of clear water - "
-        + "under her 2 m hold radius and 11.5 m tighter than at the +1.40 m it was cut at; read at the hold point alone "
-        + "from her arrival to its start; not refused with room for her, nor where the point is as tight at its own "
-        + "cut (the hold as it was); nothing without a start, a wait or a chart; the water now counts when she is "
-        + "there soon, not hours ahead; an error is no refusal, and is logged",
-        () => refuse && refuse.waitM === 0.5 && refuse.cutClearM === 12 && refuse.level === 0.2 && refuse.start === start
-              && rd.n === 1 && Math.abs(rd.t1 - start) < 1e-6 && rd.t0 > Date.now() / 1000 && rd.t0 < start
-              && roomy === null && tightAnyway === null && noStart === null && noWait === null && noChart === null
-              && soon && soon.level === 0.2 && /the water now/.test(soon.say) && later === null
-              && threw === null && logs.some((l) => l[0] === "upload_wait" && /boom/.test(l[1].error)),
-        () => JSON.stringify({ refuse: refuse && [refuse.waitM, refuse.cutClearM, refuse.level], read: rd.n,
-                               soon: soon && soon.level, later, logs: logs.length }));
+  env.point = PT; reads.length = 0; order.length = 0;
+  const t0Call = Date.now() / 1000;
+  const found = await w.waitPlan(hold, RD);
+  const rd0 = reads[0] || {}, ord = order.map((o) => o[0]).join(","), cov = order[0] || [], aisAt = (order.find((o) => o[0] === "ais") || [])[2];
+  env.ais = false; const noAis = await w.waitPlan(hold, RD); env.ais = true;
+  env.point = null;
+  const none = await w.waitPlan(hold, RD);
+  // the water now under the predicted low: the level is the water now, said so
+  env.point = PT; env.readLow = 0.5; w.sea.waterOffset = 0.1; order.length = 0;
+  const lowNow = await w.waitPlan(hold, RD), lvNow = (order.find((o) => o[0] === "point") || [])[1];
+  // a level that could not be read: the lower of chart datum and the water now, the DEEP tier only
+  env.noRead = true; w.sea.waterOffset = 1.0; order.length = 0;
+  const unread = await w.waitPlan(hold, RD), pu = order.find((o) => o[0] === "point") || [];
+  // ... and a MANUAL water level under chart datum is the water NOW, not a read of the wait: still the deep tier only
+  w.water = { source: "manual", offset_m: -0.4 }; w.sea.waterOffset = -0.4; order.length = 0;
+  const manual = await w.waitPlan(hold, RD), pm = order.find((o) => o[0] === "point") || [];
+  w.water = null; w.sea.waterOffset = 1.0;
+  env.noRead = false; env.readLow = 0.2;
+  // a wait longer than one read reaches: read in pieces, each 24 h at most, to one tide past the start
+  w.surveys = sv(Date.now() / 1000 + 30 * 3600); reads.length = 0; order.length = 0;
+  env.lows = [0.1, 0.4];                                       // the FIRST piece holds the low: the lowest of them is the level
+  await w.waitPlan(hold, RD);
+  env.lows = null;
+  const lvPieces = (order.find((o) => o[0] === "point") || [])[1];
+  const pieces = reads.map((r) => (r.t1 - r.t0) / 3600), span = reads.length ? (reads[reads.length - 1].t1 - reads[0].t0) / 3600 : 0;
+  w.surveys = sv(start);
+  // the chart round the start not read: refused before any search
+  env.cover = false; order.length = 0;
+  const uncovered = await w.waitPlan(hold, RD), searched = order.some((o) => o[0] === "point");
+  env.cover = true;
+  w.surveys = sv(undefined); const noStart = await w.waitPlan(hold, RD);
+  w.surveys = sv(Date.now() / 1000 + 60); const noWait = await w.waitPlan(hold, RD);
+  w.surveys = sv(start); w.nogo.ready = false; const noChart = await w.waitPlan(hold, RD); w.nogo.ready = true;
+  env.throwIn = true; logs.length = 0; const threw = await w.waitPlan(hold, RD); env.throwIn = false;
+  env.goneIn = true; const gone = await w.waitPlan(hold, RD); env.goneIn = false; w.nogo.ready = true;
+  // (and with no wait, none of them is asked: a start passed, or one she reaches as it comes, with no chart model)
+  w.surveys = sv(Date.now() / 1000 + 60); w.nogo.ready = false; const noWaitNoChart = await w.waitPlan(hold, RD); w.nogo.ready = true;
+  w.surveys = sv(start);
+  check("9. waitPlan: the wait point the search answers, found at the LOWER of the water now and the lowest predicted "
+        + "at the survey's start from her arrival to one tide past it (read at that point alone, in pieces of 24 h at "
+        + "most) - the chart covered over the whole reach first, kept, as one of the Upload's reads, and the moored "
+        + "ships read, before it is searched; no point in reach is a refusal with the level and what the search found; "
+        + "a level that could not be read searches the deep tier only, at chart datum or the water now; a chart that "
+        + "cannot be read over the reach is refused unsearched; nothing without a start or a wait; and ONCE SHE HAS A "
+        + "WAIT (the second review) a wait that could not be judged is REFUSED, never sent as it stands: no chart model, "
+        + "the model gone while the water was read (both as a chart refusal), and an error (logged)",
+        () => found && found.to === PT.to && found.movedM === 31 && found.tier === "floor" && found.holdClear === 28
+              && found.level === 0.2 && found.read === true && /^\+0\.20 m, the lowest predicted along it while she waits, /.test(found.say)
+              && found.start === start && !found.refuse
+              // (read from NOW - not her reckoned arrival: with the stream behind her she is there sooner - and BEFORE the
+              //  ships, whose read is good for 40 s: the review)
+              && rd0.n === 1 && Math.abs(rd0.t0 - t0Call) < 5 && Math.abs(rd0.t1 - (start + TIDE)) < 1e-6 && aisAt === 1
+              && found.ais === true && found.chanKept === true && found.depthJudged === true && noAis && noAis.ais === false
+              && manual && manual.read === false && pm[1] === -0.4 && pm[2] === true
+              && ord === "cover,ais,point" && cov[1] === 650 && cov[2] === true && cov[3] === RD
+              && none && /nowhere within 500 m/.test(none.refuse) && none.level === 0.2 && none.chans === 2 && !none.to
+              && lowNow && lvNow === 0.1 && /^\+0\.10 m, the water now$/.test(lowNow.say)
+              && unread && pu[1] === 0 && pu[2] === true && unread.read === false
+              && pieces.length === 2 && pieces[0] === 24 && pieces[1] > 0 && Math.abs(span - (30 + TIDE / 3600)) < 0.2
+              && lvPieces === 0.1
+              && uncovered && /could not be read out to the 500 m/.test(uncovered.refuse) && !searched
+              // (marked a CHART refusal - Upload says it as an unread chart, press again, never as no room - and the
+              //  no-room refusal is not: the review)
+              && uncovered.chart === true && !none.chart
+              && noStart === null && noWait === null && noWaitNoChart === null
+              && noChart && noChart.chart === true && noChart.refuse === "the chart model is not loaded" && !noChart.to && noChart.start === start
+              && gone && gone.chart === true && gone.refuse === "the chart model went while the water was read" && !gone.to
+              && threw && threw.failed === true && threw.refuse === "boom" && !threw.to && !threw.chart && threw.start === start
+              && logs.some((l) => l[0] === "upload_wait" && /boom/.test(l[1].error)),
+        () => JSON.stringify({ found: found && [found.level, found.tier, found.say.slice(0, 40)], read: [rd0.n, ((rd0.t1 - start) / 3600).toFixed(2)],
+                               ord, cov: cov.slice(1, 3), none: none && none.refuse.slice(0, 40), lvNow, unread: pu.slice(1),
+                               pieces: pieces.map((x) => +x.toFixed(1)), uncovered: uncovered && !searched, logs: logs.map((l) => l[1].error).slice(0, 2) }));
 }
 
 // ── 10. uploadTideRisk's `early` ────────────────────────────────────────────────────────────────────────────────
@@ -456,11 +503,12 @@ console.log("A survey's start time and duration:");
 {
   const up = grab("doUpload"), cm = grab("commitPattern"), ed = grab("editSurvey"), rs = grab("resetPattern");
   const swc = grab("surveyWindowChanged"), utr = grab("uploadTideRisk"), rph = grab("judgeRedHops"), urp = grab("updatePatReadout");
-  const iInk = up.indexOf("await inkYield();"), iWait = up.indexOf("await holdWaitRisk(hold)"), iPlan = up.indexOf("planInsideChart(");
+  const iInk = up.indexOf("await inkYield();"), iWait = up.indexOf("wait = await waitPlan(hold, rd);"), iPlan = up.indexOf("planInsideChart(");
   check("12. THE WIRING: Start and Duration call surveyWindowChanged, which drops the punch and reads the strip; "
         + "↻, Punch Out and ✎ read it; Reset clears the start, the duration and the strip; the readout redraws it; "
-        + "Add to plan turns the hold on for a start she waits for; Upload asks holdWaitRisk after the chart read and "
-        + "before it routes, its refusal returning before anything is sent; Upload's tide check passes flightWindow NO "
+        + "Add to plan turns the hold on for a start she waits for; Upload asks where she waits (waitPlan, phase 4) "
+        + "after the chart read and before it routes, as one of its reads, a refusal returning before anything is "
+        + "sent and a wait point moving the part's end; Upload's tide check passes flightWindow NO "
         + "start; the punch's hops are judged at cardRouteLevel; the server's series is read with trust_km",
         () => /\$\("#sp_start"\)\.onchange = surveyWindowChanged;/.test(H) && /\$\("#sp_dur"\)\.onchange = surveyWindowChanged;/.test(H)
               && /\$\("#sp_tide_ref"\)\.onclick = \(\) => \{ tideStripRefresh\(\); \};/.test(H)
@@ -470,7 +518,9 @@ console.log("A survey's start time and duration:");
               && /patStartT = null; patDurH = null; tideStrip = null;/.test(rs) && /renderTideStrip\(\);/.test(urp)
               && /hold: !!\(editing && editing\.hold\) \|\| startsLater,/.test(cm) && /const startsLater = commitWaitsForStart\(\);/.test(cm)
               && iInk > 0 && iWait > iInk && iPlan > iWait
-              && /if\(wait\)\{[\s\S]*?render\(\); return;\s*\n\s*\}/.test(up.slice(iWait, iPlan))
+              && /if\(wait && wait\.refuse\)\{ waitRefused\(wait\); render\(\); return; \}/.test(up.slice(iWait, iPlan))
+              && /if\(wait && wait\.to\)\{ wps = waitPart\(hold, wait\);/.test(up.slice(iWait, iPlan))
+              && /if\(loiter && surveyStartT\(surveyById\(hold\.held\)\) != null\)\{/.test(up.slice(iInk, iWait))
               && /flightWindow\(cum\[i0 \+ 1\], flightOwnM\(wps\.slice\(i0, i1 \+ 1\), \(a, b\) => !!lineOfLeg\(a, b\)\)\);/.test(utr)
               && /const lv = cardRouteLevel\(\), buf/.test(rph)
               && /"&trust_km=" \+ WATER_REMOTE_KM/.test(grab("waterSeriesRead")),

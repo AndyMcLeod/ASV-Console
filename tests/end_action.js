@@ -112,7 +112,7 @@ var rthHeldRun = null;          // (the motion she was last seen holding on: und
 eval(grabDecl("CHAINABLE_BEHAVIORS") + "\n" + grab("chainableRun") + "\n" +
      grab("runCompletion") + "\n" + grab("runHolds") + "\n" +
      // heldSplitRun (sequenced surveys 3b): the hold before a survey's split is not an end of plan
-     "var pendingHold = null;\n" + grab("heldSplitRun") + "\n" +
+     "var pendingHold = null;\n" + grab("heldSplitRun") + "\n" + grab("onSplitRun") + "\n" +
      // the passage being sailed (2026-10-12): its holds are not an end of plan - this world sails none
      "var sailOwnsHold = () => false;\n" +
      grab("rthPending") + "\n" + grab("endAction") + "\n" + grab("chainRunKey") + "\n" + grab("rearmRthChain"));

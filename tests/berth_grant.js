@@ -517,28 +517,76 @@ check("10. a hold inside the corridor becomes a STOP, and the STOP's own words a
 // mutation that changed it to `holdClearAt(asv) * 2` SURVIVED: the call was still there, so
 // the grep still matched, and the suite reported coverage of a number it had not looked at.
 // It now asserts the VALUE - every hold_clear_m is a bare call, passed through untouched.
-const HOLD_CLEAR_SITES = [...HC.matchAll(/hold_clear_m:\s*([^,}]+(?:\([^()]*\))?[^,}]*)[,}]/g)]
-  .map(m => m[1].trim());
-// A site is honest when the value handed over is the console's own measurement PASSED
-// THROUGH: either a bare property the planner computed on the true model (plan.holdClear,
-// set from holdTarget), or a holdClearAt(...) call whose closing paren is the end of the
-// expression. Anything after that paren is arithmetic on a number the boat acts on directly.
-const passedThrough = (s) => {
-  if (/^[A-Za-z_$][\w$.]*$/.test(s)) return true;               // plan.holdClear
-  if (!s.startsWith("holdClearAt(")) return false;
+// (2026-11-20, the survey window phase 4) Each site's WHOLE expression, to the comma or brace
+// that ends it at its own depth - the first cut stopped at the first comma, so a
+// Math.min(a, b) was read as "Math.min(a" and could be judged neither way.
+const siteExpr = (src, from) => {
+  let d = 0, i = from;
+  for (; i < src.length; i++) {
+    const c = src[i];
+    if (c === "(" || c === "[" || c === "{") d++;
+    else if (c === ")" || c === "]" || c === "}") { if (d === 0) break; d--; }
+    else if (c === "," && d === 0) break;
+  }
+  return src.slice(from, i).trim();
+};
+const HOLD_CLEAR_SITES = [...HC.matchAll(/hold_clear_m:\s*/g)].map(m => siteExpr(HC, m.index + m[0].length));
+// `s` is one call `name(...)` whose closing paren is the end of the expression
+const wholeCall = (s, name) => {
+  if (!s.startsWith(name + "(")) return false;
   let d = 0;
-  for (let i = s.indexOf("("); i < s.length; i++) {
+  for (let i = name.length; i < s.length; i++) {
     if (s[i] === "(") d++;
     else if (s[i] === ")" && --d === 0) return i === s.length - 1;  // nothing trailing
   }
   return false;
 };
+// the top-level pieces of `s` split at `sep` (outside every bracket)
+const splitTop = (s, sep) => {
+  const out = []; let d = 0, k = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (c === "(" || c === "[" || c === "{") d++;
+    else if (c === ")" || c === "]" || c === "}") d--;
+    else if (c === sep && d === 0) { out.push(s.slice(k, i)); k = i + 1; }
+  }
+  out.push(s.slice(k));
+  return out.map(x => x.trim());
+};
+// The helpers that hand over a NARROWED disc (phase 4): each starts from holdClearAt's own
+// measurement and only ever takes the smaller - their bodies are judged below, by these rules.
+const NARROWERS = ["tailHoldClear", "waitDisc"];
+// A value is honest when it is the console's own measurement PASSED THROUGH: a bare property
+// the planner computed on the true model (plan.holdClear, set from holdTarget), a
+// holdClearAt(...) call - or a narrowing helper - whose closing paren is the end of the
+// expression, a Math.min with an honest argument (it can only be smaller), or a conditional
+// whose two arms are honest (the condition is not handed over). Anything else - arithmetic
+// after the paren, Math.max, a sum - is a number the boat acts on that nothing measured.
+const honest = (s) => {
+  s = s.trim();
+  if (/^[A-Za-z_$][\w$.]*$/.test(s)) return true;               // plan.holdClear
+  if (wholeCall(s, "holdClearAt") || NARROWERS.some(n => wholeCall(s, n))) return true;
+  if (wholeCall(s, "Math.min")) return splitTop(s.slice(9, -1), ",").some(honest);
+  const q = splitTop(s, "?");
+  if (q.length === 2) { const arms = splitTop(q[1], ":"); return arms.length === 2 && arms.every(honest); }
+  return false;
+};
+// each narrower: its `live` is holdClearAt's, every return honest, and no filtered model in it
+const narrowerOk = (n) => {
+  const body = codeOnly(grab(n));
+  const rets = [...body.matchAll(/return\s+([^;]+);/g)].map(m => m[1]);
+  return /const (?:[^;]*, )?live = holdClearAt\(/.test(body) && rets.length > 0 && rets.every(honest)
+         && !/koG/.test(body);
+};
 check("10b. hold_clear_m is NEVER inflated and never reads the filtered model - it is the one "
       + "console-side number the vessel acts on with no further check",
-  () => HOLD_CLEAR_SITES.length > 0 && HOLD_CLEAR_SITES.every(passedThrough)
+  () => HOLD_CLEAR_SITES.length > 0 && HOLD_CLEAR_SITES.every(honest)
+        && NARROWERS.every(narrowerOk) && !/koG/.test(codeOnly(grab("waitPointAt")))
         && !/holdClearAt\([^)]*koG/.test(HC),
   HOLD_CLEAR_SITES.length + " call site(s): " + HOLD_CLEAR_SITES.join(" · ")
-  + " — each a BARE holdClearAt() on the true model. It becomes a vessel-side action with no "
+  + " — each the true model's holdClearAt() passed through, or narrowed by Math.min ("
+  + NARROWERS.join(", ") + ": " + NARROWERS.map(n => narrowerOk(n) ? "ok" : "NOT A NARROWING").join(", ")
+  + "). It becomes a vessel-side action with no "
   + "further check (the routed re-approach off a hold), and its warrant is a geometric "
   + "construction in asv_console.py: an inflated one is a lie the boat acts on");
 

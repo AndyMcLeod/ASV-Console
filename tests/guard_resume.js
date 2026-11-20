@@ -232,6 +232,8 @@ function setViolations(v) { violations = v; }
 function updateMissionCard() {}
 function render() {}
 function holdClearAt() { return 12.3; }
+// (a tail that ends at a WAIT POINT ships the wait's disc - tailHoldClear, tests/survey_wait.js 24; none is aboard here)
+function tailHoldClear(r) { return holdClearAt(r[r.length - 1]); }
 
 // ⚠⚠ THE ROUTER, STUBBED AND STEERABLE. resumeHeldSurvey certifies the run-in with the same
 // planner Go-To flies (2026-09-23): after an ESCAPE she is not beside her line any more, and

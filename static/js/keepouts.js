@@ -1119,6 +1119,10 @@ export function deepKeepouts(frame, feats, opts = {}) {
   const enf = enforcement(opts.enforce);
   const floor = (opts.depthRange && opts.depthRange.min) ?? o.minDepthM;
   const marginM = opts.marginM ?? DEEP_MARGIN_M, berth = opts.berthM ?? DEEP_BERTH_M;
+  // (`opts.bandMaxM`, 2026-11-20, the survey window's wait point: a band wider than this is left to its soundings - right
+  //  for a route that passes through, and wrong for a place to lie for hours on a falling tide, where a 0-18.2 m band
+  //  with no sounding near is water charted from 0 m. Infinity counts every band by its shallowest depth.)
+  const bandMax = opts.bandMaxM ?? DEEP_BAND_MAX_M;
   const deepTo = floor + marginM;
   const polys = [], points = [], snd = [];
   const counts = { areas: 0, rocks: 0, soundings: 0 };
@@ -1129,7 +1133,7 @@ export function deepKeepouts(frame, feats, opts = {}) {
       if (!enf.depth || depthExcluded(f, { min: floor, max: 0 }, o.waterOffsetM)) continue;   // a keep-out already
       const d1 = f.props?.DRVAL1, d2 = f.props?.DRVAL2, d = d1 ?? d2;
       if (d == null || d + o.waterOffsetM >= deepTo) continue;
-      if (d1 != null && d2 != null && d2 - d1 > DEEP_BAND_MAX_M) continue;   // a coarse band: its soundings say (above)
+      if (d1 != null && d2 != null && d2 - d1 > bandMax) continue;   // a coarse band: its soundings say (above)
       const kind = 'water less than ' + marginM + ' m over her floor';
       eachRing(g, (rg) => {
         const ring = rg.map((c) => frame.toEN({ lon: c[0], lat: c[1] }));

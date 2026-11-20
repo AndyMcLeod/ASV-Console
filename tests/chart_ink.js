@@ -933,7 +933,7 @@ check("20e. ... and a SMALL comb is not a footprint either — a keep-out area h
                 // on - with their comment, so the gap is wider; nothing between them is a routing)
                 // (2026-11-16: both carry the Upload's reads as one, `read: rd` - commandReads, tests/unread_water.js 3c)
                 // (2026-11-19, the survey window: and the hold's wait asked between the yield and the routing -
-                // holdWaitRisk, a water read and no routing, which the next line still pins - so the gap is wider again)
+                // waitPlan since phase 4 (was holdWaitRisk): water reads, a chart read and a search, no routing - so the gap is wider again)
                 && /await ensureNogoCovers\(\[\{lat:asv\.lat, lon:asv\.lon\}, \.\.\.wps\], null, \{plan: true, read: rd\}\);[\s\S]{0,400}?await inkYield\(\);[\s\S]{0,3200}?let lk = null;\s*\n\s*const legsAt = [^\n]*\n\s*const plan = await planInsideChart\(\[\{lat:asv\.lat, lon:asv\.lon\}, \.\.\.wps\], \{plan: true, read: rd\}, \(\) => \{\s*\n\s*const start = /.test(up)
                 && !/routePlan\(|planOffThread\(/.test(up.slice(up.indexOf("await inkYield();"), up.indexOf("const plan = await planInsideChart("))),
           "scanChartInk, ensureChartInk and doUpload in static/asv.html");

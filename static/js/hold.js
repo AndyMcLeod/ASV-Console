@@ -112,7 +112,12 @@ export function snapCapM(buf) { return Math.max(150, buf * 20); }
  * @param {number} buf    the operator's buffer
  * @param {number} holdR  the hold radius - the disc that must ALSO be clear around the result
  * @param {object} opts   `need` (required clear water, default holdMarginM(0)), `setE`/`setN`
- *                        (the set as a vector, m/s, for the down-set preference)
+ *                        (the set as a vector, m/s, for the down-set preference); `capM`, `stepM`,
+ *                        `degStep` (the search's reach and grain); `accept(q)` - a further test a
+ *                        point must pass, the requested one included (2026-11-20, the survey
+ *                        window's wait point: the model holds NOTHING outside the water the chart
+ *                        was read over, which every test here reads as clear, so a search that
+ *                        reaches further than a hold's 150 m must be told which water is read)
  * @returns {{e,n,moved,brg,clr}|null}  `moved` 0 when `p` itself is fine; null when nothing
  *          within the cap satisfies the margin - a refusal, not "use the point anyway".
  */
@@ -122,7 +127,8 @@ export function snapClearRadial(p, ko, buf, holdR = HOLD_RADIUS_MIN_M, opts = {}
   const need = opts.need ?? holdMarginM(0);
   // The margin is measured as clear water round the point (clearance less the buffer), the
   // same quantity the vessel is later told to re-approach within - one definition, not two.
-  const ok = (q) => !blocked(q, ko, margin) && clearanceM(q, ko) - buf >= need;
+  const accept = typeof opts.accept === "function" ? opts.accept : null;
+  const ok = (q) => !blocked(q, ko, margin) && clearanceM(q, ko) - buf >= need && (!accept || !!accept(q));
   if (ok(p)) return { e: p.e, n: p.n, moved: 0, brg: null, clr: clearanceM(p, ko) };
   const step = opts.stepM ?? Math.max(2, buf);
   const cap = opts.capM ?? snapCapM(buf);

@@ -267,10 +267,16 @@ export function buildKeepouts(ref, enf, dr, feats, waterOffsetM){
 // DEEP WATER FIRST'S MARGIN LAYER (keepouts.js deepKeepouts, 2026-10-12) for the model `ko` built at `enf` / `dr` and the
 // water `waterOffsetM` (the live level when not given), through the same seam as buildKeepouts: the page hangs it on the
 // model as `ko.margin` (rebuildNogo, nogoModelAt), and only the planner arms it (passage.js deepFirst).
-export function buildMargin(ref, enf, dr, feats, waterOffsetM, ko){
+// (`marginM`, 2026-11-20: the layer at another margin than DEEP_MARGIN_M - the survey window's wait point asks it at 0,
+//  where a depth band counts by its SHALLOWEST depth against the floor itself. `bandMaxM`: the widest band counted as
+//  margin water by its shallowest depth (keepouts.js deepKeepouts) - the wait point passes Infinity: every band.
+//  Neither given: the layer as it always was.)
+export function buildMargin(ref, enf, dr, feats, waterOffsetM, ko, marginM, bandMaxM){
   const o = koOpts();
   if(Number.isFinite(waterOffsetM)) o.waterOffsetM = waterOffsetM;
-  return coreDeepKeepouts(ref, feats || sea.enc.features, {...o, depthRange: dr, enforce: enf, floorPolys: ko ? ko.polys : undefined});
+  return coreDeepKeepouts(ref, feats || sea.enc.features, {...o, depthRange: dr, enforce: enf, floorPolys: ko ? ko.polys : undefined,
+                                                         ...(Number.isFinite(marginM) ? {marginM} : {}),
+                                                         ...(bandMaxM != null && !Number.isNaN(bandMaxM) ? {bandMaxM} : {})});
 }
 // --- app-level ENC NOGO: build once, every behavior routes clear of it ---- //
 //

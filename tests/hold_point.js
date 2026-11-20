@@ -416,7 +416,12 @@ check("5. holdClearM is the water round a point LESS the buffer: 12 m off the fa
         + "and never under a moving home - and is not stood down while an end-of-plan RTH is pending",
         () => /st\.hold_wants_route/.test(re) && /s\.armed && !s\.estop/.test(re)
               && /s\.home_following/.test(re) && /if\(!supervising\(\)\) return;/.test(re) && !/rthPending\(\)/.test(re)
-              && /const body = \{route: plan\.route, hold_clear_m: plan\.holdClear\};/.test(re)
+              // (2026-11-20, the survey window phase 4: a WAIT POINT's way back carries the lesser of the route's disc and
+              //  the disc the point was found with at the wait's low - every other hold's is the route's own, as it was)
+              && /const body = \{route: plan\.route, hold_clear_m: wr && wr\.to && Number\.isFinite\(plan\.holdClear\) \? Math\.min\(plan\.holdClear, wr\.holdClear\) : plan\.holdClear\};/.test(re)
+              // (the phase 4 review: stood down only between a Continue's TAKEN upload and its Start, and not for long -
+              //  never by the button's own latch, which is up through every question it asks)
+              && /if\(continueStartPending\(\)\) return;/.test(re) && !/continueHoldBusy/.test(re)
               && /routeCmd\("\/api\/cmd\/reapproach", body\)/.test(re)
               && /planNogoRoute\(/.test(re),
         "a re-approach sent to a boat the operator is driving is a control the console was never given");

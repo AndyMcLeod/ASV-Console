@@ -123,6 +123,7 @@ function world(o) {
     "const applyCmdState = () => {}, canCommand = () => w.canCommand, supervising = () => true, setTip = () => {};",
     "const guiConfirm = async () => true, ensureNogoCovers = async () => true;",
     "const holdOpts = () => ({}), patClipBufM = () => 5, holdClearAt = () => 7, tailEndsAtHold = () => false, routeTooLong = () => false;",
+    "const tailHoldClear = (r) => holdClearAt(r[r.length - 1]);",
     "const planNogoRoute = (from, to) => w.plan(from, to);",
     "const planInsideChart = async (pts, opts, plan) => plan();",
     // THE ROUTE WORKER (2026-10-12) is not here: each search runs on this thread as it always did (tests/route_worker.js)
@@ -379,6 +380,8 @@ const homeAt = (o) => world(Object.assign({ asv: LL(-200, -100),
       "const holdOpts = () => ({}), patClipBufM = () => 5;",
       "const holdClearAt = (ll) => { w.clearAsk.push(ll); return 7; };",
       "const tailEndsAtHold = () => w.tailHold === true;",
+      // (the disc a tail ships with is asked of its END - tailHoldClear's own rule is tests/survey_wait.js 24)
+      "const tailHoldClear = (r) => holdClearAt(r[r.length - 1]);",
       "const routeTooLong = (n) => { if (w.tooLong) { w.notes.push('too long ' + n); return true; } return false; };",
       // the guard's bank (review C1): the held rung reads the SYNCHRONOUS marker beside the derived offer
       "let guardHeld = w.guardHeld || null;",

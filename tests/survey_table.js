@@ -839,23 +839,95 @@ function commit(w, lines, anchors) {
                          && !/svinfo">⏸/.test(rows[0]) && /svinfo">⏸/.test(rows[1]); },
           () => (h.match(/svinfo">[^<]*/g) || []).join(" | "));
     // Continue: only on the held survey's row, and only open when she is holding
-    w.pendingHold = { sv: "S2", at: 1 };
-    v.env.S.run = "running"; v.env.S.status = { holding: false }; w.renderSurveyTable();
+    // (phase 4: where she is and whether it is open is waitState's one answer - the split's own run is a survey that
+    //  ends in a loiter under End of plan RTH; the words name where she is, not "its start" of any hold anywhere)
+    w.pendingHold = { sv: "S2", at: 1, mode: "loiter" };
+    Object.assign(v.env.S, { run: "running", behavior: "survey", run_completion: "loiter", completion: "rth" });
+    v.env.S.status = { holding: false }; w.renderSurveyTable();
     const enRoute = v.env.els["#sv_table"].innerHTML;
     v.env.S.status = { holding: true }; w.renderSurveyTable();
     const there = v.env.els["#sv_table"].innerHTML;
-    check("31. Continue appears on the HELD survey's row only - closed while she is on her way, open (\"Continue S2 ▶\") "
-          + "once she holds there",
-          () => /id="svr1_cont"[^>]* disabled[^>]*>Holding at its start - on her way</.test(enRoute) && !/svr0_cont/.test(enRoute)
-                && /id="svr1_cont"(?![^>]* disabled)[^>]*>Continue S2 ▶</.test(there),
-          () => (there.match(/svr1_cont[^<]*/) || [""])[0]);
+    // ... a hold that is NOT the split's (a Go-To's end, an escape): open as before, and said as what it is
+    v.env.S.behavior = "goto"; w.renderSurveyTable();
+    const elsewhere = v.env.els["#sv_table"].innerHTML;
+    v.env.S.behavior = "survey"; w.renderSurveyTable();
+    check("31. Continue appears on the HELD survey's row only - closed while she is on her way (said so), open "
+          + "(\"Continue S2 ▶\") once she holds where she waits - and a hold somewhere else is said as that, not as "
+          + "holding where she waits",
+          () => /id="svr1_cont"[^>]* disabled[^>]*>Continue closed: On her way</.test(enRoute) && !/svr0_cont/.test(enRoute)
+                && /id="svr1_cont"(?![^>]* disabled)[^>]*title="CONTINUE: upload the plan from this survey on and start it - she is holding where she waits for it\."[^>]*>Continue S2 ▶</.test(there)
+                && /id="svr1_cont"(?![^>]* disabled)[^>]*she is holding \(goto\), not where she was to wait\."[^>]*>Continue S2 ▶</.test(elsewhere),
+          () => (there.match(/svr1_cont[^<]*/) || [""])[0] + " || " + (enRoute.match(/svr1_cont[^<]*<?[^<]*/) || [""])[0].slice(-60));
+    // 31b. THE COUNTDOWN'S LINE (phase 4): a survey with a start that waits - held, or the one aboard is waiting for -
+    // has a line of its own for it, written in place each frame; one she has BEGUN has none unless she is waiting for
+    // it (the lab, 2026-11-20: released early, S1's row counted down to its start as she flew it)
+    {
+      const cdOf = () => { w.renderSurveyTable(); return /id="svr1_cd"/.test(v.env.els["#sv_table"].innerHTML); };
+      const hold0 = w.pendingHold;
+      w.pendingHold = null;
+      const noStart = cdOf();
+      w.mission.surveys[1].settings = { ...(w.mission.surveys[1].settings || {}), start_t: Date.now() / 1000 + 7200 };
+      w.pendingHold = { sv: "S1", at: 2, mode: "loiter" };          // (a change of key: the table is built again)
+      const held = cdOf();
+      const L2 = w.mission.lines.find((l) => l.sv === "S2"), k2 = w.mission.lines.indexOf(L2);
+      const along = (L, m) => { const t = m / G.distTo(L.a, L.b);
+        return { lat: L.a.lat + (L.b.lat - L.a.lat) * t, lon: L.a.lon + (L.b.lon - L.a.lon) * t }; };
+      for (let m = 0; m <= 40; m += 2) { w.at(k2, along(L2, m)); w.trackLineCoverage(); }
+      w.pendingHold = null;
+      const begun = w.surveyProgress("S2").any === true && cdOf();
+      w.pendingHold = { sv: "S2", at: 3, mode: "loiter" };
+      const waitingAgain = cdOf();
+      check("31b. the countdown has a line of its own on a held survey with a start, and none with no start; once she "
+            + "has BEGUN the survey it is gone - its row no longer counts down to a start she flew early - unless the "
+            + "plan aboard is waiting for it",
+            () => noStart === false && held === true && begun === false && waitingAgain === true,
+            () => JSON.stringify({ noStart, held, begun, waitingAgain, any: w.surveyProgress("S2").any }));
+      delete w.mission.surveys[1].settings.start_t;
+      w.pendingHold = hold0; w.renderSurveyTable();
+    }
+    // 31c. (the phase 4 review) THE WAIT BUTTON SAYS WHEN HOME IS NOT IN EFFECT - shown ON with the hold off, Upload
+    // flew it straight through and nothing said so - and turning the hold off says it does not wait at home either;
+    // and THE ROW'S CONTINUE IS WRITTEN IN PLACE, so a name box left in focus does not keep it closed and unflashing
+    {
+      const s2 = w.mission.surveys[1], tb = v.env.els["#sv_table"], hold0 = w.pendingHold;
+      s2.settings = { ...(s2.settings || {}), start_t: Date.now() / 1000 + 7200 }; s2.wait = "home"; w.pendingHold = null;
+      w.renderSurveyTable(); const homeOn = (tb.innerHTML.match(/<button[^>]*id="svr1_wait"[^>]*>[^<]*</) || [""])[0];
+      w.toggleSurveyHold("S2"); const offNote = v.env.log.notes.slice(-1)[0] || "";
+      w.renderSurveyTable(); const homeOff = (tb.innerHTML.match(/<button[^>]*id="svr1_wait"[^>]*>[^<]*</) || [""])[0];
+      w.toggleSurveyHold("S2"); delete s2.wait;
+      // (the loiter's tip promises channels kept out only while Shipping channels is checked - the search keeps none else)
+      w.renderSurveyTable(); const loiterTip = (tb.innerHTML.match(/<button[^>]*id="svr1_wait"[^>]*>[^<]*</) || [""])[0];
+      delete s2.settings.start_t;
+      w.pendingHold = hold0; w.renderSurveyTable();
+      const flashes = new Set(), btn = { disabled: false, textContent: "Continue S2 ▶", title: "",
+                                         classList: { toggle: (c, on) => { if (on) flashes.add(c); else flashes.delete(c); } } };
+      v.env.els["#svr1_cont"] = btn;
+      const writes = tb.writes;
+      v.env.document.activeElement = { tagName: "INPUT", inside: "sv_table" };
+      v.env.S.status = { holding: false }; w.renderSurveyTable();
+      const closedInPlace = tb.writes === writes && btn.disabled === true && btn.textContent === "Continue closed: On her way"
+                            && /^Continue is closed: she is on her way to where she waits/.test(btn.title);
+      v.env.S.status = { holding: true }; w.renderSurveyTable();
+      const openInPlace = tb.writes === writes && btn.disabled === false && btn.textContent === "Continue S2 ▶" && !flashes.has("flash");
+      v.env.document.activeElement = null; delete v.env.els["#svr1_cont"]; w.renderSurveyTable();
+      check("31c. Wait: home shows ON only with Hold on and a start ahead - with the hold off it is 'Wait: home (off)', its "
+            + "tip saying it is not in effect and why, and turning the hold off says it does not wait at home either; and "
+            + "the waiting row's Continue is written IN PLACE - closed and opened again with a name box in focus and the "
+            + "table not rebuilt",
+            () => />Wait: home</.test(homeOn) && /title="WAIT AT HOME is ON/.test(homeOn)
+                  && />Wait: home \(off\)</.test(homeOff) && /title="WAIT AT HOME is set but NOT IN EFFECT: it needs Hold on and a start ahead, and Hold is off - she flies it as she gets there\. Click for LOITER\."/.test(homeOff)
+                  && /^Hold before S2 is off - so it does not wait at home either: she flies it as she gets there\.$/.test(offNote)
+                  && />Wait: loiter</.test(loiterTip) && /out of navigation channels while Shipping channels is checked\./.test(loiterTip)
+                  && closedInPlace && openInPlace,
+            () => JSON.stringify({ homeOn: homeOn.slice(-40), homeOff: homeOff.slice(-60), offNote, closedInPlace, openInPlace, btn: [btn.disabled, btn.textContent] }));
+    }
     // the gates
     v.env.S.status = { holding: false }; await w.continueHold("S2");
-    const notThere = v.env.log.uploads.length === 0 && /not holding at its start yet/.test(v.env.log.notes.slice(-1)[0] || "");
+    const notThere = v.env.log.uploads.length === 0 && /she is on her way to where she waits - Continue opens when she is holding there/.test(v.env.log.notes.slice(-1)[0] || "");
     v.env.S.run = "paused"; v.env.S.status = { holding: true }; await w.continueHold("S2");
     const paused = v.env.log.uploads.length === 0 && /press Start/.test(v.env.log.notes.slice(-1)[0] || "");
     v.env.S.run = "running"; await w.continueHold("S1");
-    const wrong = v.env.log.uploads.length === 0 && /not waiting at S1/.test(v.env.log.notes.slice(-1)[0] || "");
+    const wrong = v.env.log.uploads.length === 0 && /not waiting for S1/.test(v.env.log.notes.slice(-1)[0] || "");
     check("32. Continue sends nothing unless THIS survey's hold is the one aboard and she is holding there - not on the "
           + "way, not paused (Start would resume the old part)",
           () => notThere && paused && wrong, () => JSON.stringify(v.env.log.notes.slice(-3)));
@@ -971,6 +1043,14 @@ function buildWorld(env) {
     + "let runUnsafe = [];\n" + decl(/^const _eqLL=[^;]*;/m) + "\n" + decl(/^let unblockDone = [^;]*;/m) + "\n"
     // the clearing itself is tests/auto_clear.js's: here only what Add to plan tells it (stop; this survey was Updated)
     + "const stopClearingFor = () => {};\n"
+    // THE WAIT (the survey window phase 4): the row's Wait button, its countdown, and Continue's one answer. The run's
+    // kind and End of plan ride env.S; what is aboard is never short here (the fuel question: tests/survey_wait.js)
+    + decl(/^let continueHoldBusy = [^;]*;/m) + "\n" + decl(/^const CHAINABLE_BEHAVIORS = [^;]*;/m) + "\n"
+    + decl(/^let continueStagedAt = [^;]*;/m) + "\n"
+    + "const waitFuelShort = () => env.fuelShort || null; const fuelFmt = (m, x) => String(x); const logClient = () => {};\n"
+    + "const roleSpeedMS = () => 2.0; const setMsNow = () => 0;\n" + decl(/^const WAIT_SET_FLOOR_MS = [^;]*;/m) + "\n"
+    // (a staged upload's record, kept beside the hold's: none here but what a check sets)
+    + "let pendingNext = null; const setPendingNext = (v) => { pendingNext = v; };\n"
     + ["rocEsc", "depthRange", "boundaryActive", "lineSetKey", "linePartContinues", "drawnLines", "lineNo", "lineCount",
        "committedPatternInfo", "surveySettingsNow", "applySurveySettings", "surveyById", "surveyFigures",
        "renderSurveyTable", "cardSurveyId", "surveysChanged", "editSurvey", "deleteSurvey", "moveSurveyRow",
@@ -979,6 +1059,9 @@ function buildWorld(env) {
        "lineCovFrame", "lineGeoKey", "trackLineCoverage", "saveLineCov", "lineDoneFrac", "surveyProgress",
        "surveyTideMoved", "goToSurvey", "uploadFromSurvey", "repunchSurvey", "withCardKept", "punchAll",
        "reverseSurvey", "clearSurveyProgress", "holdWaiting", "toggleSurveyHold", "continueHold",
+       // phase 4, the wait
+       "chainableRun", "heldSplitRun", "onSplitRun", "toggleSurveyWait", "waitState", "waitLeaveT", "waitDur", "waitCountdownSay",
+       "waitCountdownWrite", "waitContFace", "waitFastMS", "continueAsk",
        "surveysUploadBlocked", "noteSurveyUpdated",
        // the survey window (2026-11-19)
        "surveyStartT", "surveyDurH", "surgeWhen", "commitWaitsForStart", "showSurveyWindow", "localInputOf",

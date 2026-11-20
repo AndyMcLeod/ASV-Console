@@ -204,6 +204,8 @@ console.log("The passage, sailed:");
       "let S = w.S, asv = w.asv, mission = w.mission, passage = w.passage, runRoute = w.runRoute, runUnsafe = [], planIntent = w.planIntent, planGen = w.planGen, cmdGen = 0, escapeGen = 0, cmdUnstamped = 0, cmdPressedMax = 0, cmdKind = null, sentGen = 0, sentKind = null;",
       "const window = {get _wpIndex(){ return w.wpIndex; }};",
       "let routeCmdsInFlight = 0, escapeThrottle = !w.quiet, guardActedAt = 0, guardEdgeAt = 0, aisAroundBusy = false, heldResuming = false;",
+      // (the survey window phase 4: no Continue from a wait is in flight here - tests/survey_wait.js)
+      "let continueHoldBusy = false; const continueStartPending = () => false;",
       // (the guard's level and when it last commanded an escape - rthChainRetry asks them after an escape's withdrawal, 16i)
       "let guardLevel = 'clear', guardEscapeAt = 0;",
       "let lockTransit = null; const lockEnd = () => {};",     // a passage ends a lock transit before its sections plan (2026-10-18): none here
@@ -254,7 +256,7 @@ console.log("The passage, sailed:");
       "let rthChainFailed = false; const NOGO_RADIUS_M = w.nogoR || 5000, homeSections = w.C.homeSections;",
       // the end of the mission (16): the card's prediction and the chain's condition, both the page's own, and what an
       // RTH in range plans through (its route straight home here: the planner is not what is judged)
-      decl("CHAINABLE_BEHAVIORS"), grab("chainableRun"), "let pendingHold = null;", grab("heldSplitRun"),
+      decl("CHAINABLE_BEHAVIORS"), grab("chainableRun"), "let pendingHold = null;", grab("heldSplitRun"), grab("onSplitRun"),
       grab("runCompletion"), grab("runHolds"), grab("rthPending"),
       "const chainFires = (s, st, seqMoved, rthChained) => (" + CHAIN[1] + ");",
       "const planNogoRoute = (from, to) => { w.nogoAsked = (w.nogoAsked || 0) + 1; return {route: [from, to], holdClear: 30}; };",

@@ -254,8 +254,11 @@ check("8. Upload routes mission.waypoints IN ORDER from the fix, laning only leg
       + "each later survey (2026-10-02) unless the whole route is a transit, and sends positions only",
       // (2026-10-02, phase 3a: or the plan FROM a survey, the table's Upload from here - waypointsFrom)
       // (3b: and cut at the first held survey's start - splitAtHold; the rest goes on Continue)
+      // (2026-11-20, the survey window phase 4: a wait at HOME sends its own part, ending before the survey; a LOITER's
+      //  last waypoint is moved to the wait point Upload found - still in order, still positions only: tests/survey_wait.js)
       () => /const wpsAll = fromSv \? waypointsFrom\(mission, fromSv\) : mission\.waypoints \|\| \[\];/.test(upload)
-            && /const wps = hold \? hold\.part : wpsAll;/.test(upload)
+            && /let wps = home \? home\.part : hold \? hold\.part : wpsAll;/.test(upload)
+            && /if\(wait && wait\.to\)\{ wps = waitPart\(hold, wait\);/.test(upload)
             // at the guard's standoff (2026-09-26); each later survey's approach (2026-10-02); inside the water the chart
             // was read over, read again and re-planned when the route runs past it (planInsideChart, 2026-10-03)
             // (in the route worker since 2026-10-12, and on the page beside it if it cannot answer: tests/route_worker.js 2)

@@ -614,7 +614,10 @@ const goto = (from, to, o) => ({ op: "nogo", args: { from, to, opts: o } });
   const upS = grab("doUpload"), dryS = grab("uploadDryRun"), jrS = grab("judgeRedHops"), potS = grab("planOffThread");
   const upPlan = upS.slice(upS.indexOf("await planInsideChart("), upS.indexOf('}, "Upload");'));
   const wire13b = {
-    uploadInside: /const legsAt = \(\) => \{ lk = surveyLegKos\(wps\); return lk \? \{svKo: lk\.svKo\} : undefined; \};/.test(upS)
+    // (2026-11-20, the survey window phase 4: a survey released from FAR is routed at its cut, which the read over its
+    //  own window held - uploadTideRisk's `far`; every other survey as before: tests/survey_wait.js 16)
+    uploadInside: /const legsAt = \(\) => \{ lk = surveyLegKos\(wps, farCard\); return lk \? \{svKo: lk\.svKo\} : undefined; \};/.test(upS)
+                  && /const farCard = farSv \? \{sv: farSv, m: surveyCutM\(surveyById\(farSv\)\), waits: true\} : undefined;/.test(upS)
                   && /const ropts = legsAt\(\);/.test(upPlan),
     uploadBoth: /planOffThread\(\{op: "route", args: \{[^}]*transitAt: at, ropts\}\}/.test(upPlan) && /\(\) => routePlan\(start, wps, false, std, at, legsAt\(\)\)\)/.test(upPlan),
     uploadReasons: /const reasons=planLegReasons\(plan, lk\);/.test(upS) && /\+ planLegLevelsSay\(plan, lk\)\);/.test(upS) && !/legReasons\(plan\.unroutable\)/.test(upS),

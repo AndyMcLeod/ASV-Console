@@ -404,7 +404,11 @@ export function holdTarget(to, opts){
   // "the point as given was fine" - so a berth in open water is still left exactly where the
   // operator put it (tests/hold_point.js 6e and 8 hold that half).
   {
-    const sn = snapClearRadial(en, ko, buf, holdR, {need, setE, setN});
+    // (`opts.capM` / `opts.accept`, 2026-11-20: the survey window's wait point is searched further than a hold's own
+    //  cap, and only in water the chart was read over - hold.js snapClearRadial. Neither given: as it always was.)
+    const cap = opts && Number.isFinite(opts.capM) && opts.capM > 0 ? opts.capM : snapCapM(buf);
+    const sn = snapClearRadial(en, ko, buf, holdR, {need, setE, setN, capM: cap,
+                               ...(opts && typeof opts.accept === "function" ? {accept: opts.accept} : {})});
     // ⚠ NAME THE CAUSE THE CODE ACTUALLY MEASURED. With the gate gone, a refusal can now
     // arrive at a target whose MARGIN is satisfied and whose hold DISC is not - and telling
     // that operator "under N m of clear water" would be asserting something the number in
@@ -414,7 +418,7 @@ export function holdTarget(to, opts){
                               ? "the target has under "+need.toFixed(0)+" m of clear water"
                               : "the target has room for the boat but not for the "
                                 +holdR.toFixed(0)+" m it may wander while holding")
-                          +" and nowhere within "+snapCapM(buf).toFixed(0)
+                          +" and nowhere within "+cap.toFixed(0)
                           +" m of it holds a boat clear",
                     reason:{mode:"target", info:bi, at:to}};
     if(sn.moved > 0){
@@ -489,6 +493,9 @@ export function insideBoxM(p, box){
 // side: spawned in the unread tile round the Canaveral lock, the Go-To ran 6.6 km through it, over 856 m of land the
 // model never had. Now every square counts, and the route's points within `edgeM` of where she is are not judged: her
 // short way out of where she stands. A boat in unread water is refused onward until the chart there is read.
+// `opts.all` (2026-11-20, the survey window's wait point) judges EVERY point, the first too: a place to hold her for
+// hours is not her way out of anywhere, and a list of ONE point is its own first - excused whole, so a search asking
+// point by point was never refused a square (tests/survey_wait.js 5).
 export function beyondChart(pts, box, edgeM = CHART_EDGE_M, unread = null, opts = {}){
   if(!box || !pts || !pts.length) return null;
   let near = null, out = null, outM = 0;
@@ -520,7 +527,7 @@ export function unreadAlong(pts, unread, edgeM = CHART_EDGE_M, opts = {}){
   const p0 = pts[0], k0 = M_PER_DEG_LAT * Math.cos(p0.lat * Math.PI / 180);
   const herWayOut = (p) => Math.hypot((p.lat - p0.lat) * M_PER_DEG_LAT, (p.lon - p0.lon) * k0) <= edgeM;
   const judge = (p) => {
-    if(herWayOut(p)) return;                            // her own first edgeM, wherever she stands (A2)
+    if(!opts.all && herWayOut(p)) return;               // her own first edgeM, wherever she stands (A2)
     for(const r of near){
       const d = insideBoxM(p, r);                       // >0 inside the square, <0 outside: its depth, or distance, in m
       if(!(d > -edgeM)) continue;

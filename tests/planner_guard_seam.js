@@ -270,7 +270,14 @@ check("7. lines, leads and turns take the standoff; hops and transits try it fir
             // the contacts, as the disc it answers now counts them (holdClearAt) - and it is NOT a fly-through: its
             // target is the hold point she is going back to hold in, so a berth's margin is the right one
             // (and since 2026-10-03 it says it is a MANEUVER, so the charted lane and the buoys leave it alone)
-            && /planNogoRoute\(\{lat:asv\.lat,lon:asv\.lon\}, \{lat:st\.hold\.lat, lon:st\.hold\.lon\},\s*\{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\), ko: koWithAis\(\) \|\| nogo\.ko, maneuver: true\}\)/.test(H)
+            // (and since 2026-11-20, the survey window phase 4: to a WAIT POINT found again by waitPointAt it IS a
+            //  fly-through - that point was searched with its own disc, at the wait's low, and a berth's search would
+            //  move it off that answer; the hold point itself, and the fallback when the wait point cannot be flown
+            //  to, are not. The same model and the same standoff either way: `leg`)
+            && /const kc = koWithAis\(\) \|\| nogo\.ko;/.test(H)
+            && /const leg = \(to, fly\) => planNogoRoute\(\{lat:asv\.lat,lon:asv\.lon\}, to,\s*\{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\), ko: kc, maneuver: true, \.\.\.\(fly \? \{flyThrough: true\} : \{\}\)\}\);/.test(H)
+            && /let plan = leg\(wr && wr\.to \? wr\.to : \{lat:st\.hold\.lat, lon:st\.hold\.lon\}, !!\(wr && wr\.to\)\);/.test(H)
+            && /plan = leg\(\{lat:st\.hold\.lat, lon:st\.hold\.lon\}, false\);/.test(H)
             // the EIGHTH (2026-09-29): a held Go-To / RTH / transit's way in (resumeHeldLeg) - the leg's way round and
             // its return ride it - with the contacts in the model and a fly-through target, as the held survey's is.
             // ⚠⚠ TWO OF THOSE FOUR SITES NOW CARRY THE STANDOFF THE WALK USED, NOT A SECOND patClipBufM() CALL

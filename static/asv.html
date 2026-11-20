@@ -596,6 +596,10 @@
         #sv_table .svacts{display:flex;flex-wrap:wrap;gap:2px;width:100%;}
         #sv_table .svacts button{width:auto;padding:0 4px;font-size:8.5px;}
         #sv_table .svcont{width:100%;height:18px;font-size:9px;color:#39c0ff;border-color:#2b5a74;}
+        /* (phase 4) the waiting survey's Continue from its leave time on, and its countdown on a line of its own */
+        #sv_table .svcont.flash{animation:cbtnFlash 1s steps(1,end) infinite;font-weight:700;}
+        @media (prefers-reduced-motion: reduce){ #sv_table .svcont.flash{animation:none;background:var(--warn);color:#160d02;border-color:var(--warn);} }
+        #sv_table .svwait{flex:1 1 100%;}
         #sv_head{display:flex;align-items:center;gap:4px;}
         #sv_head button{margin-left:auto;width:auto;height:16px;padding:0 5px;font-size:8.5px;}
       </style>
@@ -679,12 +683,12 @@
       <!-- THE SURVEY WINDOW (2026-11-19, Andy: "During survey planning, institute a start time and duration
            functionality. Using this feature, examine tide level at start and total change through the duration of
            the survey"). START: when she begins it. Blank = as soon as she gets there. A start later than she can be
-           there has Add to plan turn its HOLD on (the boat has no clock to wait on: she holds at its start until
-           Continue). DURATION: its survey time, hours. The window its water is read over runs from the start for the
+           there has Add to plan turn its HOLD on (the boat has no clock to wait on: she waits near its start - or at
+           home, its row's Wait, phase 4 - until Continue). DURATION: its survey time, hours. The window its water is read over runs from the start for the
            longer of the duration and its own flight. Punch Out cuts at the lowest water predicted over that window
            (flightWindow). The strip draws the water through it (tideStripRefresh, /api/water/series). -->
       <div class="prow punchsep"><label>Start</label>
-        <input type="datetime-local" id="sp_start" style="width:168px;min-width:0" title="START TIME - when she is to begin this survey, in this computer's time. Blank = as soon as she gets there. Punch Out then cuts its lines at the lowest water predicted from this time through its duration, not from now. A start later than she can be there turns the survey's HOLD on when it is added to the plan: Upload sends her as far as its start, where she holds until you press Continue on its row. Nothing releases her by itself."/></div>
+        <input type="datetime-local" id="sp_start" style="width:168px;min-width:0" title="START TIME - when she is to begin this survey, in this computer's time. Blank = as soon as she gets there. Punch Out then cuts its lines at the lowest water predicted from this time through its duration, not from now. A start later than she can be there turns the survey's HOLD on when it is added to the plan: Upload sends her to WAIT for it - at water near its start that holds her at the lowest water of the wait, or at home (its row's Wait button) - until you press Continue on its row. Its row counts the wait down and says when it is time. Nothing releases her by itself."/></div>
       <div class="prow"><label>Duration h</label>
         <input type="number" id="sp_dur" value="" min="0.25" max="24" step="0.25" placeholder="flight" style="width:58px" title="DURATION - the hours this survey is to take, its survey time only (not the transit to it). Blank = its own flight, at the survey speed. The water is read over the longer of the two, so a duration shorter than the flight never shortens the window. At most 24 h: the predictions are read no further ahead."/></div>
       <div class="prow" style="gap:4px"><div id="sp_tide" style="flex:1;min-width:0;height:34px"></div>
@@ -1278,6 +1282,7 @@ import { MAX_HALF_M, SKEW_LIMIT_DEG, arcPts, cornerSlowPlan, minTurnRadiusM, sho
 import { CHART_EDGE_M, LANE_FRAC, SEG_LEN_M, beyondChart, beyondChartSay, buoyChannelLane, buoyageNote, channelLaneRoute,
          channelSpanKeepouts, channelTurnKeepouts, deepNote, deepWhy, dilateGrid, gateLegClear, marginRunsAfter, offshoreNote,
          holdTarget, junctionKnot, legPath, narrowChannelLane, passageJoinVia, planNogoRoute, pruneJunctionKnots,
+         armDeep, passageKo,
          pruneStitch, rasterKeepouts, regionOrder,
          routeAround, routeAroundSeg, routePlan, smoothTrack, stampSeg, chartFailedRefusal } from "/static/js/passage.js";
 import { LOCK, findLocks, lockOnTheWay, lockWay, lockLeg, insideLock, waivedGate, gateMiddle, featureKey as lockFeatureKey } from "/static/js/locks.js";
@@ -7089,6 +7094,70 @@ let patPlanBSay = "";               // what the start search found, on the card'
 const PENDING_HOLD_KEY = "asv_pending_hold_v1";
 let pendingHold = (() => { const v = lsGet(PENDING_HOLD_KEY, null); return (v && typeof v.sv === "string") ? v : null; })();
 function setPendingHold(v){ pendingHold = v; lsSet(PENDING_HOLD_KEY, v); }
+// ⚠ THE RECORD NAMES THE RUN SHE IS ON (the survey window phase 4, 2026-11-20; found by the design's review, read from
+// the code). An upload taken while she HOLDS is only STAGED - she stays on the run she was on until Start - and the
+// record was rewritten at the upload's reply all the same: Continue past the LAST hold wrote "none" while she still
+// held on the split's run (behavior survey, run_completion loiter), heldSplitRun went false, and End of plan RTH could
+// chain her home over the survey just staged before Start's own frame. So a STAGED upload leaves pendingHold as it is
+// and banks what it would have written here - {rec, n: its route's length, seq: the run she was on, after: the
+// reply's own time, release} - and the frame that shows THAT plan started applies it (holdNextTick). A slot taken by
+// anything else (a re-approach, a Go-To, an RTH) drops it: the record stays the run's she is still on. An upload
+// answered NOT staged writes at the reply, as it always did. Its own key, so a refresh between Upload and Start keeps it.
+const PENDING_NEXT_KEY = "asv_pending_next_v1";
+let pendingNext = (() => { const v = lsGet(PENDING_NEXT_KEY, null); return (v && Number.isFinite(v.n)) ? v : null; })();
+function setPendingNext(v){ pendingNext = v; lsSet(PENDING_NEXT_KEY, v); }
+/** An upload the vessel TOOK: `rec` is what its split records (holdRec) or null, `r` its reply, `n` its route's length. */
+function holdRecordTaken(rec, r, n, release){
+  const st = r && r.state;
+  if(st && st.plan_staged){
+    setPendingNext({rec: rec || null, n, seq: Number.isInteger(st.run_seq) ? st.run_seq : (S && Number.isInteger(S.run_seq) ? S.run_seq : null),
+                    after: Number.isFinite(st.server_t) ? st.server_t : 0, release: !!release,
+                    boot: st.boot_id != null ? st.boot_id : (S && S.boot_id != null ? S.boot_id : null)});
+    return;
+  }
+  setPendingNext(null); setPendingHold(rec || null);
+  // ⚠ A RELEASE TAKEN AT ONCE IS A RELEASE TOO (the phase 4 review): a boat STOPPED at home takes Continue's upload
+  // unstaged, so nothing is banked and holdNextTick's first look for the low-fuel monitor never ran - the latch of the
+  // return that brought her home flew the survey with no automatic return and no alert, after Continue's own question
+  // promised the monitor.
+  if(release){ fuelRth.acted = false; fuelRth.alerted = false; }
+}
+/** What frame `s` does with a staged upload's record `next` (pure): "wait" - a frame from before the reply, or the plan
+ *  still staged; "apply" - a NEW run of that plan (its length, a survey); "drop" - the slot went to something else. */
+function holdNextStep(next, s){
+  if(!next || !s) return "wait";
+  // (another console process: the plan this was banked for is not aboard that one, and its runs are numbered anew)
+  if(next.boot != null && s.boot_id != null && next.boot !== s.boot_id) return "drop";
+  if(Number.isFinite(next.after) && Number.isFinite(s.server_t) && s.server_t <= next.after) return "wait";
+  if(s.plan_staged) return "wait";
+  // ⚠ A HALTED FRAME DECIDES NOTHING (the phase 4 review, reproduced on the page's own functions): Stop, E-STOP, a
+  // disarm or a lost link make the staged plan THE loaded one (the link's stop / estop / neutral) and leave the run's
+  // number alone - read as "the slot went to something else", the record was dropped while the vessel kept the plan,
+  // and the Start that flew it chained her home from the wait point. At rest, wait: the Start that flies it (a new run,
+  // its length, a survey) applies it, and a Go-To or an RTH from rest still drops it.
+  if(s.run !== "running" && s.run !== "paused") return "wait";
+  return s.run_seq !== next.seq && s.wp_total === next.n && s.behavior === "survey" ? "apply" : "drop";
+}
+function holdNextTick(s){
+  if(!pendingNext) return;
+  const a = holdNextStep(pendingNext, s);
+  if(a === "wait") return;
+  const nx = pendingNext;
+  setPendingNext(null);
+  if(a !== "apply") return;
+  setPendingHold(nx.rec || null);
+  // (a release STARTED: the flight ahead is a first look for the low-fuel monitor - its latch from a return during
+  //  the wait would otherwise fly the survey with no automatic return and no alert: fuel.js rthDecision's `acted`)
+  if(nx.release){ fuelRth.acted = false; fuelRth.alerted = false; }
+}
+// (another tab of this console wrote one: this one learns of it - a tab opened before the split had none, and its
+//  End of plan chain saw no hold)
+window.addEventListener("storage", e => {
+  if(!e || (e.key !== PENDING_HOLD_KEY && e.key !== PENDING_NEXT_KEY)) return;
+  const h = lsGet(PENDING_HOLD_KEY, null), nx = lsGet(PENDING_NEXT_KEY, null);
+  pendingHold = (h && typeof h.sv === "string") ? h : null;
+  pendingNext = (nx && Number.isFinite(nx.n)) ? nx : null;
+});
 let patDrag = null;                            // handle being dragged: 'A'|'B'|'C'|'M' (M = whole-pattern move grip)
 let patMoveLast = null;                        // last cursor lat/lon during an 'M' drag (delta source)
 let patClip = null;                            // Punch-Out result: the RUNS, lead included [[p0,p1]..]
@@ -8463,6 +8532,7 @@ function render(){
   drawPassage(toScreen);
   drawSail(toScreen);
   drawGotoTarget(toScreen);
+  drawWaitPoint(toScreen);
   // the uploaded ENC-routed run path (approach from the boat + obstacle detours),
   // so the operator sees the real path the ASV will take, clear of land. Only the
   // portion STILL AHEAD of the boat is drawn (from the boat to the next unreached
@@ -11661,7 +11731,7 @@ function punchLevelSay(m, stamp, held){
 function punchStartSay(lv, stamp){
   if(!lv) return "";
   if(lv.start && lv.read) return " - cut for its start, " + surgeWhen(lv.startT)
-    + (stamp ? "" : ": the water now is not the water it is flown in, so Add to plan turns its hold on and she waits at its start until you press Continue");
+    + (stamp ? "" : ": the water now is not the water it is flown in, so Add to plan turns its hold on and she waits near its start (or at home: its row's Wait) until you press Continue");
   if(lv.start) return " - the water at its start " + surgeWhen(lv.startT) + " could not be read, so it is cut as if flown now";
   if(lv.late && Number.isFinite(lv.askedT)) return " - she can be at it no sooner than " + surgeWhen(lv.arrive)
     + ", after its start " + surgeWhen(lv.askedT) + ", so it is read from her arrival";
@@ -11798,21 +11868,169 @@ function renderTideStrip(){
  * none the water now is judged by itself, said so.
  */
 /**
- * THE WATER SHE WAITS IN (2026-11-19, the survey window). A survey with a start time holds her at its start until
- * Continue (its hold, which Add to plan turns on) - and she may sit there for hours, through the tide's fall, at a point
- * the punch cleared at the water of its own window, not at the water she waits in. So an Upload split at a hold
- * (splitAtHold) whose survey has a start later than her earliest arrival is judged at that point over the wait: the
- * lowest water predicted there between her arrival and the start (sectionLevel; the water now too when she is there
- * within WAIT_NOW_S), and the disc round the point clear of the chart built at that level (holdClearM on koAtLevel).
- * REFUSED - {s, p, level, say, waitM, cutClearM, cutM, arrive, start} - only when the disc is under her hold radius
- * (holdRadiusM) AND the tide made it so: at least a meter tighter than at the level the survey was cut at. A start
- * point tight at its own cut is the hold as it was before start times (no new refusal of an old plan). Null: nothing to
- * refuse, no chart, no start, or no wait. Never throws - an error is logged and judged as no wait.
+ * WHERE SHE WAITS FOR A START (the survey window phase 4, 2026-11-20; Andy: "Provide a hold point for the ASV to loiter
+ * while waiting or offer a RTH for refuel/wait"). A survey with a start time holds her until Continue (its hold, which
+ * Add to plan turns on), and she may sit for hours, through the tide's fall. Phase 1 held her at the survey's own START
+ * - a point the punch cleared at the water of its own window - and REFUSED the Upload when the wait left it too
+ * shallow (phase 1's holdWaitRisk, gone), so a plan with a waiting survey was often not uploadable at low water at all. Now:
+ *   LOITER (the default): the part sent ends at a WAIT POINT - the nearest water to the survey's start that holds her at
+ *   the LOWEST water of the wait (waitPointAt) - and she loiters there; the start itself, where it passes.
+ *   HOME (the survey's `wait`, its row's button): the part sent ends BEFORE the survey with no loiter - a plan that ends,
+ *   and End of plan RTH takes her home by the chain that takes her home from any plan (waitHomeSplit).
+ * Either way Continue on its row sends the rest, routed from wherever she is. Nothing releases her by itself.
+ * ⚠ SAID, AND NOT CHANGED: the console pauses an unwatched boat after its supervisor_lost_s, and a paused boat DRIFTS
+ * (his 2026-11-02 rule). A wait is watched only while a chart window supervises her; Upload's banner says so.
  */
-const WAIT_NOW_S = 1800;
-async function holdWaitRisk(hold){
+const WAIT_NOW_S = 300;                      // an arrival this soon is a release from NEAR: the water now is the water she flies in
+                                             // (minutes: a tide at 1.2 m/h moves TIDE_REBUILD_M in five. It was 1800, and a
+                                             // Continue from home 10-29 min out was judged at the water now: the review)
+const WAIT_REACH_M = 500;                    // how far from the survey's start a wait point is looked for
+const WAIT_SET_FLOOR_MS = 1.0;               // the least set a wait point's margin is asked for (a 2 kn stream: it turns inside a wait, and no forecast of it is read)
+const WAIT_TIDE_S = 44700;                   // 12 h 25 min past the start: Continue may come late, and the next low with it
+/** Her fastest over the ground toward the survey she waits for: the faster role speed with a set BEHIND her - the live
+ *  set, never under WAIT_SET_FLOOR_MS (no forecast of the stream is read). The release's window (uploadTideRisk) and the
+ *  leave time (waitLeaveT) are both reckoned at it. (Still water at the role speed, the review: with a 2 kn fair stream
+ *  she was at the survey 11 minutes before the window judged began, on a rising tide.) ⚠ NOT A BOUND (the second
+ *  review): a fairer stream on the way than the set where she is now brings her sooner - a 4 kn stream over 6 km, about
+ *  6 minutes - and the wait point's margin is sized to the same floor. A residual, said in the tech manual. */
+function waitFastMS(){
+  return Math.max(0.1, roleSpeedMS("survey"), roleSpeedMS("transit")) + Math.max(WAIT_SET_FLOOR_MS, setMsNow() || 0);
+}
+/** The lowest water predicted at `p` over [t0, t1], read in pieces of WATER_WINDOW_MAX_H (the server reads no further
+ *  in one): {m, say, read} - `read` false when chart datum stood in for a piece (sectionLevel) - or null. */
+async function waitLevelRead(p, t0, t1){
+  let out = null;
+  for(let a = t0; a < t1 - 1; a += WATER_WINDOW_MAX_H * 3600){
+    const b = Math.min(t1, a + WATER_WINDOW_MAX_H * 3600);
+    const rr = await waterAlongRead([p], a, b);
+    const lv = sectionLevel(rr, water, (b - a) / 3600, "while she waits, " + surgeWhen(t0) + " to " + surgeWhen(t1));
+    // ⚠ READ MEANS A STATION ANSWERED FOR THE WAIT (the phase 4 review): sectionLevel also calls a level "read" when the
+    // MANUAL water level alone set it - the water NOW standing in for the wait's low, which is no read of the wait.
+    const st = !!(rr && Array.isArray(rr.points) && rr.points.some(q => q && Number.isFinite(q.low_m) && Number.isFinite(q.km) && q.km <= WATER_REMOTE_KM));
+    const read = !!lv.read && st;
+    out = !out ? {m: lv.m, say: lv.say, read}
+               : {m: Math.min(out.m, lv.m), say: lv.m < out.m ? lv.say : out.say, read: out.read && read};
+  }
+  return out;
+}
+/**
+ * THE WAIT POINT (synchronous: Upload's, and the re-approach's when her hold is one): the nearest point to `center`,
+ * within WAIT_REACH_M, that can hold a boat - holdTarget's ONE definition, the working margin and the whole wander disc
+ * - on the chart built at `level`, asked the margin of a set of WAIT_SET_FLOOR_MS at least, with no down-set
+ * preference (the stream turns inside a wait). ⚠ MEASURED ON THE NEW CASTLE CHART by the design's review, which changed
+ * what it is searched on:
+ *   - NEVER THE RAW FLOOR MODEL. A depth band is legal there by its DEEPEST value, so "clear at the low" parked her on
+ *     the 0-1.8 m band (42 of 61 answers), and 63 of 66 fell INSIDE a keep-out polygon once the guard's own chart
+ *     dropped to datum - where the helm's escape finds no heading. Every tier counts a band by its SHALLOWEST depth:
+ *     tier "deep" is deep water first's own layer (DEEP_MARGIN_M over the floor, its berth off shoal soundings and
+ *     rocks), tier "floor" the same layer built at margin 0. Both armed at buf + need (the berth is the distance kept).
+ *   - NAVIGATION CHANNELS ARE KEPT OUT (the model's `chans` rings, as polys) unless Shipping channels is unchecked: a
+ *     fairway is deep water, and no place to loiter for hours. None outside one in reach is the refusal.
+ *   - ONLY WATER THE CHART WAS READ OVER (`accept`): the model holds nothing outside it, which reads as clear.
+ *   - THE SHIPS MOORED THERE are in it (passageKo: waitPlan reads them first).
+ * `o.deepOnly`: the level was not read - the deep tier alone. {to, movedM, kind, tier, holdClear, need, level} - the
+ * disc is the search model's own, so it reaches into no channel or margin water - or {error, need, level}.
+ */
+function waitPointAt(center, level, o){
+  o = o || {};
+  if(!nogo.ready || !nogo.ko || !nogo.frame) return {error: "the chart is not loaded", level};
+  const base = koAtLevel(level, true), buf = nogo.buffer || 0;
+  const setMs = Math.max(WAIT_SET_FLOOR_MS, setMsNow() || 0), need = holdMarginM(setMs);
+  const chanKept = !(nogo.enf && nogo.enf.chan === false), depthJudged = !(nogo.enf && nogo.enf.depth === false);
+  const chans = chanKept ? [...(base.chans || []).filter(c => c && c.ring).map(c => ({ring: c.ring, bb: c.bb, kind: "a navigation channel"})),
+                            ...waitBuoyedChannels(base)] : [];
+  const moored = passageKo(base);
+  // (`o.polys`: keep-outs of the caller's own, kept buf + need off like every other - the guard's contacts at a
+  //  re-find, hours after the Upload's AIS read went stale)
+  const extra = [...chans, ...(Array.isArray(o.polys) ? o.polys : [])];
+  const inRead = q => { const ll = nogo.frame.fromEN(q.e, q.n);
+    return !beyondChart([{lat: ll.lat, lon: ll.lon}], nogo.bbox, undefined, nogo.unread, {points: true, all: true}); };
+  // (`accept` is asked only of a point the keep-outs pass: counted both ways, so a failure can name its cause)
+  let accepted = 0, unreadOnly = 0;
+  const accept = q => { const ok = inRead(q); if(ok) accepted++; else unreadOnly++; return ok; };
+  const tiers = ["deep"];
+  if(!o.deepOnly) tiers.push("floor");
+  let last = null;
+  for(const tier of tiers){
+    const lay = waitLayer(base, level, tier);
+    const armed = lay ? armDeep({...moored, margin: lay}, buf + need) : null;
+    if(!armed) continue;
+    const ko = extra.length ? {...armed, polys: [...armed.polys, ...extra]} : armed;
+    const ht = holdTarget({lat: center.lat, lon: center.lon},
+                          {holdR: holdRadiusM(), setMs, setDeg: null, ko, capM: WAIT_REACH_M, accept});
+    if(ht && !ht.error && !ht.degraded && Number.isFinite(ht.holdClear) && ht.holdClear >= holdRadiusM())
+      // (the disc never past CHART_EDGE_M: the point stands that far inside the water the chart was read over, by
+      //  `accept` - so the disc, and a boat driving a straight chord through it, do too. The box alone capped it, and a
+      //  point 100 m from an unread square shipped a 495 m disc: the review, run on the real modules. AND LESS THE
+      //  BUFFER: at CHART_EDGE_M itself its edge lay ON the unread square, with none of the standoff a disc keeps off
+      //  everything else - and a disc inside the box keeps it (discInChart): the second review.)
+      return {to: {lat: ht.to.lat, lon: ht.to.lon}, movedM: ht.heldOff ? ht.heldOff.m : 0, kind: ht.heldOff ? ht.heldOff.kind : null,
+              tier, holdClear: Math.min(ht.holdClear, Math.max(0, CHART_EDGE_M - buf)), need, level, chans: chans.length, chanKept, depthJudged,
+              moored: (moored.moored || []).length};
+    last = ht;
+  }
+  // (NAME THE CAUSE THE CODE MEASURED: holdTarget picks its words from the keep-outs, and where every point in reach
+  //  failed only for lying in water the chart was not read over it said "room for the boat but not for the 2 m it may
+  //  wander" - of open deep water)
+  const unreadAll = accepted === 0 && unreadOnly > 0;
+  return {error: unreadAll ? "the only water within " + WAIT_REACH_M + " m of it that would hold her is water the chart was not read over"
+                           : (last && last.error) || "no water there holds her",
+          need, level, chans: chans.length, chanKept, depthJudged, unread: unreadAll};
+}
+/** The wait point's two layers for the model `base` (built at `level`): deep water first's margin and the same at margin
+ *  0 (each built when asked for and kept), each with EVERY depth band counted by its shallowest depth - keepouts.js leaves a band wider than 10 m to its
+ *  soundings, which is right for a route passing through and wrong for a place to lie for hours: on a coastal chart the
+ *  0-18.2 m band from the shoreline out passed both tiers, in place, as "deep water first's margin" (the review, run on
+ *  his Biddeford chart: 270 of 270 starts). Kept with the model they were built for. */
+const WAIT_LAYERS = new WeakMap();
+function waitLayer(base, level, tier){
+  // (kept by the level and the floor too: the model served for a level near the one it was built at is the same
+  //  object, and the operator's minimum depth can change under it without a rebuild - koAtLevel's own note)
+  const key = (+level).toFixed(3) + "|" + nogoDR().min;
+  let at = WAIT_LAYERS.get(base);
+  if(!at || at.key !== key){ at = {key}; WAIT_LAYERS.set(base, at); }
+  if(!(tier in at)){
+    const m = buildMargin(nogo.frame, nogo.enf, nogoDR(), modelFeatures(), level, base, tier === "floor" ? 0 : undefined, Infinity);
+    // (the floor tier's areas in the operator's words: the layer's own are "water less than 0 m over her floor")
+    at[tier] = m && tier === "floor" ? {...m, polys: m.polys.map(p => ({...p, kind: "water charted under her floor in part"}))} : m;
+  }
+  return at[tier];
+}
+/** A BUOYED CHANNEL BETWEEN ITS GATES, as keep-outs for a wait (the review, run on the real modules): the model's `chans`
+ *  rings sweep one gate's WIDTH either side of each buoy pair and nothing between two pairs, so a start mid-channel
+ *  between gates 800 m apart was its own wait point - on the centerline of a buoyed fairway, said to be "out of
+ *  navigation channels". The same centerline the Rule 9 lane rides (systemCenterline), each stretch as wide as its
+ *  wider gate. */
+function waitBuoyedChannels(base){
+  const out = [];
+  for(const sy of (base && base.sys) || []){
+    const cl = systemCenterline(sy);
+    for(let i = 1; i < cl.length; i++){
+      const a = cl[i - 1], b = cl[i], L = Math.hypot(b.e - a.e, b.n - a.n), hw = Math.max(a.hw || 0, b.hw || 0);
+      if(!(L > 1) || !(hw > 0)) continue;
+      const ue = (b.e - a.e) / L, un = (b.n - a.n) / L, pe = -un * hw, pn = ue * hw;
+      const ring = [{e: a.e + pe, n: a.n + pn}, {e: b.e + pe, n: b.n + pn}, {e: b.e - pe, n: b.n - pn}, {e: a.e - pe, n: a.n - pn}];
+      ring.push({...ring[0]});
+      const es = ring.map(q => q.e), ns = ring.map(q => q.n);
+      out.push({ring, bb: {x0: Math.min(...es), y0: Math.min(...ns), x1: Math.max(...es), y1: Math.max(...ns)}, kind: "a buoyed channel"});
+    }
+  }
+  return out;
+}
+/**
+ * Upload's plan for the wait at a hold whose survey has a start (asked after the chart read, before anything is routed
+ * or sent; fenced by doUpload's `was`): null - no wait (she is there at its start or after), no chart, no start: the
+ * split as it was. Else {s, p: the survey's start, arrive, start, level, say, read} and either `to`/movedM/tier/
+ * holdClear (the wait point) or `refuse` (words: nothing is sent). The level is the LOWER of the water now and the
+ * lowest predicted there from her arrival to WAIT_TIDE_S past the start - so the point passes on the chart the guard and
+ * the router read NOW (a level above the water now put 31 of 60 wait points inside a keep-out of the live chart: the
+ * way in was refused, or the disc pinned at 0), and holds through the next low if Continue comes late. A level that
+ * could not be read: the lower of chart datum and the water now, the deep tier only. Never throws.
+ */
+async function waitPlan(hold, rd){
+  let base = null;
   try{
-    if(!hold || !Array.isArray(hold.part) || !hold.part.length || !asv || !nogo.ready || !nogo.ko || !nogo.frame) return null;
+    if(!hold || !Array.isArray(hold.part) || !hold.part.length || !asv) return null;
     const s = surveyById(hold.held), st = surveyStartT(s), p = hold.part[hold.part.length - 1];
     if(st == null || !p) return null;
     const now = Date.now() / 1000, line = [{lat: asv.lat, lon: asv.lon}, ...hold.part];
@@ -11821,27 +12039,179 @@ async function holdWaitRisk(hold){
     const vs = Math.max(0.1, roleSpeedMS("survey")), vf = Math.max(vs, roleSpeedMS("transit"));
     const arrive = now + L / vf;
     if(!(st > arrive + 60)) return null;            // she gets there at its start or after: no wait
-    const end = Math.min(st, arrive + WATER_WINDOW_MAX_H * 3600);
-    const r = await waterAlongRead([p], arrive, end);
-    const lv = sectionLevel(r, water, (end - arrive) / 3600, "while she waits there, " + surgeWhen(arrive) + " to " + surgeWhen(st));
-    const live = sea.waterOffset || 0, soon = arrive - now < WAIT_NOW_S;
-    const level = soon ? Math.min(lv.m, live) : lv.m;
-    const cutM = surveyCutM(s);
-    if(!nogo.ready || !nogo.ko || !nogo.frame) return null;          // (the chart went while NOAA was read)
-    const pEN = nogo.frame.toEN({lat: p.lat, lon: p.lon}), buf = nogo.buffer || 0;
-    const waitM = holdClearM(pEN, koAtLevel(level, true), buf);
-    const cutClearM = holdClearM(pEN, cutM != null ? koAtLevel(cutM, true) : nogo.ko, buf);
-    if(!Number.isFinite(waitM) || !Number.isFinite(cutClearM)) return null;
-    if(waitM >= holdRadiusM() || waitM >= cutClearM - 1) return null;
-    return {s, p, level, say: soon && live < lv.m ? fmtLevel(live) + ", the water now" : lv.say, waitM, cutClearM, cutM,
-            arrive, start: st};
+    base = {s, p, arrive, start: st};
+    // ⚠ A WAIT NOT JUDGED IS REFUSED (the second review): from here she has a wait, and each way this could not judge
+    // where she waits - no chart model, the model gone while NOAA was read, an error in the search - sent the part as it
+    // stood, said as an ordinary hold: she loitered for hours at the survey's own start on the live disc, the place phase 1
+    // found the falling tide leaves too shallow. Each is a refusal now, nothing sent, and Upload again asks it again.
+    if(!nogo.ready || !nogo.ko || !nogo.frame) return {...base, chart: true, refuse: "the chart model is not loaded"};
+    // the chart over the whole search, kept while it is read (she may be HOLDING: Continue's Upload runs this), and
+    // the ships moored in it
+    const covered = await ensureNogoCovers([{lat: p.lat, lon: p.lon}], WAIT_REACH_M + 150, {keep: true, plan: true, read: rd});
+    if(covered === false || !nogo.ready || !nogo.ko || !nogo.frame)
+      return {...base, chart: true, refuse: "the chart round " + surveyLabel(s) + "'s start could not be read out to the " + WAIT_REACH_M
+                               + " m a wait point is looked for in"};
+    // (from NOW, not her reckoned arrival: with the stream behind her she is there sooner, and a low in between was
+    //  in neither term. And the SHIPS LAST - their read is good for 40 s, and NOAA can take longer than that: read
+    //  first, they had silently left the search by the time it ran. The phase 4 review.)
+    const lv = await waitLevelRead({lat: p.lat, lon: p.lon}, now, st + WAIT_TIDE_S);
+    await readPassageAis([{lat: asv.lat, lon: asv.lon}, {lat: p.lat, lon: p.lon}]);
+    const ais = !!nogo.ais;
+    if(!nogo.ready || !nogo.ko || !nogo.frame)                       // (the chart went while NOAA was read)
+      return {...base, chart: true, refuse: "the chart model went while the water was read"};
+    const live = sea.waterOffset || 0, read = !!(lv && lv.read);
+    const level = Math.min(live, lv ? lv.m : 0);
+    const say = lv && lv.m <= live ? lv.say : fmtLevel(live) + ", the water now" + (read ? "" : " (the water over the wait could not be read)");
+    const w = waitPointAt(p, level, {deepOnly: !read});
+    if(!w.to) return {...base, level, say, read, refuse: w.error, need: w.need, chans: w.chans, unread: !!w.unread};
+    return {...base, level, say, read, to: w.to, movedM: w.movedM, kind: w.kind, tier: w.tier, holdClear: w.holdClear, need: w.need,
+            chanKept: w.chanKept !== false, depthJudged: w.depthJudged !== false, ais};
   }catch(e){
     logClient("upload_wait", {error: String((e && e.message) || e)});
-    return null;
+    return base ? {...base, failed: true, refuse: String((e && e.message) || e).slice(0, 160)} : null;
   }
 }
+/** The part sent for a wait at `wait.to`: the split's own, its last waypoint - the survey's first - moved to the wait
+ *  point. Its tag stays, so the leg into it is routed as a transit (surveyEntries) and the tide question skips a survey
+ *  with one waypoint in what is sent (uploadTideRisk), both as for the start itself. */
+/** The disc a wait point ships with: the one it was found with (at the wait's low, inside read water) and never wider
+ *  than the water now gives with this frame's contacts in it (holdClearAt: every other Upload's disc counts them). */
+function waitDisc(wait){
+  const live = holdClearAt(wait.to);
+  return live == null ? wait.holdClear : Math.min(wait.holdClear, live);
+}
+function waitPart(hold, wait){
+  return [...hold.part.slice(0, -1), {lat: wait.to.lat, lon: wait.to.lon, sv: hold.held}];
+}
+/** Upload refused for a wait with no point (waitPlan's `refuse`): the banner, the note, the record. Nothing was sent. */
+function waitRefused(wait){
+  const L = surveyLabel(wait.s);
+  // (A CHART THAT COULD NOT BE READ judged no water at all - "no water holds her", and remedies for a wait too long,
+  //  were said of a read that failed: the review. Pressing Upload again asks it again.)
+  if(wait.failed){
+    showBanner("Upload refused - NOTHING WAS SENT: where she waits for " + L + " could not be judged (" + wait.refuse + "). "
+      + "Press Upload again, or set its row's Wait to HOME, so she waits there.");
+    flashNote("Upload refused: where " + L + " waits could not be judged - press Upload again.");
+  } else if(wait.chart){
+    showBanner("Upload refused - NOTHING WAS SENT: " + wait.refuse + ", so where she waits for " + L + " was not judged. "
+      + "Press Upload again (the chart read may answer then), or set its row's Wait to HOME, so she waits there.");
+    flashNote("Upload refused: " + wait.refuse + " - press Upload again.");
+  } else {
+  showBanner("Upload refused - NOTHING WAS SENT: no water within " + WAIT_REACH_M + " m of " + L + "'s start holds her while she "
+    + "waits for it, from about " + surgeWhen(wait.arrive) + " until its start " + surgeWhen(wait.start)
+    + (wait.say ? " (judged at " + wait.say + ")" : "") + ": " + wait.refuse
+    + (wait.chans ? "; navigation channels are kept out of a wait" : "")
+    + ". Set its row's Wait to HOME, so she waits there" + (wait.unread ? "." : "; or Upload nearer its start, so she waits less."));
+  flashNote("Upload refused: no water near " + L + "'s start holds her through the wait.");
+  }
+  logClient("upload_wait", {sv: wait.s.id, start_t: wait.start, arrive_t: Math.round(wait.arrive),
+                            level_m: Number.isFinite(wait.level) ? wait.level : null, refused: true, chart: !!wait.chart, failed: !!wait.failed,
+                            why: String(wait.refuse).slice(0, 200)});
+}
+/**
+ * THE WAIT AT HOME (the survey's `wait: "home"`): what an Upload split at `hold` sends instead - the part BEFORE the
+ * survey, with no loiter. null: not a home wait, or no wait at home (she would be home no sooner than she must leave
+ * for its start - `said` then names it and the split is the loiter's). {refuse, short}: what it needs is not there -
+ * End of plan RTH as the CONSOLE holds it (the part takes the console's setting, not the selector's), a home that is
+ * not a ROC's moving one, within RTH_MAX_M of where the part ends and of the survey's first waypoint (Continue from
+ * home is an Upload from there). Else {s, part, first, homeAt, leave, start}.
+ */
+function waitHomeSplit(hold){
+  const s = hold ? surveyById(hold.held) : null;
+  if(!s || s.wait !== "home" || !asv) return null;
+  const st = surveyStartT(s), first = hold.part[hold.part.length - 1], part = hold.part.slice(0, -1);
+  const L = surveyLabel(s), now = Date.now() / 1000;
+  // (NO WAIT, NO WAIT AT HOME - said, and asked before what a wait at home needs: with no start, or its start passed,
+  //  "no home is set" refused an Upload a wait at home had no part in, and no start said nothing at all. The review.)
+  if(st == null) return {said: L + "'s Wait is HOME, but it has no start time - there is nothing to wait for: she holds at its start until you press Continue."};
+  if(st <= now) return {said: L + "'s Wait is HOME, but its start " + surgeWhen(st) + " has passed: she holds at its start until you press Continue."};
+  const no = (why, fix) => ({refuse: "Upload refused - NOTHING WAS SENT: " + L + " is to wait AT HOME for its start, and " + why
+                                     + ". " + fix + ", or set its row's Wait to LOITER.", short: "Upload refused: " + L + " cannot wait at home (" + why + ")."});
+  if(!S.home) return no("no home is set", "Set Home");
+  // ⚠ HOME AT THE SPEEDS SHE FLIES (the review): a survey's own legs at the survey speed (both ends its waypoints, as
+  // waitFuelSay asks), the rest and the way home at the transit speed - reckoned at the faster over all of it, a wait at
+  // home was granted to a boat 12 minutes past the survey's start. The test's leave is at her still-water fastest (the
+  // earlier: no wait granted she cannot have); the leave SAID is waitLeaveT's, the one the row and the alert use.
+  const vs = Math.max(0.1, roleSpeedMS("survey")), vt = Math.max(0.1, roleSpeedMS("transit") || vs), vf = Math.max(vs, vt);
+  const path = [{lat: asv.lat, lon: asv.lon}, ...part], end = path[path.length - 1];
+  let T = 0;
+  for(let i = 1; i < path.length; i++)
+    T += distTo(path[i - 1], path[i]) / (path[i - 1].sv && path[i - 1].sv === path[i].sv ? vs : vt);
+  const homeAt = now + T + distTo(end, S.home) / vt, leaveBy = st - distTo(S.home, first) / vf;
+  const leave = st - distTo(S.home, first) / waitFastMS();
+  if(!(leaveBy > homeAt + 60)) return {said: L + "'s Wait is HOME, but she would be home no sooner than she must leave for its start "
+                                           + surgeWhen(st) + ": she waits near its start instead."};
+  // (End of plan RTH is what takes her home from the end of what is SENT - with nothing to send it has no part: the
+  //  wait at home with nothing before it says what takes her home from where she is, waitHomeNothing)
+  if(part.length && S.completion !== "rth") return no("End of plan is " + String(S.completion || "none").toUpperCase()
+                                       + " - it is End of plan RTH that takes her home from the end of what is sent", "Set End of plan to RTH");
+  if(S.home_source != null) return no("home is a ROC's, which moves", "Choose a fixed home");
+  const far = rthTooFar(end, S.home) || rthTooFar(first, S.home);
+  if(far) return no("home is " + fmtDist(far.m) + " away - past the " + fmtDist(RTH_MAX_M) + " a return is routed over", "Move home nearer");
+  return {s, part, first, homeAt, leave, start: st};
+}
+/** A wait at home with NOTHING before the survey to send: no post of any kind (a bare upload would load the WHOLE saved
+ *  plan), the record written, and said - with what takes her home from where she is. */
+function waitHomeNothing(home){
+  const L = surveyLabel(home.s), st = (S && S.status) || {};
+  // (NOTHING IS SENT, so a plan staged earlier is still aboard with its own record banked: left as it is, and said -
+  //  cleared, its Start flew it with this record standing and End of plan chained her home from its wait point. And the
+  //  promise of a return is the chain's own answer, rthPending, asked AFTER the record is written: a refused chain, a
+  //  passage's hold or a lock's is no return coming. The phase 4 review.)
+  setPendingHold({sv: home.s.id, at: Date.now(), boot: S && S.boot_id != null ? S.boot_id : null, mode: "home", ahead: true});
+  // (the promise is made to a boat HOLDING on a run that ended - the chain fires from that alone: idle, stopped or
+  //  paused, rthPending's answer was yes and no return was coming. The review.)
+  const holding = S.run === "running" && !!st.holding;
+  const where = holding && S.behavior === "rth" ? "She is holding at home."
+    : holding && rthPending() ? "She is holding on a plan that ended: End of plan RTH takes her home from it."
+    : S.run === "paused" ? "She is PAUSED, and a paused boat drifts: press RTH to take her home, or Start to resume what she was flying first."
+    : "Press RTH to take her home if she is not there.";
+  showBanner(L + " WAITS AT HOME for its start " + surgeWhen(home.start) + " - there is nothing before it to send, so NOTHING WAS "
+    + "SENT. " + where + " Press Continue on its row when it is time to leave, about " + surgeWhen(home.leave) + "."
+    + (S.plan_staged ? " ⚠ A plan uploaded earlier is still STAGED aboard: Start would run THAT plan, not this." : "")
+    + WAIT_WATCHED_HOME);
+  flashNote(L + " waits at home: nothing was sent.");
+  renderSurveyTable();
+}
+/** What a split the vessel took records (pendingHold's shape): the survey, where the part ended (a loiter), the level a
+ *  wait point was found at, the link it was sent over, and whether its start was still ahead. */
+function holdRec(hold, home, wait, route){
+  if(!hold) return null;
+  const st = surveyStartT(surveyById(hold.held));
+  const rec = {sv: hold.held, at: Date.now(), boot: S && S.boot_id != null ? S.boot_id : null,
+               ahead: st != null && st > Date.now() / 1000};
+  if(home) return {...rec, mode: "home"};
+  const end = route && route.length ? route[route.length - 1] : null;
+  return {...rec, mode: "loiter", p: end ? {lat: end.lat, lon: end.lon} : null,
+          ...(wait && wait.to && Number.isFinite(wait.level) ? {level_m: wait.level, ...(wait.read === false ? {unread: true} : {})} : {})};
+}
+/** The wait AT HOME is watched as any wait is (the review: it was said of a wait point alone, and the long wait the mode
+ *  exists for is the one most likely to be left) - in home's own terms: stopped and made fast, nothing pauses her. */
+const WAIT_WATCHED_HOME = " ⚠ A wait is watched only while a chart window supervises her: holding at home unwatched, the console "
+  + "pauses her, and a paused boat drifts - Stop her and make her fast before you leave the window (Continue opens from stopped).";
+/** Upload's banner for a split the vessel took, by how she waits. `said`: why a Wait set to HOME did not wait there. */
+function holdUploadedSay(hold, home, wait, n, said){
+  const hs = surveyById(hold.held), L = hs ? surveyLabel(hs) : hold.held;
+  const watched = " ⚠ A wait is watched only while a chart window supervises her: left unwatched the console pauses her, and a paused boat drifts.";
+  // (the reason HOME was not in effect rides THIS banner: as a note alone it was overwritten in the same task by the
+  //  tide read's, before it was ever painted - the review)
+  const why = said ? " ⚠ " + said : "";
+  if(home) return "UPLOADED UP TO THE END OF WHAT COMES BEFORE " + L + " (" + n + " waypoints): " + L + " WAITS AT HOME for its start "
+    + surgeWhen(home.start) + " - End of plan RTH takes her home from there. Press Continue on its row when it is time to leave, about "
+    + surgeWhen(home.leave) + ". The rest of the plan is NOT aboard yet." + (home.homeSay || "") + (home.fuelSay || "") + WAIT_WATCHED_HOME;
+  if(wait && wait.to) return "UPLOADED UP TO " + L + "'S WAIT POINT (" + n + " waypoints)"
+    + (wait.movedM > 0 ? ", " + fmtDist(wait.movedM) + " from its start (" + (wait.kind || "no room to hold there") + " at the wait's low)" : ", its start")
+    + ": she will HOLD there (loiter) until you press Continue on its row. Found at " + wait.say + ", "
+    + (wait.depthJudged === false ? "⚠ with DEPTH NOT JUDGED (Depth is unchecked)"
+       : wait.tier === "deep" ? "in water with deep water first's margin over her floor" : "clear of every depth area shoaler than her floor")
+    + (wait.chanKept === false ? "; ⚠ navigation channels were NOT kept out (Shipping channels is unchecked)" : ", out of navigation channels")
+    + (wait.ais === false ? ". ⚠ The AIS feed did not answer: vessels moored there were NOT read" : "")
+    + ". The rest of the plan is NOT aboard yet." + why + (wait.fuelSay || "") + watched;
+  return "UPLOADED UP TO " + L + "'S START (" + n + " waypoints) - she will HOLD there (loiter) until you press Continue on its "
+    + "row. The rest of the plan is NOT aboard yet." + why;
+}
 const UPLOAD_EARLY_S = 600;      // a survey reached this long before its start time is flown EARLY (uploadTideRisk's `early`)
-async function uploadTideRisk(wps){
+async function uploadTideRisk(wps, rel){
   try{
     const svs = (mission.surveys || []).filter(s => s && s.water_m != null && isFinite(+s.water_m));
     if(!svs.length || !asv) return null;
@@ -11860,17 +12230,49 @@ async function uploadTideRisk(wps){
       const win = flightWindow(cum[i0 + 1], flightOwnM(wps.slice(i0, i1 + 1), (a, b) => !!lineOfLeg(a, b)));
       // ⚠ NEVER FROM ITS START TIME (2026-11-19): what is sent is flown at once - so the window is the one she flies it in
       // NOW, and a survey cut for a later start and sent before it is asked about here, its start said (`early`)
-      const st = surveyStartT(s), early = st != null && st > win.t0 + UPLOAD_EARLY_S ? st : null;
-      return waterAlongRead(wps.slice(i0, i1 + 1), win.t0, win.t1).then(r => {
+      // ⚠ THE SURVEY A CONTINUE RELEASES FROM FAR IS JUDGED BY THE WATER OF ITS OWN WINDOW (phase 4, `rel`): she is not
+      // at it for more than WAIT_NOW_S - a Continue from home, pressed at the leave time on the rising tide a Plan B
+      // waits for - and the water NOW is under its cut by construction: the question was false and its lines' own hops
+      // were routed at that water and BLOCKED. On a read only; every other survey sent is judged as before.
+      // ⚠ FROM HER ARRIVAL AT HER FASTEST (the review): its window begins at her fastest with the set she has now behind
+      // her (waitFastMS), not at the still-water arrival - with the stream behind her she was there before the water
+      // judged. NOT A BOUND (the second review): a fairer stream on the way than the set where she is brings her sooner -
+      // no forecast of the stream is read; said as a residual. Its end is the flight's, as for any.
+      const now = Date.now() / 1000, rs = !!rel && s.id === rel;
+      const t0 = rs ? Math.min(win.t0, now + cum[i0 + 1] / waitFastMS()) : win.t0;
+      const far = rs && t0 - now > WAIT_NOW_S;
+      const hours = rs ? Math.min(Math.max(0, (win.t1 - t0) / 3600), WATER_WINDOW_MAX_H) : win.hours;
+      const when = !rs ? win.when : "over its flight, " + ((t0 - now) / 3600 < 0.1 ? "from now" : ((t0 - now) / 3600).toFixed(1)
+        + " h from now") + " to " + ((t0 - now) / 3600 + hours).toFixed(1) + " h";
+      const st = surveyStartT(s), early = st != null && st > t0 + UPLOAD_EARLY_S ? st : null;
+      // ⚠ AND WHAT THE WATER NOW SAYS OF THE PREDICTION (the second review): far, the window's predicted low alone was
+      // judged, so a set-down the forecast does not hold - a wind, a surge it missed - seen in the water now was never
+      // asked. The prediction where she IS, now, set against the water now (a station's reading, trusted, never the
+      // manual level): where the water stands under it, the window's low is lowered by as much - never raised. With
+      // either not read, she is judged at the lower of it and the water now, as every other survey is.
+      const nowTrust = far && water && water.ok && water.source !== "manual" && Number.isFinite(water.offset_m)
+        ? waterTrust(water) : null;
+      const nowRead = !!nowTrust && nowTrust.level !== "remote" && !nowTrust.stale;
+      const here = nowRead ? waterAlongRead([{lat: asv.lat, lon: asv.lon}], now, now + PLANB_SLOT_S) : null;
+      return Promise.all([waterAlongRead(wps.slice(i0, i1 + 1), t0, win.t1), here]).then(([r, rh]) => {
         const pts = r && Array.isArray(r.points) ? r.points.filter(trusted) : [];
-        const lv = sectionLevel({...(r || {}), points: pts}, water, win.hours, win.when);
-        return lv.read && lv.m <= live ? {s, low: lv.m, say: lv.say, early}
-             : {s, low: live, say: fmtLevel(live) + ", the water now" + (lv.read ? "" : " (no prediction along it could be read)"), early};
+        const lv = sectionLevel({...(r || {}), points: pts}, water, hours, when);
+        const ph = rh && Array.isArray(rh.points) ? rh.points.filter(trusted) : [];
+        const pn = ph.length ? sectionLevel({...rh, points: ph}, null, 0.1, "now") : null;
+        const farNow = far && nowRead && !!(pn && pn.read);
+        const under = farNow && live < pn.m ? pn.m - live : 0;
+        const farLow = Math.round((lv.m - under) * 100) / 100;
+        const farSay = under > 0 ? fmtLevel(farLow) + " - " + lv.say + ", less the " + under.toFixed(2)
+                                   + " m the water now stands under the prediction where she is" : lv.say;
+        return lv.read && (farNow || lv.m <= live) ? {s, low: farNow ? farLow : lv.m, say: farNow ? farSay : lv.say, early, far: farNow}
+             : {s, low: live, say: fmtLevel(live) + ", the water now" + (lv.read ? "" : " (no prediction along it could be read)"), early, far: false};
       });
     }).filter(Boolean);
     const got = await Promise.all(asks);
     const over = got.filter(g => +g.s.water_m - g.low >= TIDE_REBUILD_M - 1e-9);
-    return over.length ? {over} : null;
+    // (`far`: the released survey, judged by its window and HOLDING its cut - doUpload routes its legs at that cut)
+    const farOk = got.filter(g => g.far && !over.includes(g)).map(g => g.s.id);
+    return over.length || farOk.length ? {over, far: farOk} : null;
   }catch(e){ return null; }
 }
 
@@ -14044,15 +14446,24 @@ function renderSurveyTable(){
     pa.title = punchAllBusy ? "Punch all is running" : can
       ? "PUNCH ALL: re-punch every survey that has a recorded drawing, each with its own settings, against the chart and the water level NOW, and replace each where it stands. A survey the punch refuses is left as it was, and the banner says which and why."
       : "No survey here has a recorded drawing to punch again."; }
+  const nowK = Date.now() / 1000, pendK = pendingHold ? surveyById(pendingHold.sv) : null;
+  const wsK = pendingHold ? waitState(pendingHold, S, S && S.status) : null;
+  const leaveK = pendK ? waitLeaveT(pendingHold, pendK) : null;
+  const dueK = leaveK == null ? null : [nowK >= leaveK, nowK >= surveyStartT(pendK)];
   const key = JSON.stringify([rows.map(r => [r.s.id, r.s.no, r.s.name || "", r.f.lines, Math.round(r.f.m), !!r.s.punched,
                                             !!(r.s.pattern && r.s.pattern.A && r.s.pattern.B), r.p.done, r.p.of, r.p.any,
                                             r.t == null ? null : r.t.toFixed(2), !!(r.s.settings && r.s.settings.reverse),
-                                            !!r.s.hold, r.blk, surveyDeferredN(r.s)]),
-                              editingSv, pick, pendingHold && pendingHold.sv, holdWaiting()]);
-  if(key === _svTableKey) return;
+                                            !!r.s.hold, r.blk, surveyDeferredN(r.s),
+                                            // (phase 4) how it waits, and whether its start is still ahead
+                                            r.s.wait || "", (st => st != null && st > nowK)(surveyStartT(r.s))]),
+                              editingSv, pick, pendingHold && pendingHold.sv, holdWaiting(),
+                              // ... and where she is for the waiting survey, and whether its leave time has come
+                              // (booleans: the countdown itself is written in place, never by a rebuild)
+                              pendingHold && pendingHold.mode, wsK && wsK.state, wsK && wsK.can, dueK]);
+  if(key === _svTableKey){ waitCountdownWrite(rows); return; }
   // ⚠ NOT UNDER THE OPERATOR'S CURSOR: a rebuild while a name is being typed would throw the typing away.
   const foc = document.activeElement;
-  if(foc && tb.contains(foc) && foc.tagName === "INPUT") return;
+  if(foc && tb.contains(foc) && foc.tagName === "INPUT"){ waitCountdownWrite(rows); return; }
   _svTableKey = key;
   const n = list.length;
   tb.innerHTML = rows.map(({s, i, f, p, t, blk}) => {
@@ -14080,6 +14491,16 @@ function renderSurveyTable(){
       + ". " + stateSay + ". Run " + (i + 1) + " of " + n
       + "." + tideSay + " Click the row to show its figures on this card and its actions.");
     const on = s.id === pick;
+    // (HOME IN EFFECT only with the hold on and a start ahead - shown ON without them, Upload flew it straight through
+    //  and nothing said so: the review)
+    const ahead = svStart != null && svStart > Date.now() / 1000, homeOn = s.wait === "home" && !!s.hold && ahead;
+    const waitTip = homeOn
+      ? "WAIT AT HOME is ON: Upload sends the plan as far as the end of what comes before this survey - with no hold there - and End of plan RTH takes her home, where she waits (and can be refueled) until you press Continue on this row. It needs End of plan RTH and a fixed home. Click for LOITER."
+      : s.wait === "home"
+      ? "WAIT AT HOME is set but NOT IN EFFECT: it needs Hold on and a start ahead, and " + (!s.hold ? "Hold is off - she flies it as she gets there"
+          : svStart == null ? "it has no start time - she holds at its start until Continue" : "its start has passed - she holds at its start until Continue")
+        + ". Click for LOITER."
+      : "WHERE SHE WAITS for its start: LOITER - Upload sends her to water near its start that holds her at the lowest water of the wait, out of navigation channels while Shipping channels is checked. Click for HOME: she returns home to wait (and refuel). Upload says which the fuel aboard suggests.";
     const acts = !on ? "" : `<span class="svbr"></span><span class="svacts">`
       + `<button class="ctl small" id="svr${i}_go" data-act="goto" data-sv="${rocEsc(s.id)}" title="GO-TO this survey's START - the first waypoint of its first line, where the plan enters it - routed as any Go-To. Arm first.">Go-To</button>`
       + `<button class="ctl small" id="svr${i}_from" data-act="from" data-sv="${rocEsc(s.id)}" title="UPLOAD the plan FROM this survey on: it and everything after it, the approach routed from the boat to its first line. The surveys before it are left out of the plan sent. Start then runs it.">Upload from</button>`
@@ -14090,18 +14511,23 @@ function renderSurveyTable(){
       + `<button class="ctl small" id="svr${i}_hold" data-act="hold" data-sv="${rocEsc(s.id)}" title="${(s.hold
           ? "HOLD BEFORE THIS SURVEY is ON: Upload sends the plan only as far as this survey's start, where she station-keeps (loiter) until you press Continue on this row. Click to turn it off."
           : "HOLD BEFORE THIS SURVEY: Upload will send the plan only as far as this survey's start, where she station-keeps (loiter) until you press Continue on this row. Nothing releases her by itself.")
+          + (svStart != null && svStart > Date.now() / 1000 ? " WITH ITS START AHEAD she waits where its Wait button says: at water near its start that holds her at the lowest water of the wait (it may not be the start itself), or at home." : "")
           + rocEsc(startSay + (svStart != null && !s.hold ? " Without the hold she flies it as she gets there - Upload asks if that is before its start." : ""))}">${s.hold ? "Hold: on" : "Hold: off"}</button>`
+      // WHERE SHE WAITS FOR ITS START (phase 4): near its start (loiter) or at home - on a survey that waits
+      + ((s.wait === "home" || (s.hold && ahead))
+          ? `<button class="ctl small" id="svr${i}_wait" data-act="wait" data-sv="${rocEsc(s.id)}" title="${rocEsc(waitTip)}">${homeOn ? "Wait: home" : s.wait === "home" ? "Wait: home (off)" : "Wait: loiter"}</button>` : "")
       // PLAN B (the survey window phase 3): the lines its window deferred, as a new survey with a start that has the water
       + (canEdit && planBLines(s).length ? `<button class="ctl small" id="svr${i}_planb" data-act="planb" data-sv="${rocEsc(s.id)}" title="PLAN B: load the ${dN} line(s) this survey's window deferred onto the card as a NEW survey, with the start in the next ${WATER_WINDOW_MAX_H} h that gives them the water they need over its flight (the earliest), then Punch Out. Each is judged against the outline it was deferred at and flown whole or not at all. ${rocEsc(surveyLabel(s))} stays as it is.">Plan B</button>` : "")
       + `</span>`;
     // CONTINUE (3b): on the held survey's row, whether or not it is picked - it is the answer the run is waiting for.
-    const waiting = !!(pendingHold && pendingHold.sv === s.id), there = waiting && holdWaiting();
-    // (its start time, 2026-11-19: Continue before it flies it early, and Upload asks - uploadTideRisk's `early`)
-    const early = svStart != null && svStart > Date.now() / 1000;
-    const cont = !waiting ? "" : `<span class="svbr"></span><button class="ctl small svcont" id="svr${i}_cont" data-act="cont" data-sv="${rocEsc(s.id)}"${there ? "" : " disabled"} title="${(there
-        ? "CONTINUE: upload the plan from this survey on and start it. She is holding at its start."
-        : "She is on her way to this survey's start, where the uploaded part of the plan ends - Continue opens when she is holding there.")
-        + (early ? rocEsc(" Its start time is " + surgeWhen(svStart) + ": its lines were cut for the water from then. Continue before it and Upload judges them again against the water from now, asking if they were cut for deeper water.") : "")}">${there ? "Continue " + rocEsc(surveyLabel(s)) + " ▶" + (early ? " · start " + rocEsc(surgeWhen(svStart).slice(4)) : "") : "Holding at its start - on her way"}</button>`;
+    // (phase 4: where she is and whether it is open is waitState's one answer; from its leave time the button flashes -
+    //  the lasting sign, since the banner that says it is one slot shared with everything else)
+    const waiting = !!(pendingHold && pendingHold.sv === s.id), c = waiting ? waitContFace(s) : null;
+    const there = !!(c && c.there), due = !!(c && c.due);
+    const cont = !waiting ? "" : `<span class="svbr"></span><button class="ctl small svcont${there && due ? " flash" : ""}" id="svr${i}_cont" data-act="cont" data-sv="${rocEsc(s.id)}"${there ? "" : " disabled"} title="${rocEsc(c.title)}">${rocEsc(c.text)}</button>`;
+    // ... and its countdown, on a line of its own for a survey that waits (written in place: waitCountdownWrite)
+    // (not on one she has BEGUN - the lab, 2026-11-20: released early, its row counted down to its start as she flew it)
+    const cd = svStart != null && (waiting || (s.hold && !p.any)) ? `<span class="svbr"></span><span class="svinfo svwait" id="svr${i}_cd"></span>` : "";
     // UNBLOCK (2026-11-06): on a survey holding a leg the last Upload refused, whether or not it is picked - it is the
     // way on from that refusal. ✎, Punch Out and the clearing, which leaves Update S# ready (unblockSurvey).
     const unb = !(blk && canEdit) ? "" : `<span class="svbr"></span><button class="ctl small svcont" id="svr${i}_unb" data-act="unblock" data-sv="${rocEsc(s.id)}" title="UNBLOCK: load this survey back onto the card and Punch Out; the lines beside the joins Upload refused are struck off one at a time, re-punching after each, until nothing blocks. Then press Update S${s.no} and Upload.">Unblock ${rocEsc(surveyLabel(s))}</button>`;
@@ -14115,8 +14541,9 @@ function renderSurveyTable(){
           ? "EDIT: load this survey's drawing back onto the card - its pattern, boundary, Max depth, leads and turn shape. Punch Out, then Update replaces it where it stands."
           : "No drawing was recorded for this survey (it was planned before surveys were kept), so it cannot be loaded back. Draw it again, Add to plan, and delete this one."}">✎</button>`
       + `<button class="ctl small" id="svr${i}_del" data-act="del" data-sv="${rocEsc(s.id)}" title="DELETE this survey from the plan: its lines and waypoints. The others keep their numbers and order.">✕</button>`
-      + acts + cont + unb + `</div>`;
+      + acts + cont + cd + unb + `</div>`;
   }).join("");
+  waitCountdownWrite(rows);
 }
 // THE TIDE SINCE A SURVEY WAS PUNCHED (3a): a fall of a quarter meter under the level it was cut at is flagged on its
 // row. Smaller moves are inside what a depth window is drawn to (and the model itself rebuilds at TIDE_REBUILD_M); a
@@ -14187,6 +14614,7 @@ async function deleteSurvey(id){
       + "mission.json.bak1.", {always: true})) return;
   if(!removeSurvey(mission, id)) return;          // gone already
   if(pendingHold && pendingHold.sv === id) setPendingHold(null);   // its Continue has nothing to send now (3b)
+  if(pendingNext && pendingNext.rec && pendingNext.rec.sv === id) setPendingNext({...pendingNext, rec: null});   // (nor a staged one's)
   // A drawing being edited stays on the card; Add to plan now adds it as a NEW survey (commitPattern's rule).
   if(editingSv === id) editingSv = null;
   if(cardSv === id) cardSv = null;
@@ -14292,12 +14720,33 @@ async function reverseSurvey(id){
   if(r.ok) flashNote(surveyLabel(surveyById(id) || s) + " now runs " + to + " (" + r.lines + " lines). Upload sends it.");
   else showBanner("⚠ " + r.label + " NOT REVERSED - " + (r.refused || r.skip) + ". It is left as it was.");
 }
-/** Does this route END at the start of the survey the plan aboard was split for (3b)? Within half a meter: the split's
- *  last waypoint is a copy of that survey's first. */
+/** Does this route END where the plan aboard was split to hold (3b)? Within half a meter of the record's own point -
+ *  ⚠ WHERE THE PART ENDED (phase 4, pendingHold.p): a wait point is not the survey's first waypoint, and compared with
+ *  that a guard-held resume, a break-off's Continue and a strike's re-fly dropped the loiter - End of plan then chained
+ *  her home from the wait. A record from before has no point: the survey's first waypoint, as it was. Never a wait at
+ *  home: its part ends in no loiter. */
+/** THE DISC A RE-UPLOADED TAIL SHIPS WITH: the water round its end now (holdClearAt) - and, where it ends at the WAIT
+ *  POINT of the hold aboard, never wider than at the wait's LOW (the level the point was found at, or the water now
+ *  when that is lower). Found on the lab, 2026-11-20: the guard routed her round a shoal on the way to a wait point
+ *  found with 20.5 m at +0.29 m, and the tail went up with the live water's 48.8 m - certified hers to drive a straight
+ *  chord through, on a falling tide. The point as it was found, where it still passes; where it no longer does, no
+ *  more than her hold radius - beyond it she asks for a routed way back, which finds her a point again
+ *  (reapproachIfSetOff). An end that is no wait point, or a search that fails: the live disc, as it always was. */
+function tailHoldClear(route){
+  const end = route && route.length ? route[route.length - 1] : null, live = holdClearAt(end);
+  const rec = pendingHold;
+  if(live == null || !rec || rec.mode !== "loiter" || !rec.p || !Number.isFinite(rec.level_m) || !tailEndsAtHold(route)) return live;
+  try{
+    const w = waitPointAt(end, Math.min(rec.level_m, sea.waterOffset || 0), {deepOnly: !!rec.unread});
+    return Math.min(live, w && w.to && !(w.movedM > 0) && Number.isFinite(w.holdClear) ? w.holdClear : holdRadiusM());
+  }catch(e){ return live; }
+}
 function tailEndsAtHold(route){
-  if(!pendingHold || !route || !route.length) return false;
+  if(!pendingHold || pendingHold.mode === "home" || !route || !route.length) return false;
+  const end = route[route.length - 1], p = pendingHold.p;
+  if(p && Number.isFinite(+p.lat) && Number.isFinite(+p.lon)) return distTo(end, p) <= 0.5;
   const i = surveyStartIdx(mission, pendingHold.sv);
-  return i >= 0 && distTo(route[route.length - 1], mission.waypoints[i]) <= 0.5;
+  return i >= 0 && distTo(end, mission.waypoints[i]) <= 0.5;
 }
 /** She is holding where a split upload ended (station-keeping, not paused): what Continue waits for (3b). */
 function holdWaiting(){ return !!(S && S.status && S.status.holding && S.run !== "paused"); }
@@ -14306,25 +14755,373 @@ function toggleSurveyHold(id){
   const s = surveyById(id); if(!s) return;
   s.hold = !s.hold;
   saveMission(); renderSurveyTable(); render();
-  flashNote(s.hold ? "Hold before " + surveyLabel(s) + " is ON: Upload sends the plan as far as its start, where she waits until you press Continue."
-                   : "Hold before " + surveyLabel(s) + " is off.");
+  const t = surveyStartT(s), ahead = t != null && t > Date.now() / 1000;
+  flashNote(s.hold ? "Hold before " + surveyLabel(s) + " is ON: Upload sends the plan as far as "
+                     + (ahead ? (s.wait === "home" ? "the end of what comes before it, and she waits at home (its Wait button)"
+                                                   : "water near its start that holds her through the wait (its Wait button: loiter or home)")
+                              : "its start, where she waits") + " until you press Continue."
+                   : "Hold before " + surveyLabel(s) + " is off"
+                     + (s.wait === "home" ? " - so it does not wait at home either: she flies it as she gets there" : "") + ".");
+}
+/** How she waits for survey `id`: LOITER near its start (the default) or AT HOME (phase 4). Saved with the plan. */
+function toggleSurveyWait(id){
+  const s = surveyById(id); if(!s) return;
+  if(s.wait === "home") delete s.wait; else s.wait = "home";
+  saveMission(); renderSurveyTable(); render();
+  flashNote(s.wait === "home"
+    ? surveyLabel(s) + " waits AT HOME for its start: Upload sends the plan as far as the end of what comes before it, and End of plan RTH takes her home."
+    : surveyLabel(s) + " waits NEAR ITS START (loiter): Upload sends her to water there that holds her through the wait.");
 }
 /**
- * CONTINUE FROM A HOLD (3b): upload the plan from the held survey on - `release` naming this hold, so it is not split
- * at the same place again (the NEXT held survey still splits it) - and start it through the Start button's own code.
- * Only while she is holding there: before she arrives the vessel is running the part aboard and refuses an upload,
- * and a paused boat would be resumed on the OLD part by Start.
+ * WHERE SHE IS FOR THE WAITING SURVEY, AND WHETHER CONTINUE IS OPEN (phase 4): ONE answer, read by the row's button, its
+ * press and the alert - they said three things before ("holding at its start" of any hold anywhere; a boat stopped at
+ * home to refuel, or one that never left the dock, could not Continue at all). `rec`: pendingHold. {state, can, say,
+ * short} or null. A LOITER's Continue needs her holding, as it always did (any hold: the upload routes from where she
+ * is); a wait AT HOME is open whenever she is not under way and can be commanded - holding at home, or stopped there.
  */
+function waitState(rec, s, st){
+  if(!rec || !s) return null;
+  st = st || {};
+  const home = rec.mode === "home", holding = s.run === "running" && !!st.holding;
+  if(s.run === "paused") return {state: "paused", can: false, short: "Paused - press Start first",
+                                 say: "she is PAUSED (a paused boat drifts) - press Start to resume her first"};
+  // (UNDER WAY IS SAID AS WHAT IT IS - the phase 4 review: "on her way to where she waits" was said of any run under way,
+  //  a low-fuel return home and the guard's escape among them. Only the split's own run is on her way there.)
+  if(s.run === "running" && !holding)
+    return home ? {state: "way", can: false, short: "On her way", say: "she is under way - Continue opens when she is holding or stopped"}
+         : onSplitRun(s) ? {state: "way", can: false, short: "On her way",
+                            say: "she is on her way to where she waits - Continue opens when she is holding there"}
+         : {state: "way", can: false, short: "Under way",
+            say: "she is under way (" + (s.behavior || "a run") + "), not to where she waits - Continue opens when she holds"};
+  if(holding){
+    // (a tab that cannot command sends nothing: its Continue is closed, and its alert does not ask for a press)
+    const shut = canCommand(s) ? null : {can: false, short: "View only",
+                                         say: "this window cannot command her (view-only, or she is not armed) - Continue is the supervising window's"};
+    const open = (state, say) => shut ? {state, ...shut} : {state, can: true, short: "", say};
+    // (WHERE she holds, compared - not her behavior alone: a Hold pressed AT her wait point, or the guard's hold rung
+    //  stopping her there, was said to be "not where she was to wait")
+    const at = (q) => !!(q && st.hold && Number.isFinite(+q.lat) && Number.isFinite(+q.lon) && distTo(st.hold, q) <= WAIT_AT_M);
+    if(s.behavior === "rth") return open("home", "she is holding at home");
+    if(!home && (onSplitRun(s) || at(rec.p))) return open("point", "she is holding where she waits for it");
+    if(home && at(S && S.home)) return open("home", "she is holding at home");
+    if(home && s.behavior === "survey") return open("end", "she is holding at the end of what was sent, not at home");
+    return open("elsewhere", "she is holding (" + (s.behavior || "a hold") + "), not where she was to wait");
+  }
+  if(home) return canCommand(s) ? {state: "idle", can: true, short: "", say: "she is stopped - Continue uploads it from where she is and starts it"}
+                                : {state: "idle", can: false, short: "Not armed", say: "she cannot be commanded from here (not armed, E-STOP on, or this window is view-only)"};
+  return {state: "idle", can: false, short: "Not holding",
+          say: "she is not holding (" + (s.run || "idle") + ") - Upload from this survey sends her to wait again"};
+}
+/** When she must LEAVE to be at survey `sv`'s first waypoint at its start: the start less the straight way there from
+ *  where she is - the point she holds at, else the record's (a wait point) or home - at her fastest with a set behind
+ *  her (waitFastMS): against the stream, or round land, she is later than this; with a fairer stream on the way than the
+ *  set where she is, sooner (not a bound - waitFastMS). Null with no start. */
+function waitLeaveT(rec, sv){
+  const st = surveyStartT(sv);
+  if(st == null) return null;
+  const i = surveyStartIdx(mission, sv.id), first = i >= 0 ? mission.waypoints[i] : null;
+  const hs = S && S.run === "running" && S.status && S.status.holding && S.status.hold ? S.status.hold : null;
+  // ⚠ FROM WHERE SHE IS (the phase 4 review): holding, her hold; on her way to where she waits (the split's run, or a
+  // wait at home under way), that place; anywhere else - stopped at home to refuel after a low-fuel return, with a
+  // record that says she waits 100 m from the survey - her own position: reckoned from the record's point, "time to
+  // leave" came 16 minutes too late for a boat 4 km off. No fix: the record's place, as before.
+  const under = !!(S && S.run === "running" && !hs);
+  const there = rec && rec.mode === "home" ? (S && S.home) : (rec && rec.p);
+  const here = typeof asv !== "undefined" && asv && Number.isFinite(+asv.lat) && Number.isFinite(+asv.lon) ? asv : null;
+  const from = hs || (under && (rec && rec.mode === "home" || onSplitRun(S)) ? there : here) || there || null;
+  if(!first || !from || !Number.isFinite(+from.lat) || !Number.isFinite(+from.lon)) return st;
+  // (at her fastest with a set behind her: left then, she is not there before its start - as Continue's Upload judges)
+  return st - distTo(from, first) / waitFastMS();
+}
+/** A span of seconds in the row's words. */
+function waitDur(sec){
+  const m = Math.max(0, Math.round(sec / 60));
+  return m < 1 ? "under a minute" : m < 90 ? m + " min" : Math.floor(m / 60) + " h " + (m % 60) + " min";
+}
+/** The row's countdown (pure): to the start, to the leave time for a wait at home, and up from a start gone by. */
+function waitCountdownSay(now, startT, leaveT, home){
+  if(!Number.isFinite(startT)) return "";
+  if(now >= startT) return "start passed " + waitDur(now - startT) + " ago";
+  if(home && Number.isFinite(leaveT) && leaveT < startT - 60)
+    return now >= leaveT ? "TIME TO LEAVE - starts in " + waitDur(startT - now)
+                         : "leave in " + waitDur(leaveT - now) + " (starts in " + waitDur(startT - now) + ")";
+  return "starts in " + waitDur(startT - now);
+}
+/** The waiting row's CONTINUE as it stands now - one answer for the table's build and the in-place write: {ws, there
+ *  (open), due (its leave time come: it flashes), text, title} in plain text, or null when the row is not waiting. */
+function waitContFace(s){
+  if(!s || !pendingHold || pendingHold.sv !== s.id) return null;
+  const ws = waitState(pendingHold, S, S && S.status), there = !!(ws && ws.can), nowS = Date.now() / 1000;
+  // (its start time, 2026-11-19: Continue before it flies it early, and Upload asks - uploadTideRisk's `early`)
+  const svStart = surveyStartT(s), early = svStart != null && svStart > nowS;
+  const leaveT = svStart != null ? waitLeaveT(pendingHold, s) : null, due = leaveT != null && nowS >= leaveT;
+  const when = svStart == null ? "" : !early ? " · its start has come" : due ? " · TIME TO LEAVE"
+             : pendingHold.mode === "home" && leaveT < svStart - 60 ? " · leave " + surgeWhen(leaveT).slice(4)
+             : " · start " + surgeWhen(svStart).slice(4);
+  const title = (there ? "CONTINUE: upload the plan from this survey on and start it - " + ws.say + "."
+                       : "Continue is closed: " + (ws ? ws.say : "nothing is waiting") + ".")
+    + (early ? " Its start time is " + surgeWhen(svStart) + ": its lines were cut for the water from then. Continue before it and Upload judges them again against the water from now, asking if they were cut for deeper water." : "");
+  return {ws, there, due, title, text: there ? "Continue " + surveyLabel(s) + " ▶" + when : "Continue closed: " + ((ws && ws.short) || "")};
+}
+/** The countdown, written IN PLACE on each row that has one and only when it changed (the table is not rebuilt for
+ *  it: a rebuild a minute would take a hover, a click in progress, and the typing in a name) - and the waiting row's
+ *  CONTINUE with it (the review: its opening and its flash hung on a rebuild, and a name box left in focus after Enter
+ *  blocked that until he clicked elsewhere - the lasting sign the banner defers to, stuck closed). */
+function waitCountdownWrite(rows){
+  const now = Date.now() / 1000;
+  for(const {s, i} of rows){
+    const b = $("#svr" + i + "_cont"), c = b ? waitContFace(s) : null;
+    if(b && c){
+      if(b.disabled !== !c.there) b.disabled = !c.there;
+      if(b.classList) b.classList.toggle("flash", c.there && c.due);
+      if(b.textContent !== c.text) b.textContent = c.text;
+      if(b.title !== c.title) b.title = c.title;
+    }
+    const el = $("#svr" + i + "_cd");
+    if(!el) continue;
+    const st = surveyStartT(s), waiting = !!(pendingHold && pendingHold.sv === s.id);
+    const say = st == null ? "" : waitCountdownSay(now, st, waiting ? waitLeaveT(pendingHold, s) : st, waiting && pendingHold.mode === "home");
+    if(el.textContent !== say) el.textContent = say;
+  }
+}
+/** A survey's own flight as energy: its waypoints at the survey speed, still water. {e, first, last}. */
+function surveyFlightEnergy(model, id){
+  const w = (mission.waypoints || []).filter(x => x && x.sv === id);
+  const kn = V.SPEED_KN[roleSpeed("survey")] || 0;
+  return {e: w.length > 1 ? (pathEnergy(model, w, kn, {e: 0, n: 0}) || 0) : 0, first: w[0] || null, last: w[w.length - 1] || null};
+}
+/** What a Continue for survey `id` SENDS - doUpload's own split: from the survey on, up to the next held survey's start
+ *  - as energy from where she is: the way OUT to its first waypoint and every leg after, a survey's own at the survey
+ *  speed, the rest at the transit speed (still water). {e, last, held: the next held survey or null}. */
+function continueSendEnergy(model, id){
+  const all = waypointsFrom(mission, id), h = splitAtHold(all, mission.surveys, id), w = h ? h.part : all;
+  const zero = {e: 0, n: 0}, knS = V.SPEED_KN[roleSpeed("survey")] || 0, knT = V.SPEED_KN[roleSpeed("transit")] || knS;
+  const path = [...(asv ? [{lat: asv.lat, lon: asv.lon}] : []), ...w];
+  let e = 0;
+  for(let i = 1; i < path.length; i++){
+    const own = !!(path[i - 1].sv && path[i - 1].sv === path[i].sv);
+    e += pathEnergy(model, [path[i - 1], path[i]], own ? knS : knT, zero) || 0;
+  }
+  return {e, last: w[w.length - 1] || null, held: h ? h.held : null};
+}
+/** Is what is aboard short of what Continue for survey `id` sends - the way out to it, its flight and on to the next
+ *  hold - and the way home from its end, with the reserve? {level, want, model, held} or null - not short, or not
+ *  reckoned (no level under the override or with none reported; no way home known). ⚠ THE WAY OUT IS COUNTED (the
+ *  review): from home - the wait offered for refueling - it was the whole outbound leg left out, short in the unsafe
+ *  direction, and she left on a level the question would have kept home. */
+function waitFuelShort(id){
+  const model = fuelModel();
+  if(!model) return null;
+  const level = energyLevel(model, (S && S.status) || {});
+  if(level == null) return null;
+  const f = continueSendEnergy(model, id);
+  const h = f.last ? fuelHomeNeed(model, f.last) : null;
+  if(!h || !Number.isFinite(h.need)) return null;
+  const want = rthLevel(model, f.e + h.need);
+  return level < want ? {level, want, model, held: f.held} : null;
+}
+/**
+ * THE SUGGESTION BETWEEN LOITER AND HOME, said once at Upload (the plan: "the wait at idle burn, plus Plan B, plus the
+ * trip home, plus the 20% reserve"): what is aboard against the part she flies first, the wait, the survey's own flight
+ * and the way home from its end, with the reserve (rthLevel). The wait is reckoned at the HOLD role's rate - keeping
+ * station in a set is not idling - with the idle figure said beside it. Still water; the way home by the monitor's own
+ * estimate (a straight line where no water way is known, said). A suggestion: the low-fuel monitor is the protection.
+ */
+function waitFuelSay(hold, wait, home, wps){
+  try{
+    const model = fuelModel();
+    if(!model) return "";
+    if(home) return " Refuel her at home; Continue asks if what is aboard does not cover the way out, its flight and the way home.";
+    const level = energyLevel(model, (S && S.status) || {});
+    if(level == null) return " Fuel is not read here (no level, or the override): loiter or home is your call.";
+    const zero = {e: 0, n: 0}, knS = V.SPEED_KN[roleSpeed("survey")] || 0, knT = V.SPEED_KN[roleSpeed("transit")] || knS;
+    const path = [{lat: asv.lat, lon: asv.lon}, ...wps];
+    let part = 0;
+    for(let i = 1; i < path.length; i++){
+      const own = !!(path[i - 1].sv && path[i - 1].sv === path[i].sv);
+      part += pathEnergy(model, [path[i - 1], path[i]], own ? knS : knT, zero) || 0;
+    }
+    const hours = Math.max(0, (wait.start - wait.arrive) / 3600);
+    const keep = model.rateAt(V.SPEED_KN[roleSpeed("hold")] || 0) * hours, idle = model.rateAt(0) * hours;
+    const f = surveyFlightEnergy(model, hold.held);
+    const h = f.last ? fuelHomeNeed(model, f.last) : null;
+    if(!h || !Number.isFinite(h.need)) return " Fuel: the way home from its end could not be reckoned - loiter or home is your call.";
+    const want = rthLevel(model, part + keep + f.e + h.need), line = h.water === false ? " (the way home reckoned as a straight line)" : "";
+    return level < want
+      ? " ⚠ FUEL: the " + hours.toFixed(1) + " h wait (" + fuelFmt(model, keep) + " keeping station; " + fuelFmt(model, idle)
+        + " at idle), then its flight and the way home" + line + ", want " + fuelFmt(model, want) + " aboard with the reserve - she has "
+        + fuelFmt(model, level) + "."
+        // (not "set it to HOME" of a survey whose Wait IS home - one this Upload could not wait at home for: the review)
+        + ((surveyById(hold.held) || {}).wait === "home" ? " Its Wait is HOME, but this Upload could not wait there (said above)."
+                                                         : " Set its row's Wait to HOME to refuel while she waits.")
+      : " Fuel: enough aboard to wait the " + hours.toFixed(1) + " h, fly it and come home with the reserve" + line + ".";
+  }catch(e){ return ""; }
+}
+/** The water AT HOME over a wait there, said when her hold disc at its low is under the hold radius (not refused: the
+ *  return picks its own hold point when she gets there). "" when clear. ⚠ NOT JUDGED IS SAID (the review): home outside
+ *  the water the chart was read over, or no chart, was silence - read as "home is fine" by an operator who had seen the
+ *  warning on other uploads - and a level that could not be read was called the wait's low. */
+async function waitHomeWater(home){
+  const not = (why) => " Home's water over the wait was NOT judged: " + why + ".";
+  try{
+    if(!S.home) return "";
+    if(!nogo.ready || !nogo.frame || !nogo.ko) return not("the chart model is not loaded");
+    const hp = {lat: S.home.lat, lon: S.home.lon};
+    if(beyondChart([hp], nogo.bbox, undefined, nogo.unread, {points: true, all: true})) return not("the chart was not read there");
+    const lv = await waitLevelRead(hp, home.homeAt, home.leave);
+    if(!nogo.ready || !nogo.frame || !nogo.ko) return not("the chart model went while the water was read");
+    const read = !!(lv && lv.read), level = Math.min(sea.waterOffset || 0, lv ? lv.m : 0);
+    const m = holdClearM(nogo.frame.toEN(hp), koAtLevel(level, true), nogo.buffer || 0);
+    const at = read ? "THE WAIT'S LOW (" + fmtLevel(level) + ")" : fmtLevel(level) + " (the water over the wait could not be read)";
+    return Number.isFinite(m) && m < holdRadiusM()
+      ? " ⚠ HOME AT " + at + ": " + fmtDist(m) + " of clear water round it, under her "
+        + fmtDist(holdRadiusM()) + " hold radius - she is held off it where the water is, and her disc is re-measured as the tide falls."
+      : read ? "" : " Home's water was judged at " + fmtLevel(level) + " only: the water over the wait could not be read.";
+  }catch(e){ return ""; }
+}
+/** What Continue asks first, or null: what is aboard is short of the flight and the way home; another survey's
+ *  break-off is banked (this Continue flies this survey and leaves that one). */
+function continueAsk(id){
+  const s = surveyById(id), parts = [];
+  const short = waitFuelShort(id);
+  if(short){
+    const nx = short.held ? surveyById(short.held) : null;
+    parts.push("FUEL: " + fuelFmt(short.model, short.level) + " aboard; the way out to it, its flight"
+      + (short.held ? " and on to " + (nx ? surveyLabel(nx) : short.held) + "'s start" : "") + " and the way home from there want "
+      + fuelFmt(short.model, short.want) + " with the reserve. Continue anyway and the low-fuel monitor turns her for home when what "
+      + "is aboard reaches her RTH point - as she leaves, if it already has.");
+  }
+  const br = (mission.breaks || []).filter(b => b && b.sv && b.sv !== id);
+  if(br.length) parts.push((br[0].name || br[0].sv) + " was broken off and is banked: its Continue is beside Start. This Continue flies "
+    + surveyLabel(s) + " and leaves that one banked.");
+  return parts.length ? parts.join(" ") + " Continue " + surveyLabel(s) + "?" : null;
+}
+/**
+ * CONTINUE FROM A HOLD (3b; phase 4): upload the plan from the held survey on - `release` naming this hold, so it is not
+ * split at the same place again (the NEXT held survey still splits it) - and start it through the Start button's own
+ * code. Open by waitState's one answer. ⚠ BUSY WHILE IT RUNS: a second press ran a second Upload over the first, and
+ * the guard's routed re-approach - which goes out between this Upload's reply and its Start, and replaces the staged
+ * plan - stands down for it (reapproachIfSetOff).
+ */
+let continueHoldBusy = false;
+// ⚠ WHAT STANDS THE GUARD'S RE-APPROACH DOWN IS NOT THE BUTTON'S LATCH (the phase 4 review). continueHoldBusy is up from
+// the press - through the fuel question, the whole Upload and its tide question, and Start's own question, each as long
+// as the operator takes - and the re-approach stood down for all of it: a boat set beyond her certified disc sat with
+// the way off while a dialog waited. The stand-down is this: from the moment the upload is TAKEN (a plan is staged,
+// which a re-approach would replace) until Start answers, and never longer than CONTINUE_START_GRACE_MS - past that her
+// way back onto station comes first (the staged slot goes to it, the record stays, and Continue is there to press again).
+// And Start's question is asked BEFORE the upload (the second review), so what the stand-down waits for is the Start's
+// post alone: the grace bounds a post that hangs, never a dialog.
+const CONTINUE_START_GRACE_MS = 20000;
+let continueStagedAt = 0;
+function continueStartPending(){ return continueStagedAt > 0 && Date.now() - continueStagedAt < CONTINUE_START_GRACE_MS; }
 async function continueHold(id){
   const s = surveyById(id); if(!s) return;
-  if(!pendingHold || pendingHold.sv !== id){ flashNote("Continue: the plan aboard is not waiting at " + surveyLabel(s) + "'s start."); return; }
-  if(!holdWaiting()){
-    flashNote("Continue " + surveyLabel(s) + ": she is not holding at its start yet (" + ((S && S.run) || "idle")
-              + (S && S.run === "paused" ? " - press Start to finish the way there first" : "") + ").");
-    return;
+  if(continueHoldBusy) return;
+  if(!pendingHold || pendingHold.sv !== id){ flashNote("Continue: the plan aboard is not waiting for " + surveyLabel(s) + "."); return; }
+  const ws = waitState(pendingHold, S, S && S.status);
+  if(!ws || !ws.can){ flashNote("Continue " + surveyLabel(s) + ": " + (ws ? ws.say : "nothing is waiting") + "."); return; }
+  continueHoldBusy = true;
+  try{
+    const ask = continueAsk(id);
+    if(ask && !await guiConfirm("Continue " + surveyLabel(s), ask, {always: true})) return;
+    // ⚠ START'S OWN QUESTION FIRST, before anything is staged (the second review, both of its lenses): asked by startRun
+    // after the upload, it held a staged plan - which her way back onto station must not replace - for as long as he
+    // took to answer, and on a real boat, where the question waits for him, the re-approach stood down for all of it (up
+    // to the grace) while she was set off her disc. Asked here, the stand-down lasts from the upload's reply to the
+    // Start's. Its words are startRun's own (tests/survey_wait.js 19 holds them equal).
+    if(!await guiConfirm("Start the autonomous survey",
+      "The transit is planned clear of ENC obstacles (green path). Confirm the routed path looks safe and no uncharted obstacle is in the way.")) return;
+    const rec = pendingHold, start = surveyStartT(s);
+    if(!await doUpload({fromSv: id, release: id})) return;
+    continueStagedAt = Date.now();
+    const bank = pendingNext;            // (its staged plan's banked record - null when the vessel took it at once)
+    // (logged AFTER the upload: it wakes a recording gone quiet at home, which dropped the page's own wait_open)
+    logClient("wait_continue", {sv: id, mode: (rec && rec.mode) || "loiter", state: ws.state, start_t: start,
+                                early_s: start != null ? Math.round(start - Date.now() / 1000) : null});
+    // ⚠ ITS OWN PLAN, OR NOTHING (the review): past the grace her way back onto station - or another tab's upload -
+    // may replace the staged plan while Start is asked, and Start then "took" on the leg back, re-arming End of plan,
+    // with nothing said. The bank gone from beside the record is that.
+    await startRun({confirmed: true, stillStaged: () => bank && pendingNext !== bank
+      ? "⚠ CONTINUE " + surveyLabel(s) + ": the plan it staged is no longer aboard - her way back onto station (the guard's "
+        + "re-approach) or another upload replaced it while Start was asked. NOTHING WAS STARTED: press Continue on its row again."
+      : null});
+  } finally { continueHoldBusy = false; continueStagedAt = 0; }
+}
+/**
+ * THE WAIT'S CLOCK (phase 4): on every telemetry frame - they reach a covered page when its timers barely do. Applies a
+ * staged upload's record when its plan starts (holdNextTick); and says, ONCE and again each minute while another banner
+ * covers it (the banner is one slot), that it is time: the leave time has come for the survey the plan aboard waits
+ * for. Not over a guard alarm (sayUnlessAlarm), not while the console holds her unwatched, only for a record written
+ * with its start still ahead and over this link. And once, when a wait AT HOME is the plan and no return is coming.
+ */
+const WAIT_OPEN = "⏱ ";
+const WAIT_AT_M = 10;                     // her hold is "at" a point within this of it (a hold point and its record agree to a meter)
+let waitSaid = null, waitSaidMin = -1, waitHomeSaid = null, waitErrSaid = false, waitSaidKey = null, waitUp = false;
+function waitTick(s, st){
+  st = st || {};
+  holdNextTick(s);
+  const rec = pendingHold;
+  const sv = rec ? surveyById(rec.sv) : null;
+  // (THE WAIT IS OVER - released, its survey deleted, the plan cleared: the alert that asked for Continue comes down
+  //  with it. It stood while she flew the survey, over a row with no Continue: the phase 4 review.)
+  if(!rec || !sv){ waitAlertDown(); return; }
+  // (another link's record is not this boat's wait - except a wait AT HOME, which needs nothing aboard: reconnected
+  //  while she was refueled, the row still counted down and opened Continue, and the alert said nothing)
+  if(rec.mode !== "home" && rec.boot != null && s.boot_id != null && rec.boot !== s.boot_id) return;
+  const L = surveyLabel(sv), now = Date.now() / 1000, start = surveyStartT(sv);
+  // A WAIT AT HOME THAT IS NOT COMING. ⚠ Not while a Continue is in hand (its own upload withdraws the chain: nothing
+  // was refused), and never over the banner that says why a return was refused - the cause and its fix stood one frame.
+  if(rec.mode === "home" && s.run === "running" && st.holding && s.behavior === "survey" && !s.plan_staged && !pendingNext
+     && !continueHoldBusy && (rthChainFailed || s.completion !== "rth") && waitHomeSaid !== rec.at){
+    waitHomeSaid = rec.at;
+    waitSay(L + " WAS TO WAIT AT HOME, and she is holding at the end of what was sent: "
+      + (s.completion !== "rth" ? "End of plan is " + String(s.completion || "none").toUpperCase() + " now" : "the return home was not sent (refused, or withdrawn)")
+      + ". Press RTH when the way home is clear; Continue on its row flies it from wherever she holds.",
+      L + " was to wait at home, and no return is coming: press RTH when the way home is clear.");
   }
-  if(!await doUpload({fromSv: id, release: id})) return;
-  await startRun();
+  // (the console's stand-down is its own standing alert - while it PAUSES her. Its latch outlives the pause: a Stop to
+  //  refuel leaves it set, and gated on the latch the alert was silent for the rest of the wait.)
+  if(start == null || !rec.ahead || (s.supervisor_held && s.supervisor_held.paused)){ waitAlertDown(); return; }
+  const leave = waitLeaveT(rec, sv);
+  if(leave == null || now < leave) return;
+  const ws = waitState(rec, s, st), come = now >= start;
+  // SAID AGAIN WHEN WHAT IT SAYS CHANGES - where she is, whether Continue is open, the start come - not only once per
+  // wait: said on her way, it still read "on her way" with her holding and Continue open.
+  const key = rec.sv + "|" + start + "|" + rec.at + "|" + (ws ? ws.state + (ws.can ? "+" : "-") : "") + "|" + (come ? 1 : 0);
+  const minute = Math.floor(now / 60), up = waitAlertUp();
+  if(waitSaid === key && (up || minute === waitSaidMin || !(ws && ws.can))){ if(up) waitSaidMin = minute; return; }
+  // (... and AGAIN each minute it is covered - only while Continue is OPEN, never while a Continue is in hand: closed,
+  //  there is nothing to press, and it nagged through a whole leg)
+  if(continueHoldBusy) return;
+  const first = waitSaidKey !== rec.sv + "|" + start + "|" + rec.at;
+  const mins = Math.max(1, Math.ceil((start - leave) / 60));
+  const said = waitSay(WAIT_OPEN + (come ? L + "'s START HAS COME (" + surgeWhen(start) + ")"
+                                         : "TIME TO LEAVE for " + L + " (its start is " + surgeWhen(start) + ", and she is at least " + mins + " min from it)")
+    + ": " + (ws ? ws.say : "") + "." + (ws && ws.can ? " Press Continue " + L + " ▶ on its row - Upload reads the water again then." : ""),
+    (come ? L + "'s start has come" : "Time to leave for " + L) + (ws && ws.can ? ": Continue is on its row." : "."));
+  waitSaid = key; waitSaidMin = minute;
+  if(said) waitUp = true;
+  if(first){
+    waitSaidKey = rec.sv + "|" + start + "|" + rec.at;
+    logClient("wait_open", {sv: rec.sv, start_t: start, leave_t: Math.round(leave), mode: rec.mode || "loiter", state: ws && ws.state});
+  }
+}
+/** THE ALERT'S OWN SLOT. The banner is ONE, shared: the wait's alert is not put over an ADVISORY (a "⚠" this page says
+ *  once - a hold point crowded as the tide falls, the low-fuel reserve, a wait point not found again) nor over a REFUSAL
+ *  (Continue's own, a return's) - re-raised each minute, it took each down for good, 0 to 60 s after it was said. There
+ *  it is a note, and the flashing Continue on the row is the lasting sign. Answers whether the BANNER took it. */
+function waitSay(text, short){
+  const b = $("#encbanner"), t = b && b.style.display === "block" ? (b.textContent || "") : "";
+  if(t && t.indexOf(WAIT_OPEN) !== 0 && (/^⚠/.test(t) || /refused|REFUSED|NOTHING WAS SENT|BLOCKED|withdrawn/.test(t))){ flashNote(short); return false; }
+  return sayUnlessAlarm(text);
+}
+function waitAlertUp(){ const b = $("#encbanner"); return !!(b && b.style.display === "block" && (b.textContent || "").indexOf(WAIT_OPEN) === 0); }
+/** The wait is over, or not this boat's to say: the alert comes down if it is the banner standing, and may be said anew. */
+function waitAlertDown(){
+  if(waitSaid === null && !waitUp) return;
+  if(waitAlertUp()) takeDownBanner(/^⏱ /);
+  waitSaid = null; waitSaidKey = null; waitUp = false;
 }
 /** Forget the survey's progress (which lines this page has seen run). */
 function clearSurveyProgress(id){
@@ -14348,6 +15145,7 @@ function clearSurveyProgress(id){
       else if(act === "rev") reverseSurvey(id).catch(err => flashNote("Reverse failed: " + ((err && err.message) || err)));
       else if(act === "clr") clearSurveyProgress(id);
       else if(act === "hold") toggleSurveyHold(id);
+      else if(act === "wait") toggleSurveyWait(id);
       else if(act === "cont") continueHold(id).catch(err => flashNote("Continue failed: " + ((err && err.message) || err)));
       else if(act === "unblock") unblockSurvey(id).catch(err => flashNote("Unblock failed: " + ((err && err.message) || err)));
       else if(act === "planb") planBFrom(id).catch(err => flashNote("Plan B failed: " + ((err && err.message) || err)));
@@ -14418,12 +15216,14 @@ async function commitPattern(){
   const sv = editing ? editing.id : "S" + no, drawnFrom = ((currentPattern() || sp) || {}).anchors || null;
   const pos = (p) => p ? {lat: p.lat, lon: p.lon} : null;
   // ⚠ A START SHE WILL WAIT FOR TURNS ITS HOLD ON (the survey window, 2026-11-19). The boat has no clock to wait on, so
-  // a start time is kept only by the hold: Upload sends her as far as its start, where she loiters until Continue. A
+  // a start time is kept only by the hold: Upload sends her to wait for it (phase 4: a wait point near its start, or
+  // home) until Continue. A
   // punch cut for that start is cut for water that is not here now, and a plan that ran straight into it would fly it
   // early - Upload would ask (uploadTideRisk's `early`), but the plan as committed is the plan that waits.
   const startsLater = commitWaitsForStart();
   const rec = {id: sv, no, name: editing ? (editing.name || "") : patOnly ? patPlanBName : "", punched: !!patClip,
     hold: !!(editing && editing.hold) || startsLater,   // the hold before it (3b) is the survey's, not the drawing's
+    ...(editing && editing.wait === "home" ? {wait: "home"} : {}),   // ... and how it waits (phase 4): an edit replaces the record whole
     pattern: drawnFrom ? {A: pos(drawnFrom.A), B: pos(drawnFrom.B), C: pos(drawnFrom.C), align: drawnFrom.align | 0}
                        : null,
     settings: surveySettingsNow(),             // the drawing's own settings, so ✎ can put them back (Andy's per-survey list)
@@ -22498,6 +23298,27 @@ function drawGotoTarget(toScreen){
   ctx.fillStyle = "#39c0ff"; ctx.font = "10px Consolas,monospace"; ctx.fillText("GO-TO", p.x + 12, p.y - 10);
   ctx.restore();
 }
+/** WHERE SHE WAITS (the survey window phase 4): the wait point of the hold aboard - or of an upload staged for Start -
+ *  ringed and named, when it is not the survey's own first waypoint (there the plan's own line says it). A wait at
+ *  home has no point of its own: home is drawn already. */
+function waitPointMark(){
+  const rec = (pendingNext && pendingNext.rec) || pendingHold;
+  if(!rec || rec.mode !== "loiter" || !rec.p || !Number.isFinite(+rec.p.lat) || !Number.isFinite(+rec.p.lon)) return null;
+  const sv = surveyById(rec.sv); if(!sv) return null;
+  const i = surveyStartIdx(mission, rec.sv), first = i >= 0 ? mission.waypoints[i] : null;
+  if(first && distTo(first, rec.p) <= 1) return null;
+  return {p: {lat: +rec.p.lat, lon: +rec.p.lon}, label: surveyLabel(sv) + " waits here"};
+}
+function drawWaitPoint(toScreen){
+  const m = waitPointMark(); if(!m) return;
+  const p = toScreen(m.p.lat, m.p.lon);
+  ctx.save();
+  ctx.strokeStyle = "#ffcf4a"; ctx.lineWidth = 2; ctx.setLineDash([4, 3]);
+  ctx.beginPath(); ctx.arc(p.x, p.y, 10, 0, 2 * Math.PI); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = "#ffcf4a"; ctx.font = "10px Consolas,monospace"; ctx.fillText(m.label, p.x + 13, p.y - 9);
+  ctx.restore();
+}
 function pathLen(pts){ let m = 0; for(let i = 1; i < (pts || []).length; i++) m += distTo(pts[i - 1], pts[i]); return m; }
 // A length as time at the TRANSIT speed - through the water, so current and wind change it.
 function pathTimeTxt(m){ const v = roleSpeedMS("transit"); return (m > 0 && v > 0) ? fmtDur(m / v) + " at " + spdTxt(roleSpeed("transit")) : "--"; }
@@ -22801,7 +23622,7 @@ async function clearPlan(){
       "Deletes all " + nW + " waypoint(s) and " + nL + " survey line(s) from the saved plan. The plan as it was "
       + "is kept on the console as mission.json.bak1.", {always: true})) return;
   mission.waypoints=[]; mission.lines=[]; mission.surveys=[]; cardSv=null; resetPattern();   // the surveys go with their lines
-  setPendingHold(null);
+  setPendingHold(null); setPendingNext(null);     // ... and a record staged for Start (phase 4): its survey is gone
   giveUpRoute("this page cleared the drawn plan"); saveMission(); render();
 }
 $("#ln_clr").onclick = clearPlan;
@@ -23075,7 +23896,18 @@ function chainableRun(beh){ return CHAINABLE_BEHAVIORS.indexOf(beh) >= 0; }
  * while it runs looks the same, and has always chained home at its end - the pending hold is what tells them apart.
  */
 function heldSplitRun(s){
-  return !!(pendingHold && s && s.behavior === "survey" && s.run_completion === "loiter" && s.completion !== "loiter");
+  return onSplitRun(s) && s.completion !== "loiter";
+}
+/** She is on the run a hold's split sent: a survey that ends in a loiter, with a loiter's record standing.
+ *  (NOT a wait AT HOME - phase 4: its part is a plan that ENDS, and End of plan takes her home from it. Its own run
+ *  is not a loiter; a routed re-approach at its end is - and with this record standing the chain's retry found the
+ *  hold "owned" and sent nothing: the design's review, read from the code.)
+ *  ⚠ WITHOUT THE CHAIN'S CLAUSE (the phase 4 review): heldSplitRun also asks that End of plan is not LOITER - the
+ *  chain's own question, a loiter the operator's End of plan does not ask for. Read by the row, the alert and the
+ *  re-approach, that clause said "not where she was to wait" of a boat AT her wait point and re-picked her hold on the
+ *  live chart, whenever End of plan was Loiter. They ask this. */
+function onSplitRun(s){
+  return !!(pendingHold && pendingHold.mode !== "home" && s && s.behavior === "survey" && s.run_completion === "loiter");
 }
 function rthPending(){
   // The same whitelist the chain-fire condition uses, because this PREDICTS that condition:
@@ -23172,6 +24004,7 @@ async function reapproachIfSetOff(s, st){
   // behavior, under the lock it uploads under (Engine.reapproach), so one that lost the race is refused, never run. And
   // its reply draws nothing once another plan's picture is up, or she is on another run (the reply's state or the frame).
   if(routeCmdsInFlight > 0) return;                // another route command is between send and reply: her motion is about to change
+  if(continueStartPending()) return;               // (phase 4) a Continue's upload is taken and its Start not answered: this would take the staged slot
   if(!nogo.ready || !asv) return;                  // no model now: nothing honest to send
   if(reapproachBusy || Date.now() - reapproachAt < REAPPROACH_MIN_MS) return;
   reapproachBusy = true; reapproachAt = Date.now();
@@ -23181,8 +24014,28 @@ async function reapproachIfSetOff(s, st){
     // way back is routed through the same model, the charted world plus this frame's hulls, and certifies its disc there.
     // (`maneuver`, 2026-10-03: and so it is laned as it always was - not brought to a charted channel's starboard
     // quarter, not sent off to a buoy to pass it on its proper hand. Those are for passages. See planNogoRoute.)
-    const plan = planNogoRoute({lat:asv.lat,lon:asv.lon}, {lat:st.hold.lat, lon:st.hold.lon},
-                               {...holdOpts(), standoffM: patClipBufM(), ko: koWithAis() || nogo.ko, maneuver: true});
+    // ⚠ A WAIT POINT IS FOUND AGAIN AS IT WAS FOUND (phase 4, waitPointAt): the way back otherwise re-picked the hold on
+    // the LIVE chart at the LIVE set - no deep tier, channels not kept out, not at the wait's low - and the record
+    // did not follow it (so the next resume dropped the loiter and End of plan took her home). The point as it stands
+    // where it still passes; the way back goes to that answer exactly (flyThrough: never moved again), its disc the
+    // lesser of the two; and, taken, the record follows.
+    // (`hrec`: the record whose point IS her hold; `wrec`: one found at a level, searched again at it)
+    const hrec = pendingHold && pendingHold.mode === "loiter" && pendingHold.p
+                 && onSplitRun(s) && distTo(st.hold, pendingHold.p) <= 1 ? pendingHold : null;
+    const wrec = hrec && Number.isFinite(hrec.level_m) ? hrec : null;
+    // (searched as it was found - the deep tier alone where the level was not read - and with the guard's CONTACTS in
+    //  it: the Upload's own AIS read is hours stale by now, and a ship come to lie beside the point was not in the
+    //  search, while flyThrough sent her back to it 12 m off the hull. Where the point's answer cannot be flown to, or
+    //  none is found, the way back is the berth-tested one it always was - and that is SAID. The phase 4 review.)
+    const kc = koWithAis() || nogo.ko;
+    const contacts = kc && nogo.ko && kc !== nogo.ko ? kc.polys.slice(nogo.ko.polys.length) : [];
+    let wr = wrec ? waitPointAt(st.hold, Math.min(wrec.level_m, sea.waterOffset || 0), {deepOnly: !!wrec.unread, polys: contacts}) : null;
+    const lost = wrec && !(wr && wr.to) ? (wr && wr.error) || "no water there holds her" : null;
+    const leg = (to, fly) => planNogoRoute({lat:asv.lat,lon:asv.lon}, to,
+                               {...holdOpts(), standoffM: patClipBufM(), ko: kc, maneuver: true, ...(fly ? {flyThrough: true} : {})});
+    let plan = leg(wr && wr.to ? wr.to : {lat:st.hold.lat, lon:st.hold.lon}, !!(wr && wr.to));
+    let lostFly = null;
+    if(plan.error && wr && wr.to){ lostFly = planWhy(plan); wr = null; plan = leg({lat:st.hold.lat, lon:st.hold.lon}, false); }
     if(plan.error){
       setViolation(plan.reason);
       showBanner("Set "+fmtDist(st.off_station_m||0)+" off station and "
@@ -23191,10 +24044,15 @@ async function reapproachIfSetOff(s, st){
       return;
     }
     const key = chainRunKey(s), pg = planGen;
-    const body = {route: plan.route, hold_clear_m: plan.holdClear};
+    const body = {route: plan.route, hold_clear_m: wr && wr.to && Number.isFinite(plan.holdClear) ? Math.min(plan.holdClear, wr.holdClear) : plan.holdClear};
     if(Number.isInteger(s.run_seq)) body.run_seq = s.run_seq;   // the run this way back is for (an older console ignores it)
     const r = await routeCmd("/api/cmd/reapproach", body);
     if(!took(r)) return;                           // cmd() already said why
+    // (the record follows the hold: where the way back ENDS is where she waits now - in the fallback too, where no
+    //  wait point was found and the planner may have held her off to another: the phase 4 review. A record left at the
+    //  old point is the failure this block closes - the next resume drops the loiter and End of plan takes her home.)
+    const backEnd = plan.route[plan.route.length - 1];
+    if(hrec && pendingHold === hrec && backEnd) setPendingHold({...hrec, p: {lat: backEnd.lat, lon: backEnd.lon}});
     const rs = r && r.state;                       // (the console's state as it answered: a later command may have run first)
     if(planGen !== pg || chainRunKey(S) !== key || (rs && rs.run_seq != null && chainRunKey(rs) !== key)) return;
     // A committed route captures its reasoning (end_action 23b): the re-approach is one,
@@ -23210,6 +24068,15 @@ async function reapproachIfSetOff(s, st){
       +" off station, beyond the "+fmtDist(st.hold_clear_m||0)+" certified clear — re-approaching on a routed path of "
       +plan.route.length+" waypoint(s) rather than a bearing"});
     flashNote("Set "+fmtDist(st.off_station_m||0)+" off station — re-approaching on a routed path ("+plan.route.length+" wpts).");
+    // (a wait point that could not be found again at the wait's low is not the ordinary way back: where she holds now
+    //  was picked on the chart at the water NOW)
+    if(lost || lostFly){
+      const why = lost ? "no point within " + WAIT_REACH_M + " m holds her at the wait's low now (" + lost + ")"
+                       : "the way to the point found could not be flown (" + lostFly + ")";
+      planIntent.why.unshift({t:"warn", s:"her wait point was not found again: " + why + " - the way back holds her where the chart at the water now does"});
+      sayUnlessAlarm("⚠ HER WAIT POINT WAS NOT FOUND AGAIN: " + why + ". The way back holds her where the chart at the water NOW "
+        + "does - not judged at the wait's low. Look at where she holds; RTH, or Wait: HOME and Upload from its row, takes her out of it.");
+    }
     render();
   } finally { reapproachBusy = false; }
 }
@@ -24891,7 +25758,14 @@ async function doUpload(opts){
   // asks the vessel to LOITER at it; Continue uploads the rest with `release` naming the hold it answers.
   const release = (opts && typeof opts.release === "string") ? opts.release : null;
   const hold = splitAtHold(wpsAll, mission.surveys, release);
-  const wps = hold ? hold.part : wpsAll;
+  // ⚠ A SURVEY THAT WAITS AT HOME (phase 4, waitHomeSplit): the part ends BEFORE it, with no loiter - and with nothing
+  // before it NOTHING is posted (the bare post below loads the whole saved plan).
+  const homeAsk = hold ? waitHomeSplit(hold) : null, home = homeAsk && homeAsk.part ? homeAsk : null;
+  if(homeAsk && homeAsk.refuse){ showBanner(homeAsk.refuse); flashNote(homeAsk.short); render(); return; }
+  if(homeAsk && homeAsk.said) flashNote(homeAsk.said);
+  if(home && !home.part.length){ waitHomeNothing(home); render(); return; }
+  let wps = home ? home.part : hold ? hold.part : wpsAll;
+  const loiter = !!(hold && !home);         // the split's own end: she holds where it ends (a wait at home ends in none)
   const partial = !!(fromSv || hold);       // not the saved plan as it stands - so it is always sent as a route
   // The server refuses an empty plan in words, so the clear past this gate will essentially
   // never run - and that is the point rather than dead code: `runRoute` may hold the Go-To or
@@ -24924,8 +25798,8 @@ async function doUpload(opts){
   // `was` like every await below it.
   // (a read of NOAA can take seconds: said, so a press that seems to do nothing is not pressed again - review 2026-11-07)
   if((mission.surveys || []).some(s => s && s.water_m != null)) showNote("Upload: reading the water predicted along each survey first…");
-  const tide = await uploadTideRisk(wps);
-  if(tide){
+  const tide = await uploadTideRisk(wps, release);
+  if(tide && tide.over.length){
     const yes = await guiConfirm("Upload — survey cut for deeper water",
         // (o.say starts with the level itself - sectionLevel's, or uploadTideRisk's own - so it is said once; lab 2026-11-07)
         tide.over.map(o => surveyLabel(o.s) + " was cut at " + fmtLevel(+o.s.water_m)
@@ -24978,7 +25852,7 @@ async function doUpload(opts){
     // ⚠ A PART OF THE PLAN IS SENT AS ITS OWN WAYPOINTS (phase 3b). With no route the console falls back to the WHOLE
     // saved plan - which, for an Upload from a survey or a plan split at a hold, is not what the operator asked for
     // (found reading this branch for the hold: 3a's Upload from had the same hole).
-    const r0 = await cmd("/api/cmd/upload", partial ? {route: raw.route, ...(hold ? {completion: "loiter"} : {})} : undefined);
+    const r0 = await cmd("/api/cmd/upload", partial ? {route: raw.route, ...(loiter ? {completion: "loiter"} : {})} : undefined);
     if(!took(r0)){
       const say0 = notTookSay(r0, "UPLOAD");
       if(say0) showBanner(say0 + (r0 && r0.refused
@@ -24988,6 +25862,7 @@ async function doUpload(opts){
           + "vessel card before pressing Upload again."));
       render(); return;
     }
+    holdRecordTaken(holdRec(hold, home, null, raw.route), r0, raw.route.length, release);   // TAKEN: the record is the plan aboard's, drawn or not
     if(planGen !== was.gen || runRoute !== was.route){
       cmdGen++; cmdKind = "survey"; cmdPressedMax = Math.max(cmdPressedMax, pressedAt);   // (taken, so this console's command, drawn or not - see the routed draw below)
       showBanner("Plan UPLOADED UNROUTED (" + raw.route.length + " waypoints) — but the boat "
@@ -25044,26 +25919,16 @@ async function doUpload(opts){
   // redraw that end the read, then routePlan, certifyDeparture and the first corner slice, were one task.
   // Go-To and RTH already take theirs ("Routing …", 50 ms); fenced by the same snapshot as the await above.
   await inkYield();
-  // ⚠ THE WATER SHE WAITS IN AT A HOLD BEFORE A START (2026-11-19, holdWaitRisk): asked once the chart covers the hold
-  // point (the read above), before anything is routed or sent. Refused, nothing is sent; fenced by `was` as above.
-  if(hold && surveyStartT(surveyById(hold.held)) != null){
-    showNote("Upload: reading the water at " + surveyLabel(surveyById(hold.held)) + "'s start while she waits for it…");
-    const wait = await holdWaitRisk(hold);
-    if(wait){
-      const say = "Upload refused - NOTHING WAS SENT: " + surveyLabel(wait.s) + "'s start, where she would hold from about "
-        + surgeWhen(wait.arrive) + " until its start " + surgeWhen(wait.start) + ", has " + fmtDist(wait.waitM) + " of clear water "
-        + "round it at " + wait.say + " - under her " + fmtDist(holdRadiusM()) + " hold radius, and "
-        + fmtDist(wait.cutClearM) + (wait.cutM != null ? " at the " + fmtLevel(wait.cutM) + " it was cut at" : " on the chart")
-        + ". She would wait in water the falling tide leaves too shallow for her. Upload nearer its start, so she waits less "
-        + "there, or ✎ the survey and move its start.";
-      showBanner(say);
-      flashNote("Upload refused: " + surveyLabel(wait.s) + "'s start goes too shallow while she waits for it.");
-      logClient("upload_wait", {sv: wait.s.id, start_t: wait.start, arrive_t: Math.round(wait.arrive), level_m: wait.level,
-                                clear_m: Math.round(wait.waitM * 10) / 10, cut_clear_m: Math.round(wait.cutClearM * 10) / 10,
-                                refused: true});
-      render(); return;
-    }
+  // ⚠ WHERE SHE WAITS FOR A START (phase 4, waitPlan): asked once the chart covers the survey's start (the read above),
+  // before anything is routed or sent. A wait point moves the part's end; none in reach is refused, nothing sent.
+  let wait = null;
+  if(loiter && surveyStartT(surveyById(hold.held)) != null){
+    showNote("Upload: reading the water where she waits for " + surveyLabel(surveyById(hold.held)) + "…");
+    wait = await waitPlan(hold, rd);
+    if(wait && wait.refuse){ waitRefused(wait); render(); return; }
+    if(wait && wait.to){ wps = waitPart(hold, wait); wait.fuelSay = waitFuelSay(hold, wait, null, wps); }
   }
+  if(home){ home.homeSay = await waitHomeWater(home); home.fuelSay = waitFuelSay(hold, null, home, wps); }
   // Route the whole run path clear of ENC obstacles: the transit from the boat to
   // the first waypoint AND every leg between waypoints. Detours are inserted so the
   // ASV never crosses land / a nogo zone on a transit.
@@ -25073,8 +25938,12 @@ async function doUpload(opts){
   // planning, so a wider read (a new chart) builds them again from it, and `lk` is the one the plan was routed on. The
   // search here, if the worker cannot answer, asks again (review 2026-11-08): it runs later, on the chart as it is then,
   // and survey charts built from the chart at the post would be mixed with it.
+  // (a survey released from FAR - Continue from home on the rising tide - is routed at its cut, which the read over
+  //  its own window holds: uploadTideRisk's `far`. At the water now its lines' own hops were blocked: phase 4)
+  const farSv = tide && tide.far && tide.far.length ? tide.far[0] : null;
+  const farCard = farSv ? {sv: farSv, m: surveyCutM(surveyById(farSv)), waits: true} : undefined;
   let lk = null;
-  const legsAt = () => { lk = surveyLegKos(wps); return lk ? {svKo: lk.svKo} : undefined; };
+  const legsAt = () => { lk = surveyLegKos(wps, farCard); return lk ? {svKo: lk.svKo} : undefined; };
   const plan = await planInsideChart([{lat:asv.lat, lon:asv.lon}, ...wps], {plan: true, read: rd}, () => {
     const start = {lat:asv.lat, lon:asv.lon}, std = transitStandoffM(), at = surveyEntries(wps);
     const ropts = legsAt();
@@ -25277,8 +26146,9 @@ async function doUpload(opts){
       + " m buffer. Nothing else in the plan changes.");
   // The plan's end is where a Loiter run holds: tell the vessel how much water it has there.
   const r = await cmd("/api/cmd/upload", {route: plan.route,
-                      hold_clear_m: holdClearAt(plan.route[plan.route.length-1]),
-                      ...(hold ? {completion: "loiter"} : {})});    // the hold's split: she waits at its start
+                      // (a wait point's disc is the model's it was found on - the wait's low, out of channels)
+                      hold_clear_m: wait && wait.to ? waitDisc(wait) : holdClearAt(plan.route[plan.route.length-1]),
+                      ...(loiter ? {completion: "loiter"} : {})});    // the hold's split: she waits where it ends
   if(!took(r)){
     // ⚠ THREE ANSWERS, AND ONLY ONE IS A FACT ABOUT THE VESSEL. A REFUSAL may say she is
     // still on the plan she had, because every one of Engine.upload's gates raises BEFORE
@@ -25312,6 +26182,7 @@ async function doUpload(opts){
   // ⚠ AND ITS PRESS TIME (cmdPressedMax), as setPlanIntent counts one (the review of the merge of 2026-11-16): the RTH
   // button's fence and the low-fuel monitor's ask whether a command was PRESSED after theirs, and read no cmdGen - with the
   // count alone, the Upload withdrew End of plan's chain and nothing else, and the RTH pressed before it was sent over it.
+  holdRecordTaken(holdRec(hold, home, wait, plan.route), r, plan.route.length, release);   // TAKEN: drawn or not
   if(planGen !== was.gen || runRoute !== was.route){
     cmdGen++; cmdKind = "survey"; cmdPressedMax = Math.max(cmdPressedMax, pressedAt);
     showBanner("Plan UPLOADED (" + plan.route.length + " waypoints) — but the boat was "
@@ -25331,13 +26202,16 @@ async function doUpload(opts){
       + "exactly as before, but no corner is being slowed for — the hull rounds every corner "
       + "of a route and this is what measures that.");
   stagedNote(r);
-  setPendingHold(hold ? {sv: hold.held, at: Date.now()} : null);
+  // (ONE banner, one slot: an Upload FROM a survey that also splits at a later hold says both - found on the lab,
+  //  2026-11-20: Continue S1 into S2's wait showed only "UPLOADED FROM S1", and where she waits next, the fuel's
+  //  answer and "a wait is watched" were gone)
+  const holdSay = hold ? holdUploadedSay(hold, home, wait, plan.route.length, homeAsk && homeAsk.said) : "";
   if(hold){
     const hs = surveyById(hold.held);
-    showBanner("UPLOADED UP TO " + (hs ? surveyLabel(hs) : hold.held) + "'S START (" + plan.route.length + " waypoints) - "
-      + "she will HOLD there (loiter) until you press Continue on its row. The rest of the plan is NOT aboard yet.");
+    showBanner(holdSay);
     if(planIntent) planIntent.why.push({t: "info", s: "split at the hold before " + (hs ? surveyLabel(hs) : hold.held)
-      + ": the run ends in a loiter at its start; Continue sends the rest"});
+      + (home ? ": it waits at home - the run ends, End of plan takes her home; Continue sends the rest"
+              : ": the run ends in a loiter at its " + (wait && wait.to ? "wait point" : "start") + "; Continue sends the rest")});
   }
   if(fromSv){
     // SAID: the plan aboard is not the whole plan on the chart, and the surveys before this one are not in it.
@@ -25345,7 +26219,7 @@ async function doUpload(opts){
     const left = (mission.surveys || []).slice(0, Math.max(0, i)).map(x => "S" + x.no);
     showBanner("UPLOADED FROM " + (sv ? surveyLabel(sv) : fromSv) + " (" + plan.route.length + " waypoints)"
       + (left.length ? " - " + left.join(", ") + " " + (left.length === 1 ? "is" : "are") + " NOT in the plan sent" : "")
-      + ". Start runs it from that survey's first line.");
+      + ". Start runs it from that survey's first line." + (holdSay ? " " + holdSay : ""));
     if(planIntent) planIntent.why.push({t: "info", s: "uploaded from " + (sv ? surveyLabel(sv) : fromSv)
       + (left.length ? "; " + left.join(", ") + " left out" : "")});
   }
@@ -25372,6 +26246,10 @@ async function startRun(opts){
   if(S && S.run === "paused" && !fresh) return resumeRun();
   if(!confirmed && !await guiConfirm("Start the autonomous survey",
     "The transit is planned clear of ENC obstacles (green path). Confirm the routed path looks safe and no uncharted obstacle is in the way.")) return;
+  // (a caller's last word before the post, asked AFTER the question: Continue's staged plan may have been replaced
+  //  while it stood - phase 4 review)
+  const gone = opts && typeof opts.stillStaged === "function" ? opts.stillStaged() : null;
+  if(gone){ showBanner(gone); flashNote("Start: nothing was sent - the plan staged for it was replaced."); return false; }
   // ⚠⚠ THESE CLEAR IN FRONT OF THE POST, UNLIKE EVERY OTHER CONTROL ON THIS BAR, AND THAT
   // IS DELIBERATE. Engine.start sets `run = "running"` and calls _push_state() INSIDE its
   // lock, before the reply is serialized - so the telemetry frame for the new run can reach
@@ -25617,7 +26495,7 @@ async function continueSurvey(){
         + "was sent; the break-off is kept.");
       render(); return;
     }
-    const up = await cmd("/api/cmd/upload", {route, hold_clear_m: holdClearAt(route[route.length - 1]),
+    const up = await cmd("/api/cmd/upload", {route, hold_clear_m: tailHoldClear(route),
                                              ...(tailEndsAtHold(route) ? {completion: "loiter"} : {})});
     if(!took(up)){
       const say = notTookSay(up, "UPLOAD");
@@ -25857,7 +26735,7 @@ async function reflyStrike(){
         + "was sent; the struck coverage stays banked.");
       render(); return;
     }
-    const up = await cmd("/api/cmd/upload", {route, hold_clear_m: holdClearAt(route[route.length - 1]),
+    const up = await cmd("/api/cmd/upload", {route, hold_clear_m: tailHoldClear(route),
                                              ...(tailEndsAtHold(route) ? {completion: "loiter"} : {})});
     if(!took(up)){
       const say = notTookSay(up, "UPLOAD");
@@ -27434,7 +28312,7 @@ async function resumeHeldRun(opts){
   // ⚠ A HOLD'S SPLIT STAYS ONE (3b): a remainder that ends at the held survey's start still ends there in a LOITER -
   // re-uploaded without it, it would take the End of plan setting and an RTH would chain from the hold point.
   const up = await cmd("/api/cmd/upload",
-                       {route: tail, hold_clear_m: holdClearAt(tail[tail.length-1]),
+                       {route: tail, hold_clear_m: tailHoldClear(tail),
                         ...(tailEndsAtHold(tail) ? {completion: "loiter"} : {})});
   if(!took(up)){
     // ⚠ PUT HER BACK ON STATION. She is paused beside the very feature the console stopped
@@ -28032,6 +28910,10 @@ function onState(s){
   // take the rest of this frame (the guard among it) down with it; said once, because it means fuel is not watched
   try{ fuelTick(s); }catch(e){ if(!fuelErrSaid){ fuelErrSaid = true; console.error(e);
     showBanner("⚠ THE FUEL MONITOR FAILED: " + ((e && e.message) || e) + " - fuel is NOT being watched; keep an eye on the gauge."); } }
+  // the wait's clock (phase 4): a staged upload's record, and the word that it is time - CAUGHT and said once, as the
+  // fuel monitor is
+  try{ waitTick(s, st); }catch(e){ if(!waitErrSaid){ waitErrSaid = true; console.error(e);
+    showBanner("⚠ THE WAIT'S CLOCK FAILED: " + ((e && e.message) || e) + " - no countdown or alert for a waiting survey; watch the time yourself."); } }
   // the chart read ahead of her (step 3, 2026-10-11) - caught: a read is a convenience, never the frame's business
   try{ corridorAheadTick(s); }catch(e){ console.error(e); }
   try{ passageTick(s); }catch(e){ console.error(e); }      // the passage, sailed (2026-10-12)
