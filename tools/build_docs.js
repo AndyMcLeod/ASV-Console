@@ -38,6 +38,7 @@ process.on("beforeExit", () => {
   const script = path.join(__dirname, "build_pdfs.py");
   let r = spawnSync("python", [script], { stdio: "inherit" });
   if (r.error && r.error.code === "ENOENT") r = spawnSync("py", [script], { stdio: "inherit" });
+  if (r.error && r.error.code === "ENOENT") r = spawnSync("python3", [script], { stdio: "inherit" });
   pdfs = r.error ? 1 : r.status;
   if (r.error) console.error("  PDFs NOT REBUILT: no Python to run build_pdfs.py (" + r.error.message + ")");
 });
