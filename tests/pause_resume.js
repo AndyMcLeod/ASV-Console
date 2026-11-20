@@ -848,6 +848,13 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     const _eqLL = eval("(" + /^const _eqLL=([^;]*);/m.exec(H)[1] + ")");
     // eslint-disable-next-line no-eval
     const surveysUploadBlocked = eval("(" + grab("surveysUploadBlocked") + ")");
+    // THE WATER SHE WAITS IN AT A HOLD BEFORE A START (2026-11-19): holdWaitRisk's own body is tests/survey_window.js
+    // 9's; here its answer is this world's (null: nothing refused - every hold here before it) and how often it was asked
+    let waitRisk = null, waitAsked = 0;
+    const holdWaitRisk = () => Promise.resolve().then(() => { waitAsked++; return waitRisk; });
+    const holdRadiusM = () => 2;
+    // eslint-disable-next-line no-eval
+    const [surveyStartT, surgeWhen] = ["surveyStartT", "surgeWhen"].map((f) => eval("(" + grab(f) + ")"));
     // eslint-disable-next-line no-eval
     const doUpload = eval("(" + grab("doUpload") + ")");
     const up = async (setup) => { calls.length = 0; unotes.length = 0; banners.length = 0; asked = null;
@@ -1011,6 +1018,33 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
           () => calls.length === 1 && calls[0].b.completion === "loiter" && calls[0].b.route.length === 1
                 && calls[0].b.route[0].lat === 43.09,
           () => JSON.stringify(calls.map((c) => [c.b && c.b.route && c.b.route.length, c.b && c.b.completion])));
+    // 1t2-1t3. THE WAIT AT A HOLD BEFORE A START (the survey window, 2026-11-19). S2 held with a start time: Upload asks
+    // holdWaitRisk, and its refusal sends NOTHING - the banner says so and why, the log carries it, no hold is pending.
+    // With no start the hold is the hold as it was: holdWaitRisk is never asked.
+    const waitedBefore = waitAsked;
+    await up(() => { nogo = { ready: true, busy: false, band: "enc_harbour" }; answer = false; });
+    const askedNoStart = waitAsked - waitedBefore;
+    mission.surveys[1].settings = { start_t: Date.now() / 1000 + 4 * 3600 };
+    waitRisk = { s: mission.surveys[1], p: { lat: 43.09, lon: -70.70 }, level: 0.2, say: "+0.20 m, the lowest predicted",
+                 waitM: 0.5, cutClearM: 12, cutM: 1.4, arrive: Date.now() / 1000 + 600, start: mission.surveys[1].settings.start_t };
+    clientLog.length = 0; pendingHold = null;
+    await up(() => { nogo = { ready: true, busy: false, band: "enc_harbour" }; answer = false; });
+    check("1t2. a HELD survey with a START: Upload asks the water she waits in, and its refusal sends NOTHING - the "
+          + "banner says nothing was sent and why (the clear water left round its start, her hold radius, the level it "
+          + "was cut at), the log carries it, no hold is pending",
+          () => calls.length === 0 && /Upload refused - NOTHING WAS SENT: S2 Ledge's start/.test(banners.join(" "))
+                && /m of clear water round it at \+0\.20 m, the lowest predicted/.test(banners.join(" "))
+                && /under her 2 m hold radius/.test(banners.join(" "))
+                && /at the \+1\.40 m it was cut at/.test(banners.join(" ")) && pendingHold === null
+                && clientLog.some((l) => l.kind === "upload_wait" && l.o.refused === true && l.o.sv === "S2"),
+          () => "sent " + calls.length + "; " + banners.join(" | ").slice(0, 200));
+    waitRisk = null;
+    await up(() => { nogo = { ready: true, busy: false, band: "enc_harbour" }; answer = false; });
+    check("1t3. ... with room to wait, the split goes as before (loiter at S2's start); and a hold with NO start never "
+          + "asks it",
+          () => calls.length === 1 && calls[0].b.completion === "loiter" && askedNoStart === 0 && waitAsked - waitedBefore === 2,
+          () => "sent " + calls.length + ", asked " + (waitAsked - waitedBefore) + " (no start: " + askedNoStart + ")");
+    delete mission.surveys[1].settings;
     mission.surveys[1].hold = false;
     // 1w-1x. THE UNROUTED UPLOAD OF A PART (found writing 3b: 3a's Upload from had the hole too). With no route the
     // console flies the WHOLE saved plan, so a part of it is sent as its own waypoints; the whole plan still goes as
@@ -1108,8 +1142,10 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     const W = new Function("distTo", "reads", "lowFor", "kmNow", "\"use strict\";\n"
       + "let mission = {surveys: []}, asv = {lat: 43.07, lon: -70.71}; const sea = {waterOffset: 1.0}; let water = null;\n"
       + "const roleSpeedMS = (r) => r === 'transit' ? 3.0864 : 1.5432; const fmtDist = (m) => Math.round(m) + ' m';\n"
-      + ["WATER_ETA_SLACK", "WATER_WINDOW_PAD_S", "WATER_WINDOW_MAX_H", "TIDE_REBUILD_M"]
+      + ["WATER_ETA_SLACK", "WATER_WINDOW_PAD_S", "WATER_WINDOW_MAX_H", "TIDE_REBUILD_M", "UPLOAD_EARLY_S"]
           .map((n) => grabDecl(n)).join("\n") + "\n"
+      // a survey's start time (2026-11-19): none here - its `early` is tests/survey_window.js 10's
+      + grab("surveyStartT") + "\n" + grab("surgeWhen") + "\n"
       + "const WATER_REMOTE_KM = " + require("fs").readFileSync(path.join(__dirname, "..", "static", "js", "chart.js"), "utf8")
           .match(/^export const WATER_REMOTE_KM = (\d+(?:\.\d+)?);/m)[1] + ";\n"   // chart.js's, which the page imports
       + "const waterAlongRead = async (line, t0, t1) => { reads.push({line: line.map(p => p.lat), h: (t1 - t0) / 3600,"

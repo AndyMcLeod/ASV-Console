@@ -211,6 +211,9 @@ const world = () => new Function("\"use strict\";\n"
   + "let editingSv = null, cardSv = null; const surveySettingsNow = () => null; const replaceSurvey = () => {};\n"
   // phase 3a: the commit records the water level the punch was cut at
   + "const sea = {waterOffset: 0};\n"
+  // the survey window (2026-11-19): no start on the card here, so no hold is turned on (tests/survey_window.js 6)
+  + "let patStartT = null, punchLevel = null; const punchLevelFor = () => null;\n"
+  + grab(H, "commitWaitsForStart") + "\n" + grab(H, "surveyStartT") + "\n"
   + grab(H, "emptyPunchRefusal") + "\n" + grab(H, "punchRefusal") + "\n" + grab(H, "patternWaypoints") + "\n" + grab(H, "commitPattern")
   + "\nreturn { mission, commitPattern, set: (o) => { patClip = o.clip || null; patTransits = o.transits || [];"
   + " patLead = o.lead || []; drawn = o.drawn || []; ANCHORS = o.anchors || null; } };")();

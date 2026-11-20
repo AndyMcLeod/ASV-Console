@@ -5,7 +5,7 @@
   },
   "asv-simulator-operations-manual.pdf": {
     "from": "asv-simulator-operations-manual.docx",
-    "content_sha256": "f0bf5145d9e653ce4e5d09ce68bca30dc70ced3c82dc68bb9f41841e282d28ec"
+    "content_sha256": "a00dee82e8dbe7bdcf4c1aa3e0e0b55f4f061c6d7c8637f8080fbb0ff70f3ffc"
   },
   "asv-simulator-quick-start.pdf": {
     "from": "asv-simulator-quick-start.docx",
@@ -13,6 +13,6 @@
   },
   "asv-simulator-technical-manual.pdf": {
     "from": "asv-simulator-technical-manual.docx",
-    "content_sha256": "a487cc260d5614bf820c8277eb2aed9eb854bc86febd5e5b25964e05f5fee6f0"
+    "content_sha256": "f83ad9352c07e5f13d22b4e82250b8f4da0ce6b190c9401d743cd9fc3f15af58"
   }
 }

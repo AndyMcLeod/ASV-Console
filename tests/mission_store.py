@@ -569,7 +569,7 @@ check("16c. a save that only TAGS the plan takes no backup slot - a real earlier
 # boundary, Max depth, leads and turn shape, Andy's per-survey list - recorded on the survey so the page's edit can put
 # them back. They ride the survey record through both dicts (16 already proves the record does) and are type-checked.
 ST = {"boundary": [SV_WPS[0], SV_WPS[1], SV_WPS[3]], "max_depth_m": 40, "lead_mode": "s", "lead_in": 10,
-      "lead_out": 0, "turn_ease": "eased"}
+      "lead_out": 0, "turn_ease": "eased", "start_t": 1795000000, "duration_h": 24}   # start + duration: 2026-11-19
 ST_SURVEYS = [dict(SURVEYS[0], settings=ST), dict(SURVEYS[1], settings=None)]
 _, st_err = attempt(_C.save_mission, sv_plan(surveys=ST_SURVEYS))
 st_back = _C.load_mission().get("surveys")
@@ -592,7 +592,11 @@ st_bad = {"settings that are a list": sv_plan(surveys=[dict(SURVEYS[0], settings
           "an infinite lead": st_plan(lead_in=float("inf")),
           "a lead as text": st_plan(lead_out="5"),
           "a lead mode of km": st_plan(lead_mode="km"),
-          "a turn shape of spline": st_plan(turn_ease="spline")}
+          "a turn shape of spline": st_plan(turn_ease="spline"),
+          "a start time as text": st_plan(start_t="09:00"), "a start time of 0": st_plan(start_t=0),
+          "a start time that is a bool": st_plan(start_t=True), "an infinite start": st_plan(start_t=float("inf")),
+          "a duration of 0": st_plan(duration_h=0), "a duration over a day": st_plan(duration_h=24.5),
+          "a duration as text": st_plan(duration_h="2"), "a NaN duration": st_plan(duration_h=float("nan"))}
 st_said = {k: refused(v) for k, v in st_bad.items()}
 check("16e. a survey's settings that are not what they claim are REFUSED in words, naming the survey, and nothing "
       "is written",

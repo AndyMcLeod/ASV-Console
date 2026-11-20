@@ -676,6 +676,20 @@
           <option value="arc" selected>Arc</option><option value="eased">Eased</option>
         </select></div>
       <div class="phint" id="sp_ease_note">turns: arc</div>
+      <!-- THE SURVEY WINDOW (2026-11-19, Andy: "During survey planning, institute a start time and duration
+           functionality. Using this feature, examine tide level at start and total change through the duration of
+           the survey"). START: when she begins it. Blank = as soon as she gets there. A start later than she can be
+           there has Add to plan turn its HOLD on (the boat has no clock to wait on: she holds at its start until
+           Continue). DURATION: its survey time, hours. The window its water is read over runs from the start for the
+           longer of the duration and its own flight. Punch Out cuts at the lowest water predicted over that window
+           (flightWindow). The strip draws the water through it (tideStripRefresh, /api/water/series). -->
+      <div class="prow punchsep"><label>Start</label>
+        <input type="datetime-local" id="sp_start" style="width:168px;min-width:0" title="START TIME - when she is to begin this survey, in this computer's time. Blank = as soon as she gets there. Punch Out then cuts its lines at the lowest water predicted from this time through its duration, not from now. A start later than she can be there turns the survey's HOLD on when it is added to the plan: Upload sends her as far as its start, where she holds until you press Continue on its row. Nothing releases her by itself."/></div>
+      <div class="prow"><label>Duration h</label>
+        <input type="number" id="sp_dur" value="" min="0.25" max="24" step="0.25" placeholder="flight" style="width:58px" title="DURATION - the hours this survey is to take, its survey time only (not the transit to it). Blank = its own flight, at the survey speed. The water is read over the longer of the two, so a duration shorter than the flight never shortens the window. At most 24 h: the predictions are read no further ahead."/></div>
+      <div class="prow" style="gap:4px"><div id="sp_tide" style="flex:1;min-width:0;height:34px"></div>
+        <button class="ctl small" id="sp_tide_ref" style="width:auto;min-width:22px;padding:0 5px" title="Read the water over the survey's window again - the strip is read when the start or duration changes, at Punch Out and at ✎, not as the drawing moves.">↻</button></div>
+      <div class="phint" id="sp_tide_note">tide: draw a pattern, then set a start or press Punch Out</div>
       <button class="ctl small punch" id="sp_punch" title="Trim survey-line extents to ENC chart features (shoreline, docks, aids, hazards, water below min depth)">Punch Out</button>
       <button class="ctl small" id="sp_add" disabled>Add to plan</button>
       <!-- WHY ADD TO PLAN IS REFUSED (punchRefusal), directly under the button it explains - in amber like the
@@ -7038,6 +7052,9 @@ let cardSv = null;
 // RUN IT BACKWARDS (phase 3a, 2026-10-02): the drawing's punch walks its runs from the other end - the last run first,
 // each the other way (runBackwards) - before the turns are built. A per-survey setting, recorded and put back by ✎.
 let patReverse = false;
+// THE SURVEY WINDOW (2026-11-19): the drawing's start time (epoch s) and duration (h), or null - per-survey settings,
+// recorded and put back by ✎ like the rest. flightWindow reads them for the punch's water and the tide strip.
+let patStartT = null, patDurH = null;
 // THE HOLD SHE IS ON HER WAY TO, OR WAITING AT (phase 3b, 2026-10-02): {sv, at} after an upload that was SPLIT at a held
 // survey's start - the part aboard ends there in LOITER, and the survey's row offers Continue. Every successful upload
 // rewrites it (to its own split, or none); kept in this browser so a refresh while she waits still offers Continue.
@@ -11336,7 +11353,9 @@ let punchFlown = null;                      // {key, m} - the flight of the rout
  *  (review 2026-11-07: a speed halved within the TTL kept the low of a flight half as long). */
 function punchLevelKey(lines){
   return (lines || []).map(l => [l[0].lat, l[0].lon, l[1].lat, l[1].lon].map(v => v.toFixed(4)).join(",")).join(";")
-       + "|" + roleSpeedMS("survey").toFixed(2);
+       + "|" + roleSpeedMS("survey").toFixed(2)
+       // ... and its start time and duration (2026-11-19): a read over another window is no read for this one
+       + (patStartT != null || patDurH != null ? "|" + (patStartT || "") + "|" + (patDurH || "") : "");
 }
 /** The read that belongs to the pattern on the card NOW - its lines and the survey speed - or null. */
 function punchLevelFor(){
@@ -11412,16 +11431,30 @@ async function punchFlightOutgrewRead(){
  * speeds, unstretched) to her LATEST finish (the survey speed throughout, stretched by WATER_ETA_SLACK, and
  * WATER_WINDOW_PAD_S after). {t0, t1, hours, when}: `when` the window in sectionLevel's words, null for one that starts
  * now - and it says when the server's WATER_WINDOW_MAX_H cuts it short.
+ * ⚠ ITS START TIME AND DURATION (2026-11-19, the survey window): `startT` (epoch s) a start she WAITS for - later than
+ * her earliest arrival - begins the window at it (`start`), and the water now is then nothing to the punch
+ * (punchWaterM). A start she cannot be there by is `late`, and one already gone is `passed`. Both read from her
+ * arrival, as without one. `durH`, its survey time: the window runs from its start for the longer of the duration and
+ * the flight, so a duration never shortens it. UPLOAD PASSES NEITHER: what it sends is flown at once (the boat has no
+ * mid-route wait - a start is kept by the hold, and its Continue's Upload reads the window it is flown in then).
  */
-function flightWindow(preM, ownM){
+function flightWindow(preM, ownM, startT, durH){
   const now = Date.now() / 1000, vs = Math.max(0.1, roleSpeedMS("survey")), vf = Math.max(vs, roleSpeedMS("transit"));
-  const t0 = now + preM / vf, t1 = now + (preM + ownM) / vs * WATER_ETA_SLACK + WATER_WINDOW_PAD_S;
+  const arrive = now + preM / vf;
+  const st = Number.isFinite(startT) && startT > 0 ? +startT : null;
+  const passed = st != null && st <= now, start = st != null && !passed && st > arrive, late = st != null && !passed && !start;
+  const durS = Number.isFinite(durH) && durH > 0 ? durH * 3600 : 0;
+  const t0 = start ? st : arrive;
+  const t1 = start ? st + Math.max(ownM / vs * WATER_ETA_SLACK, durS) + WATER_WINDOW_PAD_S
+                   : Math.max(now + (preM + ownM) / vs * WATER_ETA_SLACK, now + preM / vs * WATER_ETA_SLACK + durS)
+                     + WATER_WINDOW_PAD_S;
   const h0 = (t0 - now) / 3600, span = (t1 - t0) / 3600, capped = span > WATER_WINDOW_MAX_H;
   const hours = Math.min(span, WATER_WINDOW_MAX_H);
-  const when = h0 < 0.1 && !capped ? null
-    : "over its flight, " + (h0 < 0.1 ? "from now" : h0.toFixed(1) + " h from now") + " to " + (h0 + hours).toFixed(1) + " h"
-      + (capped ? " (its first " + WATER_WINDOW_MAX_H + " h: the predictions are read no further ahead)" : "");
-  return {t0, t1, hours, when};
+  const cap = capped ? " (its first " + WATER_WINDOW_MAX_H + " h: the predictions are read no further ahead)" : "";
+  const when = start ? "over its window, from its start " + surgeWhen(t0) + " to " + surgeWhen(t0 + hours * 3600) + cap
+    : h0 < 0.1 && !capped ? null
+    : "over its flight, " + (h0 < 0.1 ? "from now" : h0.toFixed(1) + " h from now") + " to " + (h0 + hours).toFixed(1) + " h" + cap;
+  return {t0, t1, hours, when, start, late, passed, startT: st, arrive};
 }
 /** The plan the pattern on the card is flown after, m, from the boat: up to its own first waypoint when the card holds
  *  a survey already in the plan (✎), else the whole plan and on to the pattern's first line. */
@@ -11438,9 +11471,11 @@ async function readPunchLevel(lines){
   const path = [];
   for(const l of lines) path.push(l[0], l[1]);
   const ownM = punchFlightM(lines);
-  const win = flightWindow(punchPreM(lines), ownM);
+  const win = flightWindow(punchPreM(lines), ownM, patStartT, patDurH);
   const r = await waterAlongRead(path, win.t0, win.t1);
   return {...sectionLevel(r, water, win.hours, win.when), hours: win.hours, flightM: ownM,
+          start: win.start, startT: win.start ? win.t0 : null, late: win.late, passed: win.passed,
+          askedT: win.startT, arrive: win.arrive,
           failed: !(r && Array.isArray(r.points) && r.points.some(p => Number.isFinite(p.low_m)))};
 }
 /** A read that FAILED - no level at any of its points: NOAA or the server did not answer - is tried again after this,
@@ -11483,10 +11518,23 @@ function punchWaterM(){
   const live = sea.waterOffset || 0;
   if(!punchLevel) return live;
   const lv = punchLevelFor();
+  // ⚠ A START SHE WAITS FOR (2026-11-19): the window begins at it, so the water now is not the water she flies it in -
+  // a survey planned at low water for a start at high water is cut at the high window's low. Only on a READ: chart datum
+  // standing in for no read keeps the water now under it, as before.
+  if(lv && lv.start && lv.read && Number.isFinite(lv.m)) return lv.m;
   return Math.min(lv && Number.isFinite(lv.m) ? lv.m : 0, live);
 }
+/** The start time the card's punch is cut for - its read's start, when it is a start she waits for and the level was
+ *  read (punchWaterM) - or null. Stamped on the cut (liveCut, takePunchHold), so applyWaterOffset and the survey's own
+ *  legs (cardRouteLevel) know the water now is not the water it is flown in. */
+function punchStartT(){
+  const lv = punchLevel ? punchLevelFor() : null;
+  return lv && lv.start && lv.read && Number.isFinite(lv.startT) ? lv.startT : null;
+}
+/** A cut made for a start she waits for that is still ahead (punchStartT, stamped on it). */
+function cutWaits(c){ return !!(c && Number.isFinite(c.startT) && c.startT > Date.now() / 1000); }
 /** The live cut - the one place it is written; punchOut reads it when no clearing holds the inputs. */
-function liveCut(){ return {bufM: patClipBufM(), waterM: punchWaterM(), setKn: null, held: false}; }
+function liveCut(){ return {bufM: patClipBufM(), waterM: punchWaterM(), setKn: null, held: false, startT: punchStartT()}; }
 /** A water level as the console writes one: signed, to the centimeter. */
 function fmtLevel(v){ return (v >= 0 ? "+" : "") + v.toFixed(2) + " m"; }
 /** The level in the operator's words, for the punch summary: where it came from, and what it costs. `stamp`: for the
@@ -11505,7 +11553,136 @@ function punchLevelSay(m, stamp, held){
   return "cut at " + (m < punchLevel.m - 1e-9 ? fmtLevel(m) + (held ? ", the level this clearing is held at (under the prediction now: "
                                                                      : ", the water now (under the prediction: ") + punchLevel.say + ")"
                     : punchLevel.read ? punchLevel.say : fmtLevel(m) + ", " + punchLevel.say)
-       + (!stamp && live > m + 0.05 ? " - " + fmtLevel(live) + " now, so water deep enough only nearer high water is left out" : "");
+       + punchStartSay(lv, stamp)
+       + (!stamp && !(lv.start && lv.read) && live > m + 0.05
+          ? " - " + fmtLevel(live) + " now, so water deep enough only nearer high water is left out" : "");
+}
+/** What the card's start time did to the level, in words (punchLevelSay's tail; 2026-11-19): cut for a start she waits
+ *  for - its hold goes on at Add to plan - or a start she cannot keep, read from her arrival. "" with no start. `stamp`:
+ *  the survey's record (its row tip), which says the start without what Add to plan will do. */
+function punchStartSay(lv, stamp){
+  if(!lv) return "";
+  if(lv.start && lv.read) return " - cut for its start, " + surgeWhen(lv.startT)
+    + (stamp ? "" : ": the water now is not the water it is flown in, so Add to plan turns its hold on and she waits at its start until you press Continue");
+  if(lv.start) return " - the water at its start " + surgeWhen(lv.startT) + " could not be read, so it is cut as if flown now";
+  if(lv.late && Number.isFinite(lv.askedT)) return " - she can be at it no sooner than " + surgeWhen(lv.arrive)
+    + ", after its start " + surgeWhen(lv.askedT) + ", so it is read from her arrival";
+  if(lv.passed && Number.isFinite(lv.askedT)) return " - its start " + surgeWhen(lv.askedT) + " has passed, so it is read from her arrival";
+  return "";
+}
+/**
+ * THE TIDE STRIP (2026-11-19, the survey window; Andy: "examine tide level at start and total change through the
+ * duration of the survey"). The water over the card's window - the punch's own: flightWindow with the card's start and
+ * duration - slot by slot from /api/water/series. At each slot it is the LOWEST of the lines' points' levels, so its low
+ * is the low Punch Out cuts at. Read when the start or the duration changes, at Punch Out, at ✎ and at ↻ - not as the
+ * drawing moves (a read per drag would be a NOAA read per drag): a strip read for another drawing, window or speed says
+ * so and is drawn faint. DISPLAY ONLY: the punch reads its own level (readPunchLevel), and nothing here cuts a line.
+ * ⚠ NO TIMERS: a refresh asked while one is out is folded into it (tideStripAgain), and the card as it stands is read
+ * again when that one lands - on the promise. A hidden tab's timers wait a second or a minute.
+ */
+let tideStrip = null;                // {key, r, win, at}: the last read, for the card `key` names (punchLevelKey)
+let tideStripBusy = null, tideStripAgain = false, tideStripDrawn = null;
+const WATER_SERIES_TIMEOUT_MS = 20000;
+/** The server's slot-by-slot water along `line` between epochs t0 and t1 (/api/water/series at samplePts of it, as
+ *  waterAlongRead asks the lows), points beyond WATER_REMOTE_KM of a station left out of the curve and counted: its
+ *  answer, or {ok: false, note} in words. */
+async function waterSeriesRead(line, t0, t1){
+  const q = samplePts(line, WATER_SAMPLE_M, WATER_ALONG_MAX_PTS).map(p => p.lat.toFixed(5) + "," + p.lon.toFixed(5)).join(";");
+  let r = null;
+  const ac = typeof AbortController === "function" ? new AbortController() : null;
+  const t = ac ? setTimeout(() => ac.abort(), WATER_SERIES_TIMEOUT_MS) : null;
+  try{
+    const res = await fetch("/api/water/series?pts=" + q + "&t0=" + Math.floor(t0) + "&t1=" + Math.ceil(t1)
+                            + "&trust_km=" + WATER_REMOTE_KM, ac ? {signal: ac.signal} : undefined);
+    r = await res.json();
+    if(!res.ok) r = {ok: false, note: (r && r.error) || "HTTP " + res.status};
+  }catch(e){ r = {ok: false, note: "the read failed: " + ((e && e.message) || e)}; }
+  finally{ if(t) clearTimeout(t); }
+  return r || {ok: false, note: "no answer"};
+}
+/** One read of the strip for the card as it stands - or none, with no lines on it. */
+async function tideStripReadOnce(){
+  const lines = patSourceLines();
+  if(!lines.length){ tideStrip = null; return; }
+  const path = [];
+  for(const l of lines) path.push(l[0], l[1]);
+  const key = punchLevelKey(lines);
+  const win = flightWindow(punchPreM(lines), punchFlightM(lines), patStartT, patDurH);
+  tideStrip = {key, r: await waterSeriesRead(path, win.t0, win.t1), win, at: Date.now()};
+}
+/** Read the strip again (a read already out takes this ask with it). Resolves when the card's read has landed; never
+ *  throws. */
+async function tideStripRefresh(){
+  if(tideStripBusy){ tideStripAgain = true; return tideStripBusy; }
+  let done = null;
+  tideStripBusy = new Promise(res => { done = res; });
+  try{
+    do{ tideStripAgain = false; renderTideStrip(); await tideStripReadOnce(); } while(tideStripAgain);
+  }catch(e){ tideStrip = null; }
+  finally{ tideStripBusy = null; done(); renderTideStrip(); }
+}
+/** The strip's curve, an inline SVG (it mirrors to the controls window as markup; a canvas would not): the water through
+ *  the window, its low marked, the start and the end, and the level the card's punch is cut at, dashed. */
+function tideStripSvg(r, cutM){
+  const ser = (r.series || []).filter(x => Array.isArray(x) && Number.isFinite(x[0]) && Number.isFinite(x[1]));
+  if(ser.length < 2) return "";
+  const W = 200, H = 34, x0 = ser[0][0], x1 = ser[ser.length - 1][0];
+  let lo = Math.min(...ser.map(x => x[1])), hi = Math.max(...ser.map(x => x[1]));
+  if(Number.isFinite(cutM)){ lo = Math.min(lo, cutM); hi = Math.max(hi, cutM); }
+  const pad = Math.max(0.05, (hi - lo) * 0.12);
+  const X = e => ((e - x0) / Math.max(1, x1 - x0) * W).toFixed(1);
+  const Y = v => (H - 3 - (v - (lo - pad)) / ((hi + pad) - (lo - pad)) * (H - 6)).toFixed(1);
+  const pts = ser.map(x => X(x[0]) + "," + Y(x[1])).join(" ");
+  const mark = (t, c) => Number.isFinite(t) ? `<line x1="${X(t)}" x2="${X(t)}" y1="0" y2="${H}" style="stroke:${c};stroke-width:1"/>` : "";
+  const low = r.low && Number.isFinite(r.low.t) ? `<circle cx="${X(r.low.t)}" cy="${Y(r.low.m)}" r="2.2" style="fill:var(--warn)"/>` : "";
+  const cut = Number.isFinite(cutM) ? `<line x1="0" x2="${W}" y1="${Y(cutM)}" y2="${Y(cutM)}" style="stroke:var(--ink-dim);stroke-width:1;stroke-dasharray:3 2"/>` : "";
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:${H}px;display:block;background:var(--abyss);border:1px solid var(--line2);border-radius:2px">`
+    + mark(r.start && r.start.t, "var(--line2)") + mark(r.end && r.end.t, "var(--line2)") + cut
+    + `<polyline points="${pts}" style="fill:none;stroke:var(--ink);stroke-width:1.3" vector-effect="non-scaling-stroke"/>` + low + `</svg>`;
+}
+/** The strip's words: the level at its start and its end, the change between, the low and the high - and what it
+ *  could not draw, and a start she cannot keep. */
+function tideStripSay(r, win){
+  const sg = v => (v >= 0 ? "+" : "") + v.toFixed(2) + " m";
+  const at = (x, what) => what + " " + surgeWhen(x.t) + " " + sg(x.m);
+  const ch = r.end.m - r.start.m;
+  const head = r.kind === "observed" ? "Observed " + sg(r.start.m) + " (no tide is predicted here: the level now stands for it)"
+    : at(r.start, win && win.start ? "Start" : "From") + " → " + at(r.end, "end") + " (" + (ch >= 0 ? "rises " : "falls ")
+      + Math.abs(ch).toFixed(2) + " m); low " + sg(r.low.m) + " " + surgeWhen(r.low.t) + ", high " + sg(r.high.m) + " " + surgeWhen(r.high.t);
+  // (the window's end is the punch's own: an hour - WATER_WINDOW_PAD_S - past the survey's time, so a 4 h survey from
+  // 23:30 reads to 04:30; said, or an end past the hours typed reads as a slip. Not when the 24 h cap cut it off.)
+  const padded = r.kind !== "observed" && win && Number.isFinite(win.t1) && Number.isFinite(win.t0) && WATER_WINDOW_PAD_S > 0
+    && win.t1 - win.t0 <= win.hours * 3600 + 1;
+  const n = r.points || 0, gaps = [
+    padded ? "its end is " + +(WATER_WINDOW_PAD_S / 3600).toFixed(2) + " h past the survey's own time, a margin" : "",
+    r.far ? r.far + " of its " + n + " points have no station within " + fmtDist(WATER_REMOTE_KM * 1000, 0) + " (not drawn; the punch cuts at chart datum there)" : "",
+    r.unread ? "no station gave a level at " + r.unread + " of its " + n + " points" : "",
+    r.stofs ? "NOAA's surge forecast is in it" : "",
+    win && win.late && Number.isFinite(win.startT) ? "she can be there no sooner than " + surgeWhen(win.arrive) + ", after its start " + surgeWhen(win.startT) + ": read from her arrival" : "",
+    win && win.passed && Number.isFinite(win.startT) ? "its start " + surgeWhen(win.startT) + " has passed: read from her arrival" : ""];
+  return head + gaps.filter(Boolean).map(g => "; " + g).join("") + ".";
+}
+/** The strip and its note as the card stands. Cheap and synchronous: updatePatReadout calls it. */
+function renderTideStrip(){
+  const box = $("#sp_tide"), note = $("#sp_tide_note");
+  if(!box || !note) return;
+  const lines = patSourceLines(), t = tideStrip, r = t && t.r;
+  const readOk = !!(r && r.ok === true);          // (a water read's answer, not a command's - took() is for those)
+  const own = !!(t && lines.length && t.key === punchLevelKey(lines));
+  const cut = own && patClip && patFunnel && patFunnel.cut && Number.isFinite(patFunnel.cut.waterM) ? patFunnel.cut.waterM : NaN;
+  let svg = "", say;
+  if(!lines.length) say = "tide: draw a pattern, then set a start or press Punch Out";
+  else if(!t) say = tideStripBusy ? "tide: reading the water over its window…" : "tide: set a start, press Punch Out or ↻ to read the water over its window";
+  else if(!readOk) say = "tide: no prediction could be read along it" + (r && r.note ? " (" + r.note + ")" : "") + ".";
+  else{
+    svg = tideStripSvg(r, cut);
+    say = tideStripSay(r, t.win) + (Number.isFinite(cut) ? " Dashed: the " + fmtLevel(cut) + " it is cut at." : "")
+        + (own ? "" : " Read for another drawing, start or speed - ↻ reads it again.");
+  }
+  if(tideStripBusy && t) say = "(reading again…) " + say;
+  if(tideStripDrawn !== svg){ box.innerHTML = svg; tideStripDrawn = svg; }
+  box.style.opacity = !t || own ? "" : "0.45";
+  if(note.textContent !== say) note.textContent = say;
 }
 /**
  * UPLOAD'S TIDE CHECK (2026-11-07): the surveys `wps` carries that were cut for deeper water than they will be flown in.
@@ -11522,6 +11699,50 @@ function punchLevelSay(m, stamp, held){
  * a survey cut at +3.43 m went out unasked with the water at +0.12 m. Now the low is the read points' alone, and with
  * none the water now is judged by itself, said so.
  */
+/**
+ * THE WATER SHE WAITS IN (2026-11-19, the survey window). A survey with a start time holds her at its start until
+ * Continue (its hold, which Add to plan turns on) - and she may sit there for hours, through the tide's fall, at a point
+ * the punch cleared at the water of its own window, not at the water she waits in. So an Upload split at a hold
+ * (splitAtHold) whose survey has a start later than her earliest arrival is judged at that point over the wait: the
+ * lowest water predicted there between her arrival and the start (sectionLevel; the water now too when she is there
+ * within WAIT_NOW_S), and the disc round the point clear of the chart built at that level (holdClearM on koAtLevel).
+ * REFUSED - {s, p, level, say, waitM, cutClearM, cutM, arrive, start} - only when the disc is under her hold radius
+ * (holdRadiusM) AND the tide made it so: at least a meter tighter than at the level the survey was cut at. A start
+ * point tight at its own cut is the hold as it was before start times (no new refusal of an old plan). Null: nothing to
+ * refuse, no chart, no start, or no wait. Never throws - an error is logged and judged as no wait.
+ */
+const WAIT_NOW_S = 1800;
+async function holdWaitRisk(hold){
+  try{
+    if(!hold || !Array.isArray(hold.part) || !hold.part.length || !asv || !nogo.ready || !nogo.ko || !nogo.frame) return null;
+    const s = surveyById(hold.held), st = surveyStartT(s), p = hold.part[hold.part.length - 1];
+    if(st == null || !p) return null;
+    const now = Date.now() / 1000, line = [{lat: asv.lat, lon: asv.lon}, ...hold.part];
+    let L = 0;
+    for(let i = 1; i < line.length; i++) L += distTo(line[i - 1], line[i]);
+    const vs = Math.max(0.1, roleSpeedMS("survey")), vf = Math.max(vs, roleSpeedMS("transit"));
+    const arrive = now + L / vf;
+    if(!(st > arrive + 60)) return null;            // she gets there at its start or after: no wait
+    const end = Math.min(st, arrive + WATER_WINDOW_MAX_H * 3600);
+    const r = await waterAlongRead([p], arrive, end);
+    const lv = sectionLevel(r, water, (end - arrive) / 3600, "while she waits there, " + surgeWhen(arrive) + " to " + surgeWhen(st));
+    const live = sea.waterOffset || 0, soon = arrive - now < WAIT_NOW_S;
+    const level = soon ? Math.min(lv.m, live) : lv.m;
+    const cutM = surveyCutM(s);
+    if(!nogo.ready || !nogo.ko || !nogo.frame) return null;          // (the chart went while NOAA was read)
+    const pEN = nogo.frame.toEN({lat: p.lat, lon: p.lon}), buf = nogo.buffer || 0;
+    const waitM = holdClearM(pEN, koAtLevel(level, true), buf);
+    const cutClearM = holdClearM(pEN, cutM != null ? koAtLevel(cutM, true) : nogo.ko, buf);
+    if(!Number.isFinite(waitM) || !Number.isFinite(cutClearM)) return null;
+    if(waitM >= holdRadiusM() || waitM >= cutClearM - 1) return null;
+    return {s, p, level, say: soon && live < lv.m ? fmtLevel(live) + ", the water now" : lv.say, waitM, cutClearM, cutM,
+            arrive, start: st};
+  }catch(e){
+    logClient("upload_wait", {error: String((e && e.message) || e)});
+    return null;
+  }
+}
+const UPLOAD_EARLY_S = 600;      // a survey reached this long before its start time is flown EARLY (uploadTideRisk's `early`)
 async function uploadTideRisk(wps){
   try{
     const svs = (mission.surveys || []).filter(s => s && s.water_m != null && isFinite(+s.water_m));
@@ -11539,11 +11760,14 @@ async function uploadTideRisk(wps){
       // its own flight as the punch counts it (flightOwnM): its turns at the turn speed, so a survey punched just now is
       // read over the same window it was cut for (review 2026-11-07)
       const win = flightWindow(cum[i0 + 1], flightOwnM(wps.slice(i0, i1 + 1), (a, b) => !!lineOfLeg(a, b)));
+      // ⚠ NEVER FROM ITS START TIME (2026-11-19): what is sent is flown at once - so the window is the one she flies it in
+      // NOW, and a survey cut for a later start and sent before it is asked about here, its start said (`early`)
+      const st = surveyStartT(s), early = st != null && st > win.t0 + UPLOAD_EARLY_S ? st : null;
       return waterAlongRead(wps.slice(i0, i1 + 1), win.t0, win.t1).then(r => {
         const pts = r && Array.isArray(r.points) ? r.points.filter(trusted) : [];
         const lv = sectionLevel({...(r || {}), points: pts}, water, win.hours, win.when);
-        return lv.read && lv.m <= live ? {s, low: lv.m, say: lv.say}
-             : {s, low: live, say: fmtLevel(live) + ", the water now" + (lv.read ? "" : " (no prediction along it could be read)")};
+        return lv.read && lv.m <= live ? {s, low: lv.m, say: lv.say, early}
+             : {s, low: live, say: fmtLevel(live) + ", the water now" + (lv.read ? "" : " (no prediction along it could be read)"), early};
       });
     }).filter(Boolean);
     const got = await Promise.all(asks);
@@ -11555,7 +11779,8 @@ async function uploadTideRisk(wps){
 /** The inputs the next punch is cut at WHILE A CLEARING HOLDS THEM, else null - and punchOut then reads the live ones
  *  itself, in one place, so "held" and "live" are each written exactly once. See punchHold. */
 function punchCutNow(){
-  return punchHold ? {bufM: punchHold.bufM, waterM: punchHold.waterM, setKn: punchHold.setKn, held: true} : null;
+  return punchHold ? {bufM: punchHold.bufM, waterM: punchHold.waterM, setKn: punchHold.setKn, held: true,
+                      startT: punchHold.startT != null ? punchHold.startT : null} : null;
 }
 /**
  * One sample of the SET, a frame (clearingTick) - what the hold's "highest over the window" reads. ⚠ THE DRIFT IS
@@ -11592,7 +11817,8 @@ function holdStepUp(m){ return Math.ceil(m / PUNCH_HOLD_STEP_M - 1e-9) * PUNCH_H
 /** Take the hold: the highest margin over the window, rounded up, and the level a punch is cut at (punchWaterM). */
 function takePunchHold(){
   const m = punchMarginMax();
-  punchHold = {bufM: holdStepUp(m.bufM), waterM: punchWaterM(), setKn: m.setKn, at: Date.now(), why: null};
+  punchHold = {bufM: holdStepUp(m.bufM), waterM: punchWaterM(), setKn: m.setKn, at: Date.now(), why: null,
+               startT: punchStartT()};         // (the start it is cut for, as liveCut stamps one - 2026-11-19)
   return punchHold;
 }
 /**
@@ -11912,7 +12138,7 @@ async function judgeRedHops(){
   if(!patClip || !patJoined || !nogo.ready || !nogo.ko) return;
   const hops = patRed.filter(r => !r.turn && r.a && r.b);
   if(!hops.length) return;
-  const lv = surveyRouteLevel(patFunnel && patFunnel.cut ? patFunnel.cut.waterM : null), buf = +nogo.buffer || 0;
+  const lv = cardRouteLevel(), buf = +nogo.buffer || 0;
   // ⚠ THE MODEL ASKED ON IS THE CHART AS IT IS AT EACH MESSAGE (re-review 2026-11-08). planOffThread sends the frame as it
   // is when each message goes, and the frame moves with the chart (the centroid of the features read): a chart rebuilt
   // between messages - an extract read on the way, a wider read - and the old chart's model asked in the new frame is a
@@ -12081,7 +12307,8 @@ async function uploadDryRun(){
   // each survey's own legs on the chart at its own water, as Upload routes them - this one's at its punch's cut
   // (surveyLegKos: the card's survey is not stamped yet, or stamped with an older cut) - asked again by the search here,
   // which runs later, on the chart as it is then (doUpload's legsAt)
-  const legsAt = () => { const lk = surveyLegKos(wps, {sv, m: patFunnel && patFunnel.cut ? patFunnel.cut.waterM : null});
+  const legsAt = () => { const lk = surveyLegKos(wps, {sv, m: patFunnel && patFunnel.cut ? patFunnel.cut.waterM : null,
+                                                       waits: cutWaits(patFunnel && patFunnel.cut)});
                          return lk ? {svKo: lk.svKo} : undefined; };
   const ropts = legsAt();
   let plan;
@@ -12795,6 +13022,7 @@ function updatePatReadout(){
   { const el = $("#sp_refuse");
     if(el){ el.textContent = refused ? refused.text : ""; el.style.display = refused ? "" : "none"; } }
   renderClearRow();                            // the clearing's row, under the refusal it answers
+  renderTideStrip();                           // the water over its window, read or stale (2026-11-19)
   // ── THE STRIKE ROW, rendered in ONE place for every branch below ──────────────────
   // What is selected and what Delete will do; then, separately, how many runs the
   // operator has taken out and the way to put them back. Both are read off the same
@@ -12890,6 +13118,9 @@ function updatePatReadout(){
 function resetPattern(){ pat = {A:null,B:null,C:null,align:pat.align}; patDrag=null; patClip=null;
   editingSv = null;                              // the edit IS the pattern: discarding one ends the other (phase 2)
   patReverse = false; { const rv = $("#sp_reverse"); if(rv) rv.checked = false; }   // a new drawing runs forwards (3a)
+  // ... with no start time or duration, and no strip read for the drawing that went (the survey window, 2026-11-19)
+  patStartT = null; patDurH = null; tideStrip = null;
+  { const s = $("#sp_start"), d = $("#sp_dur"); if(s) s.value = ""; if(d) d.value = ""; }
   patUnsafe=[]; patRed=[]; patJoined=false; patDropped=null; patFunnel=null; patRoutes=[]; patTransits=[]; patTrim=[]; $("#encbanner").style.display="none";
   // The strikes go with the pattern they were made against, and so does any rebuild still
   // scheduled for it — a timer left running would re-punch a pattern that no longer
@@ -13069,7 +13300,8 @@ function surveySettingsNow(){
           lead_mode: mission.lead_mode === "s" ? "s" : "m",
           lead_in: Math.max(0, +mission.lead_in || 0), lead_out: Math.max(0, +mission.lead_out || 0),
           turn_ease: mission.turn_ease === "eased" ? "eased" : "arc",
-          reverse: !!patReverse};                 // run backwards (phase 3a)
+          reverse: !!patReverse,                  // run backwards (phase 3a)
+          start_t: patStartT, duration_h: patDurH};   // its start time and duration (the survey window, 2026-11-19)
 }
 /** Put a survey's recorded settings back on the card. A survey recorded before phase 2 has none, and the card keeps
  *  what it holds - said by the caller. */
@@ -13088,10 +13320,42 @@ function applySurveySettings(st){
   if($("#sp_lead_out"))  $("#sp_lead_out").value  = mission.lead_out;
   if($("#sp_turn_ease")) $("#sp_turn_ease").value = mission.turn_ease;
   patReverse = !!st.reverse; if($("#sp_reverse")) $("#sp_reverse").checked = patReverse;   // 3a
+  // the survey window (2026-11-19): a survey from before has none, and comes back with none
+  patStartT = Number.isFinite(+st.start_t) && +st.start_t > 0 ? +st.start_t : null;
+  patDurH = Number.isFinite(+st.duration_h) && +st.duration_h > 0 ? Math.min(WATER_WINDOW_MAX_H, +st.duration_h) : null;
+  showSurveyWindow();
   updateLeadNote(); updateEaseNote();
   return true;
 }
+/** An epoch as a datetime-local field holds it, in this computer's time ("2026-11-19T14:30"), or "" for none. */
+function localInputOf(t){
+  if(!Number.isFinite(t) || t <= 0) return "";
+  const d = new Date(t * 1000), p = (n) => String(n).padStart(2, "0");
+  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + "T" + p(d.getHours()) + ":" + p(d.getMinutes());
+}
+/** A datetime-local field's value as an epoch (it is this computer's time), or null - blank or half typed. */
+function epochOfLocalInput(v){
+  if(typeof v !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d/.test(v)) return null;
+  const ms = new Date(v).getTime();
+  return Number.isFinite(ms) && ms > 0 ? Math.round(ms / 1000) : null;
+}
+/** The card's Start and Duration fields as patStartT / patDurH stand. */
+function showSurveyWindow(){
+  const s = $("#sp_start"), d = $("#sp_dur");
+  if(s) s.value = localInputOf(patStartT);
+  if(d) d.value = patDurH != null ? String(patDurH) : "";
+}
 function surveyById(id){ return (mission.surveys || []).find(s => s.id === id) || null; }
+/** Survey `s`'s start time (its settings' start_t, epoch s - 2026-11-19), or null: none set, or a survey from before. */
+function surveyStartT(s){
+  const t = s && s.settings ? +s.settings.start_t : NaN;
+  return Number.isFinite(t) && t > 0 ? t : null;
+}
+/** Survey `s`'s duration, hours (its settings' duration_h), or null. */
+function surveyDurH(s){
+  const h = s && s.settings ? +s.settings.duration_h : NaN;
+  return Number.isFinite(h) && h > 0 ? h : null;
+}
 /** One survey's figures for its row: drawn lines (a line the keep-outs cut is one), coverage meters (leads are run,
  *  not coverage - as the LINES card counts them). */
 function surveyFigures(id){
@@ -13147,11 +13411,16 @@ function renderSurveyTable(){
     // THE TIDE SINCE THE PUNCH (3a): its depth window was judged at the level it was cut at - a fall only (surveyTideMoved).
     const tideSay = t == null ? "" : " ⚠ The water has FALLEN " + Math.abs(t).toFixed(2) + " m under the level it was cut "
       + "at, so its lines were cut for deeper water than there is now - Punch all re-cuts them.";
+    const svStart = surveyStartT(s), startSay = svStart == null ? ""
+      : " Its start is " + surgeWhen(svStart) + (svStart > Date.now() / 1000 ? "" : " (passed)") + ": it was cut for the water from then.";
     const tip = rocEsc(surveyLabel(s) + ": " + f.lines + " line(s), " + fmtDist(f.m) + " of coverage"
       + (s.punched ? ", punched" : ", NOT punched")
       + (s.water_m != null ? " at a water level of " + (s.water_m >= 0 ? "+" : "") + s.water_m.toFixed(2) + " m"
                              + (s.water ? " (" + s.water + ")" : "") : "")
-      + ((s.settings && s.settings.reverse) ? ", run BACKWARDS" : "") + ". " + stateSay + ". Run " + (i + 1) + " of " + n
+      + ((s.settings && s.settings.reverse) ? ", run BACKWARDS" : "")
+      // its start time and duration (the survey window, 2026-11-19)
+      + (svStart != null ? ", to start " + surgeWhen(svStart) : "") + (surveyDurH(s) != null ? ", " + surveyDurH(s) + " h" : "")
+      + ". " + stateSay + ". Run " + (i + 1) + " of " + n
       + "." + tideSay + " Click the row to show its figures on this card and its actions.");
     const on = s.id === pick;
     const acts = !on ? "" : `<span class="svbr"></span><span class="svacts">`
@@ -13161,15 +13430,19 @@ function renderSurveyTable(){
           ? "RUN IT BACKWARDS (or forwards again): punch this survey again from its other end - entered at the far end of its last line, the lines in reverse order and each the other way - and replace it where it stands."
           : "No drawing was recorded for this survey, so it cannot be punched again."}">${(s.settings && s.settings.reverse) ? "Forwards" : "Backwards"}</button>`
       + `<button class="ctl small" id="svr${i}_clr" data-act="clr" data-sv="${rocEsc(s.id)}"${p.any ? "" : " disabled"} title="CLEAR this survey's progress: forget which of its lines this page has seen run, so it reads as not run.">Clear</button>`
-      + `<button class="ctl small" id="svr${i}_hold" data-act="hold" data-sv="${rocEsc(s.id)}" title="${s.hold
+      + `<button class="ctl small" id="svr${i}_hold" data-act="hold" data-sv="${rocEsc(s.id)}" title="${(s.hold
           ? "HOLD BEFORE THIS SURVEY is ON: Upload sends the plan only as far as this survey's start, where she station-keeps (loiter) until you press Continue on this row. Click to turn it off."
-          : "HOLD BEFORE THIS SURVEY: Upload will send the plan only as far as this survey's start, where she station-keeps (loiter) until you press Continue on this row. Nothing releases her by itself."}">${s.hold ? "Hold: on" : "Hold: off"}</button>`
+          : "HOLD BEFORE THIS SURVEY: Upload will send the plan only as far as this survey's start, where she station-keeps (loiter) until you press Continue on this row. Nothing releases her by itself.")
+          + rocEsc(startSay + (svStart != null && !s.hold ? " Without the hold she flies it as she gets there - Upload asks if that is before its start." : ""))}">${s.hold ? "Hold: on" : "Hold: off"}</button>`
       + `</span>`;
     // CONTINUE (3b): on the held survey's row, whether or not it is picked - it is the answer the run is waiting for.
     const waiting = !!(pendingHold && pendingHold.sv === s.id), there = waiting && holdWaiting();
-    const cont = !waiting ? "" : `<span class="svbr"></span><button class="ctl small svcont" id="svr${i}_cont" data-act="cont" data-sv="${rocEsc(s.id)}"${there ? "" : " disabled"} title="${there
+    // (its start time, 2026-11-19: Continue before it flies it early, and Upload asks - uploadTideRisk's `early`)
+    const early = svStart != null && svStart > Date.now() / 1000;
+    const cont = !waiting ? "" : `<span class="svbr"></span><button class="ctl small svcont" id="svr${i}_cont" data-act="cont" data-sv="${rocEsc(s.id)}"${there ? "" : " disabled"} title="${(there
         ? "CONTINUE: upload the plan from this survey on and start it. She is holding at its start."
-        : "She is on her way to this survey's start, where the uploaded part of the plan ends - Continue opens when she is holding there."}">${there ? "Continue " + rocEsc(surveyLabel(s)) + " ▶" : "Holding at its start - on her way"}</button>`;
+        : "She is on her way to this survey's start, where the uploaded part of the plan ends - Continue opens when she is holding there.")
+        + (early ? rocEsc(" Its start time is " + surgeWhen(svStart) + ": its lines were cut for the water from then. Continue before it and Upload judges them again against the water from now, asking if they were cut for deeper water.") : "")}">${there ? "Continue " + rocEsc(surveyLabel(s)) + " ▶" + (early ? " · start " + rocEsc(surgeWhen(svStart).slice(4)) : "") : "Holding at its start - on her way"}</button>`;
     // UNBLOCK (2026-11-06): on a survey holding a leg the last Upload refused, whether or not it is picked - it is the
     // way on from that refusal. ✎, Punch Out and the clearing, which leaves Update S# ready (unblockSurvey).
     const unb = !(blk && canEdit) ? "" : `<span class="svbr"></span><button class="ctl small svcont" id="svr${i}_unb" data-act="unblock" data-sv="${rocEsc(s.id)}" title="UNBLOCK: load this survey back onto the card and Punch Out; the lines beside the joins Upload refused are struck off one at a time, re-punching after each, until nothing blocks. Then press Update S${s.no} and Upload.">Unblock ${rocEsc(surveyLabel(s))}</button>`;
@@ -13197,8 +13470,14 @@ function renderSurveyTable(){
 const SURVEY_TIDE_FLAG_M = 0.25;
 /** How far the water has fallen under the level survey `s` was cut at, in meters (negative), or null when it has not
  *  fallen a flag's worth or when nothing was recorded (an un-punched survey, one from before 3a). */
+// ⚠ NOT BEFORE ITS START TIME (2026-11-19, the survey window): a survey cut for a later start is cut at the low of THAT
+// window, which can stand well above the water now (planned at low water for a start at high) - the water now is not
+// the water it is flown in, and the row would cry wolf until the start. Upload asks of it if it is sent before then
+// (uploadTideRisk's `early`).
 function surveyTideMoved(s){
   if(!s || s.water_m == null || !isFinite(+s.water_m)) return null;
+  const st = surveyStartT(s);
+  if(st != null && st > Date.now() / 1000) return null;
   const d = (sea.waterOffset || 0) - (+s.water_m);
   return d <= -(SURVEY_TIDE_FLAG_M - 1e-9) ? d : null;
 }
@@ -13234,6 +13513,7 @@ async function editSurvey(id){
   editingSv = id; cardSv = id;
   if(mode !== "survey") setMode("survey");
   saveMission(); updatePatReadout(); render();
+  tideStripRefresh();                            // the water over its window, start and duration back (2026-11-19)
   flashNote("Editing " + surveyLabel(s) + ": Punch Out, then Update S" + s.no + " replaces it where it stands. "
     + (had ? "Its boundary, Max depth, leads and turn shape are back on the card."
            : "It was added before surveys kept their settings, so the card's boundary, Max depth, leads and turn "
@@ -13471,8 +13751,13 @@ async function commitPattern(){
   if(editing) no = editing.no;
   const sv = editing ? editing.id : "S" + no, drawnFrom = ((currentPattern() || sp) || {}).anchors || null;
   const pos = (p) => p ? {lat: p.lat, lon: p.lon} : null;
+  // ⚠ A START SHE WILL WAIT FOR TURNS ITS HOLD ON (the survey window, 2026-11-19). The boat has no clock to wait on, so
+  // a start time is kept only by the hold: Upload sends her as far as its start, where she loiters until Continue. A
+  // punch cut for that start is cut for water that is not here now, and a plan that ran straight into it would fly it
+  // early - Upload would ask (uploadTideRisk's `early`), but the plan as committed is the plan that waits.
+  const startsLater = commitWaitsForStart();
   const rec = {id: sv, no, name: editing ? (editing.name || "") : "", punched: !!patClip,
-    hold: !!(editing && editing.hold),        // the hold before it (3b) is the survey's, not the drawing's
+    hold: !!(editing && editing.hold) || startsLater,   // the hold before it (3b) is the survey's, not the drawing's
     pattern: drawnFrom ? {A: pos(drawnFrom.A), B: pos(drawnFrom.B), C: pos(drawnFrom.C), align: drawnFrom.align | 0}
                        : null,
     settings: surveySettingsNow(),             // the drawing's own settings, so ✎ can put them back (Andy's per-survey list)
@@ -13502,9 +13787,18 @@ async function commitPattern(){
   // the plan that was just committed, so they describe it instead of going to "--" at the
   // moment it becomes real. Same fault the survey card had, one row over.
   resetPattern(); recalcCommittedForSpeed(); saveMission(); render();
+  if(startsLater && !(editing && editing.hold))
+    flashNote(surveyLabel(rec) + " starts " + surgeWhen(surveyStartT(rec)) + ": its HOLD is on - Upload sends her as far "
+      + "as its start, where she holds until you press Continue on its row. Nothing releases her by itself.");
 }
-
-// --- arbitrary survey-area boundary (CAMP SurveyArea) -------------------- //
+/** Whether the pattern being committed has a start she will wait for: the card's read says she reaches it before its
+ *  start (flightWindow's `start`) - or, with no read of the card's own, its start is still ahead at all. A start she
+ *  cannot be there by was read from her arrival, and is flown as she gets there: no hold. */
+function commitWaitsForStart(){
+  if(!(Number.isFinite(patStartT) && patStartT > Date.now() / 1000)) return false;
+  const lv = punchLevel ? punchLevelFor() : null;
+  return lv ? !!lv.start : true;
+}
 function boundHandleAt(cx, cy){
   const r = mapEl.getBoundingClientRect(), o = originPx();
   for(let i=0;i<boundary.length;i++){ const s = worldPx(boundary[i].lat,boundary[i].lon,zoom);
@@ -14218,7 +14512,11 @@ function applyWaterOffset(wl){
   const rebuilds = !!(nogo.features && nogo.features.length && nogo.builtOffset != null
                       && Math.abs(sea.waterOffset - nogo.builtOffset) >= TIDE_REBUILD_M - 1e-9);
   const cutOn = patFunnel && patFunnel.cut && Number.isFinite(patFunnel.cut.waterM) ? patFunnel.cut : null;
-  const under = !!cutOn && sea.waterOffset < cutOn.waterM - (TIDE_REBUILD_M - 1e-9);
+  // ⚠ NOT FOR A CUT MADE FOR A START STILL AHEAD (the survey window, 2026-11-19): it is cut at the low of the window it is
+  // flown in, which can stand well above the water now - planned at low water for a start at high, the next station
+  // update threw the punch away. She is not flown in the water now (the hold keeps the start; Upload asks of a survey
+  // sent before it). Once the start is past, the water now judges it again.
+  const under = !!cutOn && !cutWaits(cutOn) && sea.waterOffset < cutOn.waterM - (TIDE_REBUILD_M - 1e-9);
   const keep = !!cutOn && !rebuilds && !under;
   if(sea.waterOffset !== prev && patClip && !keep){
     patClip = null;
@@ -17693,6 +17991,16 @@ function surveyRouteLevel(cutM){
   if(cutM == null || cutM === "" || !Number.isFinite(+cutM)) return null;
   return Math.min(+cutM, sea.waterOffset || 0);
 }
+/** THE WATER THE SURVEY ON THE CARD HAS ITS OWN LEGS JUDGED AT (judgeRedHops, the clearing's dry run): surveyRouteLevel
+ *  of its punch's cut - ⚠ or the cut itself when it was cut for a start she waits for that is still ahead (2026-11-19,
+ *  cutWaits). She flies it from that start, not now: judged at the water now, planned at low water for a start at high,
+ *  every hop between lines cut for the high water read red. Upload never takes this: what it sends is flown at once, and
+ *  its survey legs stay at the lower (surveyLegKos with no card, or a card that does not wait). */
+function cardRouteLevel(){
+  const c = patFunnel && patFunnel.cut;
+  if(!c) return null;
+  return cutWaits(c) && Number.isFinite(+c.waterM) ? +c.waterM : surveyRouteLevel(c.waterM);
+}
 /** A survey's cut level on record (`water_m`), or null - one stamped with none, or none at all. */
 function surveyCutM(s){
   return s && s.water_m != null && s.water_m !== "" && Number.isFinite(+s.water_m) ? +s.water_m : null;
@@ -17711,7 +18019,9 @@ function surveyLegKos(wps, card){
     const id = w && w.sv;
     if(id == null || seen.has(id)) continue;
     seen.add(id);
-    const c = card && id === card.sv ? card.m : surveyCutM(surveyById(id)), m = surveyRouteLevel(c);
+    // (the card's survey cut for a start she waits for: at its cut - cardRouteLevel's rule, 2026-11-19)
+    const mine = card && id === card.sv, c = mine ? card.m : surveyCutM(surveyById(id));
+    const m = mine && card.waits && c != null && Number.isFinite(+c) ? +c : surveyRouteLevel(c);
     if(m == null) continue;
     const ko = koAtLevel(m, true);
     if(ko && ko !== nogo.ko){ svKo[id] = ko; levels[id] = m; cuts[id] = +c; }
@@ -21536,6 +21846,19 @@ $("#sp_reset").onclick = ()=>{ resetPattern(); render(); };
 $("#sp_align").onchange = ()=>{ pat.align = parseInt($("#sp_align").value)||0; patClip=null; updatePatReadout(); render(); };
 // Backwards (3a) is geometry like the alignment: a changed direction is a different plan, so the punch goes with it.
 $("#sp_reverse").onchange = ()=>{ patReverse = !!$("#sp_reverse").checked; patClip=null; updatePatReadout(); render(); };
+// THE SURVEY WINDOW (2026-11-19): a new start or duration is a new window - the punch on the card was cut for the old
+// one (patClip dropped, as Backwards drops it) and the strip reads the new one. A half-typed time is no start.
+function surveyWindowChanged(){
+  const t = epochOfLocalInput(($("#sp_start") || {}).value), h = parseFloat(($("#sp_dur") || {}).value);
+  const durH = Number.isFinite(h) && h > 0 ? Math.min(WATER_WINDOW_MAX_H, h) : null;
+  if(t === patStartT && durH === patDurH) return;
+  patStartT = t; patDurH = durH;
+  patClip = null; updatePatReadout(); render();
+  tideStripRefresh();
+}
+$("#sp_start").onchange = surveyWindowChanged;
+$("#sp_dur").onchange = surveyWindowChanged;
+$("#sp_tide_ref").onclick = () => { tideStripRefresh(); };
 // force line spacing: move C to the typed distance along the current direction
 $("#sp_spacing").onchange = ()=>{
   const v = parseFloat($("#sp_spacing").value);
@@ -21687,7 +22010,7 @@ $("#enf_openwater").onchange = ()=>{ V.OPEN_WATER = $("#enf_openwater").value !=
 // Through `punchNow`, not straight at `punchOut`, so the button shares the ONE chain
 // every punch is serialised on. Pressing it while a strike’s rebuild is in flight then
 // queues behind that rebuild instead of being dropped by `punchBusy`.
-$("#sp_punch").onclick = () => { punchOutPressed(); };    // takes the hold; clears what blocks (2026-11-06)
+$("#sp_punch").onclick = () => { punchOutPressed(); tideStripRefresh(); };    // takes the hold; clears what blocks (2026-11-06); the strip (2026-11-19)
 $("#chrtBtn").onclick = ()=>{ encShow=!encShow; $("#chrtBtn").classList.toggle("on", encShow); render(); };
 // THE FOUR DOCUMENTS ON THE COMMAND BAR (Andy, 2026-10-19), AS PDFs IN THE BROWSER since 2026-11-19 (Andy: "convert them
 // from word to PDF"; asked, he chose "PDF in the browser"). A button opens /docs/<id> in a tab of its own, which the
@@ -23847,12 +24170,15 @@ async function doUpload(opts){
   if(tide){
     const yes = await guiConfirm("Upload — survey cut for deeper water",
         // (o.say starts with the level itself - sectionLevel's, or uploadTideRisk's own - so it is said once; lab 2026-11-07)
-        tide.over.map(o => surveyLabel(o.s) + " was cut at " + fmtLevel(+o.s.water_m) + "; the water along it before she "
-          + "finishes it goes as low as " + o.say).join(". ")
+        tide.over.map(o => surveyLabel(o.s) + " was cut at " + fmtLevel(+o.s.water_m)
+          // (its start time, 2026-11-19: sent now, it is flown before it - the water it was cut for is not here yet)
+          + (o.early ? " for its start, " + surgeWhen(o.early) + " - sent now, she flies it before then" : "")
+          + "; the water along it before she finishes it goes as low as " + o.say).join(". ")
         + ". Its line ends and turns can then run into water the guard will stop her for. Cancel, then ✎ the survey, "
         + "Punch Out and Update it to cut it at the water it will be flown in - or Upload it as it is.", {always: true});
     // logged WITH the answer (review 2026-11-07: it was written before it, so the log could not say what was done)
-    logClient("upload_tide", {surveys: tide.over.map(o => ({sv: o.s.id, water_m: +o.s.water_m, low_m: o.low})), asked: true,
+    logClient("upload_tide", {surveys: tide.over.map(o => ({sv: o.s.id, water_m: +o.s.water_m, low_m: o.low,
+                                                            ...(o.early ? {start_t: o.early} : {})})), asked: true,
                               answer: yes ? "upload" : "cancel"});
     if(!yes){
       flashNote("Upload: nothing was sent - " + tide.over.map(o => surveyLabel(o.s)).join(", ") + " to be punched again.");
@@ -23960,6 +24286,26 @@ async function doUpload(opts){
   // redraw that end the read, then routePlan, certifyDeparture and the first corner slice, were one task.
   // Go-To and RTH already take theirs ("Routing …", 50 ms); fenced by the same snapshot as the await above.
   await inkYield();
+  // ⚠ THE WATER SHE WAITS IN AT A HOLD BEFORE A START (2026-11-19, holdWaitRisk): asked once the chart covers the hold
+  // point (the read above), before anything is routed or sent. Refused, nothing is sent; fenced by `was` as above.
+  if(hold && surveyStartT(surveyById(hold.held)) != null){
+    showNote("Upload: reading the water at " + surveyLabel(surveyById(hold.held)) + "'s start while she waits for it…");
+    const wait = await holdWaitRisk(hold);
+    if(wait){
+      const say = "Upload refused - NOTHING WAS SENT: " + surveyLabel(wait.s) + "'s start, where she would hold from about "
+        + surgeWhen(wait.arrive) + " until its start " + surgeWhen(wait.start) + ", has " + fmtDist(wait.waitM) + " of clear water "
+        + "round it at " + wait.say + " - under her " + fmtDist(holdRadiusM()) + " hold radius, and "
+        + fmtDist(wait.cutClearM) + (wait.cutM != null ? " at the " + fmtLevel(wait.cutM) + " it was cut at" : " on the chart")
+        + ". She would wait in water the falling tide leaves too shallow for her. Upload nearer its start, so she waits less "
+        + "there, or ✎ the survey and move its start.";
+      showBanner(say);
+      flashNote("Upload refused: " + surveyLabel(wait.s) + "'s start goes too shallow while she waits for it.");
+      logClient("upload_wait", {sv: wait.s.id, start_t: wait.start, arrive_t: Math.round(wait.arrive), level_m: wait.level,
+                                clear_m: Math.round(wait.waitM * 10) / 10, cut_clear_m: Math.round(wait.cutClearM * 10) / 10,
+                                refused: true});
+      render(); return;
+    }
+  }
   // Route the whole run path clear of ENC obstacles: the transit from the boat to
   // the first waypoint AND every leg between waypoints. Detours are inserted so the
   // ASV never crosses land / a nogo zone on a transit.

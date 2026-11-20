@@ -186,7 +186,10 @@ const PAGE_FUNCS = ["punchOut", "lateKeeps", "currentPattern", "surveyPattern", 
   // ... and Upload's read of the same survey, which must agree with it (5p)
   "uploadTideRisk", "lineOfLeg", "onLineM",
   // THE RED HOPS AND UPLOAD'S SURVEY LEGS AT THE SURVEY'S OWN WATER (2026-11-08)
-  "koAtLevel", "surveyRouteLevel", "surveyCutM", "surveyLegKos", "atWaterLevel", "planLegReasons", "planLegLevelsSay"];
+  "koAtLevel", "surveyRouteLevel", "surveyCutM", "surveyLegKos", "atWaterLevel", "planLegReasons", "planLegLevelsSay",
+  // A SURVEY'S START TIME AND DURATION (2026-11-19): the cut stamped with its start, the card's legs at it, the strip
+  "punchStartT", "cutWaits", "punchStartSay", "cardRouteLevel", "commitWaitsForStart", "surveyStartT", "surgeWhen",
+  "renderTideStrip", "tideStripSvg", "tideStripSay"];
 const PAGE_DECLS = [/^const NO_LEAD = [^;]*;/m, /^const LEAD_GIVE = [^;]*;/m, /^const MAX_SURVEY_LINES = [^;]*;/m,
   /^const LEAD_MAX_M = [^;]*;/m, /^const REPUNCH_DELAY_MS = [^;]*;/m, /^const TIDE_REBUILD_M = [^;]*;/m,
   /^const TRIM_MAX_M = [^;]*;/m, /^const JUDGE_RUN_M = [^;]*;/m, /^const SPEED_ROLES = [^;]*;/m,
@@ -231,6 +234,7 @@ function makeWorld(opts) {
     + "let patStruck = [], patStruckKey = null, patSel = null, patClipMemo = null, patRepunchT = null;\n"
     + "let punchInFlight = null, punchBusy = false, encShow = false, boundary = [], boundaryClosed = false;\n"
     + "let surveyBounded = false;\n"
+    + "let patStartT = null, patDurH = null, tideStrip = null, tideStripBusy = null, tideStripDrawn = null;\n"
     + "let planKind = null, asv = null;\n"
     + "const mission = {lines: [], waypoints: [], surveys: [], approach_radius_m: 1, speeds: {}, speed: 'survey'};\n"
     // the chart read punchOut awaits: instant, unless a check puts something to happen DURING it (49)
@@ -1232,7 +1236,7 @@ const kinds = (w) => w.log.client.map((x) => x.k);
           + "plan stop a clearing first (Put them back forgetting its count too); every frame samples the standoff and "
           + "watches a finished clearing, right after the level is applied; Upload's refusal names Unblock, whose row "
           + "button Punch Outs the survey; Update tells the Unblock offer its survey is done",
-          () => /\$\("#sp_punch"\)\.onclick = \(\) => \{ punchOutPressed\(\); \};/.test(H)
+          () => /\$\("#sp_punch"\)\.onclick = \(\) => \{ punchOutPressed\(\); tideStripRefresh\(\); \};/.test(H)
                 && /if\(patSel\) stopClearingFor\("you struck a line by hand"\);\s*\n\s*if\(patSel && strikeSelectedRun\(\)\)/.test(keyH)
                 && /b\.onclick = \(\)=>\{ stopClearingFor\("you put the struck runs back"\); if\(restoreStruckRuns\(\)\)\{ forgetClearingStrikes\(\); render\(\); \} \};/.test(H)
                 && /const sp = currentPattern\(\); if\(!sp\) return;\s*\n[^\n]*\n\s*stopClearingFor\("you pressed Add to plan"\);/.test(cm)

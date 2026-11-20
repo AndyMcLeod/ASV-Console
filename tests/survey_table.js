@@ -914,6 +914,10 @@ function buildWorld(env) {
     + decl(/^const LEAD_MAX_M = [^;]*;/m) + "\n" + decl(/^const LINE_PART_OFFSET_M = [^;]*;/m) + "\n"
     + decl(/^let _drawnLines = [^;]*;/m) + "\n" + decl(/^let _svTableKey = [^;]*;/m) + "\n"
     + decl(/^let patReverse = [^;]*;/m) + "\n" + decl(/^const SURVEY_TIDE_FLAG_M = [^;]*;/m) + "\n"
+    // the survey window (2026-11-19): its start and duration ride the settings; ✎ reads the strip (stubbed: the strip
+    // itself is tests/survey_window.js 11)
+    + decl(/^let patStartT = [^;]*;/m) + "\n" + decl(/^const WATER_WINDOW_MAX_H = [^;]*;/m) + "\n"
+    + "let punchLevel = null; const punchLevelFor = () => null; const tideStripRefresh = () => Promise.resolve();\n"
     + decl(/^const LINE_DONE_FRAC = [^;]*;/m) + "\n" + decl(/^const COV_STEP_MAX_M = [^;]*;/m) + "\n"
     + decl(/^const LINE_COV_KEY = [^;]*;/m) + "\n" + "let lineCov = {};\n" + decl(/^let covPrev = [^;]*;/m) + "\n"
     + decl(/^let punchAllBusy = [^;]*;/m) + "\n"
@@ -939,7 +943,9 @@ function buildWorld(env) {
        "lineCovFrame", "lineGeoKey", "trackLineCoverage", "saveLineCov", "lineDoneFrac", "surveyProgress",
        "surveyTideMoved", "goToSurvey", "uploadFromSurvey", "repunchSurvey", "withCardKept", "punchAll",
        "reverseSurvey", "clearSurveyProgress", "holdWaiting", "toggleSurveyHold", "continueHold",
-       "surveysUploadBlocked", "noteSurveyUpdated"].map(grab).join("\n")
+       "surveysUploadBlocked", "noteSurveyUpdated",
+       // the survey window (2026-11-19)
+       "surveyStartT", "surveyDurH", "surgeWhen", "commitWaitsForStart", "showSurveyWindow", "localInputOf"].map(grab).join("\n")
     + "\nreturn { get mission(){ return mission; }, set mission(v){ mission = v; },"
     + " get editingSv(){ return editingSv; }, set editingSv(v){ editingSv = v; }, get cardSv(){ return cardSv; },"
     + " set cardSv(v){ cardSv = v; }, get pat(){ return pat; }, get boundary(){ return boundary; },"

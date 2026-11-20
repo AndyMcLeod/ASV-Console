@@ -2012,6 +2012,35 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
      there still ends in the loiter. Upload from a held survey goes to its start and waits too.
      (Also fixed: with the chart model not loaded, Upload from a survey - or a split - used to
      send no route at all, and the console then flew the WHOLE saved plan.)
+   - *A survey's start time and duration* (2026-11-19, the survey window, phase 1). The Survey
+     tab has a **Start** (date and time, in this computer's time; blank = as soon as she gets
+     there) and a **Duration h** (the survey time only, not the transit to it; blank = its own
+     flight at the survey speed; 24 h at most). Under them a **tide strip** draws the water over
+     the survey's window: the level at its start and its end, the change between, the low
+     (marked) and the high, and, once punched, the level it is cut at (dashed). It is read when
+     the start or the duration changes, at Punch Out, at ✎ and at **↻**, not as the drawing
+     moves. A strip read for another drawing is drawn faint and says so. The window runs from
+     the start for the **longer** of the duration and the flight, so a duration never shortens
+     it, and an hour more as a margin, which the strip says (4 h from 23:30 reads to 04:30). **Punch Out** then cuts the lines at the lowest water predicted over that window, not
+     from now. A survey planned at low water for a start at high water keeps the lines the high
+     water allows. Both settings ride the survey (✎ puts them back).
+     The boat has no clock to wait on, so **a start is kept only by the hold**: Add to plan turns
+     the survey's **Hold** on when its start is later than she can be there, and says so. Upload
+     sends her as far as its start, where she loiters until you press **Continue** (which says
+     the start time). A start she cannot reach in time is read from her arrival and gets no hold.
+     **Upload never judges a survey from its start time**: whatever it sends is flown at once,
+     so a survey sent before its start (its hold turned off, or Continue pressed early) is asked
+     about against the water she flies it in now, and the question names its start. **The wait
+     itself is checked**: Upload refuses (nothing is sent) a split whose hold point the falling
+     tide leaves with less clear water than her hold radius while she waits, when that is at
+     least a meter tighter than at the level the survey was cut at. A start point that is
+     tight at its own cut is the hold as it always was. While its start is ahead, the water now
+     does not drop the punch on the card, does not flag the survey's row, and does not price the
+     hops between its lines; once the start has passed, it does all three again. The server's
+     `GET /api/water/series` gives the strip its curve (the lowest of the lines' points at each
+     6-minute slot, so its low is the low the punch cuts at). Lines that fit the window and lines
+     that do not, a second plan for the rest, and a hold point chosen for the wait are later
+     phases.
    - *Upload* walks the waypoints in order from where the boat is **now**. The
      **approach** is routed clear of the chart and keeps to the starboard side of any
      channel, and so is the **leg into each later survey** (2026-10-02: routed exactly as a

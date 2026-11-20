@@ -1981,6 +1981,16 @@ def _check_survey_settings(sid, st):
                           % (sid, st.get("turn_ease")))
     if st.get("reverse") is not None and not isinstance(st.get("reverse"), bool):
         raise PlanRefused("survey %s's backwards flag must be true or false - nothing was saved" % sid)
+    # its start time and duration (the survey window, 2026-11-19): the start an epoch, the duration hours within the
+    # one day a tide read spans (WATER_WINDOW_MAX_S)
+    v = st.get("start_t")
+    if v is not None and (isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v <= 0):
+        raise PlanRefused("survey %s's start time must be a time (got %r) - nothing was saved" % (sid, v))
+    v = st.get("duration_h")
+    if v is not None and (isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v)
+                          or not 0 < v <= WATER_WINDOW_MAX_S / 3600.0):
+        raise PlanRefused("survey %s's duration must be more than 0 and at most %g hours (got %r) - nothing was saved"
+                          % (sid, WATER_WINDOW_MAX_S / 3600.0, v))
 
 
 def _stored_rev():
@@ -5536,14 +5546,14 @@ def surge_outlook(res, now=None, pos=None):
     return {"ok": False, "note": "; ".join(notes) or "no surge forecast"}
 
 
-def fetch_water_along(points, t0, t1, timeout=15.0):
-    """The lowest water above chart datum at each of `points` [(lat, lon)] between epochs t0 and t1 (a passage's
-    section, while she sails it): {ok, low_m, at, t, points: [{lat, lon, km, low_m, t, kind, datum, stations}], note}.
-    A point no station gives a level at has low_m None; `km` is its nearest station's distance. Never raises."""
+def _water_gather(points, t0, timeout=15.0):
+    """THE STATIONS ALONG `points` AND WHAT THEY GIVE (fetch_water_along's and fetch_water_series' one read, 2026-11-19):
+    (pools, got, lowered, sinfo) - each point's pool [(lat, lon, datum, [(station, km)])], each station's levels
+    {(id, datum, gl): [(epoch, m)] or None} read once for every point it serves, those STOFS lowered and what STOFS was
+    asked (_stofs_lowered) - or None with no station list."""
     sts = _load_water_stations()
     if not sts:
-        return {"ok": False, "note": "CO-OPS station list unavailable (offline?)", "points": []}
-    t1 = max(t0, min(t1, t0 + WATER_WINDOW_MAX_S))
+        return None
     pools, need = [], {}
     for lat, lon in points:
         _n, datum, _l, cand = _water_pool(sts, lat, lon)
@@ -5564,38 +5574,67 @@ def fetch_water_along(points, t0, t1, timeout=15.0):
             for k, ser in ex.map(_job, list(need)):
                 got[k] = ser
     lowered, sinfo = _stofs_lowered(got, need, t0)    # ({}, None) with no STOFS cycle held: the answer as before
+    return pools, got, lowered, sinfo
+
+
+def _water_use(cand, datum, got):
+    """A point's stations that gave levels, nearest first - [(station, km, levels)] - and their keys."""
+    use = [(s, km, got.get((s["id"], datum, bool(s["gl"])))) for s, km in cand]
+    use = [(s, km, ser) for s, km, ser in use if ser]
+    return use, [(s["id"], datum, bool(s["gl"])) for s, _k, _v in use]
+
+
+def _water_slots(use, t0, t1, gl):
+    """The window's slots - and the one either side of it: a low between two slots is not missed at an edge - with each
+    station's levels in them (Great Lakes: the one observed level, at t0)."""
+    vals = [{e: v for e, v in ser if t0 - WATER_PRED_SLOT_S <= e <= t1 + WATER_PRED_SLOT_S} for _s, _k, ser in use]
+    return vals, ([t0] if gl else sorted(set().union(*[set(v) for v in vals])))
+
+
+def _water_blend_at(use, vals, e, gl):
+    """A point's level at slot `e`: its stations' inverse-distance blend, as fetch_water_level blends hers - or None when
+    none has the slot. ONE blend for the lowest water along a line and for the series over a window."""
+    num = den = 0.0
+    for (_s, km, ser), v in zip(use, vals):
+        x = ser[0][1] if gl else v.get(e)
+        if x is None:
+            continue
+        w = 1.0 / max(km, 0.01) ** WATER_IDW_POWER
+        num += w * x
+        den += w
+    return num / den if den > 0 else None
+
+
+def fetch_water_along(points, t0, t1, timeout=15.0):
+    """The lowest water above chart datum at each of `points` [(lat, lon)] between epochs t0 and t1 (a passage's
+    section, while she sails it): {ok, low_m, at, t, points: [{lat, lon, km, low_m, t, kind, datum, stations}], note}.
+    A point no station gives a level at has low_m None; `km` is its nearest station's distance. Never raises."""
+    t1 = max(t0, min(t1, t0 + WATER_WINDOW_MAX_S))
+    g = _water_gather(points, t0, timeout)
+    if g is None:
+        return {"ok": False, "note": "CO-OPS station list unavailable (offline?)", "points": []}
+    pools, got, lowered, sinfo = g
 
     def _low(use, gl):
-        # the window's slots, and the one either side of it: a low between two slots is not missed at an edge
-        vals = [{e: v for e, v in ser if t0 - WATER_PRED_SLOT_S <= e <= t1 + WATER_PRED_SLOT_S} for _s, _k, ser in use]
-        slots = [t0] if gl else sorted(set().union(*[set(v) for v in vals]))
+        vals, slots = _water_slots(use, t0, t1, gl)
         low = None
         for e in slots:
-            num = den = 0.0
-            for (_s, km, ser), v in zip(use, vals):
-                x = ser[0][1] if gl else v.get(e)
-                if x is None:
-                    continue
-                w = 1.0 / max(km, 0.01) ** WATER_IDW_POWER
-                num += w * x
-                den += w
-            if den > 0 and (low is None or num / den < low[0]):
-                low = (num / den, e)
+            v = _water_blend_at(use, vals, e, gl)
+            if v is not None and (low is None or v < low[0]):
+                low = (v, e)
         return low
 
     out = []
     for lat, lon, datum, cand in pools:
         row = {"lat": lat, "lon": lon, "km": round(cand[0][1], 1), "low_m": None, "t": None, "kind": None,
                "datum": datum, "stations": []}
-        use = [(s, km, got.get((s["id"], datum, bool(s["gl"])))) for s, km in cand]
-        use = [(s, km, ser) for s, km, ser in use if ser]
+        use, keys = _water_use(cand, datum, got)
         if use:
             gl = bool(use[0][0]["gl"])
             low = _low(use, gl)
             if low is not None:
                 row.update(low_m=round(low[0], 3), t=low[1], kind="observed" if gl else "predicted",
                            km=round(use[0][1], 1), name=use[0][0]["name"], stations=[s["id"] for s, _k, _v in use])
-                keys = [(s["id"], datum, bool(s["gl"])) for s, _k, _v in use]
                 if not gl and any(k in lowered for k in keys):
                     plan = _low([(s, km, lowered.get(k, ser)) for (s, km, ser), k in zip(use, keys)], gl)
                     if plan is not None and plan[0] < low[0] - 0.0005:     # STOFS set this point's lowest water
@@ -5609,14 +5648,89 @@ def fetch_water_along(points, t0, t1, timeout=15.0):
                 **({"stofs": sinfo} if sinfo else {}))
 
 
-def _water_along_query(path):
-    """/api/water/along?pts=LAT,LON;LAT,LON...&t0=EPOCH&t1=EPOCH -> (points, t0, t1); ValueError in words."""
+def fetch_water_series(points, t0, t1, trust_km=None, timeout=15.0):
+    """THE WATER OVER A SURVEY'S WINDOW, SLOT BY SLOT (2026-11-19; Andy: "During survey planning, institute a start time
+    and duration functionality. Using this feature, examine tide level at start and total change through the duration
+    of the survey"). At each 6-minute slot from the one before t0 to the one after t1, the LOWEST of `points`' levels -
+    each blended from its own stations and lowered by STOFS's surge where it is held, by _water_blend_at, the blend
+    fetch_water_along takes its lows from - so the series' lowest is that read's low over the same window. A point whose
+    nearest station that answered is beyond `trust_km` (the page's WATER_REMOTE_KM, beyond which sectionLevel stands
+    chart datum in) is left out of the curve and counted in `far`; one no station gives a level at, in `unread`. The
+    Great Lakes have no predictions: there the observed level stands for the window, a flat line.
+    {ok, t0, t1, series: [[epoch, m]], start: {t, m}, end: {t, m}, low: {t, m}, high: {t, m}, kind, points, counted,
+    far, unread, stofs?} - start and end interpolated at t0 and t1 - or {ok: False, note, series: [], ...}. The window is
+    clipped to WATER_WINDOW_MAX_S, as the lows are. Never raises."""
+    t1 = max(t0, min(t1, t0 + WATER_WINDOW_MAX_S))
+    base = {"t0": t0, "t1": t1, "points": len(points), "counted": 0, "far": 0, "unread": 0, "series": []}
+    g = _water_gather(points, t0, timeout)
+    if g is None:
+        return dict(base, ok=False, note="CO-OPS station list unavailable (offline?)")
+    pools, got, lowered, sinfo = g
+    curves, stofs_used = [], False             # [(gl, {slot: m} or the observed level)]
+    for _lat, _lon, datum, cand in pools:
+        use, keys = _water_use(cand, datum, got)
+        if not use:
+            base["unread"] += 1
+            continue
+        if trust_km is not None and round(use[0][1], 1) > trust_km:
+            base["far"] += 1
+            continue
+        gl = bool(use[0][0]["gl"])
+        if not gl and any(k in lowered for k in keys):             # STOFS only ever lowers a prediction
+            use = [(s, km, lowered.get(k, ser)) for (s, km, ser), k in zip(use, keys)]
+            stofs_used = True
+        vals, slots = _water_slots(use, t0, t1, gl)
+        if gl:
+            v = _water_blend_at(use, vals, t0, gl)
+            if v is not None:
+                curves.append((True, v))
+            continue
+        at = {}
+        for e in slots:
+            v = _water_blend_at(use, vals, e, gl)
+            if v is not None:
+                at[e] = v
+        if at:
+            curves.append((False, at))
+    base["counted"] = len(curves)
+    if not curves:
+        why = ("no station within %g km gave a level along it" % trust_km) if base["far"] and trust_km is not None \
+            else "no station gave a level along it"
+        return dict(base, ok=False, note=why, **({"stofs": sinfo} if stofs_used and sinfo else {}))
+    tidal = sorted(set().union(*[set(c) for g_, c in curves if not g_]))
+    slots = tidal or [t0, t1]
+    series = []
+    for e in slots:
+        vs = [c if g_ else c.get(e) for g_, c in curves]
+        vs = [v for v in vs if v is not None]
+        if vs:
+            series.append((e, min(vs)))
+
+    def _at(t):
+        # the level at t, between the two slots round it (the series' own end slot beyond it)
+        if t <= series[0][0]:
+            return series[0][1]
+        for (ea, va), (eb, vb) in zip(series, series[1:]):
+            if ea <= t <= eb:
+                return va + (vb - va) * ((t - ea) / (eb - ea) if eb > ea else 0.0)
+        return series[-1][1]
+
+    lo, hi = min(series, key=lambda x: x[1]), max(series, key=lambda x: x[1])
+    return dict(base, ok=True, series=[[e, round(v, 3)] for e, v in series],
+                start={"t": t0, "m": round(_at(t0), 3)}, end={"t": t1, "m": round(_at(t1), 3)},
+                low={"t": lo[0], "m": round(lo[1], 3)}, high={"t": hi[0], "m": round(hi[1], 3)},
+                kind="observed" if not tidal else "predicted", **({"stofs": sinfo} if stofs_used and sinfo else {}))
+
+
+def _water_along_query(path, route="/api/water/along"):
+    """/api/water/along?pts=LAT,LON;LAT,LON...&t0=EPOCH&t1=EPOCH -> (points, t0, t1); ValueError in words. (`route`:
+    the one asked, for its usage line - /api/water/series takes the same query.)"""
     q = urllib.parse.parse_qs(urllib.parse.urlparse(path).query)
     try:
         pts = [tuple(float(v) for v in p.split(",")) for p in q["pts"][0].split(";") if p.strip()]
         t0, t1 = float(q["t0"][0]), float(q["t1"][0])
     except (KeyError, ValueError, IndexError):
-        raise ValueError("usage: /api/water/along?pts=LAT,LON;LAT,LON...&t0=EPOCH&t1=EPOCH")
+        raise ValueError("usage: %s?pts=LAT,LON;LAT,LON...&t0=EPOCH&t1=EPOCH" % route)
     if not 0 < len(pts) <= WATER_ALONG_MAX_PTS:
         raise ValueError("1 to %d points" % WATER_ALONG_MAX_PTS)
     for p in pts:
@@ -5625,6 +5739,22 @@ def _water_along_query(path):
     if not (math.isfinite(t0) and math.isfinite(t1) and t1 >= t0):
         raise ValueError("t0 and t1 epochs, t1 not before t0")
     return pts, t0, t1
+
+
+def _water_series_query(path):
+    """/api/water/series?pts=...&t0=EPOCH&t1=EPOCH[&trust_km=KM] -> (points, t0, t1, trust_km or None); ValueError in
+    words."""
+    pts, t0, t1 = _water_along_query(path, "/api/water/series")
+    raw = urllib.parse.parse_qs(urllib.parse.urlparse(path).query).get("trust_km")
+    if not raw:
+        return pts, t0, t1, None
+    try:
+        km = float(raw[0])
+    except ValueError:
+        km = float("nan")
+    if not (math.isfinite(km) and km > 0):
+        raise ValueError("trust_km must be a positive number of kilometers")
+    return pts, t0, t1, km
 
 
 def _monitor_pass(mon, name, body):
@@ -10417,6 +10547,12 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as e:
                 return self._send(400, json.dumps({"error": str(e)}))
             self._send(200, json.dumps(finite_only(fetch_water_along(pts, t0, t1))))
+        elif self.path.startswith("/api/water/series"):      # a survey's window, slot by slot (the tide strip, 2026-11-19)
+            try:
+                pts, t0, t1, trust = _water_series_query(self.path)
+            except ValueError as e:
+                return self._send(400, json.dumps({"error": str(e)}))
+            self._send(200, json.dumps(finite_only(fetch_water_series(pts, t0, t1, trust))))
         elif self.path.startswith("/api/waterlevel"):
             self._send(200, json.dumps(WATER.snapshot()))
         elif self.path.startswith("/api/tide"):     # tide-chart series (ENV card)

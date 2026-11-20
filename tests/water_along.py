@@ -263,7 +263,8 @@ check("7. THE WIRING: /api/water/along answered (its query read, a refusal a 400
       lambda: 0 <= get.index('self.path.startswith("/api/water/along")') < get.index('self.path.startswith("/api/waterlevel")')
               and "pts, t0, t1 = _water_along_query(self.path)" in get and "return self._send(400" in get
               and "nearest, datum, lake, cand = _water_pool(sts, lat, lon)" in inspect.getsource(A.fetch_water_level)
-              and "_water_pool(sts, lat, lon)" in inspect.getsource(A.fetch_water_along),
+              and "_water_pool(sts, lat, lon)" in inspect.getsource(A._water_gather)
+              and "_water_gather(points, t0, timeout)" in inspect.getsource(A.fetch_water_along),
       "")
 
 print("\n" + ("%d CHECK(S) FAILED (%d ran)" % (fails, ran) if fails else "all checks passed (%d)" % ran))

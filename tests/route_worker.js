@@ -618,10 +618,12 @@ const goto = (from, to, o) => ({ op: "nogo", args: { from, to, opts: o } });
                   && /const ropts = legsAt\(\);/.test(upPlan),
     uploadBoth: /planOffThread\(\{op: "route", args: \{[^}]*transitAt: at, ropts\}\}/.test(upPlan) && /\(\) => routePlan\(start, wps, false, std, at, legsAt\(\)\)\)/.test(upPlan),
     uploadReasons: /const reasons=planLegReasons\(plan, lk\);/.test(upS) && /\+ planLegLevelsSay\(plan, lk\)\);/.test(upS) && !/legReasons\(plan\.unroutable\)/.test(upS),
-    dryCard: /const legsAt = \(\) => \{ const lk = surveyLegKos\(wps, \{sv, m: patFunnel && patFunnel\.cut \? patFunnel\.cut\.waterM : null\}\);/.test(dryS)
+    // (2026-11-19: and whether its cut waits for a start - cardRouteLevel's rule, tests/survey_window.js 5)
+    dryCard: /const legsAt = \(\) => \{ const lk = surveyLegKos\(wps, \{sv, m: patFunnel && patFunnel\.cut \? patFunnel\.cut\.waterM : null,\s*waits: cutWaits\(patFunnel && patFunnel\.cut\)\}\);/.test(dryS)
              && /const ropts = legsAt\(\);/.test(dryS),
     dryBoth: /transitAt: at, ropts\}\}/.test(dryS) && /\(\) => routePlan\(start, wps, false, std, at, legsAt\(\)\)/.test(dryS),
-    hopsAtCut: /surveyRouteLevel\(patFunnel && patFunnel\.cut \? patFunnel\.cut\.waterM : null\)/.test(jrS)
+    hopsAtCut: /const lv = cardRouteLevel\(\), buf/.test(jrS)
+               && /return cutWaits\(c\) && Number\.isFinite\(\+c\.waterM\) \? \+c\.waterM : surveyRouteLevel\(c\.waterM\);/.test(grab("cardRouteLevel"))
                && /koAtLevel\(lv, true\)/.test(jrS) && /planOffThread\(\{op: "hops", ko: onKo, args: \{pairs\}\}/.test(jrS)
                && /koAtLevel\(m, true\)/.test(grab("surveyLegKos")),
     // (the re-review, 2026-11-08: each message asks on the chart as it is when it goes - the frame goes as it is then)
