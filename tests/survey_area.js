@@ -81,9 +81,10 @@ const world = () => new Function("GD", "GM", [
   "let pat = {A: null, B: null, C: null, align: 0}, boundary = [], boundaryClosed = false, center = {lat: 43, lon: -70.7};",
   // BOUNDED, as every check before the switch (2026-10-16) assumed - 8 drives PATTERN
   "let surveyBounded = true;",
+  "let patOnly = null; let patOutlineLowM = null, patOnlySig = null, patPlanBSay = ''; const planBDrawingCheck = () => false;",                         // (a Plan B's lines - the survey window phase 3: none here)
   decl("MAX_SURVEY_LINES"), decl("AREA_EDGE_M"), decl("AREA_SLIVER_M"),
   grab("surveyPattern"), grab("areaPattern"), grab("clipToPoly"), grab("boundaryActive"), grab("currentPattern"),
-  grab("planRef"), grab("patSourceLines"),
+  grab("planRef"), grab("patSourceLines"), grab("patSourceAll"), grab("patOnlyIdx"),
   "return {surveyPattern, set: (o) => { if (o.pat) pat = o.pat; if (o.boundary) { boundary = o.boundary; boundaryClosed = o.boundary.length >= 3; }",
   "                                   if (o.bounded !== undefined) surveyBounded = o.bounded; },",
   "        lines: () => patSourceLines(), sp: () => currentPattern()};",

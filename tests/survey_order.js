@@ -197,6 +197,7 @@ const commitWorld = new Function("\"use strict\";\n"
   + "const currentPattern = () => ({}); const patSourceLines = () => drawn;\n"
   + "const resetPattern = () => {}; const recalcCommittedForSpeed = () => {}; const saveMission = () => {};\n"
   + "const stopClearingFor = () => {}; const noteSurveyUpdated = () => {};   // the clearing: tests/auto_clear.js\n"
+  + "const planBDrawingCheck = () => false;        // no Plan B here (the survey window phase 3: tests/survey_select.js)\n"
   + "const render = () => {}; const showBanner = () => {}; const flashNote = () => {};\n"
   // phase 2 (2026-10-02): no survey is being edited here (tests/survey_table.js drives the edit)
   + "let editingSv = null, cardSv = null; const surveySettingsNow = () => null; const replaceSurvey = () => {};\n"

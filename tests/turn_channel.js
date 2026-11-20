@@ -280,7 +280,10 @@ check("14. the banner and the hint NAME the channel (open-looking water needs na
 // punch memo's key (which names that object whole) cannot serve a clip taken under the other setting.
 check("15. punchOut skips BOTH channel rules - the span exclusion and the turn water - when Shipping channels is "
       + "off, and runs both exactly as before when it is on",
-      () => P.includes("const chanExcl = enf.chan === false ? [] : channelSpanKeepouts(src, ref, nogo.features, ko.marks);")
+      // (2026-11-20, the survey window phase 3 review: the span rule is asked of the WHOLE drawing - patSourceAll, which
+      //  is the card's lines for every survey but a Plan B - so a Plan B's line that only ends in a fairway the
+      //  drawing's other lines span stays cut out of it: tests/survey_select.js 28a)
+      () => P.includes("const chanExcl = enf.chan === false ? [] : channelSpanKeepouts(patSourceAll(), ref, nogo.features, ko.marks);")
             && P.includes("const turnExcl = enf.chan === false ? [] : channelTurnKeepouts(clipped, ref, nogo.features, ko.marks);")
             && /const ref=nogo\.frame, buffer=nogo\.buffer, enf=nogo\.enf;/.test(P),
       "chanExcl and turnExcl in punchOut, both read off the punch's own `enf`");

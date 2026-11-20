@@ -245,10 +245,15 @@ console.log("A survey's start time and duration:");
   const w = new Function("$", "\"use strict\";\n"
     + "let patStartT = null, patDurH = null, patReverse = false, boundary = [], boundaryClosed = false, boundDrag = null,"
     + " surveyBounded = false; const mission = {}; const LEAD_MAX_M = 2000;\n" + decls("WATER_WINDOW_MAX_H")
+    // (a Plan B's lines and outline ride the settings too - the survey window phase 3: tests/survey_select.js)
+    + "let patOnly = null, patOutlineM = null; const showPlanBNote = () => {}; let patOutlineLowM = null, patOnlySig = null, patPlanBSay = ''; const planBDrawingCheck = () => false;\n"
     + "const depthRange = () => ({max: 0}); const boundaryActive = () => false;\n"
     + "const updateLeadNote = () => {}; const updateEaseNote = () => {};\n"
     + fns("localInputOf", "epochOfLocalInput", "showSurveyWindow", "surveySettingsNow", "applySurveySettings")
     + "return { get st(){ return patStartT; }, set st(v){ patStartT = v; }, get dur(){ return patDurH; }, set dur(v){ patDurH = v; },"
+    // (a Plan B's own: its lines, its outline, the level its Max depth is anchored at - 8b)
+    + "  get pb(){ return {only: patOnly, outline: patOutlineM, low: patOutlineLowM, sig: patOnlySig, say: patPlanBSay}; },"
+    + "  setPb: (o) => { patOnly = o.only; patOutlineM = o.outline; patOutlineLowM = o.low; patOnlySig = o.sig ?? null; patPlanBSay = o.say || ''; },"
     + "  localInputOf, epochOfLocalInput, surveySettingsNow, applySurveySettings };")($);
   const t = Math.round(new Date(2026, 10, 20, 14, 30).getTime() / 1000);
   const shown = w.localInputOf(t), back = w.epochOfLocalInput(shown);
@@ -269,6 +274,28 @@ console.log("A survey's start time and duration:");
               && restored[0] === t && restored[1] === 2.5 && restored[2] === "2026-11-20T14:30" && restored[3] === "2.5"
               && old[0] === null && old[1] === null && old[2] === "" && old[3] === "" && w.dur === 24,
         () => JSON.stringify({ shown, back: back - t, rec: [rec.start_t, rec.duration_h], restored, old, cap: w.dur }));
+  // 8b. A PLAN B'S SETTINGS THROUGH THE REAL PAIR (the phase 3 review, 2026-11-20: the round trip was pinned by source
+  // text only, and breaking the outline's restore passed every suite). Its lines come back sorted, once each, never
+  // negative; its outline and the level its Max depth is anchored at come back as they were; the drawing they are of
+  // is to be pinned afresh (the card may hold another), and the search's word does not ride a record.
+  w.setPb({ only: [3, 1], outline: 1.37, low: -0.2, sig: 12345, say: "Start Fri 07:16" });
+  const recB = w.surveySettingsNow();
+  w.setPb({ only: [9], outline: 0, low: 0, sig: 777, say: "another Plan B's word" });   // another Plan B on the card, pinned
+  w.applySurveySettings({ ...recB, only: [3, 1, 1, -2, 2.5, "4"] });
+  const backB = w.pb;
+  w.applySurveySettings({ lead_mode: "m" });                 // a survey that is no Plan B: none of the three
+  const noneB = w.pb;
+  w.setPb({ only: null, outline: null, low: 0.4 });          // (an anchor with no Plan B is not recorded)
+  const lone = w.surveySettingsNow();
+  check("8b. a Plan B's lines, its outline and the level its Max depth is anchored at ride the survey's settings and "
+        + "come back through the page's own pair - the lines sorted, once each, whole numbers from 0 - with the drawing "
+        + "to be pinned again and no search word; a survey that is no Plan B has none of them, saved or put back",
+        () => JSON.stringify(recB.only) === "[3,1]" && recB.outline_m === 1.37 && recB.outline_low_m === -0.2
+              && JSON.stringify(backB.only) === "[1,3]" && backB.outline === 1.37 && backB.low === -0.2
+              && backB.sig === null && backB.say === ""
+              && noneB.only === null && noneB.outline === null && noneB.low === null
+              && lone.only === null && lone.outline_low_m === null,
+        () => JSON.stringify({ recB: [recB.only, recB.outline_m, recB.outline_low_m], backB, noneB, lone: [lone.only, lone.outline_low_m] }));
 }
 
 // ── 9. holdWaitRisk ─────────────────────────────────────────────────────────────────────────────────────────────

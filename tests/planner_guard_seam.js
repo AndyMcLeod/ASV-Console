@@ -195,7 +195,10 @@ check("5b. ... and the CLIP MEMO names it while the STRIKE key does not - a set 
             // carries the moored-contact signature too - a ship arriving or sailing is a set change
             // of its own kind, and the same property holds: the memo can never serve a stale clip
             && /const baseKey = patClipKey\(cutAt\);/.test(H)
-            && /const clipKey = baseKey && baseKey \+ "\|ais:" \+ \(aisClip\.stale \? "stale" : aisClipSig\(aisExcl\)\);/.test(H);
+            // (2026-11-20, the survey window phase 3 review: and the level a Plan B's Max depth is anchored at, when it
+            //  is not this punch's own cut - a clip under one anchor is never served under another; the key is what it
+            //  was for every other survey)
+            && /const clipKey = baseKey && baseKey \+ "\|ais:" \+ \(aisClip\.stale \? "stale" : aisClipSig\(aisExcl\)\)\r?\n\s*\+ \(anchorM !== cutAt\.waterM \? "\|anc:" \+ anchorM\.toFixed\(3\) : ""\);/.test(H);
       },
       "the memo reads patClipKey(), which is patStrikeKey() plus the standoff. Without the "
         + "standoff, two punches at the same buffer in different sets share one memo and the "

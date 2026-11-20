@@ -668,6 +668,63 @@ check("16i. deferred lines or their high water that are not what they claim are 
       all(d_said.values()) and all("S1" in v for v in d_said.values()) and open(_C.MISSION_PATH, "rb").read() == d_before,
       "; ".join("%s: %s" % (k, (v or "NOT REFUSED")[:40]) for k, v in d_said.items()))
 
+# 16j-16k. PLAN B (the survey window phase 3, 2026-11-19): a deferred line records the water it needs (`need_m`), and a
+# Plan B's settings the lines of its drawing it flies (`only`) and the outline they were judged against (`outline_m`).
+# Both dicts, type-checked.
+B_SURVEYS = [dict(SURVEYS[0], deferred=[dict(d_run, need_m=0.45), dict(d_run, i=4, why="time", need_m=-0.1),
+                                        dict(d_run, i=5, need_m=None), dict(d_run, i=6)], deferred_high_m=1.2,
+                  settings=dict(ST, only=[1, 3, 7], outline_m=1.37)),
+             dict(SURVEYS[1], settings=dict(ST, only=None, outline_m=None))]
+_, b3_err = attempt(_C.save_mission, sv_plan(surveys=B_SURVEYS))
+b3_back = _C.load_mission().get("surveys")
+check("16j. the water each deferred line needs, and a Plan B's own lines and outline, are saved and loaded as they were "
+      "(none of either, too)",
+      b3_err is None and b3_back == B_SURVEYS, "save: %s; loaded %s" % (b3_err or "ok", json.dumps(b3_back)[:160]))
+b3_before = open(_C.MISSION_PATH, "rb").read()
+b3_bad = {"a need as text": sv_plan(surveys=[dict(SURVEYS[0], deferred=[dict(d_run, need_m="0.4")])]),
+          "a need a bool": sv_plan(surveys=[dict(SURVEYS[0], deferred=[dict(d_run, need_m=True)])]),
+          "an infinite need": sv_plan(surveys=[dict(SURVEYS[0], deferred=[dict(d_run, need_m=float("inf"))])]),
+          "a NaN need": sv_plan(surveys=[dict(SURVEYS[0], deferred=[dict(d_run, need_m=float("nan"))])]),
+          "Plan B lines not a list": st_plan(only={"1": 1}),
+          "a Plan B line as text": st_plan(only=[1, "3"]),
+          "a Plan B line a bool": st_plan(only=[True]),
+          "a Plan B line negative": st_plan(only=[2, -1]),
+          "a Plan B line a fraction": st_plan(only=[1.5]),
+          "too many Plan B lines": st_plan(only=list(range(_C.SURVEY_DEFERRED_MAX + 1))),
+          "an outline as text": st_plan(outline_m="1.2"),
+          "an outline a bool": st_plan(outline_m=False),
+          "an infinite outline": st_plan(outline_m=float("-inf"))}
+b3_said = {k: refused(v) for k, v in b3_bad.items()}
+check("16k. a need, Plan B lines or an outline that are not what they claim are REFUSED in words, naming the survey, "
+      "and nothing is written",
+      all(b3_said.values()) and all("S1" in v for v in b3_said.values()) and open(_C.MISSION_PATH, "rb").read() == b3_before,
+      "; ".join("%s: %s" % (k, (v or "NOT REFUSED")[:40]) for k, v in b3_said.items()))
+
+# 16l-16m. THE PHASE 3 REVIEW (2026-11-20): a need that is only the lowest level a line was ASKED at is marked
+# (`need_floor`), and a Plan B's settings carry the level its first plan was CUT at, which its Max depth stays anchored
+# to (`outline_low_m`). Saved and loaded as they are; types checked.
+R_SURVEYS = [dict(SURVEYS[0], deferred=[dict(d_run, i=4, why="time", need_m=-0.3, need_floor=True),
+                                        dict(d_run, i=5, why="time", need_m=0.5), dict(d_run, need_m=0.45, need_floor=False)],
+                  deferred_high_m=1.2, settings=dict(ST, only=[4, 5], outline_m=1.2, outline_low_m=-0.25)),
+             dict(SURVEYS[1], settings=dict(ST, only=None, outline_m=None, outline_low_m=None))]
+_, r3_err = attempt(_C.save_mission, sv_plan(surveys=R_SURVEYS))
+r3_back = _C.load_mission().get("surveys")
+check("16l. a need marked as only the floor it was asked at, and the level a Plan B's Max depth is anchored at, are "
+      "saved and loaded as they were (none of either, too)",
+      r3_err is None and r3_back == R_SURVEYS, "save: %s; loaded %s" % (r3_err or "ok", json.dumps(r3_back)[:160]))
+r3_before = open(_C.MISSION_PATH, "rb").read()
+r3_bad = {"a floor mark as text": sv_plan(surveys=[dict(SURVEYS[0], deferred=[dict(d_run, need_m=0.1, need_floor="yes")])]),
+          "a floor mark a number": sv_plan(surveys=[dict(SURVEYS[0], deferred=[dict(d_run, need_m=0.1, need_floor=1)])]),
+          "the anchor as text": sv_plan(surveys=[dict(SURVEYS[0], settings=dict(ST, outline_low_m="0.2"))]),
+          "the anchor a bool": sv_plan(surveys=[dict(SURVEYS[0], settings=dict(ST, outline_low_m=False))]),
+          "the anchor infinite": sv_plan(surveys=[dict(SURVEYS[0], settings=dict(ST, outline_low_m=float("-inf")))]),
+          "the anchor not a number": sv_plan(surveys=[dict(SURVEYS[0], settings=dict(ST, outline_low_m=float("nan")))])}
+r3_said = {k: refused(v) for k, v in r3_bad.items()}
+check("16m. a floor mark or an anchor level that is not what it claims is REFUSED in words, naming the survey, and "
+      "nothing is written",
+      all(r3_said.values()) and all("S1" in v for v in r3_said.values()) and open(_C.MISSION_PATH, "rb").read() == r3_before,
+      "; ".join("%s: %s" % (k, (v or "NOT REFUSED")[:40]) for k, v in r3_said.items()))
+
 # 17-17b. THE SURVEY BREAK-OFFS (2026-10-11, Andy: "When an ASV breaks off a survey to RTH for refueling the survey
 # departure point must be recorded"). The page banks each on the plan - so a page reloaded or a console restarted while
 # she is refueled still offers Continue - and they ride both dicts and are type-checked like the surveys.

@@ -194,7 +194,9 @@ const PAGE_FUNCS = ["punchOut", "lateKeeps", "currentPattern", "surveyPattern", 
   // stamps the outline's high (punchHighNow), times its route for a duration (deferPastDuration) and says it (deferSay).
   // tests/survey_select.js is its subject.
   "windowSelects", "punchHighNow", "punchDrawnM", "punchOwnM", "horizonHigh", "deferPastDuration", "deferSay",
-  "srcLineOf", "deferTimeKey", "deferredRecord"];
+  "srcLineOf", "deferTimeKey", "deferredRecord",
+  // ... and PLAN B's drawing (phase 3): none here, so every line of the drawing
+  "patSourceAll", "patOnlyIdx", "patSourceIdx"];
 const PAGE_DECLS = [/^const NO_LEAD = [^;]*;/m, /^const LEAD_GIVE = [^;]*;/m, /^const MAX_SURVEY_LINES = [^;]*;/m,
   /^const DEFER_TIME_MAX = [^;]*;/m, /^const SURVEY_DEFERRED_MAX = [^;]*;/m,
   /^const LEAD_MAX_M = [^;]*;/m, /^const REPUNCH_DELAY_MS = [^;]*;/m, /^const TIDE_REBUILD_M = [^;]*;/m,
@@ -242,6 +244,7 @@ function makeWorld(opts) {
     + "let surveyBounded = false;\n"
     + "let patStartT = null, patDurH = null, tideStrip = null, tideStripBusy = null, tideStripDrawn = null;\n"
     + "let patDefer = null, patDeferTime = null, patDeferMemo = null;\n"
+    + "let patOnly = null, patOutlineM = null, patPlanBName = ''; const showPlanBNote = () => {}; let patOutlineLowM = null, patOnlySig = null, patPlanBSay = ''; const planBDrawingCheck = () => false;\n"
     + "let planKind = null, asv = null;\n"
     + "const mission = {lines: [], waypoints: [], surveys: [], approach_radius_m: 1, speeds: {}, speed: 'survey'};\n"
     // the chart read punchOut awaits: instant, unless a check puts something to happen DURING it (49)

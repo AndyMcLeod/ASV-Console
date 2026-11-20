@@ -215,6 +215,8 @@ const world = () => new Function("\"use strict\";\n"
   + "let patStartT = null, punchLevel = null; const punchLevelFor = () => null;\n"
   // ... and nothing its window deferred (phase 2: tests/survey_select.js)
   + "let patDefer = null;\n"
+  // ... and no Plan B on the card (phase 3: tests/survey_select.js)
+  + "let patOnly = null, patPlanBName = ''; let patOutlineLowM = null, patOnlySig = null, patPlanBSay = ''; const planBDrawingCheck = () => false;\n"
   + grab(H, "commitWaitsForStart") + "\n" + grab(H, "surveyStartT") + "\n"
   + grab(H, "emptyPunchRefusal") + "\n" + grab(H, "punchRefusal") + "\n" + grab(H, "patternWaypoints") + "\n" + grab(H, "commitPattern")
   + "\nreturn { mission, commitPattern, set: (o) => { patClip = o.clip || null; patTransits = o.transits || [];"

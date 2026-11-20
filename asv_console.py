@@ -1970,9 +1970,15 @@ def _check_survey_deferred(sid, s):
                               % (sid, SURVEY_DEFERRED_MAX))
         for k, d in enumerate(dfr):
             i = d.get("i") if isinstance(d, dict) else None
+            # (phase 3: `need_m`, the water the line needs - the least level it is clear end to end at - or none)
+            nd = d.get("need_m") if isinstance(d, dict) else None
+            # (... and `need_floor`: that need is only the lowest level the line was ASKED at - it was clear there)
+            nf = d.get("need_floor") if isinstance(d, dict) else None
             if not (isinstance(d, dict) and _is_position(d.get("a")) and _is_position(d.get("b"))
                     and d.get("why") in ("tide", "time")
-                    and (i is None or (isinstance(i, int) and not isinstance(i, bool) and i >= 0))):
+                    and (nf is None or isinstance(nf, bool))
+                    and (i is None or (isinstance(i, int) and not isinstance(i, bool) and i >= 0))
+                    and (nd is None or (isinstance(nd, (int, float)) and not isinstance(nd, bool) and math.isfinite(nd)))):
                 raise PlanRefused("survey %s's deferred line %d is not a run of its drawing (%s) - nothing was saved"
                                   % (sid, k + 1, repr(d)[:80]))
     dh = s.get("deferred_high_m")
@@ -2016,6 +2022,22 @@ def _check_survey_settings(sid, st):
                           or not 0 < v <= WATER_WINDOW_MAX_S / 3600.0):
         raise PlanRefused("survey %s's duration must be more than 0 and at most %g hours (got %r) - nothing was saved"
                           % (sid, WATER_WINDOW_MAX_S / 3600.0, v))
+    # A PLAN B (the survey window phase 3): the lines of its drawing it flies - indices, at most as many as a survey's
+    # record holds - and the outline level they were judged against
+    v = st.get("only")
+    if v is not None and not (isinstance(v, list) and len(v) <= SURVEY_DEFERRED_MAX
+                              and all(isinstance(i, int) and not isinstance(i, bool) and i >= 0 for i in v)):
+        raise PlanRefused("survey %s's Plan B lines must be a list of at most %d line numbers (got %s) - nothing was saved"
+                          % (sid, SURVEY_DEFERRED_MAX, repr(v)[:80]))
+    v = st.get("outline_m")
+    if v is not None and (isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v)):
+        raise PlanRefused("survey %s's Plan B outline must be a finite number of meters (got %r) - nothing was saved"
+                          % (sid, v))
+    # ... and the level its FIRST plan was cut at, which a Plan B's Max depth stays anchored to (the phase 3 review)
+    v = st.get("outline_low_m")
+    if v is not None and (isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v)):
+        raise PlanRefused("survey %s's Plan B anchor level must be a finite number of meters (got %r) - nothing was saved"
+                          % (sid, v))
 
 
 def _stored_rev():

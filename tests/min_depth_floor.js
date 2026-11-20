@@ -344,10 +344,12 @@ check("3. an unset operator floor leaves the hull's exactly as it was",
   // `aisExcl` joined the clip statement 2026-11-04 (the moored-contact clip); handed empty here -
   // this check's question is the depth window's two models, and a contact in the clip is 17c's.
   // `cutAt` (2026-11-06): the punch's cut - the water level both models are built at; the wrapper above builds at 0.
+  // `drCov` (2026-11-20, the survey window phase 3 review): the coverage's own depth window - a Plan B's Max depth is
+  // anchored at its first plan's cut (deferHighDR); for every other survey it is `dr` itself, handed so here.
   const M = new Function("buildKeepouts", "foldChartInk", "ref", "enf", "dr", "nogo",
-                         "chanExcl", "turnExcl", "aisExcl", "cutAt",
+                         "chanExcl", "turnExcl", "aisExcl", "cutAt", "drCov",
     stmts.join("\n") + "\nreturn {ko, koClip, koTurn};")(
-      buildKeepouts, () => 0, F, enf, dr, { features: feats }, [], [], [], { bufM: 3, waterM: 0, held: false });
+      buildKeepouts, () => 0, F, enf, dr, { features: feats }, [], [], [], { bufM: 3, waterM: 0, held: false }, dr);
   // 17c. THE AIS EXCLUSION REACHES EXACTLY THE CLIP (2026-11-04, the moored-contact clip): a hull handed
   // to the same sliced model lands in koClip's polys and in NEITHER ko nor koTurn - the two-model rule's
   // third direction (ceiling to the clip, floor to the turns, contacts to the clip alone).
@@ -355,9 +357,9 @@ check("3. an unset operator floor leaves the hull's exactly as it was",
     const R17 = [{ e: -10, n: 90 }, { e: 10, n: 90 }, { e: 10, n: 110 }, { e: -10, n: 110 }];
     const fake = { ring: R17, bb: { x0: -10, y0: 90, x1: 10, y1: 110 }, kind: "AIS: X (30 x 8 m, moored)", mmsi: 1 };
     const M2 = new Function("buildKeepouts", "foldChartInk", "ref", "enf", "dr", "nogo",
-                            "chanExcl", "turnExcl", "aisExcl", "cutAt",
+                            "chanExcl", "turnExcl", "aisExcl", "cutAt", "drCov",
       stmts.join("\n") + "\nreturn {ko, koClip, koTurn};")(
-        buildKeepouts, () => 0, F, enf, dr, { features: feats }, [], [], [fake], { bufM: 3, waterM: 0, held: false });
+        buildKeepouts, () => 0, F, enf, dr, { features: feats }, [], [], [fake], { bufM: 3, waterM: 0, held: false }, dr);
     check("17c. a moored contact handed to the punch's model reaches the CLIP alone: in koClip's polys, "
           + "in neither ko nor koTurn - lines never through her, turns and leads never refused for her",
           () => M2.koClip.polys.includes(fake) && !M2.ko.polys.includes(fake) && !M2.koTurn.polys.includes(fake),
@@ -409,7 +411,11 @@ check("17b. ... and each model is bound to its own consumer: koClip spreads koCo
         const po = grab(H, "punchOut");
         // (2026-11-06: both built at the punch's CUT level - the live one, or the blocker clearing's hold - and the SAME
         //  `cutAt.waterM` for both, so the two models cannot come to stand at different water)
-        return /const koCov=buildKeepouts\(ref, enf, dr, nogo\.features, cutAt\.waterM\);/.test(po)
+        // (2026-11-20, the survey window phase 3 review: the coverage's window is `drCov` - `dr` itself for every survey
+        //  but a Plan B, whose Max depth stays anchored at its first plan's cut; pinned that it IS dr with no anchor)
+        return /const koCov=buildKeepouts\(ref, enf, drCov, nogo\.features, cutAt\.waterM\);/.test(po)
+            && /const drCov = anchorM !== cutAt\.waterM \? deferHighDR\(dr, anchorM, cutAt\.waterM\) : dr;/.test(po)
+            && /const anchorM = patOutlineLowM != null && Number\.isFinite\(patOutlineLowM\) \? patOutlineLowM : cutAt\.waterM;/.test(po)
             && /const ko=buildKeepouts\(ref, enf, \{min: dr\.min, max: 0\}, nogo\.features, cutAt\.waterM\);/.test(po)
             // the moored-contact clip joined the SAME statement 2026-11-04 (aisExcl beside chanExcl), so the
             // slice filter that feeds 17 still carries it - an AIS exclusion spliced via a NEW statement

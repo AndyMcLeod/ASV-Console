@@ -2039,7 +2039,7 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
      hops between its lines; once the start has passed, it does all three again. The server's
      `GET /api/water/series` gives the strip its curve (the lowest of the lines' points at each
      6-minute slot, so its low is the low the punch cuts at). A second plan for the lines a
-     window defers (below) and a hold point chosen for the wait are later phases.
+     window defers is **Plan B** (below); a hold point chosen for the wait is a later phase.
    - *Which lines a survey's window flies* (2026-11-19, the survey window, phase 2: conservative,
      whole lines). With a **Start** or a **Duration** on the card, Punch Out also reads the
      **highest** water predicted over the 24 h from the window's start, and cuts each line at
@@ -2054,9 +2054,40 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
      high it outlined them at; a punch with every line deferred is refused, naming the low or
      the duration and the fixes (a start nearer high water, a longer duration, or clearing both).
      If the high cannot be read, nothing is deferred for the tide and the note says so. Deferred
-     lines are **never** in the plan Upload sends: they are recorded with the survey (their ends
-     and the reason) for the later phases, and striking a line stays its own act. With neither
+     lines are **never** in the plan Upload sends: they are recorded with the survey (their ends,
+     the reason and the water each needs), and striking a line stays its own act. With neither
      a Start nor a Duration, Punch Out is exactly as before.
+   - *Plan B: the lines a window deferred* (2026-11-19, the survey window, phase 3; reviewed
+     2026-11-20). Each line deferred for the tide gets the **water it needs**: the least level,
+     on 5 cm steps up to its outline's, at which it is clear end to end, found with the same
+     keep-out model and sample grid the punch cuts with (no second depth rule). A line deferred
+     for the duration was clear at the level the punch was cut at, so it needs that at most:
+     its need is found going **down** from the cut, to chart datum (or to the lowest water of
+     the next 24 h when the tide goes under it). A line clear all the way down has no need
+     found; that is recorded and said as "clear down to" that level, never as a need. The
+     punch note and the row's tip say each kind. The picked row of a survey with deferred lines
+     has **Plan B**: it loads just those lines onto the card as a **new** survey (the first one
+     is left as it is), judged against the outline they were deferred at, with no duration, and
+     sets its **Start** to the earliest start in the next 24 h whose lowest water over the
+     flight covers every line's need. The earliest start is when she can be at them: after the
+     plan ahead as she flies it (survey lines at the survey speed, not the transit speed) and
+     after any survey waiting for a later start, plus ten minutes. The low of a start is read
+     as the console's own predictions are, the six-minute slot before the start included. Then
+     it punches. What the search found stays on the card's Plan B line until Reset. If no start
+     gives every line its water, the start is the earliest one that gives the most of them
+     theirs and the punch defers the rest whole: **Plan B** on the new survey's row plans those
+     (Plan C). If no start gives any line its water, it says so and nothing can be added on
+     that tide. If the flight is longer than the 24 h read, no start is searched and it says
+     so. The punch judges every line again at its own low, so a line the start search was wrong
+     about is deferred, never flown short. If the water cannot be read, there is no start and
+     the note says so. Add to plan names it "Plan B of S3 ...", and its start turns its hold on
+     as any start does.
+     A Plan B is lines of **one drawing**: its channel rule is asked of the whole drawing (a
+     line that ends in a fairway the drawing's other lines span stays cut out of it), its Max
+     depth stays anchored at the level its first plan was cut at (the same seabed is too deep
+     for both), and a geometry edit on its card (Spacing, Align, a handle, the boundary) ends
+     the Plan B, said: the card is then an ordinary survey of every line drawn. Punch all and
+     Backwards do not put a discarded Plan B back on the empty card.
    - *Upload* walks the waypoints in order from where the boat is **now**. The
      **approach** is routed clear of the chart and keeps to the starboard side of any
      channel, and so is the **leg into each later survey** (2026-10-02: routed exactly as a

@@ -171,7 +171,9 @@ const PAGE_FUNCS = ["punchOut", "lateKeeps", "currentPattern", "surveyPattern", 
   // ... and the start it is cut for (the survey window, 2026-11-19: none here - tests/survey_window.js's subject)
   "punchStartT", "cutWaits", "punchStartSay", "commitWaitsForStart", "surveyStartT", "surgeWhen",
   // ... and the window's selection (phase 2: none here either - tests/survey_select.js's subject)
-  "windowSelects", "punchHighNow", "deferPastDuration", "deferSay"];
+  "windowSelects", "punchHighNow", "deferPastDuration", "deferSay",
+  // ... and Plan B's drawing (phase 3: none here, so every line of the drawing)
+  "patSourceAll", "patOnlyIdx", "patSourceIdx"];
 const PAGE_DECLS = [/^const NO_LEAD = [^;]*;/m, /^const LEAD_GIVE = [^;]*;/m, /^const MAX_SURVEY_LINES = [^;]*;/m,
   /^const DEFER_TIME_MAX = [^;]*;/m,
   /^const LEAD_MAX_M = [^;]*;/m, /^const REPUNCH_DELAY_MS = [^;]*;/m, /^const TIDE_REBUILD_M = [^;]*;/m, /^const TRIM_MAX_M = [^;]*;/m, /^const JUDGE_RUN_M = [^;]*;/m, /^const SPEED_ROLES = [^;]*;/m,
@@ -251,6 +253,7 @@ function makeWorld(opts) {
     // the survey window (2026-11-19): no start or duration on the card, and its tide strip inert
     + "let patStartT = null, patDurH = null, tideStrip = null; const renderTideStrip = () => {};\n"
     + "let patDefer = null, patDeferTime = null, patDeferMemo = null;\n"
+    + "let patOnly = null, patOutlineM = null, patPlanBName = ''; const showPlanBNote = () => {}; let patOutlineLowM = null, patOnlySig = null, patPlanBSay = ''; const planBDrawingCheck = () => false;\n"
     // no prediction read in this world (2026-11-07): every punch is cut at the water now, as it always was here
     + "let punchLevel = null; const refreshPunchLevel = async () => punchLevel, settlePunchLevel = async () => {};\n"
     + "const punchFlightOutgrewRead = async () => false, PUNCH_FLIGHT_REREAD = 2;   // the route re-read: auto_clear\n"

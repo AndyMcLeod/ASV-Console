@@ -488,6 +488,28 @@ function commit(w, lines, anchors) {
           () => sameEnds && !/id="svr1_unb"/.test(h12j) && /id="svr1_unb" data-act="unblock" data-sv="S2"/.test(h12k),
           () => "same ends " + sameEnds + "; after Update: " + (unbs(h12j) || "none") + "; next refusal: " + (unbs(h12k) || "none"));
     v.w.runUnsafe = [];
+    // 12k. PLAN B (the survey window phase 3): the picked row of a survey whose window deferred lines - with a drawing to
+    // load them from - offers Plan B; a row with none deferred, or no drawing, or not picked, does not
+    const pbs = (h) => [...h.matchAll(/id="(svr\d_planb)" data-act="planb" data-sv="(S\d)"/g)].map((m) => m[1] + ":" + m[2]).join(",");
+    const svs = v.w.mission.surveys, run = { a: P(0, 0), b: P(0, 50), why: "tide", need_m: 0.4 };
+    const keep = svs.map((s) => s.deferred);
+    // (S1 none deferred; S2 and S3 two each - S3 has no recorded drawing)
+    svs.forEach((s) => { s.deferred = s.id === "S1" ? null : [{ ...run, i: 1 }, { ...run, i: 3 }]; });
+    const noDraw = svs.find((s) => !(s.pattern && s.pattern.A && s.pattern.B));
+    const picks = {};
+    for (const s of svs) { v.w.cardSv = s.id; v.w.renderSurveyTable(); picks[s.id] = pbs(tb.innerHTML); }
+    v.w.cardSv = "S2"; v.w.renderSurveyTable();
+    const tip2 = (tb.innerHTML.match(/id="svr1_planb"[^>]*title="([^"]*)"/) || [])[1] || "";
+    svs.forEach((s, k) => { s.deferred = keep[k]; });
+    const ls = grab("renderSurveyTable").length && H.match(/else if\(act === "planb"\) planBFrom\(id\)\.catch\(/);
+    check("12k. the picked row of a survey whose window deferred lines offers PLAN B - not a row with none deferred, one "
+          + "with no drawing to load them from, or a row not picked - its tip saying it loads them as a NEW survey and "
+          + "leaves this one as it is; the table's click sends it to planBFrom",
+          () => picks.S1 === "" && picks.S2 === "svr1_planb:S2" && picks.S3 === "" && noDraw && noDraw.id === "S3"
+                && /load the 2 line\(s\) this survey's window deferred onto the card as a NEW survey/.test(tip2)
+                && /S2 Bob's &quot;&lt;pier&gt;&quot; stays as it is\.$/.test(tip2) && !!ls,   // (its name, escaped once)
+          () => JSON.stringify(picks) + " | no drawing: " + (noDraw && noDraw.id) + " | tip ..." + tip2.slice(-90));
+    v.w.cardSv = null;
   }
 
   // ── 13. the LINES card ─────────────────────────────────────────────────────────────────────────────────────────
@@ -715,6 +737,8 @@ function commit(w, lines, anchors) {
     v.env.punch = ({ pat }) => Math.abs(pat.A.lon - ANCH(0).A.lon) < 1e-12 ? { clip: pattern(3, 90, 10, 0, 0) }
                               : { clip: pattern(2, 100, 10, 0, 300), red: [{ turn: true, run: 1, why: "nogo", by: "a dock / pier" }] };
     v.env.els["#sp_lead_in"].value = "0"; w.mission.lead_in = 7;          // the card's own setting, to come back after
+    // (a Plan B was on the card: its lines and outline are its DRAWING's, and Punch all discards the drawing - 24b2)
+    w.setPlanB({ only: [1, 3], outlineM: 1.1, lowM: 0 });
     await w.punchAll();
     const m = w.mission, b = v.env.log.banners.slice(-1)[0] || "";
     check("24. Punch all re-punches each survey with a drawing and puts it back WHERE IT STANDS (S1 now 3 lines, still "
@@ -727,6 +751,11 @@ function commit(w, lines, anchors) {
     check("24b. ... and the card's own settings are back afterwards, the edit ended, nothing left busy",
           () => w.mission.lead_in === 7 && w.editingSv === null && !w.punchAllBusy && w.pat.A === null,
           () => JSON.stringify({ lead: w.mission.lead_in, ed: w.editingSv, busy: w.punchAllBusy }));
+    check("24b2. ... but NOT a Plan B's lines, outline and anchor: they belong to the drawing Punch all discarded, and "
+          + "put back on the empty card they made the next survey drawn a nameless 'Plan B' - only those line numbers "
+          + "of ITS lines flown, judged against another survey's outline (the phase 3 review, four reviewers)",
+          () => w.planB.only === null && w.planB.outlineM === null && w.planB.lowM === null,
+          () => JSON.stringify(w.planB));
     // a punch that did not finish (no chart): commitPattern would commit the drawing UN-punched - the repunch must not
     const s1Before = JSON.stringify(w.mission.lines.filter((l) => l.sv === "S1"));
     v.env.punch = () => null;
@@ -919,6 +948,11 @@ function buildWorld(env) {
     + decl(/^let patStartT = [^;]*;/m) + "\n" + decl(/^const WATER_WINDOW_MAX_H = [^;]*;/m) + "\n"
     // ... and the lines its window deferred (phase 2): the record Add to plan writes, the row's count and tip (12k)
     + decl(/^let patDefer = [^;]*;/m) + "\n" + decl(/^const SURVEY_DEFERRED_MAX = [^;]*;/m) + "\n"
+    // ... and Plan B (phase 3): its lines and outline ride the settings, its button rides the row (12l)
+    + decl(/^let patOnly = [^;]*;/m) + "\n" + "const patSourceAll = () => drawn;\n"
+    // ... and what the phase 3 review added: the anchor level, the drawing a Plan B's numbers are of, the search's word
+    + decl(/^let patOutlineLowM = [^;]*;/m) + "\n" + decl(/^let patPlanBSay = [^;]*;/m) + "\n"
+    + grab("planBSig") + "\n" + grab("planBDrawingCheck") + "\n"
     + "let punchLevel = null; const punchLevelFor = () => null; const tideStripRefresh = () => Promise.resolve();\n"
     + decl(/^const LINE_DONE_FRAC = [^;]*;/m) + "\n" + decl(/^const COV_STEP_MAX_M = [^;]*;/m) + "\n"
     + decl(/^const LINE_COV_KEY = [^;]*;/m) + "\n" + "let lineCov = {};\n" + decl(/^let covPrev = [^;]*;/m) + "\n"
@@ -949,7 +983,9 @@ function buildWorld(env) {
        // the survey window (2026-11-19)
        "surveyStartT", "surveyDurH", "surgeWhen", "commitWaitsForStart", "showSurveyWindow", "localInputOf",
        // ... phase 2
-       "deferredRecord", "surveyDeferredN", "deferredWhy", "fmtLevel"].map(grab).join("\n")
+       "deferredRecord", "surveyDeferredN", "deferredWhy", "fmtLevel",
+       // ... phase 3
+       "showPlanBNote", "planBLines", "patOnlyIdx", "patSourceIdx"].map(grab).join("\n")
     + "\nreturn { get mission(){ return mission; }, set mission(v){ mission = v; },"
     + " get editingSv(){ return editingSv; }, set editingSv(v){ editingSv = v; }, get cardSv(){ return cardSv; },"
     + " set cardSv(v){ cardSv = v; }, get pat(){ return pat; }, get boundary(){ return boundary; },"
@@ -964,6 +1000,9 @@ function buildWorld(env) {
     + " get lineCov(){ return lineCov; }, set lineCov(v){ lineCov = v; }, get patReverse(){ return patReverse; },"
     + " setPatReverse: (v) => { patReverse = v; }, at: (k, p) => { runLineIdx = k; asv = p; },"
     + " set missionLoaded(v){ missionLoaded = v; }, get punchAllBusy(){ return punchAllBusy; },"
+    // (a Plan B on the card: its lines, its outline, the level its Max depth is anchored at - 24b2)
+    + " get planB(){ return {only: patOnly, outlineM: patOutlineM, lowM: patOutlineLowM}; },"
+    + " setPlanB: (o) => { patOnly = o.only; patOutlineM = o.outlineM; patOutlineLowM = o.lowM; },"
     + " set: (o) => { patClip = o.clip || null; patTransits = o.transits || []; patLead = o.lead || [];"
     + "   drawn = o.drawn || []; ANCHORS = o.anchors || null; } };");
   return f(env);
