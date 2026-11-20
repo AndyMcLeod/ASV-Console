@@ -221,9 +221,17 @@ advice_for() {
 
 fail=0
 have_node=0; command -v node   >/dev/null 2>&1 && have_node=1
-have_py=0;   command -v python >/dev/null 2>&1 && have_py=1
+# WHICH PYTHON. `python` where there is one (Windows, and this hook as it always ran); else `python3`, which is
+# all a stock Linux or macOS has - there the hook used to find no python, skip every Python suite and pass.
+# The three JavaScript suites that start a Python of their own read $PYTHON, so they get the same one.
+py=""
+if command -v python >/dev/null 2>&1; then py=python
+elif command -v python3 >/dev/null 2>&1; then py=python3
+fi
+have_py=0;   [ -n "$py" ] && have_py=1
+[ "$have_py" -eq 1 ] && { PYTHON="${PYTHON:-$py}"; export PYTHON; }
 [ "$have_node" -eq 1 ] || echo "pre-commit: node not found - skipping the JavaScript suites (install Node to enable them)."
-[ "$have_py"   -eq 1 ] || echo "pre-commit: python not found - skipping the Python suites."
+[ "$have_py"   -eq 1 ] || echo "pre-commit: neither python nor python3 found - skipping the Python suites."
 
 # A TIME LIMIT PER SUITE (review #17). A suite that hangs - a console that never answers, a promise that never
 # settles - used to hold the commit for ever with nothing on screen but its name. GNU timeout stops it after
@@ -241,7 +249,7 @@ SUITE_LIMIT_S=${ASV_SUITE_LIMIT_S:-600}
 limit=""
 HOOK_DIR=$(cd "$(dirname "$0")" && pwd)
 if [ "$have_py" -eq 1 ] && [ -f "$HOOK_DIR/../tests/lib/limit.py" ]; then
-  limit="python $HOOK_DIR/../tests/lib/limit.py $SUITE_LIMIT_S"
+  limit="$py $HOOK_DIR/../tests/lib/limit.py $SUITE_LIMIT_S"
 elif timeout --version 2>/dev/null | grep -q GNU; then
   limit="timeout $SUITE_LIMIT_S"
 else
@@ -257,7 +265,7 @@ for suite in tests/*.js tests/*.py; do
   name=$(basename "$suite")
   case "$suite" in
     *.js) [ "$have_node" -eq 1 ] || continue; runner=node   ;;
-    *.py) [ "$have_py"   -eq 1 ] || continue; runner=python ;;
+    *.py) [ "$have_py"   -eq 1 ] || continue; runner=$py ;;
   esac
   echo "pre-commit: $name ..."
   $limit $runner "$suite"
