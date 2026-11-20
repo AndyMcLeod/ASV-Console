@@ -452,6 +452,7 @@ async function check18() {
   const K = require("../static/js/keepouts.js");
   const { planeFrame } = require("../static/js/geodesy.js");
   const { normalizeSurveys } = require("../static/js/surveys.js");
+  const { noWakeKnOf } = require("../static/js/speedzones.js");   // loadMission's No-wake speed (2026-11-20): the REAL one
   const { V, nogo, sea } = ST, { nogoDR, buildKeepouts, buildMargin } = CH;
   // the harness's own premise: chart.js reads THIS V (one module instance), or the builder is judging another floor
   V.NOGO_MIN_DEPTH_M = 7.25;

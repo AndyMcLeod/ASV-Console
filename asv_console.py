@@ -1592,6 +1592,21 @@ def _cache_plan_completion(v):
 # eat the operator's choice.
 SPEED_ROLES = ("transit", "turn", "survey")
 
+# THE NO-WAKE SPEED (Andy, 2026-11-20: "ASV speed reductions though no wake zones should be anchored on actual vessel
+# speed rather than the 'low' state"): the knots a speed zone with no number is flown at - the plan's `no_wake_kn`, the
+# page's own (static/js/speedzones.js NO_WAKE_DEFAULT_KN, noWakeKnOf). A save with a bad one is refused
+# (check_plan_body); a file holding a bad one or none reads as the default.
+NO_WAKE_DEFAULT_KN = 5.0
+NO_WAKE_MAX_KN = 30.0
+
+
+def _no_wake_kn(v):
+    """The plan's No-wake speed, knots to a tenth: what it holds if that is a speed in (0, NO_WAKE_MAX_KN], else the
+    default."""
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or not 0 < v <= NO_WAKE_MAX_KN:
+        return NO_WAKE_DEFAULT_KN
+    return round(float(v), 1)
+
 
 def speed_step_key(kn):
     """The operator's whole-knot speed nearest `kn` knots, inside the hull's range, as its SPEED_KN key ("7"), or
@@ -1703,6 +1718,11 @@ def check_plan_body(m):
         if v is not None and (isinstance(v, bool) or not isinstance(v, (int, float))
                               or not math.isfinite(v) or v < 0):
             raise PlanRefused("%s must be a finite, non-negative number (got %r) - nothing was saved" % (k, v))
+    v = m.get("no_wake_kn")
+    if v is not None and (isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v)
+                          or not 0 < v <= NO_WAKE_MAX_KN):
+        raise PlanRefused("no_wake_kn must be a speed in knots over 0 and at most %g (got %r) - nothing was saved"
+                          % (NO_WAKE_MAX_KN, v))
     rev = m.get("rev")
     if rev is not None and (isinstance(rev, bool) or not isinstance(rev, int) or rev < 0):
         raise PlanRefused("rev must be the revision of the plan this edit was made to (got %r) - "
@@ -2252,6 +2272,8 @@ def load_mission(refresh=True):
             # keep-clear buffer (m) around every nogo zone - the tightness the
             # ASV threads between piers; smaller for tight marinas.
             "buffer_m": m.get("buffer_m", NOGO_BUFFER_DEFAULT_M),
+            # the knots a speed zone with no number is flown at (2026-11-20)
+            "no_wake_kn": _no_wake_kn(m.get("no_wake_kn")),
             # operator MIN DEPTH (m) - a routing floor for EVERY behavior, not just
             # survey coverage (2026-09-07). The client takes the deeper of this and the
             # hull's own navigability limit, so a value below what the hull needs cannot
@@ -2310,7 +2332,7 @@ def load_mission(refresh=True):
     view = {"waypoints": [], "lines": [], "arrival_radius_m": ARRIVAL_DEFAULT_M,
             "approach_radius_m": WP_APPROACH_M, "speed": "survey",
             "speeds": _norm_speeds(None), "completion": "rth",
-            "buffer_m": NOGO_BUFFER_DEFAULT_M, "min_depth_m": 2.0,
+            "buffer_m": NOGO_BUFFER_DEFAULT_M, "min_depth_m": 2.0, "no_wake_kn": NO_WAKE_DEFAULT_KN,
             "lead_mode": "m", "lead_in": 0, "lead_out": 0, "turn_ease": "arc",
             "boundary": [], "boundary_closed": False, "survey_bounded": None, "surveys": [], "breaks": [], "strikes": [], "passage": None, "passage_hold": None,
             "rev": 0}
@@ -2353,6 +2375,7 @@ def save_mission(m):
         "completion": (m.get("completion") if m.get("completion") in ("complete", "loiter", "repeat", "rth")
                        else "rth"),
         "buffer_m": m.get("buffer_m", 3.0),
+        "no_wake_kn": _no_wake_kn(m.get("no_wake_kn")),
         "min_depth_m": m.get("min_depth_m", 2.0),
         "lead_mode": ("s" if m.get("lead_mode") == "s" else "m"),
         "lead_in": m.get("lead_in", 0),

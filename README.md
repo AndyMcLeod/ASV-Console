@@ -3232,8 +3232,13 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    commanded speed comes back. A zone she is slowing for stays held while her route still meets
    it, however short her slowing makes the slow-down distance. If her route turns away from it, the
    banner says the zone "is no longer on her way", not that she is clear of it. A numeric limit
-   takes her fastest speed at or under it. "No wake",
-   "headway", "idle", "slow" and "speed restricted" take her slowest. A zone never raises her speed.
+   takes her fastest speed at or under it, and a no-wake zone that gives its speed ("5 knot no
+   wake", "No wake - 5 MPH") is that limit. "No wake", "headway", "idle", "slow" and "speed
+   restricted" with no number are flown at the plan's **No-wake kn** (Route rules; 5 kn unless
+   set - since 2026-11-20, before which they took her slowest): her fastest speed at or under it,
+   and under a law's own cap where it has one (Massachusetts' 6 mph). New Hampshire, Maine and
+   Massachusetts define headway as the slowest speed that keeps steerage way: set No-wake kn to
+   her slowest to follow that. A zone never raises her speed.
    It stands aside for the guard's slow-down and hold, a drift-in, and an escape (collision avoidance
    comes first). A page that cannot say which leg she is on still caps her by position and puts her
    speed back when she is clear. The zone taking her speed and letting it go are each said in a

@@ -746,6 +746,26 @@ check("16o. a wait that is neither \"loiter\" nor \"home\" is REFUSED in words, 
       and open(_C.MISSION_PATH, "rb").read() == w4_before,
       "; ".join("%s: %s" % (k, (v or "NOT REFUSED")[:40]) for k, v in w4_said.items()))
 
+# 16p-16q. THE NO-WAKE SPEED (2026-11-20; Andy: "ASV speed reductions though no wake zones should be anchored on actual
+# vessel speed rather than the 'low' state"): the knots a speed zone with no number is flown at, the plan's `no_wake_kn` -
+# saved and loaded as set, the default where a plan names none or holds one that is not a speed; a save naming a bad one
+# is REFUSED (static/js/speedzones.js noWakeKnOf is the page's half; tests/speed_zones.js 2e pins every whitelist).
+_, nw_err = attempt(_C.save_mission, dict(PLAN, no_wake_kn=4.5))
+nw_back = _C.load_mission().get("no_wake_kn")
+_C.save_mission(dict(PLAN))
+nw_none = _C.load_mission().get("no_wake_kn")
+nw_norm = [_C._no_wake_kn(v) for v in (4.5, 4.04, 6, 30, 0, -2, 31, None, True, float("nan"), "6")]
+check("16p. the plan's No-wake speed is saved and loaded as set (4.5 kn); a plan naming none reads as the default 5, and "
+      "so does one holding anything but a speed in (0, 30] knots",
+      nw_err is None and nw_back == 4.5 and nw_none == 5.0 and nw_norm == [4.5, 4.0, 6.0, 30.0] + [5.0] * 7,
+      "save: %s; loaded %r, none %r; %r" % (nw_err or "ok", nw_back, nw_none, nw_norm))
+nw_before = open(_C.MISSION_PATH, "rb").read()
+nw_said = {k: refused(dict(PLAN, no_wake_kn=v)) for k, v in
+           (("zero", 0), ("negative", -1), ("over 30", 31), ("a bool", True), ("a string", "5"), ("NaN", float("nan")))}
+check("16q. a No-wake speed that is not a speed in (0, 30] knots is REFUSED in words, and nothing is written",
+      all("no_wake_kn" in v for v in nw_said.values()) and open(_C.MISSION_PATH, "rb").read() == nw_before,
+      "; ".join("%s: %s" % (k, (v or "NOT REFUSED")[:50]) for k, v in nw_said.items()))
+
 # 17-17b. THE SURVEY BREAK-OFFS (2026-10-11, Andy: "When an ASV breaks off a survey to RTH for refueling the survey
 # departure point must be recorded"). The page banks each on the plan - so a page reloaded or a console restarted while
 # she is refueled still offers Continue - and they ride both dicts and are type-checked like the surveys.

@@ -824,6 +824,7 @@
         <div class="prow"><label>Buffer m</label><input type="number" id="sp_buffer" value="3" min="0" max="200" step="1" title="Keep-clear buffer around every nogo zone. SHARED — this is the buffer all behaviors (Go-To / RTH / search / survey) route clear by."/></div>
         <div class="prow"><label>Transit kn</label>
           <select id="sp_spd_transit" title="Speed on everything that is not coverage and not a turn: the approach out to the survey area, hops between separated regions, and the Go-To / RTH / Transit behaviors. Whole knots, COMMANDED through the water: the current and the wind make her speed over the ground differ."></select></div>
+        <div class="prow"><label>No-wake kn</label><input type="number" id="sp_nowake" value="5" min="0.5" max="30" step="0.5" title="The speed a SPEED ZONE WITH NO NUMBER is flown at - no wake, headway, idle, slow, speed restricted: the fastest whole knot she has at or under this, never faster than her own speed for the job, and under a law's own cap where it has one (Massachusetts' headway: 6 mph at most). A zone that states its speed - '5 knot no wake' - is flown at that speed instead. COMMANDED through the water. New Hampshire, Maine and Massachusetts define headway as the slowest speed that keeps steerage way: set this to her slowest to follow that. Saved with the plan."/></div>
         <div class="prow" title="OPEN WATER FIRST. On a passage leg of 3 km or more - a Go-To, an RTH, Continue, the way out to a survey and into each later one, a long passage's sections - the planner looks at the whole water between her and the point and keeps a berth of up to 1 km off charted dangers where the water allows, rather than threading islands, ledges and shoals by the shortest way: the chart may be wrong by tens of meters, or miss a rock. A buoyed or charted channel and the water round a safe-water buoy count as safer; an isolated-danger buoy and a lone channel mark are kept clear. It is taken when it cuts the route's time near dangers by 10% or more at no more than twice the length; the banner says what it added. A DRAWN transit keeps its own line where that is clear - only a leg the router has to bend round something goes the open-water way round it. OFF: the shortest clear way, as before. The next plan reads it (a fresh page starts on First)."><label>Open water</label><select id="enf_openwater"><option value="first" selected>First</option><option value="off">Off</option></select></div>
         <div class="prow" title="HOW A ROCK IN A BUOYED CHANNEL IS PASSED by the Rule 9 lane - a charted rock, wreck or obstruction, a small shoal patch or islet with water all round it. It is never the channel's edge: the lane holds its line and passes it to EITHER side. LAND gives it the lane's own clearance from a bank (twice the buffer and two meters, or more). SHOAL gives it only the keep-clear - the buffer, or the guard's standoff in a set - and two meters (half the buffer where that is more), as a shallow point of the sea bottom: any spot of water shallower than the floor. Anything built - a pier, a pile, a dolphin, a float, a bridge support - and every buoy or beacon is the bank either way - except a fish weir or other structure charted only as an obstruction, which cannot be told from a rock and is passed as one. This is the lane between SINGLE channel marks only: in a charted channel, between buoy pairs or in unmarked narrow water a rock is passed at the ordinary keep-clear either way. For trying both: the next Go-To, RTH, transit, survey approach or leg into a later survey is planned with what this says (a fresh page starts on Land)."><label>Channel rocks</label><select id="enf_rock"><option value="land" selected>Land</option><option value="bottom">Shoal</option></select></div>
         <div class="enf" title="Which ENC features form the NOGO model — SHARED by every behavior (Go-To / RTH / search / survey), not just Punch Out. Toggling these re-routes all behaviors.">
@@ -1292,7 +1293,8 @@ import { koCount as routeKoCount, packKo as routePackKo } from "/static/js/route
 // OPEN WATER FIRST (2026-10-14): its words, for the banners and the Intent card (the planner itself is passage.js's).
 import { openWaterBox, openWaterNote, openWaterWhy } from "/static/js/openwater.js";
 import { parseBoundaryFile, ringAreaM2, ringMiddle, BOUNDARY_FILE_MAX_BYTES } from "/static/js/boundary_file.js";
-import { zoneDecision, zoneLeadM, zoneRuleTxt, zoneId, zoneApplies, noaaZones, inZone, lawZones } from "/static/js/speedzones.js";
+import { zoneDecision, zoneLeadM, zoneRuleTxt, zoneId, zoneApplies, noaaZones, inZone, lawZones, noWakeKnOf,
+         NO_WAKE_DEFAULT_KN } from "/static/js/speedzones.js";
 import { HAZ_UNKNOWN_EXTENT, MARK_TAIL, WATER_FAR_KM, WATER_REMOTE_KM, WATER_STALE_S,
          WRECK_CLEAR_MARGIN_M, airNeedM, blocked, blockedInfo, bufferFloor, buildKeepouts, buildMargin, clearanceM,
          channelPolys, depthExcluded, effectiveWaterOffset, firstBlockAlong, hazExtent, overheadBlocks,
@@ -1754,6 +1756,7 @@ document.addEventListener("visibilitychange", ()=>{ if(document.visibilityState 
 // --- mission plan -------------------------------------------------------- //
 let mission = {waypoints: [], lines: [], arrival_radius_m: 2, approach_radius_m: 1, speed: "survey",
                speeds: {transit:"survey", turn:"survey", survey:"survey"}, completion: "rth", buffer_m: 3,
+               no_wake_kn: NO_WAKE_DEFAULT_KN,
                lead_mode: "m", lead_in: 0, lead_out: 0, turn_ease: "arc", surveys: []};
 // --- SPEED BY ROLE: transit, turn, survey ----------------------------------------- //
 // Andy, 2026-08-31: "Vessel speed should be selectable for various modes. Allow separate
@@ -6475,6 +6478,7 @@ function zoneCap(route){
   const kns = Object.values(V.SPEED_KN).filter(Number.isFinite), slowMs = (kns.length ? Math.min(...kns) : 0) * 0.514444;
   const leadM = zoneLeadM(v, law ? slowLeadM(v, slowMs, law, 0, 0) : 0, SPEED_CMD_LATENCY_S);
   return zoneDecision({pos: {lat: asv.lat, lon: asv.lon}, ahead, zones: zs, speedsKn: V.SPEED_KN, leadM, held: zoneHeld,
+                       noWakeKn: noWakeKnOf(mission.no_wake_kn),      // a rule with no number: the No-wake speed
                        loaM: (V.VESSEL && V.VESSEL.hull && V.VESSEL.hull.loa_m) || 0});
 }
 /** A speed in a zone's sentence: "4 kn", and a named key with its knots - "low (4 kn)", never a bare "low". */
@@ -6512,17 +6516,22 @@ function zoneTrack(zc, jobKey, toldKey){
       logClient("speed_zone", {state: zc.where, zone: zoneName(zc.zone), rule: zoneRuleTxt(zc.zone), key: zc.key, job: null, capping: false});
       return;
     }
-    const below = zc.below ? " - the rule asks for less than her slowest speed that steers, so she runs at " + zoneSpd(zc.key)
-                             + "; check the local rule" : "";
+    // a rule with no number is flown at the operator's No-wake speed (zoneKey's `by`), and the banner says so
+    const nw = zc.by === "setting" ? noWakeKnOf(mission.no_wake_kn) : null;
+    const set = nw == null ? "" : Math.abs((V.SPEED_KN[zc.key] || 0) - nw) < 1e-9 ? " (the No-wake speed)"
+                                                                                 : " (the No-wake speed is " + nw + " kn)";
+    const below = !zc.below ? ""
+      : nw != null ? " - the No-wake speed, " + nw + " kn, is under her slowest speed that steers, so she runs at " + zoneSpd(zc.key)
+      : " - the rule asks for less than her slowest speed that steers, so she runs at " + zoneSpd(zc.key) + "; check the local rule";
     showBanner(!capping
       ? "SPEED ZONE " + (zc.where === "ahead" ? "AHEAD - " : "- ") + zoneName(zc.zone) + ": " + zoneRuleTxt(zc.zone)
-        + ". Her " + zoneSpd(jobKey) + " is within it" + below + "."
+        + ". Her " + zoneSpd(jobKey) + " is within it" + (zc.below ? below : nw != null ? ", the No-wake speed of " + nw + " kn" : "") + "."
       : "SPEED ZONE " + (zc.where === "ahead" ? "AHEAD - " : "- ") + zoneName(zc.zone) + ": " + zoneRuleTxt(zc.zone) + ". "
-        + (zc.where === "ahead" ? "Slowing to " + zoneSpd(zc.key) + " now, " + fmtDist(zc.d) + " before it, so she is at it on its edge"
-                                : "Held at " + zoneSpd(zc.key)) + below
+        + (zc.where === "ahead" ? "Slowing to " + zoneSpd(zc.key) + (zc.below ? "" : set) + " now, " + fmtDist(zc.d) + " before it, so she is at it on its edge"
+                                : "Held at " + zoneSpd(zc.key) + (zc.below ? "" : set)) + below
         + "; " + zoneSpd(jobKey) + " comes back when she is clear of it.");
     logClient("speed_zone", {state: zc.where, zone: zoneName(zc.zone), rule: zoneRuleTxt(zc.zone), key: zc.key, job: jobKey,
-                             capping, below: !!zc.below, d: Math.round(zc.d || 0)});
+                             capping, below: !!zc.below, d: Math.round(zc.d || 0), ...(nw != null ? {no_wake_kn: nw} : {})});
     return;
   }
   if(zoneHeld){
@@ -7680,6 +7689,8 @@ async function loadMission(){
                  approach_radius_m:m.approach_radius_m ?? 1, speed:m.speed||"survey",
                  speeds:m.speeds||{},
                  completion:m.completion||"rth", buffer_m:m.buffer_m ?? 3,
+                 // ... and THE NO-WAKE SPEED (2026-11-20), through this whitelist too, or the next save writes the default
+                 no_wake_kn:noWakeKnOf(m.no_wake_kn),
                  min_depth_m:m.min_depth_m ?? 2,
                  // The lead settings are the operator's, in the unit they chose - so all
                  // three travel together or none of them mean anything (a stored 20 that
@@ -7740,6 +7751,7 @@ async function loadMission(){
       // small boat must not quietly narrow a big one's clearance.
       nogo.buffer = bufferFloor(mission.buffer_m);
       $("#sp_buffer").value = nogo.buffer;
+      if($("#sp_nowake")) $("#sp_nowake").value = noWakeKnOf(mission.no_wake_kn);
       // The lead controls, restored onto the card. The MODE first: the two numbers mean
       // different lengths depending on it, and a mode restored after them would leave the
       // note quoting meters for a duration until the next keystroke.
@@ -23514,6 +23526,14 @@ function setBuffer(v){
 $("#vesselSel").onchange = (e)=>switchVessel(e.target.value);
 if($("#portSel")) $("#portSel").onchange = (e)=>switchPort(e.target.value);
 $("#sp_buffer").onchange = ()=>setBuffer($("#sp_buffer").value);
+// THE NO-WAKE SPEED (Andy, 2026-11-20): what a speed zone with no number is flown at, knots - read by the governor each
+// frame (zoneCap), so a change takes effect on her next frame. One writer, saved with the plan.
+function setNoWake(v){
+  mission.no_wake_kn = noWakeKnOf(v);
+  $("#sp_nowake").value = mission.no_wake_kn;
+  saveMission();
+}
+$("#sp_nowake").onchange = ()=>setNoWake($("#sp_nowake").value);
 // MIN DEPTH — a routing floor for EVERY behavior, edited under the Path planning card's Route rules (#sp_mindepth; the
 // command bar's copy went 2026-10-13). Same shape as setBuffer above, and for the same reason: one writer, persisted,
 // and the shared model rebuilt so Go-To / RTH / search / survey all re-route live.
@@ -28754,7 +28774,7 @@ async function resetMission(){
     {always: true})) return;
   // clear the persisted plan + the trail so the reloaded page comes up clean
   mission = {waypoints: [], lines: [], arrival_radius_m: 2, approach_radius_m: 1,
-             speed: "survey", completion: "rth", buffer_m: 3, surveys: []};
+             speed: "survey", completion: "rth", buffer_m: 3, no_wake_kn: NO_WAKE_DEFAULT_KN, surveys: []};
   boundary = []; boundaryClosed = false;
   clearTrack();
   flashNote("Resetting — reloading fresh…");

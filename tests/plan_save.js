@@ -110,6 +110,7 @@ console.log("Saving the plan - against a revision, one at a time, and said when 
   // normalizeSurveys is the REAL one (2026-10-02): loadMission judges the plan's surveys with it, and check 12 is
   // about exactly that judgment - a stub here would pass whatever the page did with them.
   const { normalizeSurveys } = require("../static/js/surveys.js");
+  const { noWakeKnOf, NO_WAKE_DEFAULT_KN } = require("../static/js/speedzones.js");   // its No-wake speed and resetMission's (2026-11-20): the REAL ones
   const $ = () => ({ value: 0 }), SPEED_ROLES = [], V = {}, nogo = {};
   const updateSpeedNote = () => {}, bufferFloor = (b) => b, updateLeadNote = () => {};
   const updateEaseNote = () => {}, updatePatReadout = () => {}, render = () => {};

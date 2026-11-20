@@ -136,6 +136,58 @@ check("2b. THE SPEED A ZONE ALLOWS: the fastest key at or under its limit (5 kn 
       () => k2.five.kn === 5 && !k2.five.below && k2.ten.kn === 10 && k2.half.kn === 5 && k2.three.kn === 4 && k2.three.below
             && k2.wake.key === "4" && k2.wake.kn === 4 && !k2.wake.below && k2.ten.key === "10" && k2.zb.kn === 1.5 && k2.restr.kn === 1.5,
       () => JSON.stringify(k2));
+// 2c-2e. THE NO-WAKE SPEED (Andy, 2026-11-20: "ASV speed reductions though no wake zones should be anchored on actual
+// vessel speed rather than the 'low' state. A 5 knot no wake zone should be recognized as a speed in knots"; asked, one
+// setting in knots, 5 by default, saved with the plan)
+const MAK = { 4: 4, 5: 5, 6: 6, 8: 8 };
+const k2c = {
+  drix5: Z.zoneKey(zone("no_wake", null), DRIX, 5), zb5: Z.zoneKey(zone("headway", null), SMALL, 5),
+  zb45: Z.zoneKey(zone("idle", null), SMALL, 4.5), tooLow: Z.zoneKey(zone("no_wake", null), DRIX, 1),
+  maLaw: Z.zoneKey(zone("headway", null, { max_kn: 5.2 }), MAK, 8), maSet: Z.zoneKey(zone("headway", null, { max_kn: 5.2 }), MAK, 4),
+  limit: Z.zoneKey(zone("limit", 6), DRIX, 3), none: Z.zoneKey(zone("no_wake", null), DRIX),
+};
+check("2c. A ZONE WITH NO NUMBER IS FLOWN AT THE NO-WAKE SPEED: the fastest whole knot at or under it (5 -> 5 on the DriX "
+      + "and on the small-class hull, not their 'low'; 4.5 -> 4); one under her slowest - her slowest, said (1 -> 4, below); "
+      + "Massachusetts' 6 mph cap under it wins (8 -> 5, by the law), over it does not (4 -> 4, by the setting); a zone "
+      + "that gives its number keeps it (6 kn with a 3 kn setting -> 6); asked with none, her slowest as before",
+      () => k2c.drix5.key === "5" && k2c.drix5.by === "setting" && !k2c.drix5.below && k2c.zb5.key === "5" && k2c.zb45.key === "4"
+            && k2c.tooLow.key === "4" && k2c.tooLow.below && k2c.tooLow.by === "setting"
+            && k2c.maLaw.key === "5" && k2c.maLaw.by === "law" && !k2c.maLaw.below && k2c.maSet.key === "4" && k2c.maSet.by === "setting"
+            && k2c.limit.key === "6" && !k2c.limit.by && k2c.none.key === "4" && k2c.none.by === "slowest",
+      () => JSON.stringify(k2c));
+const t2d = { kn: Z.parseSpeedText("5 knot no wake zone"), mph: Z.parseSpeedText("No Wake - 5 MPH"),
+              plain: Z.parseSpeedText("No wake zone"), lim: Z.parseSpeedText("speed restricted, 5 knot speed limit") };
+const nw2 = [4.5, 4.04, "6", 0, -2, 31, null, true, NaN, "fast"].map(Z.noWakeKnOf);
+check("2d. A NO-WAKE ZONE THAT GIVES ITS SPEED IS THAT SPEED: '5 knot no wake zone' a 5 kn limit and 'No Wake - 5 MPH' "
+      + "4.3 kn, each said '... no wake'; a plain 'No wake zone' keeps no number, and a speed limit is not called no wake. "
+      + "The plan's No-wake speed: knots in (0, 30] to a tenth, anything else the default 5",
+      () => t2d.kn.rule === "limit" && t2d.kn.limit_kn === 5 && t2d.kn.no_wake === true && Z.zoneRuleTxt({ props: t2d.kn }) === "5 kn no wake"
+            && t2d.mph.rule === "limit" && t2d.mph.limit_kn === 4.3 && t2d.mph.no_wake === true
+            && t2d.plain.rule === "no_wake" && t2d.plain.limit_kn === null && !t2d.lim.no_wake && Z.zoneRuleTxt({ props: t2d.lim }) === "5 kn"
+            && JSON.stringify(nw2) === "[4.5,4,6,5,5,5,5,5,5,5]" && Z.NO_WAKE_DEFAULT_KN === 5,
+      () => JSON.stringify({ t2d, nw2 }));
+{
+  // 2e: THE PLAN CARRIES IT - every whitelist a plan passes through names it, or the next save writes the default over
+  // the operator's setting (the `speeds` defect the page's mission load warns of)
+  const PY = fs.readFileSync(path.join(APP, "asv_console.py"), "utf8");
+  const load = H.slice(H.indexOf("mission = {waypoints:m.waypoints||[]"), H.indexOf("surveys:Array.isArray(m.surveys)"));
+  const sites = {
+    pageLoad: /no_wake_kn:noWakeKnOf\(m\.no_wake_kn\),/.test(load),
+    pageFill: /\$\("#sp_nowake"\)\.value = noWakeKnOf\(mission\.no_wake_kn\);/.test(H),
+    pageWrite: /mission\.no_wake_kn = noWakeKnOf\(v\);[\s\S]{0,80}saveMission\(\);/.test(grab("setNoWake")),
+    pageInit: (H.match(/no_wake_kn: NO_WAKE_DEFAULT_KN/g) || []).length === 2,
+    gov: /noWakeKn: noWakeKnOf\(mission\.no_wake_kn\)/.test(grab("zoneCap")),
+    pyRead: (PY.match(/"no_wake_kn": _no_wake_kn\(m\.get\("no_wake_kn"\)\),/g) || []).length === 2,
+    pyEmpty: /"no_wake_kn": NO_WAKE_DEFAULT_KN,/.test(PY),
+    pyCheck: /v = m\.get\("no_wake_kn"\)\s*\r?\n\s*if v is not None and/.test(PY),
+    pyDefault: /^NO_WAKE_DEFAULT_KN = 5\.0$/m.test(PY.split("\r\n").join("\n")) && /^NO_WAKE_MAX_KN = 30\.0$/m.test(PY.split("\r\n").join("\n"))
+               && Z.NO_WAKE_MAX_KN === 30,
+  };
+  check("2e. THE PLAN CARRIES ITS NO-WAKE SPEED: the page's mission load, its card, its one writer (saved), both new-plan "
+        + "defaults and the governor's ask; the server's read and save whitelists, the new plan, the save's refusal - and "
+        + "the server's default and bound are the page's",
+        () => Object.values(sites).every(Boolean), () => JSON.stringify(sites));
+}
 
 // ── 3. where ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 const Z5 = zone("limit", 5);                     // 400 m square, its SW corner at 43, -70.7
@@ -195,12 +247,13 @@ const gov = (o) => {
     "let resumeSlow = false, escapeThrottle = false, govLead = null, guardEdgeAt = 0; const EDGE_REASSESS_MS = 2000;",
     "const indexedRoute = () => w.indexed ? w.route : null, speedRole = () => 'transit', roleSpeed = () => w.job || '7', leadSpeedKey = () => null;",
     "const isStepKey = (k) => /^\\d+$/.test(String(k));",
-    "const turnSeg = [], curTurn = -1, mission = {lines: []}, cornerSlowFor = -1, cornerSlow = new Set();",
+    // the plan's No-wake speed (2026-11-20): w.noWake, else none in the plan - the default
+    "const turnSeg = [], curTurn = -1, mission = {lines: [], ...(w.noWake !== undefined ? {no_wake_kn: w.noWake} : {})}, cornerSlowFor = -1, cornerSlow = new Set();",
     "const commandSpeed = (k) => { w.sent.push(k); w.speedKey = k; }, showBanner = (t) => w.banners.push(t), flashNote = (t) => w.notes.push(t);",
     "const logClient = (k, d) => w.logs.push([k, d]);",
     "const spdTxt = (k) => (/^\\d+$/.test(String(k)) ? V.SPEED_KN[k] + ' kn' : String(k)), fmtDist = (m) => Math.round(m) + ' m';",
     "const slowLaw = () => null, slowLeadM = () => 0, SPEED_CMD_LATENCY_S = 1;",
-    "const {zoneDecision, zoneLeadM, zoneRuleTxt, zoneId, zoneApplies, noaaZones, inZone, lawZones} = Z;",
+    "const {zoneDecision, zoneLeadM, zoneRuleTxt, zoneId, zoneApplies, noaaZones, inZone, lawZones, noWakeKnOf} = Z;",
     "let commandedSpeed = null, zoneHeld = null, zoneRestore = null, zonesFor = null, zonesList = []; const zoneSaid = new Set();",
     // govRaiseHeld (2026-11-02): the ONE function the governor's refusal-to-raise and the zone's release
     // banner both ask, so the banner can no longer announce a restore the next statement declines. Lifted,
@@ -498,10 +551,11 @@ check("6f. A STATE LINE NOT READ, THAT STATE'S RULES IN ITS BOX (safety before e
   L.pos = at(300, 200); const g3 = L.api.tick();               // in it, 30 m off the shore
   L.pos = at(545, 200); const g4 = L.api.tick();               // 54 m off the corner: out, not yet clear by her length
   L.pos = at(560, 200); const g5 = L.api.tick();               // 67 m off: clear
-  check("6i. THE GOVERNOR AND NEW HAMPSHIRE'S SHORE: the job's 7 kn until the band is inside her lead; then headway (the "
-        + "DriX's 4) before it, said with the law it is; held in it; held leaving it; the job's 7 back when clear, said",
-        () => g0 === "7" && g1 === "7" && g2 === "4" && g3 === "4" && g4 === "4" && g5 === "7"
-              && /^SPEED ZONE AHEAD - New Hampshire, within 150 ft of shore or a dock \(NH RSA 270-D:2 VI\): headway speed\. Slowing to 4 kn now/.test(L.banners[0] || "")
+  check("6i. THE GOVERNOR AND NEW HAMPSHIRE'S SHORE: the job's 7 kn until the band is inside her lead; then headway at the "
+        + "No-wake speed (a plan naming none: 5 kn - 2026-11-20, no longer her slowest, the DriX's 4) before it, said with the "
+        + "law it is and the setting; held in it; held leaving it; the job's 7 back when clear, said",
+        () => g0 === "7" && g1 === "7" && g2 === "5" && g3 === "5" && g4 === "5" && g5 === "7"
+              && /^SPEED ZONE AHEAD - New Hampshire, within 150 ft of shore or a dock \(NH RSA 270-D:2 VI\): headway speed\. Slowing to 5 kn \(the No-wake speed\) now/.test(L.banners[0] || "")
               && /^CLEAR OF SPEED ZONE New Hampshire, within 150 ft of shore or a dock \(NH RSA 270-D:2 VI\): back to 7 kn, her commanded speed\.$/.test(L.banners[1] || "")
               && L.banners.length === 2,
         () => JSON.stringify({ g: [g0, g1, g2, g3, g4, g5], banners: L.banners }));
@@ -514,13 +568,29 @@ check("6f. A STATE LINE NOT READ, THAT STATE'S RULES IN ITS BOX (safety before e
   const Q = gov({ zones: LAWG, sog: 12, job: "4" });
   Q.pos = at(42, 200); Q.api.tick(); const qb = Q.banners.length;
   Q.route = [at(-600, 200), at(42, -600)]; Q.api.tick();
-  check("6j. A BAND SHE IS SLOWING FOR IS NOT LET GO AS SHE SLOWS (her lead under what is left: still 4, nothing said - live, "
+  check("6j. A BAND SHE IS SLOWING FOR IS NOT LET GO AS SHE SLOWS (her lead under what is left: still 5, nothing said - live, "
         + "the page said 'Clear of speed zone' there); her way turned from it, the job's 7 back and said as what happened - "
         + "'no longer on her way', not 'clear'; one she came to at a speed within it, her way turned from it - nothing said",
-        () => k1 === "4" && k2 === "4" && nb === 1 && nn === 0 && k3 === "7" && qb === 1 && Q.banners.length === 1 && Q.notes.length === 0
+        () => k1 === "5" && k2 === "5" && nb === 1 && nn === 0 && k3 === "7" && qb === 1 && Q.banners.length === 1 && Q.notes.length === 0
               && /^SPEED ZONE New Hampshire, within 150 ft of shore or a dock \(NH RSA 270-D:2 VI\) is no longer on her way: back to 7 kn, her commanded speed\.$/.test(K.banners[1] || "")
               && !K.notes.some((t) => /Clear of speed zone/.test(t)),
         () => JSON.stringify({ k: [k1, k2, k3], banners: K.banners, notes: K.notes, q: [Q.banners, Q.notes] }));
+  // 6k: THE PLAN'S OWN NO-WAKE SPEED in the governor (2026-11-20)
+  const N45 = gov({ zones: LAWG, noWake: 4.5 });
+  N45.pos = at(50, 200); const n45 = N45.api.tick();
+  const N1 = gov({ zones: LAWG, noWake: 1 });
+  N1.pos = at(50, 200); const n1 = N1.api.tick();
+  const Q5 = gov({ zones: LAWG, job: "4" });
+  Q5.pos = at(50, 200); const q5 = Q5.api.tick();
+  const lg = (N45.logs.find(([k, d]) => k === "speed_zone" && d.state === "ahead") || [])[1] || {};
+  check("6k. THE GOVERNOR FLIES THE PLAN'S NO-WAKE SPEED: 4.5 kn - 4, said '(the No-wake speed is 4.5 kn)' and logged with "
+        + "it; 1 kn, under her slowest - her 4, said as the setting under it, not as the law asking it; a job of 4 under "
+        + "the default 5 - left at 4 and said within it, the No-wake speed of 5 kn",
+        () => n45 === "4" && /Slowing to 4 kn \(the No-wake speed is 4\.5 kn\) now, /.test(N45.banners[0] || "") && lg.no_wake_kn === 4.5
+              && n1 === "4" && /Slowing to 4 kn now, \d+ m before it, so she is at it on its edge - the No-wake speed, 1 kn, is under her slowest speed that steers, so she runs at 4 kn; 7 kn comes back/.test(N1.banners[0] || "")
+              && !/check the local rule/.test(N1.banners[0] || "")
+              && q5 !== "5" && /Her 4 kn is within it, the No-wake speed of 5 kn\.$/.test(Q5.banners[0] || ""),
+        () => JSON.stringify({ n45, n1, q5, b: [N45.banners[0], N1.banners[0], Q5.banners[0]], lg }));
 }
 
 // ── 7. Massachusetts' rules (lawZones, 2026-10-16: "model the MA shore distance rules"; asked, "Headway in every MA
@@ -616,13 +686,21 @@ check("7d. MASSACHUSETTS' LINE UNREAD: with no line read and the chart in its bo
   MG.pos = FMA.fromEN(200, -800); const m3 = MG.api.tick();       // in it
   MG.pos = FMA.fromEN(405, -800); const m4 = MG.api.tick();       // 5 m past its end: not clear by her length
   MG.pos = FMA.fromEN(450, -800); const m5 = MG.api.tick();       // 50 m past, 150 m short of the next: clear
-  check("7e. THE GOVERNOR AND A MASSACHUSETTS CHANNEL: the job's 7 until it is inside her lead, then headway (the DriX's 4) "
-        + "before it, said with the rule it is; held in it and while she clears it; the job's 7 back when clear, said",
-        () => m0 === "7" && m1 === "7" && m2 === "4" && m3 === "4" && m4 === "4" && m5 === "7"
-              && /^SPEED ZONE AHEAD - Massachusetts, in a channel \(MA 323 CMR 2\.07\(3\)\(d\)\): headway speed\. Slowing to 4 kn now/.test(MG.banners[0] || "")
+  check("7e. THE GOVERNOR AND A MASSACHUSETTS CHANNEL: the job's 7 until it is inside her lead, then headway at the No-wake "
+        + "speed (5 kn, under the law's 6 mph) before it, said with the rule it is; held in it and while she clears it; the "
+        + "job's 7 back when clear, said",
+        () => m0 === "7" && m1 === "7" && m2 === "5" && m3 === "5" && m4 === "5" && m5 === "7"
+              && /^SPEED ZONE AHEAD - Massachusetts, in a channel \(MA 323 CMR 2\.07\(3\)\(d\)\): headway speed\. Slowing to 5 kn \(the No-wake speed\) now/.test(MG.banners[0] || "")
               && /^CLEAR OF SPEED ZONE Massachusetts, in a channel \(MA 323 CMR 2\.07\(3\)\(d\)\): back to 7 kn, her commanded speed\.$/.test(MG.banners[1] || "")
               && MG.banners.length === 2,
         () => JSON.stringify({ m: [m0, m1, m2, m3, m4, m5], banners: MG.banners }));
+  // 7f: a No-wake speed over the law's own cap - the law wins, and is said as the law
+  const M8 = gov({ zones: [MAW, ...MA_CHART], route: [FMA.fromEN(-600, -800), FMA.fromEN(1500, -800)], noWake: 8 });
+  M8.pos = FMA.fromEN(-10, -800); const m8 = M8.api.tick();
+  check("7f. A NO-WAKE SPEED OVER MASSACHUSETTS' 6 MPH (8 kn): the law's cap wins - 5, said as headway with no word of the "
+        + "setting",
+        () => m8 === "5" && /headway speed\. Slowing to 5 kn now, /.test(M8.banners[0] || "") && !/No-wake/.test(M8.banners[0] || ""),
+        () => JSON.stringify({ m8, banners: M8.banners }));
 }
 
 {

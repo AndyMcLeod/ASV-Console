@@ -31,32 +31,55 @@ export function zoneApplies(z, loaM){
   return { applies: true, why: "" };
 }
 
-/** The rule in words: "5 kn", "no wake", "speed restricted". */
+/** The rule in words: "5 kn", "5 kn no wake", "no wake", "speed restricted". */
 export function zoneRuleTxt(z){
   const p = (z && z.props) || {};
-  if(p.rule === "limit" && p.limit_kn > 0) return (Math.round(p.limit_kn * 10) / 10) + " kn";
+  if(p.rule === "limit" && p.limit_kn > 0) return (Math.round(p.limit_kn * 10) / 10) + " kn" + (p.no_wake ? " no wake" : "");
   return QUALITATIVE[p.rule] || "speed restricted";
+}
+
+// THE NO-WAKE SPEED (Andy, 2026-11-20: "ASV speed reductions though no wake zones should be anchored on actual vessel speed
+// rather than the 'low' state. A 5 knot no wake zone should be recognized as a speed in knots"; asked, he chose one setting
+// in knots, 5 by default, saved with the plan). The plan's `no_wake_kn`; this is its value when the plan names none.
+export const NO_WAKE_DEFAULT_KN = 5;
+export const NO_WAKE_MAX_KN = 30;
+/** A No-wake speed as the plan may hold it: knots in (0, NO_WAKE_MAX_KN], to a tenth - else the default. */
+export function noWakeKnOf(v){
+  const x = typeof v === "string" ? parseFloat(v) : v;
+  return typeof x === "number" && Number.isFinite(x) && x > 0 && x <= NO_WAKE_MAX_KN ? Math.round(x * 10) / 10 : NO_WAKE_DEFAULT_KN;
 }
 
 /**
  * THE SPEED KEY A ZONE ALLOWS this hull (`speedsKn`: the vessel's key -> knots table): the FASTEST key at or under its
- * limit; a rule with no number ("no wake", "headway", "idle", "slow", "speed restricted") takes the hull's SLOWEST key -
- * the least wake she can make while still steering. {key, kn, below}: `below` when even her slowest is over the limit,
- * which the page says (the law asks for a speed she cannot make and keep steerage).
+ * limit. A rule with NO NUMBER ("no wake", "headway", "idle", "slow", "speed restricted") is flown at the operator's
+ * No-wake speed, `noWakeKn` - the fastest key at or under it, and under the law's own cap where it has one
+ * (Massachusetts' headway: six miles per hour at most, max_kn). Called without one, such a rule takes her SLOWEST key,
+ * as every rule with no number did before 2026-11-20.
+ * {key, kn, below, by}: `below` when even her slowest is over what is asked, which the page says; `by` says what set a
+ * no-number rule's speed - "setting" (the No-wake speed), "law" (max_kn, where it is under the setting) or "slowest".
+ * ⚠ NEW HAMPSHIRE, MAINE AND MASSACHUSETTS DEFINE HEADWAY as the slowest speed that keeps steerage way (lawZones' notes):
+ * a No-wake speed above her slowest runs their shore bands faster than that definition. His call; the manuals say it.
  */
-export function zoneKey(z, speedsKn){
+export function zoneKey(z, speedsKn, noWakeKn){
   // (of keys at the same speed - the DriX's "low" and "4" are both 4 kn - the whole knot, which the operator reads as "4 kn")
   const step = (k) => /^\d+$/.test(String(k));
   const keys = Object.keys(speedsKn || {}).filter((k) => Number.isFinite(speedsKn[k]) && speedsKn[k] > 0)
                                           .sort((a, b) => (speedsKn[a] - speedsKn[b]) || (step(b) - step(a)));
   if(!keys.length) return null;
   const p = (z && z.props) || {}, slowest = keys[0];
-  // a rule with no number takes her slowest - and where the law caps even that (Massachusetts' headway: six miles per
-  // hour at most, max_kn), says so when her slowest is over it
-  if(!(p.rule === "limit" && p.limit_kn > 0))
-    return { key: slowest, kn: speedsKn[slowest], below: p.max_kn > 0 && speedsKn[slowest] > p.max_kn + 1e-9 };
-  let best = null;
-  for(const k of keys) if(speedsKn[k] <= p.limit_kn + 1e-9 && (best == null || speedsKn[k] > speedsKn[best])) best = k;
+  const under = (lim) => {
+    let best = null;
+    for(const k of keys) if(speedsKn[k] <= lim + 1e-9 && (best == null || speedsKn[k] > speedsKn[best])) best = k;
+    return best;
+  };
+  if(!(p.rule === "limit" && p.limit_kn > 0)){
+    const law = p.max_kn > 0;
+    if(!(noWakeKn > 0))
+      return { key: slowest, kn: speedsKn[slowest], below: law && speedsKn[slowest] > p.max_kn + 1e-9, by: "slowest" };
+    const by = law && p.max_kn < noWakeKn ? "law" : "setting", best = under(by === "law" ? p.max_kn : noWakeKn);
+    return best ? { key: best, kn: speedsKn[best], below: false, by } : { key: slowest, kn: speedsKn[slowest], below: true, by };
+  }
+  const best = under(p.limit_kn);
   return best ? { key: best, kn: speedsKn[best], below: false } : { key: slowest, kn: speedsKn[slowest], below: true };
 }
 
@@ -120,7 +143,8 @@ export function firstZoneAhead(pts, zones, maxM){
  * WHAT THE WATER ALLOWS HER NOW - or null, where no zone binds her. Asked every frame by the page's governor.
  *   pos      her position; `ahead` the route she flies from the waypoint she steers for (may be empty)
  *   zones    every zone read for the water; `loaM` her length; `speedsKn` her key -> knots table
- *   leadM    how far before a zone the slower speed must be commanded for her to be AT it on the edge (the page's
+ *   noWakeKn the operator's No-wake speed, knots - what a rule with no number is flown at (zoneKey)
+ *   leadM   how far before a zone the slower speed must be commanded for her to be AT it on the edge (the page's
  *            slow-down law plus the margin: zoneLeadM)
  *   held     the last answer (its zone's id), so a boundary ridden does not flap: she is CLEAR of a zone only once her
  *            position is outside it by her own length (ZONE_RELEASE_MIN_M at least) - and a zone she is slowing for stays
@@ -129,7 +153,7 @@ export function firstZoneAhead(pts, zones, maxM){
  * within the lead: {key, kn, below, zone, where: "in" | "ahead" | "leaving", d}. Zones that do not bind her hull are
  * never an answer (`skipped` lists the ones she is in, for the page to say).
  */
-export function zoneDecision({ pos, ahead, zones, loaM, speedsKn, leadM, held }){
+export function zoneDecision({ pos, ahead, zones, loaM, speedsKn, noWakeKn, leadM, held }){
   if(!pos || !zones || !zones.length) return null;
   const binding = [], skipped = [];
   for(const z of zones){ const a = zoneApplies(z, loaM); (a.applies ? binding : skipped).push(z); }
@@ -154,7 +178,7 @@ export function zoneDecision({ pos, ahead, zones, loaM, speedsKn, leadM, held })
       if(zoneId(z) === held.id && !cands.some((c) => c.zone === z) && zoneEdgeM(pos, z) < release) cands.push({ zone: z, where: "leaving", d: 0 });
   let best = null;
   for(const c of cands){
-    const k = zoneKey(c.zone, speedsKn);
+    const k = zoneKey(c.zone, speedsKn, noWakeKn);
     if(!k) continue;
     if(!best || k.kn < best.kn || (k.kn === best.kn && c.where === "in" && best.where !== "in")) best = { ...k, ...c };
   }
@@ -206,13 +230,16 @@ export function parseSpeedText(text){
   const len = /(\d+(?:\.\d+)?)\s*(?:FT|FEET|FOOT)\b[^.]{0,40}?(?:IN LENGTH|LONG)|(?:LENGTH|LONG)[^.]{0,20}?(\d+(?:\.\d+)?)\s*(?:FT|FEET)/.exec(up);
   const lenM = /(\d+(?:\.\d+)?)\s*(?:M|METRES|METERS)\b[^.]{0,10}?(?:IN LENGTH|\/)|\/\s*(\d+(?:\.\d+)?)\s*(?:M|METRES|METERS)\b/.exec(up);
   let out = null;
-  if(kn && (restricted || /SPEEDS? OF|SPEED LIMIT|NOT EXCEED|OR LESS/.test(up))) out = { rule: "limit", limit_kn: +kn[1] };
-  else if(mph && (restricted || /SPEED|NOT EXCEED|OR LESS/.test(up))) out = { rule: "limit", limit_kn: Math.round(+mph[1] / 1.15078 * 10) / 10 };
+  // A NO-WAKE ZONE THAT GIVES ITS SPEED IS THAT SPEED (Andy, 2026-11-20: "A 5 knot no wake zone should be recognized as a
+  // speed in knots"): "5 knot no wake zone", "No wake - 5 MPH" are a 5 kn (4.3 kn) limit, said with its "no wake"
+  if(kn && (restricted || wake || /SPEEDS? OF|SPEED LIMIT|NOT EXCEED|OR LESS/.test(up))) out = { rule: "limit", limit_kn: +kn[1] };
+  else if(mph && (restricted || wake || /SPEED|NOT EXCEED|OR LESS/.test(up))) out = { rule: "limit", limit_kn: Math.round(+mph[1] / 1.15078 * 10) / 10 };
   else if(wake) out = { rule: "no_wake", limit_kn: null };
   else if(idle) out = { rule: "idle", limit_kn: null };
   else if(headway) out = { rule: "headway", limit_kn: null };
   else if(restricted) out = { rule: "restricted", limit_kn: null };
   if(!out) return null;
+  if(out.rule === "limit" && wake) out.no_wake = true;
   const m = lenM ? +(lenM[1] || lenM[2]) : (len ? +(len[1] || len[2]) * 0.3048 : 0);
   if(m > 0 && /GREATER THAN OR EQUAL|OR (?:MORE|LONGER|GREATER)|AND OVER|AND LONGER|≥/.test(up)) out.min_length_m = Math.round(m * 10) / 10;
   return out;
