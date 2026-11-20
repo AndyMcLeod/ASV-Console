@@ -1816,7 +1816,9 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    (menu → half-drawn leg → all measurements → the tool), and **dragging still pans**.
    Drawn in **magenta** — S-52's color for the mariner's own information, and the one
    chart color this console had not spent — because a measurement is an *annotation*:
-   it is never uploaded, saved to the mission, sent to the vessel, or logged.
+   it is never uploaded, saved to the mission, sent to the vessel, or logged. (Since
+   2026-11-20 what she has *run* of a survey line is magenta too: what she has driven,
+   never what she will.)
 
    **Search patterns.** The card's **Search** tab generates a canned search route (à la CCOM's
    Project 11 `track_patterns`): **Expanding box**, **Sector**, or **Parallel /
@@ -1828,7 +1830,9 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
    before or after Punch Out, a search - is drawn **cyan** and labeled **PREVIEW — not in
    plan** on the chart. **Green** is only ever the route uploaded to the boat, and the committed
    plan's lines are **yellow** with their L# labels. (A punched preview used to be green, the same
-   green as the route under way.)
+   green as the route under way.) What she has **run** of a line turns **magenta** - each stretch as
+   she runs it, and a done line (90% of it run, the table's ✓) magenta whole - and it holds through a
+   refresh and a console restart, which drop the blue trail.
 
    **Punch Out (chart-feature clipping).** Draw a survey rectangle, set the survey
    **depth window** (Min depth, optional Max — blank surveys deep water), and click

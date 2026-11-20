@@ -8518,6 +8518,15 @@ function render(){
     ctx.beginPath(); ctx.moveTo(s0.x,s0.y); ctx.lineTo(s1.x,s1.y);
     ctx.setLineDash(act?[]:[7,5]); ctx.strokeStyle = act ? "#ffd76a" : "rgba(255,215,106,0.55)";
     ctx.lineWidth = act?2.5:1.5; ctx.stroke(); ctx.setLineDash([]);
+    // WHAT SHE HAS RUN OF IT, MAGENTA (lineDoneSpans): solid and heavier than the amber, over it - the whole coverage
+    // once the line is done, each piece of it so far while it is not.
+    const dn = lineDoneSpans(L);
+    if(dn.length){
+      ctx.strokeStyle = LINE_DONE_INK; ctx.lineWidth = 3; ctx.beginPath();
+      for(const [t0, t1] of dn){ const p = toScreen(at(t0).lat, at(t0).lon), q = toScreen(at(t1).lat, at(t1).lon);
+        ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); }
+      ctx.stroke();
+    }
     for(const p of [a,b]){ ctx.beginPath(); ctx.arc(p.x,p.y,2.5,0,2*Math.PI); ctx.fillStyle="#ffd76a"; ctx.fill(); }
     ctx.fillStyle = act ? "#ffd76a" : "rgba(255,215,106,0.75)"; ctx.fillText("L"+lineNo(i), a.x+5, a.y-5);
   });
@@ -9596,6 +9605,25 @@ function lineDoneFrac(L){
   const fr = lineCovFrame(L);
   const lo = fr.flip ? len - to : from, hi = fr.flip ? len - from : to;     // the coverage, in the key's frame
   return Math.min(1, coveredM(lineCov[fr.key], lo, hi) / (hi - lo));
+}
+// THE RUN LINES IN MAGENTA (Andy, 2026-11-20: "Color code lines that are done with magenta and hold the color for all
+// completed lines/line segments"). The blue he had seen there was her TRAIL, never a line's color - and the trail goes
+// with a console restart, a vessel or area change, a respawn or Clear (checkBoot, clearTrack). This is drawn from the
+// table's own record of the line (lineCov, keyed by its geometry), so it holds through all of those.
+const LINE_DONE_INK = "#e05cff";      // --magenta (read once: render strokes it per line, per frame)
+/** The stretches of line L to draw done, as [t0, t1] fractions along its own a->b: its whole coverage (between the leads)
+ *  once it is DONE (LINE_DONE_FRAC - the table's ✓), else each piece of its coverage she has run. The leads are run, not
+ *  coverage, and stay as they are drawn. */
+function lineDoneSpans(L){
+  const len = distTo(L.a, L.b), from = Math.max(0, L.lead_in_m || 0), to = len - Math.max(0, L.lead_out_m || 0);
+  if(!(len > 0) || !(to > from)) return [];
+  if(lineDoneFrac(L) >= LINE_DONE_FRAC) return [[from / len, to / len]];
+  const fr = lineCovFrame(L), out = [];
+  for(const [a, b] of (lineCov[fr.key] || [])){
+    const lo = Math.max(from, fr.flip ? len - b : a), hi = Math.min(to, fr.flip ? len - a : b);   // meters from L.a
+    if(hi > lo) out.push([lo / len, hi / len]);
+  }
+  return out;
 }
 /** A survey's progress by DRAWN line (a line the keep-outs cut is done when all its parts are): {done, of, any}. */
 function surveyProgress(id){
@@ -17267,7 +17295,8 @@ function drawMarginStretches(toScreen, mg, idx){
 // MAGENTA on purpose: S-52 reserves it for the MARINER'S OWN information, and it is the
 // one chart color this console had not already spent - amber is the plan, cyan the
 // track and the transit draft, green/orange the routed run. A measurement can therefore
-// never be mistaken for something the boat will drive.
+// never be mistaken for something the boat will drive. (Since 2026-11-20, at Andy's word, what she has RUN of a survey
+// line is magenta too - LINE_DONE_INK, a heavy stroke along the line: what she HAS driven, still never what she will.)
 const MEAS_COL = "#e05cff";
 // ONE NUMBER GOVERNS THE READING'S SIZE. Tune MEAS_FONT_PX and everything that has to stay
 // in proportion to it follows: the gap that holds the text off the leg, and the dark halo

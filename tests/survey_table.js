@@ -637,6 +637,43 @@ function commit(w, lines, anchors) {
             () => "with leads " + fl.toFixed(3) + ", whole line " + fbare.toFixed(3));
       w.lineCov = keep;
     }
+    // 18e-18f: what the chart draws MAGENTA (Andy, 2026-11-20: "Color code lines that are done with magenta and hold the
+    // color for all completed lines/line segments") - lineDoneSpans, [t0, t1] fractions along the line's own a->b
+    {
+      const keep = w.lineCov;
+      const near = (sp, want) => sp.length === want.length
+        && sp.every((s, i) => Math.abs(s[0] - want[i][0]) < 0.01 && Math.abs(s[1] - want[i][1]) < 0.01);
+      const show = (sp) => JSON.stringify(sp.map((s) => s.map((x) => +x.toFixed(3))));
+      w.lineCov = {}; w.at(-1, null); w.trackLineCoverage();
+      const none = w.lineDoneSpans(L0);
+      run(0, L0, 20, 50, 2);
+      const part = w.lineDoneSpans(L0), back = w.lineDoneSpans(rev);
+      w.at(-1, null); w.trackLineCoverage(); run(0, L0, 70, 80, 2);
+      const two = w.lineDoneSpans(L0);
+      const LL = { a: L0.a, b: L0.b, lead_in_m: 30, lead_out_m: 10, sv: "S1" };
+      const leadPart = w.lineDoneSpans(LL);                         // [20,50] + [70,80] inside the coverage [30,90]
+      w.lineCov = {}; w.at(-1, null); w.trackLineCoverage(); run(0, L0, 0, 92, 2);
+      const done = w.lineDoneSpans(L0), doneLead = w.lineDoneSpans({ ...LL, lead_in_m: 0, lead_out_m: 8 });
+      w.lineCov = keep; w.at(-1, null); w.trackLineCoverage();
+      check("18e. the chart draws in MAGENTA what she has run of a line: each piece of its coverage while it is partial "
+            + "- along the line's own way whichever way it was run, never over its leads - and the WHOLE coverage once "
+            + "it is done (92 m of 100 m), so a completed line holds the color whole; nothing for a line not run",
+            () => none.length === 0 && near(part, [[0.2, 0.5]]) && near(back, [[0.5, 0.8]])
+                  && near(two, [[0.2, 0.5], [0.7, 0.8]]) && near(leadPart, [[0.3, 0.5], [0.7, 0.8]])
+                  && near(done, [[0, 1]]) && near(doneLead, [[0, 0.92]]),
+            () => [none, part, back, two, leadPart, done, doneLead].map(show).join(" "));
+    }
+    check("18f. ... and render draws them: the plan-lines loop strokes lineDoneSpans(L) in LINE_DONE_INK - the page's "
+          + "--magenta - after the line's amber, so over it, and before the end dots",
+          () => {
+            const i = H.indexOf("  mission.lines.forEach((L,i)=>{\n    const a = toScreen(L.a.lat,L.a.lon), b = toScreen(L.b.lat,L.b.lon), act = (i===runLineIdx);");
+            const loop = i < 0 ? "" : H.slice(i, H.indexOf("\n  drawSurveyLabels(toScreen);", i));
+            const amber = loop.indexOf('ctx.setLineDash(act?[]:[7,5]); ctx.strokeStyle = act ? "#ffd76a"');
+            const dn = loop.indexOf("const dn = lineDoneSpans(L);"), ink = loop.indexOf("ctx.strokeStyle = LINE_DONE_INK;");
+            const dots = loop.indexOf("for(const p of [a,b]){");
+            const inkV = (H.match(/^const LINE_DONE_INK = "([^"]+)";/m) || [])[1], css = (H.match(/--magenta:(#[0-9a-fA-F]+);/) || [])[1];
+            return !!loop && amber > 0 && dn > amber && ink > dn && dots > ink && !!inkV && inkV === css;
+          });
     // 19: by DRAWN line
     run(0, L0, 0, 100, 2);
     w.at(1, along(L1, 0)); w.trackLineCoverage(); run(1, L1, 0, 100, 2);
@@ -1056,7 +1093,7 @@ function buildWorld(env) {
        "renderSurveyTable", "cardSurveyId", "surveysChanged", "editSurvey", "deleteSurvey", "moveSurveyRow",
        "renameSurvey", "emptyPunchRefusal", "isStepKey", "spdTxt", "spdAtTxt", "slowestSelectableKey", "punchRefusal", "patternWaypoints", "commitPattern",
        // phase 3a
-       "lineCovFrame", "lineGeoKey", "trackLineCoverage", "saveLineCov", "lineDoneFrac", "surveyProgress",
+       "lineCovFrame", "lineGeoKey", "trackLineCoverage", "saveLineCov", "lineDoneFrac", "lineDoneSpans", "surveyProgress",
        "surveyTideMoved", "goToSurvey", "uploadFromSurvey", "repunchSurvey", "withCardKept", "punchAll",
        "reverseSurvey", "clearSurveyProgress", "holdWaiting", "toggleSurveyHold", "continueHold",
        // phase 4, the wait
@@ -1076,7 +1113,7 @@ function buildWorld(env) {
     + " get surveyBounded(){ return surveyBounded; }, set surveyBounded(v){ surveyBounded = v; },"
     + " commitPattern, editSurvey, deleteSurvey, moveSurveyRow, renameSurvey, renderSurveyTable, cardSurveyId,"
     + " committedPatternInfo, surveySettingsNow, applySurveySettings,"
-    + " trackLineCoverage, saveLineCov, lineDoneFrac, surveyProgress, surveyTideMoved, goToSurvey, uploadFromSurvey,"
+    + " trackLineCoverage, saveLineCov, lineDoneFrac, lineDoneSpans, surveyProgress, surveyTideMoved, goToSurvey, uploadFromSurvey,"
     + " repunchSurvey, punchAll, reverseSurvey, clearSurveyProgress, lineGeoKey, toggleSurveyHold, continueHold,"
     + " get pendingHold(){ return pendingHold; }, set pendingHold(v){ pendingHold = v; },"
     + " set runUnsafe(v){ runUnsafe = v; }, set patFunnel(v){ patFunnel = v; },"
