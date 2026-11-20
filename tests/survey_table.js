@@ -917,6 +917,8 @@ function buildWorld(env) {
     // the survey window (2026-11-19): its start and duration ride the settings; ✎ reads the strip (stubbed: the strip
     // itself is tests/survey_window.js 11)
     + decl(/^let patStartT = [^;]*;/m) + "\n" + decl(/^const WATER_WINDOW_MAX_H = [^;]*;/m) + "\n"
+    // ... and the lines its window deferred (phase 2): the record Add to plan writes, the row's count and tip (12k)
+    + decl(/^let patDefer = [^;]*;/m) + "\n" + decl(/^const SURVEY_DEFERRED_MAX = [^;]*;/m) + "\n"
     + "let punchLevel = null; const punchLevelFor = () => null; const tideStripRefresh = () => Promise.resolve();\n"
     + decl(/^const LINE_DONE_FRAC = [^;]*;/m) + "\n" + decl(/^const COV_STEP_MAX_M = [^;]*;/m) + "\n"
     + decl(/^const LINE_COV_KEY = [^;]*;/m) + "\n" + "let lineCov = {};\n" + decl(/^let covPrev = [^;]*;/m) + "\n"
@@ -945,7 +947,9 @@ function buildWorld(env) {
        "reverseSurvey", "clearSurveyProgress", "holdWaiting", "toggleSurveyHold", "continueHold",
        "surveysUploadBlocked", "noteSurveyUpdated",
        // the survey window (2026-11-19)
-       "surveyStartT", "surveyDurH", "surgeWhen", "commitWaitsForStart", "showSurveyWindow", "localInputOf"].map(grab).join("\n")
+       "surveyStartT", "surveyDurH", "surgeWhen", "commitWaitsForStart", "showSurveyWindow", "localInputOf",
+       // ... phase 2
+       "deferredRecord", "surveyDeferredN", "deferredWhy", "fmtLevel"].map(grab).join("\n")
     + "\nreturn { get mission(){ return mission; }, set mission(v){ mission = v; },"
     + " get editingSv(){ return editingSv; }, set editingSv(v){ editingSv = v; }, get cardSv(){ return cardSv; },"
     + " set cardSv(v){ cardSv = v; }, get pat(){ return pat; }, get boundary(){ return boundary; },"

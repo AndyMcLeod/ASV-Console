@@ -7055,6 +7055,20 @@ let patReverse = false;
 // THE SURVEY WINDOW (2026-11-19): the drawing's start time (epoch s) and duration (h), or null - per-survey settings,
 // recorded and put back by ✎ like the rest. flightWindow reads them for the punch's water and the tide strip.
 let patStartT = null, patDurH = null;
+// THE WINDOW'S SELECTION (2026-11-19, the survey window phase 2): the lines the punch on the card DEFERRED - not clear
+// end to end at its window's low, or past its duration - {out: Set of source-line indices, lines: [{i, why, runs}],
+// of, lowM, highM, highT, highWhy, durH}, or null (no window, or no punch). Drawn, recorded on the survey, NEVER flown:
+// punchOut takes them out of the runs before anything is ordered or joined. See deferForWindow.
+let patDefer = null;
+// ... and the lines deferred PAST THE DURATION, by punchNow's measure of the route the punch made: {key, lines: Set}.
+// Kept for the drawing, window and speeds it was measured for (deferTimeKey); a press of Punch Out measures afresh.
+let patDeferTime = null;
+// ... and the OUTLINE's clips, line by line, for the inputs `key` names: {key, runs: Map i -> runs}. A strike
+// re-punches with the same inputs, so its lines are not clipped at the high water again.
+let patDeferMemo = null;
+// ... drawn in a color none of the survey lines' six is (the preview's blue, the plan's gold, a routed hop's amber, a
+// red hop's red, a routable one's orange, the clearing's magenta): lavender, dashed.
+const DEFER_INK = "rgba(190,160,255,0.95)";
 // THE HOLD SHE IS ON HER WAY TO, OR WAITING AT (phase 3b, 2026-10-02): {sv, at} after an upload that was SPLIT at a held
 // survey's start - the part aboard ends there in LOITER, and the survey's row offers Continue. Every successful upload
 // rewrites it (to its own split, or none); kept in this browser so a refresh while she waits still offers Continue.
@@ -8425,6 +8439,7 @@ function render(){
     ctx.fillStyle = act ? "#ffd76a" : "rgba(255,215,106,0.75)"; ctx.fillText("L"+lineNo(i), a.x+5, a.y-5);
   });
   drawSurveyLabels(toScreen);
+  drawDeferredSurveys(toScreen);
   drawSpeedZones(toScreen);
   drawBoundary(toScreen);
   drawPattern(toScreen);
@@ -11389,13 +11404,34 @@ function flightOwnM(pts, isLine){
  * it); punchNow then measures the route it made and reads again when it is longer.
  */
 function punchFlightM(lines){
+  const L = punchDrawnM(lines);
+  return punchFlown && punchFlown.key === punchLevelKey(lines) ? Math.max(L, punchFlown.m) : L;
+}
+/** The drawing's own flight, m (survey-speed meters): its lines and the hops between them as drawn - punchFlightM's
+ *  first answer, before any route is measured. */
+function punchDrawnM(lines){
   const f = turnTimeFactor();
   let L = 0;
   for(let k = 0; k < lines.length; k++){
     L += distTo(lines[k][0], lines[k][1]);
     if(k + 1 < lines.length) L += distTo(lines[k][1], lines[k + 1][0]) * f;
   }
-  return punchFlown && punchFlown.key === punchLevelKey(lines) ? Math.max(L, punchFlown.m) : L;
+  return L;
+}
+/** Whether the card's punch SELECTS for its window (2026-11-19, phase 2): a start time or a duration on it. With
+ *  neither, Punch Out is exactly as it was - every line cut at the low, none deferred. */
+function windowSelects(){ return patStartT != null || (Number.isFinite(patDurH) && patDurH > 0); }
+/**
+ * THE FLIGHT THE CARD'S WATER IS READ OVER (phase 2): punchFlightM - except with a DURATION, whose lines past it are
+ * deferred (deferPastDuration), so the drawing's flight beyond it is no part of what is flown: the drawing is counted up
+ * to the duration at the survey speed. The route the punch made, once measured longer (punchFlown, by
+ * punchFlightOutgrewRead), is what it is - so a route the deferral could not bring inside the duration is read whole.
+ */
+function punchOwnM(lines){
+  if(!(Number.isFinite(patDurH) && patDurH > 0)) return punchFlightM(lines);
+  const capM = patDurH * 3600 * Math.max(0.1, roleSpeedMS("survey"));
+  const flown = punchFlown && punchFlown.key === punchLevelKey(lines) ? punchFlown.m : 0;
+  return Math.max(Math.min(punchDrawnM(lines), capM), flown);
 }
 /** The flight of the route the punch on the card made (patternWaypoints), as flightOwnM counts it - its lines as they
  *  are, its turns and joins at the turn speed. */
@@ -11470,13 +11506,30 @@ function punchPreM(lines){
 async function readPunchLevel(lines){
   const path = [];
   for(const l of lines) path.push(l[0], l[1]);
-  const ownM = punchFlightM(lines);
+  const ownM = punchOwnM(lines);
   const win = flightWindow(punchPreM(lines), ownM, patStartT, patDurH);
-  const r = await waterAlongRead(path, win.t0, win.t1);
+  // ⚠ AND, FOR A WINDOW, THE HIGHEST WATER OVER THE NEXT WATER_WINDOW_MAX_H FROM ITS START (phase 2: Andy's "allow all
+  // lines to be planned to the max high tide level"): the level the punch's OUTLINE is clipped at - every line at the
+  // most water the horizon gives it, so a line that is not clear end to end at the window's low is deferred whole rather
+  // than run in part. The series' high: the highest of the slots' LOWEST over the lines' trusted points - the most water
+  // the whole survey stands in at once. Read beside the low, never instead of it: the outline is drawn, never flown.
+  const sel = windowSelects();
+  const [r, hz] = await Promise.all([
+    waterAlongRead(path, win.t0, win.t1),
+    sel ? waterSeriesRead(path, win.t0, win.t0 + WATER_WINDOW_MAX_H * 3600).catch(e => ({ok: false, note: String((e && e.message) || e)}))
+        : null]);
+  const hi = sel ? horizonHigh(hz) : null;
   return {...sectionLevel(r, water, win.hours, win.when), hours: win.hours, flightM: ownM,
           start: win.start, startT: win.start ? win.t0 : null, late: win.late, passed: win.passed,
           askedT: win.startT, arrive: win.arrive,
+          high: hi && hi.high, highWhy: hi && hi.why,
           failed: !(r && Array.isArray(r.points) && r.points.some(p => Number.isFinite(p.low_m)))};
+}
+/** The horizon's high from a series read: {high: {m, t}} or {why} - in words, for the punch summary. */
+function horizonHigh(hz){
+  if(hz && hz.ok === true && hz.high && Number.isFinite(+hz.high.m) && Number.isFinite(+hz.high.t))
+    return {high: {m: +hz.high.m, t: +hz.high.t}};
+  return {why: (hz && (hz.note || hz.error)) || "no answer"};
 }
 /** A read that FAILED - no level at any of its points: NOAA or the server did not answer - is tried again after this,
  *  not kept PUNCH_LEVEL_TTL_MS, which made one NOAA hiccup chart datum for ten minutes of punches (review 2026-11-07).
@@ -11534,7 +11587,17 @@ function punchStartT(){
 /** A cut made for a start she waits for that is still ahead (punchStartT, stamped on it). */
 function cutWaits(c){ return !!(c && Number.isFinite(c.startT) && c.startT > Date.now() / 1000); }
 /** The live cut - the one place it is written; punchOut reads it when no clearing holds the inputs. */
-function liveCut(){ return {bufM: patClipBufM(), waterM: punchWaterM(), setKn: null, held: false, startT: punchStartT()}; }
+function liveCut(){ return {bufM: patClipBufM(), waterM: punchWaterM(), setKn: null, held: false, startT: punchStartT(),
+                            high: punchHighNow()}; }
+/** The high water the card's punch OUTLINES its lines at (readPunchLevel's `high`, the survey window phase 2): {m, t},
+ *  {why} when it was not read, or null with no window on the card (windowSelects). Stamped on the cut (liveCut,
+ *  takePunchHold), so every punch of a clearing defers its lines by the same outline. */
+function punchHighNow(){
+  if(!windowSelects()) return null;
+  const lv = punchLevel ? punchLevelFor() : null;
+  if(!lv) return {why: "the water over its window was not read for these lines"};
+  return lv.high && Number.isFinite(lv.high.m) ? {m: lv.high.m, t: lv.high.t} : {why: lv.highWhy || "not read"};
+}
 /** A water level as the console writes one: signed, to the centimeter. */
 function fmtLevel(v){ return (v >= 0 ? "+" : "") + v.toFixed(2) + " m"; }
 /** The level in the operator's words, for the punch summary: where it came from, and what it costs. `stamp`: for the
@@ -11607,7 +11670,7 @@ async function tideStripReadOnce(){
   const path = [];
   for(const l of lines) path.push(l[0], l[1]);
   const key = punchLevelKey(lines);
-  const win = flightWindow(punchPreM(lines), punchFlightM(lines), patStartT, patDurH);
+  const win = flightWindow(punchPreM(lines), punchOwnM(lines), patStartT, patDurH);
   tideStrip = {key, r: await waterSeriesRead(path, win.t0, win.t1), win, at: Date.now()};
 }
 /** Read the strip again (a read already out takes this ask with it). Resolves when the card's read has landed; never
@@ -11780,7 +11843,8 @@ async function uploadTideRisk(wps){
  *  itself, in one place, so "held" and "live" are each written exactly once. See punchHold. */
 function punchCutNow(){
   return punchHold ? {bufM: punchHold.bufM, waterM: punchHold.waterM, setKn: punchHold.setKn, held: true,
-                      startT: punchHold.startT != null ? punchHold.startT : null} : null;
+                      startT: punchHold.startT != null ? punchHold.startT : null,
+                      high: punchHold.high || null} : null;
 }
 /**
  * One sample of the SET, a frame (clearingTick) - what the hold's "highest over the window" reads. ⚠ THE DRIFT IS
@@ -11818,7 +11882,8 @@ function holdStepUp(m){ return Math.ceil(m / PUNCH_HOLD_STEP_M - 1e-9) * PUNCH_H
 function takePunchHold(){
   const m = punchMarginMax();
   punchHold = {bufM: holdStepUp(m.bufM), waterM: punchWaterM(), setKn: m.setKn, at: Date.now(), why: null,
-               startT: punchStartT()};         // (the start it is cut for, as liveCut stamps one - 2026-11-19)
+               startT: punchStartT(),          // (the start it is cut for, as liveCut stamps one - 2026-11-19)
+               high: punchHighNow()};          // (and the outline's high water, held with it - phase 2)
   return punchHold;
 }
 /**
@@ -11867,6 +11932,142 @@ function distToRunM(d, seg){
   const a = toEN(seg[0], d), b = toEN(seg[1], d), dx = b.e - a.e, dy = b.n - a.n, L2 = dx * dx + dy * dy;
   const t = L2 > 0 ? Math.max(0, Math.min(1, -(a.e * dx + a.n * dy) / L2)) : 0;
   return Math.hypot(a.e + t * dx, a.n + t * dy);
+}
+
+// ── THE WINDOW'S SELECTION (2026-11-19, the survey window phase 2) ──────────────────────────────────────────────────
+/**
+ * PLAN A: THE LINES THAT FIT THE WINDOW, WHOLE (Andy: "conservative, whole lines, proposed defaults"). With a start or a
+ * duration on the card (windowSelects) a line is flown only if
+ *   - it is CLEAR END TO END AT THE WINDOW'S LOW: its clip at the low - the punch's own, the one flown - covers its
+ *     OUTLINE, its clip at the highest water predicted over the next WATER_WINDOW_MAX_H (readPunchLevel's `high`: every
+ *     line at its most). A line the tide shortens at the low is DEFERRED WHOLE ("tide"), not flown in part; and
+ *   - it ENDS WITHIN THE DURATION, taken in the order the punch flies them (deferPastDuration: "time").
+ * A deferred line is drawn (DEFER_INK, dashed: its outline, or its runs for "time"), counted on the summary, recorded on
+ * the survey for the phases after this one - and NEVER flown: punchOut filters it out of the runs before the strike
+ * filter, the order, the turns and the joins, so nothing downstream can make a waypoint of it. NOR IS IT A STRIKE:
+ * strikes are the operator's and stay theirs (patStruck is never touched here), so a line that fits again - a later
+ * start, a longer duration, a cleared window - comes back with its strikes still on it.
+ * ⚠ ONLY THE TIDE: the outline is cut by all the low clip is (land, the boundary, a pier, a moored ship, a channel, the
+ * depth window) at more water, so the two differ only where the water does. The coverage CEILING (Max depth) is moved up
+ * with the water in the outline's model (deferHighDR): left where it is, the outline lost the water that is deeper than
+ * Max depth only at the high - a deferred line drawn shorter than any water makes it, and phase 3's "water each deferred
+ * line needs" asked of a line that is not the one drawn. (The DECISION is the same either way: what the tide gives at
+ * the high is outside every low run, whatever the ceiling takes elsewhere.)
+ */
+const DEFER_EPS_M = 0.5;                     // under clipLine's step (2 m at least): one sample of difference is seen
+const DEFER_TIME_MAX = 4;                    // punchNow's re-punches for the duration, at most
+/** The index in `src` of the drawing's line that run `run` lies on: the nearest to its midpoint (a run lies ON its
+ *  line, ~0 m off it; the next line is a spacing away), or -1 with none. */
+function srcLineOf(run, src){
+  const mid = {lat: (run[0].lat + run[1].lat) / 2, lon: (run[0].lon + run[1].lon) / 2};
+  let best = -1, bd = Infinity;
+  for(let i = 0; i < src.length; i++){ const d = distToRunM(mid, src[i]); if(d < bd){ bd = d; best = i; } }
+  return best;
+}
+/** Run `run` as meters along `line` from its first end: [s0, s1], s0 <= s1. */
+function runSpanM(run, line){
+  const u = toEN(line[1], line[0]), L = Math.hypot(u.e, u.n) || 1;
+  const at = p => { const q = toEN(p, line[0]); return (q.e * u.e + q.n * u.n) / L; };
+  const s0 = at(run[0]), s1 = at(run[1]);
+  return s0 <= s1 ? [s0, s1] : [s1, s0];
+}
+/** Whether runs `low` cover runs `high` of the same line: every high run inside one low run, to DEFER_EPS_M. */
+function coversRuns(low, high, line){
+  const lo = low.map(r => runSpanM(r, line));
+  return high.every(h => { const s = runSpanM(h, line);
+    return lo.some(l => l[0] <= s[0] + DEFER_EPS_M && l[1] >= s[1] - DEFER_EPS_M); });
+}
+/** Whether runs `low` are the whole of `line`: one run, end to end - no water could add to it. */
+function wholeLine(low, line){
+  if(low.length !== 1) return false;
+  const s = runSpanM(low[0], line);
+  return s[0] <= DEFER_EPS_M && s[1] >= distTo(line[0], line[1]) - DEFER_EPS_M;
+}
+/** The outline's depth window: the floor as it is (at the high water more of the seabed clears it) and the ceiling
+ *  raised by the water's rise, so what is too deep to survey is the same water at both levels (see above). */
+function deferHighDR(dr, lowM, highM){
+  return {min: dr.min, max: dr.max > 0 ? dr.max + Math.max(0, highM - lowM) : dr.max};
+}
+/** The OUTLINE's model: koClip's, at the high water - the same features, chart ink and `extra` keep-outs (the channels
+ *  the survey spans, the moored ships), the depth window moved up with the water (deferHighDR). */
+function deferOutlineKo(ref, enf, dr, lowM, highM, extra){
+  const koHi = buildKeepouts(ref, enf, deferHighDR(dr, lowM, highM), nogo.features, highM);
+  foldChartInk(koHi, ref);
+  return extra && extra.length ? {...koHi, polys: [...koHi.polys, ...extra]} : koHi;
+}
+/** The key the lines deferred past the duration are kept under: the drawing, the window, and the survey and turn speeds
+ *  the route was timed at. */
+function deferTimeKey(src){ return punchLevelKey(src) + "|" + roleSpeedMS("turn").toFixed(2); }
+/**
+ * The window's selection of the punch's runs `clipped` (cut at the low) of the drawing's lines `src`. `o`: {lowM, highM,
+ * highT, highWhy, clipHigh(i): line i's runs at highM, timeLines: the Set of lines past the duration, durH}. Returns
+ * patDefer's shape; `tide` whether the outline was there to judge by. Pure but for clipHigh - and a line the low left
+ * whole (wholeLine) is never clipped again.
+ */
+function deferForWindow(src, clipped, o){
+  const of = clipped.map(s => srcLineOf(s, src));
+  const byLine = src.map(() => []);
+  of.forEach((i, j) => { if(i >= 0) byLine[i].push(clipped[j]); });
+  const tide = Number.isFinite(o.highM) && Number.isFinite(o.lowM) && o.highM > o.lowM + 0.005 && typeof o.clipHigh === "function";
+  const out = new Set(), lines = [];
+  for(let i = 0; i < src.length; i++){
+    const low = byLine[i];
+    if(tide && !wholeLine(low, src[i])){
+      const hi = o.clipHigh(i) || [];
+      if(hi.length && !coversRuns(low, hi, src[i])){ out.add(i); lines.push({i, why: "tide", runs: hi}); continue; }
+    }
+    if(o.timeLines && o.timeLines.has(i) && low.length){ out.add(i); lines.push({i, why: "time", runs: low}); }
+  }
+  return {out, lines, of, tide, lowM: o.lowM, highM: Number.isFinite(o.highM) ? o.highM : null,
+          highT: Number.isFinite(o.highT) ? o.highT : null, highWhy: o.highWhy || null,
+          durH: Number.isFinite(o.durH) && o.durH > 0 ? o.durH : null};
+}
+/**
+ * THE DURATION, MEASURED ON THE ROUTE THE PUNCH MADE (punchNow, after a finished punch): the survey's own time from its
+ * first line - each line, leads and all, at the survey speed; every turn and join weighted by turnTimeFactor, as
+ * flightOwnM counts them - and from the first line that ENDS past `patDurH`, it and every line after it are deferred
+ * whole ("time"). Answers whether that added a line, so punchNow punches again without them (DEFER_TIME_MAX times at
+ * most): the route is made again around the gap, and a new order can put another line past it. A line deferred stays
+ * deferred until Punch Out is pressed (punchOutPressed), so a strike's re-punch is cut as the one it was chosen on.
+ */
+function deferPastDuration(){
+  if(!(Number.isFinite(patDurH) && patDurH > 0) || !patClip || !patClip.length) return false;
+  const src = patSourceLines();
+  if(!src.length) return false;
+  const key = deferTimeKey(src), capM = patDurH * 3600 * Math.max(0.1, roleSpeedMS("survey")), f = turnTimeFactor();
+  let M = 0, past = -1;
+  for(let k = 0; k < patClip.length; k++){
+    const l = patClip[k];
+    M += distTo(l[0], l[1]);                   // (patClip's runs carry their leads)
+    if(M > capM + 1e-6){ past = k; break; }
+    if(k + 1 < patClip.length){
+      let p = l[1];
+      for(const v of (patTransits && patTransits[k]) || []){ M += distTo(p, v) * f; p = v; }
+      M += distTo(p, patClip[k + 1][0]) * f;
+    }
+  }
+  if(past < 0) return false;
+  const was = patDeferTime && patDeferTime.key === key ? patDeferTime.lines : new Set();
+  const lines = new Set(was);
+  for(let k = past; k < patClip.length; k++){ const i = srcLineOf(patClip[k], src); if(i >= 0) lines.add(i); }
+  patDeferTime = {key, lines};
+  return lines.size > was.size;
+}
+/** The selection in the punch summary's words - "" with no window. */
+function deferSay(d){
+  if(!d) return "";
+  const nT = d.lines.filter(x => x.why === "tide").length, nD = d.lines.filter(x => x.why === "time").length;
+  const hiAt = Number.isFinite(d.highM) ? fmtLevel(d.highM) + (Number.isFinite(d.highT) ? " " + surgeWhen(d.highT) : "") : "";
+  const outline = d.tide ? " (outlined at the high water ahead, " + hiAt + ")"
+    : Number.isFinite(d.highM) ? " (no water ahead stands higher than its low, so none is deferred for the tide)"
+    : " (the high water ahead could not be read" + (d.highWhy ? " - " + d.highWhy : "") + ": none is deferred for the "
+      + "tide, and a line the tide cuts short is flown in part, as without a window)";
+  const parts = [];
+  if(nT) parts.push(nT + " not clear end to end at the window's low, " + fmtLevel(d.lowM));
+  if(nD) parts.push(nD + " past its " + +(+d.durH).toFixed(2) + " h duration");
+  if(!parts.length) return " · every line fits its window" + outline;
+  return " · " + d.out.size + " line" + (d.out.size === 1 ? "" : "s") + " DEFERRED - dashed on the chart, never flown: "
+       + parts.join("; ") + outline;
 }
 /**
  * IS `seg` A STRUCK RUN - does one of `struck` (the coverage midpoints the strikes were made at) lie ON it?
@@ -12074,11 +12275,15 @@ function punchNow(){
     // made yet - so a finished punch whose route flies longer than that is read again over it, and punched again when the
     // low came back under its cut (punchFlightOutgrewRead), PUNCH_FLIGHT_REREAD times at most, its own count.
     $("#sp_hint").textContent = "Reading the water predicted over the survey's flight…";
-    let res, grew = 0;
+    // ⚠ AND INSIDE ITS DURATION (the survey window phase 2): a finished punch whose route runs past the card's Duration
+    // has the lines from the first one past it deferred, and is punched again without them (deferPastDuration) -
+    // DEFER_TIME_MAX times at most, its own count - before the flight is measured for the water.
+    let res, grew = 0, timed = 0;
     for(let i = 0; i < PUNCH_SLICE.again; i++){
       await settlePunchLevel();
       res = await punchOut(heldCutAfterRead, PUNCH_SLICE);
       if(res === "again") continue;
+      if(res !== "stopped" && timed < DEFER_TIME_MAX && deferPastDuration()){ timed++; i--; continue; }
       if(res !== "stopped" && grew < PUNCH_FLIGHT_REREAD && await punchFlightOutgrewRead()){ grew++; i--; continue; }
       break;
     }
@@ -12640,6 +12845,7 @@ function renderClearRow(){
 async function punchOutPressed(opts){
   const o = opts || {};
   endClearing(null); releasePunchHold();
+  patDeferTime = null;                         // the duration is measured afresh on the route this press makes (phase 2)
   // ⚠ "punching" WHILE ITS OWN PUNCH RUNS (review 2026-11-06): the row hides, so the old punch's "Clear blocked lines"
   // cannot be pressed under it, and startClearing refuses; anything that ends or starts a clearing meanwhile moves
   // `gen`, and then what follows here is not ours to do - its tail once released the hold under a clearing begun so.
@@ -12800,6 +13006,12 @@ function drawPattern(toScreen){
     ctx.save();
     if(patClip){
       ctx.setLineDash([2,4]); ctx.strokeStyle="rgba(57,192,255,0.22)"; ctx.lineWidth=1; seg(src);
+      // THE LINES THE WINDOW DEFERRED (the survey window phase 2): dashed lavender, under the plan's own - a line the tide
+      // cut short at the low drawn at its OUTLINE (the most of it the high water ahead gives), one past the duration as
+      // the low cut it. Drawn only: none is in patClip, so none is committed, uploaded or flown.
+      if(patDefer && patDefer.lines.length){
+        ctx.setLineDash([8,5]); ctx.strokeStyle=DEFER_INK; ctx.lineWidth=2; seg(patDefer.lines.flatMap(x => x.runs));
+      }
       // COVERAGE HEAVY, LEAD LIGHT. The run and its coverage stopped being the same line
       // the moment a lead was set, and telling them apart is the operator's whole reason
       // for setting one — so the run is laid down thin and dashed first and the coverage
@@ -13120,6 +13332,7 @@ function resetPattern(){ pat = {A:null,B:null,C:null,align:pat.align}; patDrag=n
   patReverse = false; { const rv = $("#sp_reverse"); if(rv) rv.checked = false; }   // a new drawing runs forwards (3a)
   // ... with no start time or duration, and no strip read for the drawing that went (the survey window, 2026-11-19)
   patStartT = null; patDurH = null; tideStrip = null;
+  patDefer = null; patDeferTime = null; patDeferMemo = null;   // ... and nothing deferred (phase 2)
   { const s = $("#sp_start"), d = $("#sp_dur"); if(s) s.value = ""; if(d) d.value = ""; }
   patUnsafe=[]; patRed=[]; patJoined=false; patDropped=null; patFunnel=null; patRoutes=[]; patTransits=[]; patTrim=[]; $("#encbanner").style.display="none";
   // The strikes go with the pattern they were made against, and so does any rebuild still
@@ -13174,6 +13387,14 @@ function emptyPunchRefusal(f){
               + "the survey depth window" + (f.chans ? ", with " + f.chans + " navigation channel(s) cut out of the coverage" : ""));
     fixes.push(overWater, "check the survey depth window");
   } else {
+    // THE WINDOW DEFERRED THEM (the survey window phase 2): whole lines, not cut - named first, it is the operator's
+    // own setting, and the one fix for it is theirs
+    const dfr = f.deferred;
+    if(dfr && dfr.tide) causes.push(dfr.tide + " line(s) deferred: not clear end to end at its window's low, " + fmtLevel(dfr.lowM));
+    if(dfr && dfr.time) causes.push(dfr.time + " line(s) deferred: past its " + +(+dfr.durH).toFixed(2) + " h duration");
+    if(dfr && dfr.tide) fixes.push("set a start nearer high water");
+    if(dfr && dfr.time) fixes.push("lengthen its Duration");
+    if(dfr && dfr.lines) fixes.push("clear its Start and Duration to cut every line at the low, in part where the tide cuts it");
     if(f.struck) causes.push(f.struck + " run(s) struck off by hand");
     if(f.slivers) causes.push(f.slivers + " run(s) the chart cut to slivers under a meter");
     if(f.short) causes.push(f.short + " run(s) under this vessel's " + f.minLine + " m minimum survey line");
@@ -13261,6 +13482,43 @@ function punchRefusal(){
         + "To fix: " + fixes.slice(0, -1).join(", ") + " or " + fixes[fixes.length - 1]
         + ". Right-click a red join to see which runs it joins."
         + (hops.length ? " And " + hops.length + " hop(s) Upload cannot route: " + hopWords() + "." : "")};
+}
+/** THE LINES THE PLAN'S SURVEYS DEFERRED (their records' `deferred`, the survey window phase 2): dashed lavender, dimmer
+ *  than the card's - drawn, never flown (they are no line or waypoint of the plan). Not the survey on the card (✎):
+ *  its own punch draws its own. */
+function drawDeferredSurveys(toScreen){
+  const svs = (mission.surveys || []).filter(s => s && Array.isArray(s.deferred) && s.deferred.length && s.id !== editingSv);
+  if(!svs.length) return;
+  ctx.save(); ctx.setLineDash([8,5]); ctx.strokeStyle = DEFER_INK; ctx.globalAlpha = 0.55; ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  for(const s of svs) for(const d of s.deferred){
+    if(!(d && d.a && d.b && Number.isFinite(+d.a.lat) && Number.isFinite(+d.b.lat))) continue;
+    const a = toScreen(+d.a.lat, +d.a.lon), b = toScreen(+d.b.lat, +d.b.lon);
+    ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+  }
+  ctx.stroke(); ctx.restore();
+}
+/** The record of a punch's deferred lines (patDefer): [{i, a, b, why}] a run each, SURVEY_DEFERRED_MAX at most (the
+ *  server's cap). */
+const SURVEY_DEFERRED_MAX = 2000;            // asv_console.py SURVEY_DEFERRED_MAX
+function deferredRecord(d){
+  const pos = p => ({lat: p.lat, lon: p.lon});
+  return d.lines.flatMap(x => x.runs.map(r => ({i: x.i, a: pos(r[0]), b: pos(r[1]), why: x.why}))).slice(0, SURVEY_DEFERRED_MAX);
+}
+/** Why survey `s`'s lines were deferred, in words: how many for the tide (and the high water outlined at), how many for
+ *  its duration. */
+function deferredWhy(s){
+  const by = why => new Set((s.deferred || []).filter(d => d && d.why === why).map((d, k) => Number.isInteger(d.i) ? d.i : "r" + k)).size;
+  const nT = by("tide"), nD = by("time"), parts = [];
+  if(nT) parts.push(nT + " not clear end to end at its window's low"
+                    + (Number.isFinite(+s.deferred_high_m) && s.deferred_high_m != null ? " (drawn at the high water ahead, " + fmtLevel(+s.deferred_high_m) + ")" : ""));
+  if(nD) parts.push(nD + " past its duration");
+  return parts.join(", ");
+}
+/** A survey's deferred LINES (its record's runs, counted by the drawing's line each lies on), or 0. */
+function surveyDeferredN(s){
+  if(!s || !Array.isArray(s.deferred) || !s.deferred.length) return 0;
+  return new Set(s.deferred.map((d, k) => d && Number.isInteger(d.i) ? d.i : "r" + k)).size;
 }
 /**
  * EACH SURVEY'S NAME ON THE CHART (sequenced surveys phase 2, 2026-10-02): "S3 Rye ledge" beside its first line's
@@ -13394,7 +13652,7 @@ function renderSurveyTable(){
   const key = JSON.stringify([rows.map(r => [r.s.id, r.s.no, r.s.name || "", r.f.lines, Math.round(r.f.m), !!r.s.punched,
                                             !!(r.s.pattern && r.s.pattern.A && r.s.pattern.B), r.p.done, r.p.of, r.p.any,
                                             r.t == null ? null : r.t.toFixed(2), !!(r.s.settings && r.s.settings.reverse),
-                                            !!r.s.hold, r.blk]),
+                                            !!r.s.hold, r.blk, surveyDeferredN(r.s)]),
                               editingSv, pick, pendingHold && pendingHold.sv, holdWaiting()]);
   if(key === _svTableKey) return;
   // ⚠ NOT UNDER THE OPERATOR'S CURSOR: a rebuild while a name is being typed would throw the typing away.
@@ -13411,6 +13669,7 @@ function renderSurveyTable(){
     // THE TIDE SINCE THE PUNCH (3a): its depth window was judged at the level it was cut at - a fall only (surveyTideMoved).
     const tideSay = t == null ? "" : " ⚠ The water has FALLEN " + Math.abs(t).toFixed(2) + " m under the level it was cut "
       + "at, so its lines were cut for deeper water than there is now - Punch all re-cuts them.";
+    const dN = surveyDeferredN(s);
     const svStart = surveyStartT(s), startSay = svStart == null ? ""
       : " Its start is " + surgeWhen(svStart) + (svStart > Date.now() / 1000 ? "" : " (passed)") + ": it was cut for the water from then.";
     const tip = rocEsc(surveyLabel(s) + ": " + f.lines + " line(s), " + fmtDist(f.m) + " of coverage"
@@ -13420,6 +13679,9 @@ function renderSurveyTable(){
       + ((s.settings && s.settings.reverse) ? ", run BACKWARDS" : "")
       // its start time and duration (the survey window, 2026-11-19)
       + (svStart != null ? ", to start " + surgeWhen(svStart) : "") + (surveyDurH(s) != null ? ", " + surveyDurH(s) + " h" : "")
+      // ... and the lines its window deferred (phase 2), dashed on the chart and never flown
+      + (dN ? ". " + dN + " line(s) DEFERRED by its window - dashed lavender on the chart, not in the plan: "
+            + deferredWhy(s) : "")
       + ". " + stateSay + ". Run " + (i + 1) + " of " + n
       + "." + tideSay + " Click the row to show its figures on this card and its actions.");
     const on = s.id === pick;
@@ -13449,7 +13711,7 @@ function renderSurveyTable(){
     return `<div class="svrow${s.id === pick ? " on" : ""}${s.id === editingSv ? " edit" : ""}" id="svr${i}" data-act="pick" data-sv="${rocEsc(s.id)}" title="${tip}">`
       + `<span class="svno">S${s.no}</span>`
       + `<input class="svname" id="svr${i}_name" data-sv="${rocEsc(s.id)}" maxlength="120" placeholder="name" value="${rocEsc(s.name || "")}" title="The survey's name - shown on the chart and in the LINES card. Its number S${s.no} stays with it."/>`
-      + `<span class="svbr"></span><span class="svinfo">${s.hold ? "⏸" : ""}${t == null ? "" : "⚠"}${state}${f.lines}L ${fmtDist(f.m).replace(" ", "")}</span>`
+      + `<span class="svbr"></span><span class="svinfo">${s.hold ? "⏸" : ""}${t == null ? "" : "⚠"}${state}${f.lines}L${dN ? "(+" + dN + ")" : ""} ${fmtDist(f.m).replace(" ", "")}</span>`
       + `<button class="ctl small" id="svr${i}_up" data-act="up" data-sv="${rocEsc(s.id)}"${i === 0 ? " disabled" : ""} title="Run this survey one place EARLIER. Upload sends the new order.">▲</button>`
       + `<button class="ctl small" id="svr${i}_dn" data-act="dn" data-sv="${rocEsc(s.id)}"${i === n - 1 ? " disabled" : ""} title="Run this survey one place LATER. Upload sends the new order.">▼</button>`
       + `<button class="ctl small" id="svr${i}_ed" data-act="edit" data-sv="${rocEsc(s.id)}"${canEdit ? "" : " disabled"} title="${canEdit
@@ -13771,7 +14033,12 @@ async function commitPattern(){
     // ... AND WHERE THAT LEVEL CAME FROM (2026-11-07): the survey's predicted low over its flight, the water now, or
     // chart datum where nothing could be read - in the punch's own words, for the row's tip and the mission file.
     water: patClip && patFunnel && patFunnel.cut && typeof patFunnel.cut.say === "string" ? (patFunnel.cut.stamp || patFunnel.cut.say).slice(0, 400) : null,
-    punched_at: patClip ? new Date().toISOString() : null};
+    punched_at: patClip ? new Date().toISOString() : null,
+    // THE LINES ITS WINDOW DEFERRED (the survey window phase 2): each run of each, the line of the drawing it lies on and
+    // why - drawn on the chart, NEVER a line or waypoint of the plan - and the high water a tide line's outline was cut at.
+    deferred: patClip && patDefer && patDefer.lines.length ? deferredRecord(patDefer) : null,
+    deferred_high_m: patClip && patDefer && patDefer.tide && patDefer.lines.some(x => x.why === "tide")
+                     ? Math.round(patDefer.highM * 1000) / 1000 : null};
   for(let i = firstLine; i < mission.lines.length; i++) mission.lines[i].sv = sv;
   for(let i = firstWp; i < mission.waypoints.length; i++) mission.waypoints[i].sv = sv;
   if(editing){
@@ -20140,7 +20407,7 @@ async function punchOut(cut, slicer){
     if(!ok || !nogo.features || !nogo.features.length){
       // THIS punch's answer, said in the banner below: no chart, so the un-punched pattern is what Add to plan
       // commits, as it always has - which is why a punch the tide threw away earlier stops refusing here.
-      patClip=null; patDropped=null;
+      patClip=null; patDropped=null; patDefer=null;
       // (a read that did not land over the survey - given up for no answer, refused for its size - is said by ITS cause:
       //  the model kept is of other water, and its note is not about this one - 2026-11-16)
       if(!ok && areaAsk.failed){
@@ -20268,6 +20535,35 @@ async function punchOut(cut, slicer){
       // Transits keep the plain buffer (legSafe, the hops), and the guard covers them.
       clipped = []; src.forEach(l=>clipLine(l[0],l[1],ref,koClip,clipBuf).forEach(s=>clipped.push(s)));
       patClipMemo = clipKey ? {key: clipKey, runs: clipped.map(s=>[s[0], s[1]])} : null;
+    }
+    // ⚠⚠ THE WINDOW'S SELECTION (2026-11-19, the survey window phase 2 - deferForWindow): with a start or a duration on
+    // the card, a line not clear end to end at the window's low, or past its duration, is DEFERRED WHOLE - here, before
+    // the strike filter, the order, the turns and the joins, so nothing below can make a waypoint of it. Its outline is
+    // clipped as the coverage is - the same features, chart ink, channels and moored ships, at the same standoff - at
+    // the high water ahead (the cut's `high`), and only for a line the low left short (patDeferMemo keeps them through a
+    // strike's re-punch). With neither, nothing here runs and the punch is exactly what it was.
+    const clippedN = clipped.length;
+    patDefer = null;
+    if(windowSelects()){
+      const hi = cutAt.high || punchHighNow() || {why: "not read"};
+      const highM = Number.isFinite(hi.m) ? Math.max(hi.m, cutAt.waterM) : NaN;
+      let clipHigh = null;
+      if(Number.isFinite(highM)){
+        const hiKey = clipKey ? clipKey + "|hi:" + highM.toFixed(3) : null;
+        if(!hiKey || !patDeferMemo || patDeferMemo.key !== hiKey) patDeferMemo = {key: hiKey, runs: new Map()};
+        const memo = patDeferMemo;
+        let koHiClip = null;
+        clipHigh = i => {
+          if(memo.runs.has(i)) return memo.runs.get(i);
+          if(!koHiClip) koHiClip = deferOutlineKo(ref, enf, dr, cutAt.waterM, highM, [...chanExcl, ...aisExcl]);
+          const r = clipLine(src[i][0], src[i][1], ref, koHiClip, clipBuf);
+          memo.runs.set(i, r);
+          return r;
+        };
+      }
+      patDefer = deferForWindow(src, clipped, {lowM: cutAt.waterM, highM, highT: hi.t, highWhy: hi.why || null, clipHigh,
+        timeLines: patDeferTime && patDeferTime.key === deferTimeKey(src) ? patDeferTime.lines : null, durH: patDurH});
+      if(patDefer.out.size){ const of = patDefer.of; clipped = clipped.filter((s, j) => !patDefer.out.has(of[j])); }
     }
     // TURN WATER: channel polys that none of the clipped coverage lines occupy are
     // off-limits to everything that CONNECTS those lines (turns, reversal hops,
@@ -20397,7 +20693,11 @@ async function punchOut(cut, slicer){
     // THE FUNNEL, for the refusal of a punch that leaves no run (2026-10-01): what each stage took. `slivers` are the
     // clip's remnants under a meter, which the filter above drops - shortenSeg hands a run too short for both margins
     // back WHOLE, so nothing else reaches it - and they are the chart's doing, not a stage of their own.
-    patFunnel = {drawn: src.length, clipped: clipped.length, struck: nStruck,
+    // (`clipped` the runs the chart left, before the window's selection took its lines - `deferred` those lines, by why)
+    patFunnel = {drawn: src.length, clipped: clippedN, struck: nStruck,
+                 deferred: patDefer ? {lines: patDefer.out.size, tide: patDefer.lines.filter(x => x.why === "tide").length,
+                                       time: patDefer.lines.filter(x => x.why === "time").length, lowM: patDefer.lowM,
+                                       durH: patDefer.durH} : null,
                  slivers: ro.ordered.length - shortened.length, short: nShort, minLine, chans: chanExcl.length,
                  // (the level said as it stood at THIS punch: Add to plan stamps it on the survey - 2026-11-07)
                  cut: {...cutAt, say: punchLevelSay(cutAt.waterM, false, cutAt.held),
@@ -20849,6 +21149,9 @@ async function punchOut(cut, slicer){
       // THE WATER IT WAS CUT AT, AND WHERE THAT CAME FROM (2026-11-07): the survey's predicted low, which costs the
       // coverage only high water reaches - said, as every other dropped meter on this line is.
       ` · ${(patFunnel && patFunnel.cut && patFunnel.cut.say) || punchLevelSay(cutAt.waterM, false, cutAt.held)}`+
+      // ... AND THE LINES ITS WINDOW DEFERRED, with why (the survey window phase 2): coverage the plan does not fly is
+      // said with its count, as every other dropped meter here is
+      deferSay(patDefer)+
       // THE MOORED-CONTACT CLIP IS SAID WITH ITS COUNT, AND SO IS A FEED THAT COULD NOT BE ASKED (2026-11-04):
       // coverage clipped for a ship nobody can see on the summary reads as a chart fault, and an empty sea
       // claimed from a stale feed is worse - the standing claim-vs-evidence rule, at the punch's own surface.

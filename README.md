@@ -2038,9 +2038,25 @@ SRCH / TRAN buttons are gone. `tests/path_card.js`.
      does not drop the punch on the card, does not flag the survey's row, and does not price the
      hops between its lines; once the start has passed, it does all three again. The server's
      `GET /api/water/series` gives the strip its curve (the lowest of the lines' points at each
-     6-minute slot, so its low is the low the punch cuts at). Lines that fit the window and lines
-     that do not, a second plan for the rest, and a hold point chosen for the wait are later
-     phases.
+     6-minute slot, so its low is the low the punch cuts at). A second plan for the lines a
+     window defers (below) and a hold point chosen for the wait are later phases.
+   - *Which lines a survey's window flies* (2026-11-19, the survey window, phase 2: conservative,
+     whole lines). With a **Start** or a **Duration** on the card, Punch Out also reads the
+     **highest** water predicted over the 24 h from the window's start, and cuts each line at
+     it too: that is the line's **outline**, the most of it any water ahead allows. A line is
+     flown only if its cut at the window's **low** covers its outline (to half a meter), and
+     only if it ends within the **Duration** on the route the punch made, its turns and the
+     hops between lines at the turn speed. **Every other line is deferred whole**, never cut
+     short and never flown: it is drawn **dashed lavender** at its outline, on the card and,
+     after Add to plan, faint on the chart, and the survey's row counts it (**8L(+3)**) and its
+     tip says why. A line the low cuts no shorter than the high does (a pier at its end, say) is
+     flown in part, as before. The punch note says how many lines are deferred and why, and the
+     high it outlined them at; a punch with every line deferred is refused, naming the low or
+     the duration and the fixes (a start nearer high water, a longer duration, or clearing both).
+     If the high cannot be read, nothing is deferred for the tide and the note says so. Deferred
+     lines are **never** in the plan Upload sends: they are recorded with the survey (their ends
+     and the reason) for the later phases, and striking a line stays its own act. With neither
+     a Start nor a Duration, Punch Out is exactly as before.
    - *Upload* walks the waypoints in order from where the boat is **now**. The
      **approach** is routed clear of the chart and keeps to the starboard side of any
      channel, and so is the **leg into each later survey** (2026-10-02: routed exactly as a

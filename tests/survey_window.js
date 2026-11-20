@@ -367,8 +367,10 @@ console.log("A survey's start time and duration:");
     + decls("WATER_ETA_SLACK", "WATER_WINDOW_PAD_S", "WATER_WINDOW_MAX_H", "WATER_SAMPLE_M", "WATER_ALONG_MAX_PTS")
     + "let patStartT = null, patDurH = null, patClip = null, patFunnel = null, lines = [];\n"
     + "const patSourceLines = () => lines; const punchPreM = () => 0; const punchFlightM = () => 3600;\n"
+    // (the strip's window is the punch's own: punchOwnM, the drawing up to its duration - phase 2, 2026-11-19)
+    + "let punchFlown = null; const punchDrawnM = () => 3600;\n"
     + "const waterSeriesRead = (line, t0, t1) => new Promise((res) => { reads.push({t0, t1}); release.push(res); });\n"
-    + fns("fmtLevel", "flightWindow", "punchLevelKey", "tideStripReadOnce", "tideStripRefresh", "tideStripSvg",
+    + fns("fmtLevel", "flightWindow", "punchLevelKey", "punchOwnM", "tideStripReadOnce", "tideStripRefresh", "tideStripSvg",
           "tideStripSay", "renderTideStrip")
     + decls("WATER_SERIES_TIMEOUT_MS")
     + "let tideStrip = null; let tideStripBusy = null, tideStripAgain = false, tideStripDrawn = null;\n"

@@ -189,8 +189,14 @@ const PAGE_FUNCS = ["punchOut", "lateKeeps", "currentPattern", "surveyPattern", 
   "koAtLevel", "surveyRouteLevel", "surveyCutM", "surveyLegKos", "atWaterLevel", "planLegReasons", "planLegLevelsSay",
   // A SURVEY'S START TIME AND DURATION (2026-11-19): the cut stamped with its start, the card's legs at it, the strip
   "punchStartT", "cutWaits", "punchStartSay", "cardRouteLevel", "commitWaitsForStart", "surveyStartT", "surgeWhen",
-  "renderTideStrip", "tideStripSvg", "tideStripSay"];
+  "renderTideStrip", "tideStripSvg", "tideStripSay",
+  // ... AND THE WINDOW'S SELECTION (phase 2): none here - no start or duration, so nothing is deferred - but every punch
+  // stamps the outline's high (punchHighNow), times its route for a duration (deferPastDuration) and says it (deferSay).
+  // tests/survey_select.js is its subject.
+  "windowSelects", "punchHighNow", "punchDrawnM", "punchOwnM", "horizonHigh", "deferPastDuration", "deferSay",
+  "srcLineOf", "deferTimeKey", "deferredRecord"];
 const PAGE_DECLS = [/^const NO_LEAD = [^;]*;/m, /^const LEAD_GIVE = [^;]*;/m, /^const MAX_SURVEY_LINES = [^;]*;/m,
+  /^const DEFER_TIME_MAX = [^;]*;/m, /^const SURVEY_DEFERRED_MAX = [^;]*;/m,
   /^const LEAD_MAX_M = [^;]*;/m, /^const REPUNCH_DELAY_MS = [^;]*;/m, /^const TIDE_REBUILD_M = [^;]*;/m,
   /^const TRIM_MAX_M = [^;]*;/m, /^const JUDGE_RUN_M = [^;]*;/m, /^const SPEED_ROLES = [^;]*;/m,
   /^const _eqLL=[^;]*;/m,
@@ -235,6 +241,7 @@ function makeWorld(opts) {
     + "let punchInFlight = null, punchBusy = false, encShow = false, boundary = [], boundaryClosed = false;\n"
     + "let surveyBounded = false;\n"
     + "let patStartT = null, patDurH = null, tideStrip = null, tideStripBusy = null, tideStripDrawn = null;\n"
+    + "let patDefer = null, patDeferTime = null, patDeferMemo = null;\n"
     + "let planKind = null, asv = null;\n"
     + "const mission = {lines: [], waypoints: [], surveys: [], approach_radius_m: 1, speeds: {}, speed: 'survey'};\n"
     // the chart read punchOut awaits: instant, unless a check puts something to happen DURING it (49)

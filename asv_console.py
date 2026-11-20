@@ -1711,6 +1711,7 @@ def check_plan_body(m):
 
 SURVEY_ID_MAX = 32          # characters in a survey's id - the page's own bound (static/js/surveys.js)
 SURVEY_NAME_MAX = 120
+SURVEY_DEFERRED_MAX = 2000  # runs of the lines a survey's window deferred - the page's own cap (asv.html deferredRecord)
 
 
 BREAKS_MAX = 3              # survey break-offs a plan keeps, newest first (the page keeps one per survey)
@@ -1949,11 +1950,35 @@ def _check_surveys(m):
             pa = s.get("punched_at")
             if pa is not None and not (isinstance(pa, str) and len(pa) <= 40):
                 raise PlanRefused("survey %s's punch time must be a time stamp (got %r) - nothing was saved" % (sid, pa))
+            _check_survey_deferred(sid, s)
     for what, items in (("waypoint", m.get("waypoints") or []), ("survey line", m.get("lines") or [])):
         for i, x in enumerate(items):
             if isinstance(x, dict) and x.get("sv") is not None and not _is_survey_id(x.get("sv")):
                 raise PlanRefused("%s %d's survey tag is not a survey id (%r) - nothing was saved"
                                   % (what, i + 1, x.get("sv")))
+
+
+def _check_survey_deferred(sid, s):
+    """The lines a survey's WINDOW DEFERRED (the survey window phase 2, 2026-11-19): `deferred`, a run each of the lines
+    its start time or duration left out - {i: the line of its drawing, a, b: positions, why: "tide" | "time"} - and
+    `deferred_high_m`, the high water a tide line's outline was cut at. The page draws them; they are no line or waypoint
+    of the plan and nothing here or aboard flies them. Types only, as the rest of a survey's record."""
+    dfr = s.get("deferred")
+    if dfr is not None:
+        if not isinstance(dfr, list) or len(dfr) > SURVEY_DEFERRED_MAX:
+            raise PlanRefused("survey %s's deferred lines must be a list of at most %d - nothing was saved"
+                              % (sid, SURVEY_DEFERRED_MAX))
+        for k, d in enumerate(dfr):
+            i = d.get("i") if isinstance(d, dict) else None
+            if not (isinstance(d, dict) and _is_position(d.get("a")) and _is_position(d.get("b"))
+                    and d.get("why") in ("tide", "time")
+                    and (i is None or (isinstance(i, int) and not isinstance(i, bool) and i >= 0))):
+                raise PlanRefused("survey %s's deferred line %d is not a run of its drawing (%s) - nothing was saved"
+                                  % (sid, k + 1, repr(d)[:80]))
+    dh = s.get("deferred_high_m")
+    if dh is not None and (isinstance(dh, bool) or not isinstance(dh, (int, float)) or not math.isfinite(dh)):
+        raise PlanRefused("survey %s's deferred lines' high water must be a finite number of meters (got %r) - "
+                          "nothing was saved" % (sid, dh))
 
 
 def _check_survey_settings(sid, st):

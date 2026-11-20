@@ -52,6 +52,8 @@ function grab(name) {
 }
 const DECL = (H.match(/^const PREVIEW_INK = [^;]*;/m) || [])[0];
 if (!DECL) throw new Error("test setup: const PREVIEW_INK not found (renamed?)");
+const DEFER_DECL = (H.match(/^const DEFER_INK = [^;]*;/m) || [])[0];
+if (!DEFER_DECL) throw new Error("test setup: const DEFER_INK not found (renamed?)");
 
 console.log("A preview never looks like the route:");
 
@@ -90,8 +92,10 @@ function survey(opts) {
     + " distTo = (a, b) => Math.hypot(a.lat - b.lat, a.lon - b.lon), boundaryActive = () => false,"
     + " patScreen = () => null, HANDLE = {},"
     // (2026-11-06) Upload's verdict on each red hop (none asked here: patUnsafe's pair stays red) and no clearing target
-    + " patRed = [], clr = { phase: \"idle\", target: null };\n"
-    + DECL + "\n" + grab("drawPreviewLabel") + "\n" + grab("drawPattern") + "\n return drawPattern; })()");
+    + " patRed = [], clr = { phase: \"idle\", target: null },"
+    // (the survey window phase 2, 2026-11-19) the lines its window deferred: one, on the second line, at its outline
+    + " patDefer = opts.defer ? { lines: [{ i: 1, why: \"tide\", runs: [SRC[1]] }] } : null;\n"
+    + DECL + "\n" + DEFER_DECL + "\n" + grab("drawPreviewLabel") + "\n" + grab("drawPattern") + "\n return drawPattern; })()");
   f(toScreen);
   return log;
 }
@@ -148,6 +152,28 @@ check("6. the help says cyan: the Quick Start's Punch Out step and the search hi
       () => /segments clip cyan, transits auto-route amber/.test(H) && /\(cyan kept \/ amber routed \/ red blocked\)/.test(H)
             && !/green kept|segments clip green/.test(H),
       () => "green-kept wording left: " + ((H.match(/green kept|segments clip green/g) || []).length));
+
+// 7. THE LINES A SURVEY'S WINDOW DEFERRED (the survey window phase 2, 2026-11-19): never flown, so never in an ink that
+// means flown or planned - not the preview's cyan, the route's green, the plan's gold, nor the hops' amber and red or the
+// clearing's magenta - and dashed. The card's punch draws them; the plan's surveys draw theirs dimmer (drawDeferredSurveys).
+{
+  const dfr = survey({ defer: true });
+  const inkOf = (s) => s.replace(/,\s*[\d.]+\)$/, "").replace(/\s/g, "");      // the color, without its alpha
+  const dInk = inkOf(DEFER_DECL.match(/"([^"]+)"/)[1]);
+  const lav = strokes(dfr).filter((r) => inkOf(r.ink) === dInk);
+  const others = ["rgba(57,192,255", "rgba(63,191,107", "rgba(255,215,106", "rgba(217,154,60", "rgba(217,83,79",
+                  "rgba(217,154,43", "rgba(224,92,255"];
+  const drawer = grab("drawDeferredSurveys");
+  const users = (H.match(/strokeStyle ?= ?DEFER_INK/g) || []).length;
+  check("7. the lines a survey's window deferred go down dashed in their own ink, none of the six survey inks nor the "
+        + "route's green - on the card's punch, and dimmer for the plan's surveys - and nothing else is drawn in it",
+        () => lav.length === 1 && lav[0].dashed && !others.some((o) => dInk.startsWith(o))
+              && strokes(plain).every((r) => inkOf(r.ink) !== dInk)
+              && /ctx\.setLineDash\(\[8,5\]\); ctx\.strokeStyle = DEFER_INK; ctx\.globalAlpha = 0\.55;/.test(drawer)
+              && users === 2 && (H.match(/rgba\(190,160,255/g) || []).length === 1,
+        () => "deferred strokes " + JSON.stringify(lav) + "; ink " + dInk + "; drawn in it by " + users + " (the card's "
+              + "punch and the plan's surveys)");
+}
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
 process.exit(fails ? 1 : 0);

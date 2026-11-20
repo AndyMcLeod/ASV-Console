@@ -632,6 +632,42 @@ check("16g. a water level or its note, punch time or backwards flag that is not 
       all(w_said.values()) and all("S1" in v for v in w_said.values()) and open(_C.MISSION_PATH, "rb").read() == w_before,
       "; ".join("%s: %s" % (k, (v or "NOT REFUSED")[:40]) for k, v in w_said.items()))
 
+# 16h-16i. THE LINES ITS WINDOW DEFERRED (the survey window phase 2, 2026-11-19): a survey records the runs of the lines its
+# start time or duration left out of the plan - drawn on the chart, never flown - and the high water a tide line's
+# outline was cut at. Both dicts, type-checked; and NOTHING of them is a line or waypoint of the plan.
+P_A, P_B = {"lat": SV_WPS[0]["lat"], "lon": SV_WPS[0]["lon"]}, {"lat": SV_WPS[1]["lat"], "lon": SV_WPS[1]["lon"]}
+D_SURVEYS = [dict(SURVEYS[0], deferred=[{"i": 2, "a": P_A, "b": P_B, "why": "tide"},
+                                        {"i": 4, "a": P_B, "b": P_A, "why": "time"}], deferred_high_m=1.37),
+             dict(SURVEYS[1], deferred=None, deferred_high_m=None)]
+d_plan = sv_plan(surveys=D_SURVEYS)
+_, d_err = attempt(_C.save_mission, d_plan)
+d_loaded = _C.load_mission()
+check("16h. the lines a survey's window DEFERRED and the high water they were outlined at are saved and loaded as they "
+      "were - and they add no line or waypoint to the plan",
+      d_err is None and d_loaded.get("surveys") == D_SURVEYS
+      and len(d_loaded.get("lines") or []) == len(d_plan.get("lines") or [])
+      and len(d_loaded.get("waypoints") or []) == len(d_plan.get("waypoints") or []),
+      "save: %s; loaded %s" % (d_err or "ok", json.dumps(d_loaded.get("surveys"))[:140]))
+d_before = open(_C.MISSION_PATH, "rb").read()
+d_run = {"i": 2, "a": P_A, "b": P_B, "why": "tide"}
+d_bad = {"deferred lines not a list": sv_plan(surveys=[dict(SURVEYS[0], deferred={"i": 2})]),
+         "too many deferred runs": sv_plan(surveys=[dict(SURVEYS[0], deferred=[d_run] * (_C.SURVEY_DEFERRED_MAX + 1))]),
+         "a deferred run with no end": sv_plan(surveys=[dict(SURVEYS[0], deferred=[dict(d_run, b=None)])]),
+         "a deferred run off the globe": sv_plan(surveys=[dict(SURVEYS[0], deferred=[dict(d_run, a={"lat": 95, "lon": 0})])]),
+         "a deferred run for no reason": sv_plan(surveys=[dict(SURVEYS[0], deferred=[dict(d_run, why="struck")])]),
+         "a deferred run's line as text": sv_plan(surveys=[dict(SURVEYS[0], deferred=[dict(d_run, i="2")])]),
+         "a deferred run's line a bool": sv_plan(surveys=[dict(SURVEYS[0], deferred=[dict(d_run, i=True)])]),
+         "a deferred run's line negative": sv_plan(surveys=[dict(SURVEYS[0], deferred=[dict(d_run, i=-1)])]),
+         "a deferred run that is a list": sv_plan(surveys=[dict(SURVEYS[0], deferred=[[P_A, P_B]])]),
+         "the high water as text": sv_plan(surveys=[dict(SURVEYS[0], deferred_high_m="1.4")]),
+         "the high water a bool": sv_plan(surveys=[dict(SURVEYS[0], deferred_high_m=True)]),
+         "the high water infinite": sv_plan(surveys=[dict(SURVEYS[0], deferred_high_m=float("inf"))])}
+d_said = {k: refused(v) for k, v in d_bad.items()}
+check("16i. deferred lines or their high water that are not what they claim are REFUSED in words, naming the survey, "
+      "and nothing is written",
+      all(d_said.values()) and all("S1" in v for v in d_said.values()) and open(_C.MISSION_PATH, "rb").read() == d_before,
+      "; ".join("%s: %s" % (k, (v or "NOT REFUSED")[:40]) for k, v in d_said.items()))
+
 # 17-17b. THE SURVEY BREAK-OFFS (2026-10-11, Andy: "When an ASV breaks off a survey to RTH for refueling the survey
 # departure point must be recorded"). The page banks each on the plan - so a page reloaded or a console restarted while
 # she is refueled still offers Continue - and they ride both dicts and are type-checked like the surveys.

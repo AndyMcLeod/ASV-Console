@@ -213,6 +213,8 @@ const world = () => new Function("\"use strict\";\n"
   + "const sea = {waterOffset: 0};\n"
   // the survey window (2026-11-19): no start on the card here, so no hold is turned on (tests/survey_window.js 6)
   + "let patStartT = null, punchLevel = null; const punchLevelFor = () => null;\n"
+  // ... and nothing its window deferred (phase 2: tests/survey_select.js)
+  + "let patDefer = null;\n"
   + grab(H, "commitWaitsForStart") + "\n" + grab(H, "surveyStartT") + "\n"
   + grab(H, "emptyPunchRefusal") + "\n" + grab(H, "punchRefusal") + "\n" + grab(H, "patternWaypoints") + "\n" + grab(H, "commitPattern")
   + "\nreturn { mission, commitPattern, set: (o) => { patClip = o.clip || null; patTransits = o.transits || [];"
