@@ -1707,7 +1707,13 @@ what they hold. **The readouts** - what a tab's drawing works out to: a survey's
 and width; a search route's waypoints and length; a transit's or passage's points, length and time;
 a Go-To's bearing and range and time; the plan's waypoints, lines and length - sit in ONE strip per
 tab, a caption over each value, so they no longer read as more rows to set. Search's waypoint count
-is captioned **Route** (it said Legs, under the Legs setting). `tests/path_card.js`.
+is captioned **Route** (it said Legs, under the Legs setting). `tests/path_card.js`. **A gray note
+only when it adds something**: a note that only repeated its control - "lead: none" under two
+zeros, "turns: arc" under Arc, "all three at 7 kn" under selectors saying 7, the Area row's "Press
+Draw..." under the Survey switch's own note - is written empty and takes no room. A lead set still
+says the run it adds, Eased its spiral (or, on a hull that cannot ease, NOT AVAILABLE in amber); the
+speed note says the knots are commanded through the water and names any speed its selector cannot
+show. `tests/path_card.js` 12, `tests/speed_knots.js` 3b-3d.
 
 1. **Plan** — on the **Path planning card**: the **Waypoints** tab to drop/remove
    waypoints, or the **Survey** tab for a **CAMP-style 3-click survey pattern** (its switch on

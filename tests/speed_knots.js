@@ -139,15 +139,26 @@ check("3. picking 8 kn on the survey selector sets the plan's survey speed to \"
       () => mission.speeds.survey === "8" && DOM["#sp_spd_survey"].value === "8" && saved === 1
             && commandedSpeed === null && recalcs === 1,
       () => JSON.stringify(mission.speeds) + " saved " + saved + " commanded " + commandedSpeed);
-check("3b. the note under them reads in knots and says they are COMMANDED through the water",
-      () => /transit 9 kn · turn 4 kn · survey 8 kn/.test(DOM["#sp_spd_note"].textContent)
-            && /commanded through the water; current and wind change her speed over the ground/.test(DOM["#sp_spd_note"].textContent),
+// The note says what the knots ARE and no longer repeats the selectors' own values (2026-11-21, the path card review,
+// item 4: "all three at 7 kn" under two selectors that said 7) - only a speed its selector cannot show.
+check("3b. the note under them says the knots are COMMANDED through the water - and does not repeat the three "
+      + "speeds its selectors already show",
+      () => DOM["#sp_spd_note"].textContent === "knots commanded through the water; current and wind change her speed over the ground",
       () => DOM["#sp_spd_note"].textContent);
 setRoleSpeed("turn", "8"); setRoleSpeed("transit", "8");
-check("3c. ... and when the three agree it says so, in knots",
-      () => /^all three at 8 kn — set them apart to differ/.test(DOM["#sp_spd_note"].textContent)
+check("3c. ... and the same when the three agree (it said \"all three at 8 kn - set them apart to differ\")",
+      () => DOM["#sp_spd_note"].textContent === "knots commanded through the water; current and wind change her speed over the ground"
             && DOM["#sp_spd_transit"].value === "8",
       () => DOM["#sp_spd_note"].textContent);
+mission.speeds = { ...mission.speeds, turn: "low" }; DOM["#sp_spd_turn"].value = "low";   // a plan older than the knots
+updateSpeedNote();
+const odd = DOM["#sp_spd_note"].textContent;
+mission.speeds = { ...mission.speeds, turn: "8" }; DOM["#sp_spd_turn"].value = "8"; updateSpeedNote();
+check("3d. a speed its selector CANNOT show (a named one: the selector reads blank) is named in the note, in knots, "
+      + "and only that one",
+      () => odd === "turn at low (4.0 kn), not on its selector · knots commanded through the water; current and wind change her speed over the ground"
+            && DOM["#sp_spd_note"].textContent === "knots commanded through the water; current and wind change her speed over the ground",
+      () => odd);
 
 // 4. THE WORDS.
 check("4. spdTxt reads a whole knot as \"7 kn\" and a named speed as its name (\"SLOWED to low\" is unchanged); "

@@ -356,6 +356,10 @@
     gap:1px;padding:3px 6px 4px;background:#0c1722;}
   .ppread label{font-size:7.5px;}
   .ppread .phint{font-family:var(--mono);font-size:11px;line-height:1.2;}
+  /* A NOTE ONLY WHEN IT ADDS SOMETHING (2026-11-21, the path card review, item 4): a note whose whole content is what
+     its control already shows - "lead: none" under two zeros, "turns: arc" under Arc, "all three at 7 kn" under the
+     selectors that say 7 - is written EMPTY, and an empty one takes no room. */
+  #pathPanel div.phint:empty{display:none;}
   .encbanner{position:absolute;left:50%;transform:translateX(-50%);bottom:120px;z-index:6;
     font-family:var(--mono);font-size:10px;color:#160d02;background:var(--warn);border-radius:3px;
     padding:4px 10px;max-width:80vw;text-align:center;display:none;}
@@ -663,7 +667,7 @@
           <button class="ctl small" id="bnd_close" title="Close the polygon (needs ≥3 points)">Close</button>
           <button class="ctl small" id="bnd_clr" title="Delete the boundary polygon">Clear</button>
           <button class="ctl small on" id="areaBtn" title="Show / hide the survey-area boundary overlay (persisted). It still clips the lines while hidden; drawing the area always shows it.">Show</button></span></div>
-        <div class="phint" id="bnd_hint">Press Draw, then click the chart to drop boundary points; click the first point to close. Survey lines clip to this area.</div>
+        <div class="phint" id="bnd_hint"></div>
       </div>
       <div class="prow"><label>Max depth m</label><input type="number" id="sp_maxdepth" value="" min="0" max="1000" step="1" placeholder="none" title="Survey coverage maximum. Blank = no maximum (deep water is fine to survey). Deep water is never a nogo — the boat may transit it."/></div>
       <!-- SPEED BY ROLE. A survey run is three jobs and they do not want one speed; the
@@ -693,7 +697,7 @@
             <option value="m" selected>m</option><option value="s">s</option>
           </select>
         </span></div>
-      <div class="phint" id="sp_lead_note">lead: none</div>
+      <div class="phint" id="sp_lead_note"></div>
       <!-- EASED TURNS. Every reversal this console draws steps its curvature from nothing to
            1/R the instant the boat leaves the line — an infinite rudder rate, which no hull
            can answer, so it overshoots and settles. That settling is exactly what the lead-in
@@ -708,7 +712,7 @@
         <select id="sp_turn_ease" title="ARC is the plain reversal this console has always drawn: its curvature steps from zero to 1/R at the line end, which the hull answers by overshooting and settling. EASED ramps the curvature in and out over a spiral, so the steering rate is constant and the boat arrives on the next line already straight — at the cost of a little more outboard water and about twice the waypoints. Needs the vessel profile to declare a steering settle time.">
           <option value="arc" selected>Arc</option><option value="eased">Eased</option>
         </select></div>
-      <div class="phint" id="sp_ease_note">turns: arc</div>
+      <div class="phint" id="sp_ease_note"></div>
       <!-- THE SURVEY WINDOW (2026-11-19, Andy: "During survey planning, institute a start time and duration
            functionality. Using this feature, examine tide level at start and total change through the duration of
            the survey"). START: when she begins it. Blank = as soon as she gets there. A start later than she can be
@@ -1832,8 +1836,8 @@ function speedRole(){ return currentActivity().role || "transit"; }
 function roleSpeed(role){
   // ⚠⚠ `depart` IS PINNED TO `low` AND IS NOT THE OPERATOR'S TO SET (R7, R8). The design
   // says "SPEED_ROLES gains depart"; in THIS page SPEED_ROLES is the operator's own list -
-  // it builds the three #sp_spd_* selectors, seeds mission.speeds, and is what the "all
-  // three at ..." line counts. Putting depart in it would have created a control whose whole
+  // it builds the three #sp_spd_* selectors, seeds mission.speeds, and is what the speed
+  // note under them reads. Putting depart in it would have created a control whose whole
   // effect is to defeat the rule it serves: the DEPTH grant is permission to run with the
   // hull's under-keel clearance UNVERIFIED, and the only speed at which that is defensible
   // is the slowest the hull has. Worse, mission.speeds.depart would have been seeded from
@@ -15373,7 +15377,7 @@ function closeBoundary(){
 }
 function clearBoundary(){
   boundary = []; boundaryClosed = false; boundDrag = null; patClip = null;
-  $("#bnd_hint").textContent = "Press Draw, then click the chart to drop boundary points; click the first point to close.";
+  $("#bnd_hint").textContent = "";   // how to draw one is the Survey switch's note (renderSurveyMode); this row says what happened
   updatePatReadout(); saveMission(); pathRender(); render();
 }
 // ── IMPORTING A SURVEY AREA (Andy, 2026-10-16: "should have a draw mode or an input mode for pre-drawn surveys"; asked,
@@ -23347,7 +23351,8 @@ function renderSurveyMode(){
   const t = !surveyBounded
       ? "Draw (top of the card), then click A the start corner, B the opposite corner, C the line spacing and direction. Nothing bounds the lines."
     : !boundaryActive()
-      ? "Draw the area below, or Import one (GeoJSON, KML, CSV). The lines fill it; A, B and C then set their start, spacing and direction."
+      ? "Draw the area below, or Import one (GeoJSON, KML, CSV): a chart click drops each corner, a click on the first closes it. "
+        + "The lines fill it; A, B and C then set their start, spacing and direction."
       : "The lines fill the area. Draw (top of the card) moves A, B and C - the lines' start, spacing and direction.";
   if(hint && hint.textContent !== t) hint.textContent = t;
 }
@@ -23623,7 +23628,7 @@ function setLeadMode(m){
 function updateLeadNote(){
   const el = $("#sp_lead_note"); if(!el) return;
   const i = leadInM(), o = leadOutM();
-  if(!(i > 0 || o > 0)){ el.textContent = "lead: none — the run is the coverage"; return; }
+  if(!(i > 0 || o > 0)){ el.textContent = ""; return; }   // no lead: its two zeros say so (an empty note takes no room)
   const dur = mission.lead_mode === "s";
   const conv = dur ? ` (${mission.lead_in||0} s / ${mission.lead_out||0} s at ${spdTxt(roleSpeed("survey"))} = `
                      + `${roleSpeedMS("survey").toFixed(2)} m/s)` : ``;
@@ -23652,7 +23657,7 @@ function updateEaseNote(){
   const el = $("#sp_ease_note"); if(!el) return;
   if(mission.turn_ease !== "eased"){
     el.style.color = "";
-    el.textContent = "turns: arc — curvature steps at the line end; the boat settles onto the line";
+    el.textContent = "";   // Arc: the control says so, and its title says what an arc does
     return;
   }
   const t = V.STEERING_SETTLE_S || 0;
@@ -23929,17 +23934,17 @@ function fillSpeedSelects(){
   });
   updateSpeedNote();
 }
-// What the three are, in one line under them - and in KNOTS. Says so out loud when they are all equal, which is the
-// state a console that has never been told otherwise is in, and says what the knots ARE: commanded, through the water.
+// What the knots ARE - commanded, through the water - in one line under the selectors, and any role's speed its own
+// selector cannot show (a named one from a plan older than the knots, or a knot this hull has no step for: the selector
+// reads blank). It no longer repeats the selectors' own values (2026-11-21, the path card review, item 4: "all three at
+// 7 kn" under two selectors saying 7, and the transit's in Route rules' line).
 function updateSpeedNote(){
   const el = $("#sp_spd_note"); if(!el) return;
   const kn = r => (V.SPEED_KN[roleSpeed(r)] != null ? V.SPEED_KN[roleSpeed(r)].toFixed(1) + " kn" : "--");
   const one = r => isStepKey(roleSpeed(r)) ? spdTxt(roleSpeed(r)) : roleSpeed(r) + " (" + kn(r) + ")";
-  const same = SPEED_ROLES.every(r => roleSpeed(r) === roleSpeed("survey"));
-  el.textContent = (same
-    ? "all three at " + one("survey") + " — set them apart to differ"
-    : SPEED_ROLES.map(r => r + " " + one(r)).join(" · "))
-    + " · commanded through the water; current and wind change her speed over the ground";
+  const unshown = SPEED_SELECTS.filter(([r, id]) => { const s = $(id); return !s || s.value !== String(roleSpeed(r)); });
+  el.textContent = unshown.map(([r]) => r + " at " + one(r) + ", not on its selector").join(" · ")
+    + (unshown.length ? " · " : "") + "knots commanded through the water; current and wind change her speed over the ground";
 }
 // TWO DIFFERENT THINGS, and keeping them apart is the whole point:
 //   runCompletion() - what the run IN PROGRESS does at its end. A Go-To station-keeps,

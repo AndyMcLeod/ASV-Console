@@ -35,6 +35,10 @@
 //   11    each tab's computed readouts in ONE strip (.ppread), a caption over each value, none left outside; Search's
 //         readout captioned Route (2026-11-21, the card review's item 3; the markup scanned). 3 mutations, 3/3 caught:
 //         the Transit strip gone; Search's readout captioned Legs again; the cells label-beside-value rows again
+//   12    a gray note only when it adds something (2026-11-21, item 4): no lead and Arc write their notes EMPTY, an
+//         empty note takes no room, the area row's instruction (the Survey switch's note says it) gone. 4 mutations,
+//         4/4 caught: the empty rule gone; "lead: none" again; "turns: arc" again; the area row's instruction back.
+//         (The speed note's half is tests/speed_knots.js 3b-3d.)
 //
 // TEETH (1d, 6b, 9) - 7 sidecar mutations RUN, 7/7 caught:
 //   Arr m back on the command bar -> 1d          the section before Route rules -> 1d
@@ -619,6 +623,44 @@ check("8. THE FIRST RENDER RUNS AFTER EVERY NAME IT READS IS DECLARED - S (canCo
               && /<label>Route<\/label><span class="phint" id="sr_count"/.test(SR) && SR.split("<label>Legs</label>").length === 2
               && /\.ppread \.prow\{flex:1 1 auto;min-width:54px;flex-direction:column;/.test(H) && /\.ppread\{display:flex;flex-wrap:wrap;/.test(H),
         () => JSON.stringify({ got, outside }));
+}
+
+// ── 12. A GRAY NOTE ONLY WHEN IT ADDS SOMETHING (2026-11-21, the card review's item 4). The Survey tab carried a note
+// under nearly every control, several only repeating it: "lead: none" under two zeros, "turns: arc" under Arc, the area
+// row's "Press Draw, then click..." under the Survey switch's own note saying how. A note with nothing to add is now
+// written EMPTY and an empty one takes no room; what a note adds - a lead's run in meters, an eased turn's spiral or
+// that this hull cannot ease, in amber - it still says. The lead and turn-shape writers run here on stubs.
+{
+  const mk = () => ({ textContent: "stale", style: { color: "" } });
+  const D = { "#sp_lead_note": mk(), "#sp_ease_note": mk() };
+  const w = { lin: 0, lout: 0, mission: { lead_mode: "m", turn_ease: "arc" }, V: { STEERING_SETTLE_S: 0, VESSEL: { name: "Test hull" } } };
+  const api = new Function("w", "D", [
+    "const $ = (s) => D[s] || null, mission = w.mission, V = w.V;",
+    "const leadInM = () => w.lin, leadOutM = () => w.lout, fmtDist = (m) => m.toFixed(0) + ' m';",
+    "const spdTxt = (k) => k + ' kn', roleSpeed = () => '7', roleSpeedMS = () => 3.6, easeLsM = () => 9;",
+    grab("updateLeadNote"), grab("updateEaseNote"),
+    "return { updateLeadNote, updateEaseNote };"].join("\n"))(w, D);
+  api.updateLeadNote(); api.updateEaseNote();
+  const none = [D["#sp_lead_note"].textContent, D["#sp_ease_note"].textContent];
+  w.lin = 20; w.lout = 10; w.mission.turn_ease = "eased";
+  api.updateLeadNote(); api.updateEaseNote();
+  const some = [D["#sp_lead_note"].textContent, D["#sp_ease_note"].textContent, D["#sp_ease_note"].style.color];
+  w.V.STEERING_SETTLE_S = 2.5; api.updateEaseNote();
+  const eased = D["#sp_ease_note"].textContent;
+  const authored = (id) => (CARD.match(new RegExp('<div class="phint" id="' + id + '"[^>]*>([^<]*)</div>')) || [])[1];
+  const tags = ["sp_lead_note", "sp_ease_note", "bnd_hint"].map(authored);
+  check("12. A NOTE ONLY WHEN IT ADDS SOMETHING: no lead and Arc write their notes EMPTY (the zeros and the control say "
+        + "it), and an empty note takes no room; a lead still says its run in meters, Eased its spiral - or, on a hull "
+        + "with no settle time, NOT AVAILABLE in amber; the area row authored and cleared empty, the Survey switch's "
+        + "note saying how an area closes",
+        () => none.join("|") === "|"
+              && /^lead: 20 m in \/ 10 m out — \+30 m of RUN per line/.test(some[0])
+              && /NOT AVAILABLE/.test(some[1]) && some[2] === "var(--warn)" && /^turns: eased — 2\.5 s of steering settle/.test(eased)
+              && tags.join("|") === "||"
+              && /#pathPanel div\.phint:empty\{display:none;\}/.test(H)
+              && /\$\("#bnd_hint"\)\.textContent = "";/.test(grab("clearBoundary"))
+              && /a chart click drops each corner, a click on the first closes it/.test(grab("renderSurveyMode")),
+        () => JSON.stringify({ none, some, eased, tags }));
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
