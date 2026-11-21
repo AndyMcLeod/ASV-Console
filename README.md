@@ -1720,7 +1720,10 @@ Lead in/out, Turn shape - set for a hull and a sensor, then mostly left, so it s
 line naming each: "survey 7 kn · turn 7 kn · lead none · arc turns", an eased turn the hull cannot
 fly said NOT AVAILABLE there) and **Survey window** (Start, Duration h, the water strip). Punch Out,
 Add to plan, what they report and the Plan B note stay outside them: no fold hides what the punch
-says. A fold set by hand is kept in that browser. `tests/path_card.js` 13.
+says. A fold set by hand is kept in that browser. `tests/path_card.js` 13. **The survey rows in
+words**: each row's line read "⏸⚠2L(+2) 668m"; it now says "⏸ hold · ⚠ water fell · 2 lines +2
+deferred · 668 m" (and "3/6 run" or "✓ done" once she has run some), wrapping onto a second line -
+only between parts - rather than being cut off. `tests/survey_table.js` 30b.
 
 1. **Plan** — on the **Path planning card**: the **Waypoints** tab to drop/remove
    waypoints, or the **Survey** tab for a **CAMP-style 3-click survey pattern** (its switch on

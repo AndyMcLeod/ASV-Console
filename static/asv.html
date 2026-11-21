@@ -620,7 +620,9 @@
         #sv_table .svno{font-family:var(--mono);font-size:10px;color:#ffd76a;min-width:20px;}
         #sv_table .svname{flex:1 1 60px;min-width:0;font-size:10px;padding:1px 3px;}
         #sv_table .svbr{flex-basis:100%;height:0;}
-        #sv_table .svinfo{flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;font-family:var(--mono);font-size:8.5px;color:var(--ink-dim);white-space:nowrap;}
+        /* (2026-11-21, the path card review, item 6) the row's line in WORDS - "⏸ hold · 2 lines +2 deferred · 668 m", it
+           read "⏸2L(+2) 668m" - wrapping onto a second line when it needs one rather than cut off with an ellipsis */
+        #sv_table .svinfo{flex:1 1 0;min-width:0;overflow-wrap:anywhere;font-family:var(--mono);font-size:8.5px;color:var(--ink-dim);line-height:1.3;}
         #sv_table button{width:15px;height:16px;padding:0;font-size:9px;line-height:1;flex:0 0 auto;}
         /* the picked row's actions (3a): short labels, two to a line in the ~125 px card (four lines on the first try) */
         #sv_table .svacts{display:flex;flex-wrap:wrap;gap:2px;width:100%;}
@@ -14581,7 +14583,7 @@ function renderSurveyTable(){
   tb.innerHTML = rows.map(({s, i, f, p, t, blk}) => {
     const canEdit = !!(s.pattern && s.pattern.A && s.pattern.B);
     // DONE / PARTIAL (3a): by drawn line, from what this page saw her run (trackLineCoverage).
-    const state = (p.of && p.done === p.of) ? "✓" : p.any ? p.done + "/" + p.of + " " : "";
+    const state = (p.of && p.done === p.of) ? "✓ done" : p.any ? p.done + "/" + p.of + " run" : "";
     const stateSay = (p.of && p.done === p.of) ? "DONE - every line run"
                    : p.any ? "PARTIAL - " + p.done + " of " + p.of + " line(s) run" : "not run yet";
     // THE TIDE SINCE THE PUNCH (3a): its depth window was judged at the level it was cut at - a fall only (surveyTideMoved).
@@ -14646,7 +14648,11 @@ function renderSurveyTable(){
     return `<div class="svrow${s.id === pick ? " on" : ""}${s.id === editingSv ? " edit" : ""}" id="svr${i}" data-act="pick" data-sv="${rocEsc(s.id)}" title="${tip}">`
       + `<span class="svno">S${s.no}</span>`
       + `<input class="svname" id="svr${i}_name" data-sv="${rocEsc(s.id)}" maxlength="120" placeholder="name" value="${rocEsc(s.name || "")}" title="The survey's name - shown on the chart and in the LINES card. Its number S${s.no} stays with it."/>`
-      + `<span class="svbr"></span><span class="svinfo">${s.hold ? "⏸" : ""}${t == null ? "" : "⚠"}${state}${f.lines}L${dN ? "(+" + dN + ")" : ""} ${fmtDist(f.m).replace(" ", "")}</span>`
+      // (item 6: in words, each part named - it read "⏸⚠3/6 2L(+2) 668m"; the glyphs kept in front of their words; each
+      //  part held whole by no-break spaces, so a second line starts at a " · ", never inside "2 lines" - the lab)
+      + `<span class="svbr"></span><span class="svinfo">${[s.hold ? "⏸ hold" : "", t == null ? "" : "⚠ water fell", state,
+          f.lines + (f.lines === 1 ? " line" : " lines") + (dN ? " +" + dN + " deferred" : ""), fmtDist(f.m)].filter(Boolean)
+          .map(x => x.replace(/ /g, "\u00a0")).join(" · ")}</span>`
       + `<button class="ctl small" id="svr${i}_up" data-act="up" data-sv="${rocEsc(s.id)}"${i === 0 ? " disabled" : ""} title="Run this survey one place EARLIER. Upload sends the new order.">▲</button>`
       + `<button class="ctl small" id="svr${i}_dn" data-act="dn" data-sv="${rocEsc(s.id)}"${i === n - 1 ? " disabled" : ""} title="Run this survey one place LATER. Upload sends the new order.">▼</button>`
       + `<button class="ctl small" id="svr${i}_ed" data-act="edit" data-sv="${rocEsc(s.id)}"${canEdit ? "" : " disabled"} title="${canEdit

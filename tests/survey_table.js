@@ -21,6 +21,11 @@
 //          disabled without a drawing, a name escaped, a name being typed never rebuilt under the cursor;
 //   13     the LINES card's survey headings and their totals; one survey: no heading (the table as it was);
 //   14     the chart labels.
+//   30b    (2026-11-21, the path card review, item 6) the row's line in WORDS - "⏸ hold · 2 lines · 200 m", it read
+//          "⏸2L 200m" - each part named, the glyphs kept in front of their words, wrapping rather than cut off, and
+//          only between parts (each held whole by no-break spaces: the lab saw "· 2 / lines +2 deferred").
+//          4 mutations, 4/4 caught: the lines "2L" again; the done state a bare "✓"; the line cut off (nowrap) again;
+//          the parts not held whole
 //
 //   node tests/survey_table.js      # exit 0 = pass, 1 = fail   (stdlib Node)
 //
@@ -875,6 +880,22 @@ function commit(w, lines, anchors) {
                   return on && />Hold: on</.test(h) && rows.length === 2
                          && !/svinfo">⏸/.test(rows[0]) && /svinfo">⏸/.test(rows[1]); },
           () => (h.match(/svinfo">[^<]*/g) || []).join(" | "));
+    // 30b (2026-11-21, the path card review, item 6): the row's line in WORDS. It read "⏸⚠3/6 2L(+2) 668m"; each part is
+    // named now, " · " between them, the glyphs kept in front of the words they stood for (22b and 30 above still find
+    // them first), and the line wraps when it needs a second one instead of being cut off with an ellipsis.
+    {
+      const raw = (h.match(/svinfo">[^<]*/g) || []).map((x) => x.slice(8)), info = raw.map((x) => x.replace(/\u00a0/g, " "));
+      const src = grab("renderSurveyTable"), css = (H.match(/#sv_table \.svinfo\{[^}]*\}/) || [""])[0];
+      check("30b. THE ROW'S LINE IN WORDS: \"2 lines · 200 m\", the held one \"⏸ hold · 2 lines · 200 m\" (it read "
+            + "\"⏸2L 200m\"); a run part \"3/6 run\" or \"✓ done\", deferred lines \"+2 deferred\", a fall \"⚠ water fell\"; "
+            + "the line wrapping, not cut off, and only between parts (each held whole: \"2 lines\" never split)",
+            () => info.length === 2 && /^2 lines · \d+(\.\d+)? k?m$/.test(info[0]) && /^⏸ hold · 2 lines · \d+(\.\d+)? k?m$/.test(info[1])
+                  && /^⏸\u00a0hold · 2\u00a0lines · /.test(raw[1])
+                  && /"✓ done"/.test(src) && /"\/" \+ p\.of \+ " run"/.test(src) && /" \+" \+ dN \+ " deferred"/.test(src)
+                  && /"⚠ water fell"/.test(src) && /\.filter\(Boolean\)\s*\.map\(x => x\.replace\(\/ \/g, "\\u00a0"\)\)\.join\(" · "\)/.test(src)
+                  && /overflow-wrap:anywhere/.test(css) && !/nowrap|ellipsis/.test(css),
+            () => JSON.stringify({ info, css }));
+    }
     // Continue: only on the held survey's row, and only open when she is holding
     // (phase 4: where she is and whether it is open is waitState's one answer - the split's own run is a survey that
     //  ends in a loiter under End of plan RTH; the words name where she is, not "its start" of any hold anywhere)
