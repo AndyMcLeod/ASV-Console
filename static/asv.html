@@ -128,8 +128,9 @@
     display:flex;align-items:center;gap:6px;}
   .panel .phead::before{content:"⠿";color:var(--ink-faint);font-size:11px;line-height:1;}
   /* THE PATH PLANNING CARD (2026-10-13): one card, five tabs, always loaded. 236 px: five tabs, and the Survey rows the
-     old 158 px card squeezed (its own note measured the name field at 7.6 px on one line). */
-  #pathPanel{width:236px;max-height:calc(100vh - 150px);overflow:auto;}
+     old 158 px card squeezed (its own note measured the name field at 7.6 px on one line). 264 px since 2026-11-21 (the
+     path card review, item 7): its type one px larger, the card 28 px wider so the rows that fitted still fit. */
+  #pathPanel{width:264px;max-height:calc(100vh - 150px);overflow:auto;}
   #pathPanel .phead{position:sticky;top:-8px;z-index:2;}
   #pathPanel .pptitle{flex:1;}
   #pathPanel .phead .ctl{height:18px;padding:0 6px;font-size:9px;}
@@ -358,6 +359,31 @@
     gap:1px;padding:3px 6px 4px;background:#0c1722;}
   .ppread label{font-size:7.5px;}
   .ppread .phint{font-family:var(--mono);font-size:11px;line-height:1.2;}
+  /* LARGER TYPE ON THE PATH PLANNING CARD (2026-11-21, the path card review, item 7): it read at 7.5-9.5 px - captions,
+     notes, section lines, the survey rows - while its values change under the operator's eye. Every size on it one px
+     larger, scoped to the card (the other panels keep theirs), each rule one step more specific than the one it lifts
+     (the survey table's own <style> comes later in the page, so its rules are lifted through #pathPanel #sv_table). */
+  #pathPanel label{font-size:10px;}
+  #pathPanel .enf label{font-size:11px;}
+  #pathPanel .phint{font-size:10.5px;}
+  #pathPanel input,#pathPanel select{font-size:12px;}
+  #pathPanel .ctl.small{font-size:11px;}
+  #pathPanel .phead{font-size:10px;}
+  #pathPanel .phead .ctl,#pathPanel .pparea .ppbtns .ctl,#pathPanel .ppplan .ctl{font-size:10px;}
+  /* sized to their words, never under the old 40 px: at 10 px the base .ctl's 40 px cut CLR PLAN, and the head's and
+     the Area row's Draw while they read "Drawing" / "Drawing area" (the lab, every tab) */
+  #pathPanel .phead .ctl,#pathPanel .pparea .ppbtns .ctl,#pathPanel .ppplan .ctl{width:auto;min-width:40px;}
+  #pathPanel .pptab{font-size:9.5px;}
+  #pathPanel .ppsub{font-size:10px;}
+  #pathPanel .pprules-head{font-size:10px;}
+  #pathPanel .pprules .pprsum{font-size:9.5px;}
+  #pathPanel .ppread label{font-size:8.5px;}
+  #pathPanel .ppread .phint{font-size:12px;}
+  #pathPanel #sv_table .svno,#pathPanel #sv_table .svname{font-size:11px;}
+  #pathPanel #sv_table button{font-size:10px;}
+  #pathPanel #sv_table .svacts button{font-size:9.5px;}
+  #pathPanel #sv_table .svcont{font-size:10px;}
+  #pathPanel #sv_table .svinfo{font-size:9.5px;}
   /* A NOTE ONLY WHEN IT ADDS SOMETHING (2026-11-21, the path card review, item 4): a note whose whole content is what
      its control already shows - "lead: none" under two zeros, "turns: arc" under Arc, "all three at 7 kn" under the
      selectors that say 7 - is written EMPTY, and an empty one takes no room. */
@@ -635,7 +661,7 @@
         #sv_head{display:flex;align-items:center;gap:4px;}
         #sv_head button{margin-left:auto;width:auto;height:16px;padding:0 5px;font-size:8.5px;}
       </style>
-      <div id="sv_head" style="display:none;font-family:var(--mono);font-size:9px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;"><span>Surveys, in run order</span><button class="ctl small" id="sv_punchall">Punch all</button></div>
+      <div id="sv_head" style="display:none;font-family:var(--mono);font-size:10px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;"><span>Surveys, in run order</span><button class="ctl small" id="sv_punchall">Punch all</button></div>
       <div id="sv_table" style="display:none"></div>
       <div class="phint" id="sv_note" style="display:none"></div>
       <!-- THE SURVEY TAB'S SECTIONS (2026-11-21, the path card review, item 5): the tab ran a column of rows with nothing to
@@ -958,9 +984,9 @@
        left:14px/top:96px, which is where the PATH PLANNING card sits (the four mode panels until 2026-10-13)
        sit; the ROC card is a `.panel` too, so on a fresh profile it opened exactly on
        top of them. That collision is why the ROC button used to cancel the chart mode.
-       14 + 236 (the Path planning card's width) = 250, so 264 clears it with a 14px gap
-       and the mode can be left alone. A dragged position is persisted and overrides it. -->
-  <div class="panel" id="rocPanel" style="display:none;width:252px;left:264px;">
+       14 + 264 (the Path planning card's width since 2026-11-21; 236 before) = 278, so 292 clears it with a 14px
+       gap and the mode can be left alone. A dragged position is persisted and overrides it. -->
+  <div class="panel" id="rocPanel" style="display:none;width:252px;left:292px;">
     <div class="phead" id="rocPanelHead" title="Drag to move">ROC · HOME</div>
     <div class="phint">Remote Operations Centers. Click + Shore or + Ship, then click the chart to
       place it. Edit its position (and a ship's heading/speed) here, then Confirm to start it —

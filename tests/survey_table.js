@@ -885,7 +885,7 @@ function commit(w, lines, anchors) {
     // them first), and the line wraps when it needs a second one instead of being cut off with an ellipsis.
     {
       const raw = (h.match(/svinfo">[^<]*/g) || []).map((x) => x.slice(8)), info = raw.map((x) => x.replace(/\u00a0/g, " "));
-      const src = grab("renderSurveyTable"), css = (H.match(/#sv_table \.svinfo\{[^}]*\}/) || [""])[0];
+      const src = grab("renderSurveyTable"), css = (H.match(/\n {8}#sv_table \.svinfo\{[^}]*\}/) || [""])[0];   // the table's own rule (item 7 lifts its size earlier in the page)
       check("30b. THE ROW'S LINE IN WORDS: \"2 lines · 200 m\", the held one \"⏸ hold · 2 lines · 200 m\" (it read "
             + "\"⏸2L 200m\"); a run part \"3/6 run\" or \"✓ done\", deferred lines \"+2 deferred\", a fall \"⚠ water fell\"; "
             + "the line wrapping, not cut off, and only between parts (each held whole: \"2 lines\" never split)",

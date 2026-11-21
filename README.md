@@ -1723,7 +1723,11 @@ Add to plan, what they report and the Plan B note stay outside them: no fold hid
 says. A fold set by hand is kept in that browser. `tests/path_card.js` 13. **The survey rows in
 words**: each row's line read "⏸⚠2L(+2) 668m"; it now says "⏸ hold · ⚠ water fell · 2 lines +2
 deferred · 668 m" (and "3/6 run" or "✓ done" once she has run some), wrapping onto a second line -
-only between parts - rather than being cut off. `tests/survey_table.js` 30b.
+only between parts - rather than being cut off. `tests/survey_table.js` 30b. **Larger type**: every
+size on the card is one px larger (captions 8.5, labels 10, notes 10.5, values and fields 12), and
+the card is 264 px wide (236 before) so the rows that fitted still fit; the ROC card's default spot
+moved with it (left 292 px, 14 px clear). The head's, the Area row's and the plan foot's buttons size
+to their words. `tests/path_card.js` 14.
 
 1. **Plan** — on the **Path planning card**: the **Waypoints** tab to drop/remove
    waypoints, or the **Survey** tab for a **CAMP-style 3-click survey pattern** (its switch on

@@ -44,6 +44,10 @@
 //         kept, each folded section's line naming what is in it (2026-11-21, item 5). 4 mutations, 4/4 caught: Speeds
 //         lead and turns open to start; the folds not applied; the summary dropping an eased turn NOT AVAILABLE; the
 //         window section renamed
+//   14    larger type (2026-11-21, item 7): every size on the card one px larger, scoped to it; the card 264 px and the
+//         ROC card's default left 14 px clear of it; the head's, the Area row's and the plan foot's buttons sized to
+//         their words. 4 mutations, 4/4 caught: the ROC card back at 264 px (under the wider card); the card back to
+//         236 px; the survey rows' line not lifted; the buttons' 40 px back
 //
 // TEETH (1d, 6b, 9) - 7 sidecar mutations RUN, 7/7 caught:
 //   Arr m back on the command bar -> 1d          the section before Route rules -> 1d
@@ -730,6 +734,34 @@ check("8. THE FIRST RENDER RUNS AFTER EVERY NAME IT READS IS DECLARED - S (canCo
               && /SV_SECS\.forEach\(\(\[k, key\]\) => \{ \$\("#sv_sec_" \+ k \+ "_head"\)\.onclick = \(\) => \{ svFold\[k\] = !svFold\[k\]; lsSet\(key, svFold\[k\]\); pathRender\(\); \}; \}\);/.test(H)
               && /#pp_follow input, #pp_follow select, \.svsec input, \.svsec select/.test(H),
         () => JSON.stringify({ order, wrong, heads, dflt, kept, s0, s1, s2 }));
+}
+
+// ── 14. LARGER TYPE (2026-11-21, the card review's item 7). The card read at 7.5-9.5 px - captions, notes, section lines,
+// the survey rows - while its values change under the operator's eye. Every size on it one px larger, scoped to
+// #pathPanel (the other panels keep theirs), and the card 28 px wider so the rows that fitted still fit; the ROC card,
+// which opens beside it, keeps its 14 px gap (its default left was set from this card's width). Measured in the lab:
+// no clipped text and no overflowing row on any tab, Pattern or Bounded, on the chart (264 px) or in the controls
+// window - once the head's, the Area row's and the plan foot's buttons sized to their words (at 10 px the base .ctl's
+// 40 px cut CLR PLAN and "Drawing area").
+{
+  const W = +((H.match(/\n  #pathPanel\{width:(\d+)px;/) || [])[1]);
+  const ROC = +((H.match(/<div class="panel" id="rocPanel" style="display:none;width:252px;left:(\d+)px;">/) || [])[1]);
+  const LEFT = +((H.match(/\n  \.panel\{position:absolute;left:(\d+)px;/) || [])[1]);
+  const SIZES = [["#pathPanel label", 10], ["#pathPanel .enf label", 11], ["#pathPanel .phint", 10.5],
+    ["#pathPanel input,#pathPanel select", 12], ["#pathPanel .ctl.small", 11], ["#pathPanel .phead", 10], ["#pathPanel .pptab", 9.5],
+    ["#pathPanel .ppsub", 10], ["#pathPanel .pprules-head", 10], ["#pathPanel .pprules .pprsum", 9.5], ["#pathPanel .ppread label", 8.5],
+    ["#pathPanel .ppread .phint", 12], ["#pathPanel #sv_table .svno,#pathPanel #sv_table .svname", 11], ["#pathPanel #sv_table button", 10],
+    ["#pathPanel #sv_table .svacts button", 9.5], ["#pathPanel #sv_table .svcont", 10], ["#pathPanel #sv_table .svinfo", 9.5],
+    ["#pathPanel .phead .ctl,#pathPanel .pparea .ppbtns .ctl,#pathPanel .ppplan .ctl", 10]];
+  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\#]/g, "\\$&");
+  const missing = SIZES.filter(([sel, px]) => !new RegExp("\\n  " + esc(sel) + "\\{font-size:" + px + "px;\\}").test(H)).map(([s]) => s);
+  check("14. LARGER TYPE: every size on the card one px larger, scoped to #pathPanel (captions 8.5, labels 10, notes "
+        + "10.5, values and fields 12, the survey rows 9.5-11); the card 264 px wide and the ROC card's default left 14 px "
+        + "clear of it; the head's, the Area row's and the plan foot's buttons sized to their words, never under 40 px",
+        () => W === 264 && ROC === LEFT + W + 14 && missing.length === 0
+              && /\n  #pathPanel \.phead \.ctl,#pathPanel \.pparea \.ppbtns \.ctl,#pathPanel \.ppplan \.ctl\{width:auto;min-width:40px;\}/.test(H)
+              && /<div id="sv_head" style="display:none;font-family:var\(--mono\);font-size:10px;/.test(H),
+        () => JSON.stringify({ W, ROC, LEFT, missing }));
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
