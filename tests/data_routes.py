@@ -46,7 +46,12 @@ that hold now, and what each one is protecting against, are in the block above n
     has no external service on its path, before it agrees to call a stall weather);
   * the skip is keyed on the console's own "[ports] geocoder unreachable" note, NOT on the
     400 - which reads "(no geocoder, or no such place)" for both causes, so the old
-    condition skipped whenever a lookup failed for any reason at all.
+    condition skipped whenever a lookup failed for any reason at all;
+  * and 12g and 12i skip on the console's own `chart_failed` (2026-11-21): NOAA's chart
+    host went dark, the snap could not read a chart, and 12g FAILED as "a town centre is on
+    land" while 12i PASSED on the outage's note. Never keyed on snapped False, which is
+    also the honest answer for a place with no water near it. 12g's detail prints the
+    console's note now.
 
 TEETH, THE NETWORKED SKIP (2026-09-19) - twelve mutations RUN, 11 caught, and the one
 survivor recorded as a survivor. Two fixture defects and one non-determinism came out of
@@ -834,12 +839,20 @@ try:
         # route out. The console must move it to charted water this hull can float in.
         place = found.get("place") or {}
         moved = found.get("moved_m")
-        check("12g. the geocoded PLACE CENTRE is snapped to charted navigable water",
-              found.get("snapped") is True and (found.get("depth_m") or 0) > 0
-              and moved is not None,
-              "place %.4f,%.4f -> berth in %.1f m, moved %.0f m (a town centre is on land)"
-              % (place.get("lat", 0), place.get("lon", 0),
-                 found.get("depth_m") or 0, moved or 0))
+        # ⚠ A CHART THAT COULD NOT BE READ IS A SKIP, NOT A FINDING (2026-11-21). NOAA's chart host went dark and this
+        # FAILED with "berth in 0.0 m, moved 0 m (a town centre is on land)" - a guess at the cause, because the
+        # console's own note was never printed. Keyed on the console's `chart_failed`, never on snapped False, which is
+        # also the answer for a place with no water near it - the case 12g exists to catch.
+        if found.get("chart_failed"):
+            skip("12g", "the console could not read the chart - the water snap not exercised (%s)"
+                 % (found.get("note") or "no note"))
+        else:
+            check("12g. the geocoded PLACE CENTRE is snapped to charted navigable water",
+                  found.get("snapped") is True and (found.get("depth_m") or 0) > 0
+                  and moved is not None,
+                  "place %.4f,%.4f -> berth in %.1f m, moved %.0f m - %s"
+                  % (place.get("lat", 0), place.get("lon", 0),
+                     found.get("depth_m") or 0, moved or 0, found.get("note") or "no note"))
         # 12h. ... and the boat actually comes up there.
         # ⚠ A THUNK, BECAUSE IT DEREFERENCES gf["spawn"], WHICH A REFUSAL DOES NOT CARRY. As
         # a plain expression this crashed the suite on exactly the mutation 12f and 12g exist
@@ -865,6 +878,11 @@ try:
              % NET_BUDGET_S)
     elif geocoder_unreachable():
         skip("12i", "the console could not reach the geocoder - landlocked case not exercised")
+    elif ((_gi[1] or {}).get("found") or {}).get("chart_failed"):
+        # the chart unread: "no water here" is not what the console found, so the landlocked case is not exercised
+        # (before 2026-11-21 this PASSED on the outage's note, read as the landlocked reason)
+        skip("12i", "the console could not read the chart - landlocked case not exercised (%s)"
+             % ((_gi[1].get("found") or {}).get("note") or "no note"))
     else:
         ci, gi = _gi
         fi = gi.get("found") or {}

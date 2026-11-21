@@ -514,10 +514,17 @@ def snap_to_water(lat, lon, min_depth, radius_km=12.0, timeout=90.0):
     berth chosen is the closest usable water rather than the first polygon in the file.
     """
     d = min(0.35, max(0.05, radius_km / 111.0))
+    # ⚠ A CHART THAT COULD NOT BE READ IS NOT A PLACE WITH NO WATER (2026-11-21). NOAA's chart host went dark and this
+    # answered "no charted depth areas within 12 km" for Nome - a harbor - so the port was flagged with a reason about
+    # the place that was really about the service. A failed read says so (`failed`), and the route passes it on.
     try:
         data = fetch_enc_features((lon - d, lat - d, lon + d, lat + d), min_depth)
     except Exception as e:
-        return {"ok": False, "note": "no chart here (%s)" % type(e).__name__}
+        return {"ok": False, "failed": True,
+                "note": "the chart could not be read (%s) - the water was not checked" % type(e).__name__}
+    if data.get("failed"):
+        return {"ok": False, "failed": True,
+                "note": "%s - the water was not checked" % (data.get("note") or "the chart could not be read")}
     areas = [f for f in (data.get("features") or []) if f.get("role") == "depth_area"]
     if not areas:
         return {"ok": False, "note": "no charted depth areas within %.0f km" % radius_km}
@@ -3313,16 +3320,27 @@ def fetch_enc_features(bbox, min_depth=0.0, band=None, extras=True, use_cache=Tr
             pass
     if data is None:
         if time.monotonic() < _enc_down_until:
-            return {"band": None, "features": [], "note": "ENC offline (no cache for this area)"}
+            return {"band": None, "features": [], "failed": True, "note": "ENC offline (no cache for this area)"}
         if forced is None:
-            band = _enc_pick_band(bbox)
+            # ⚠ "NO CHART HERE" AND "THE SERVICE DID NOT ANSWER" ARE TWO ANSWERS (2026-11-21). This said "no ENC coverage
+            # here (or offline)" for both, and snap_to_water passed it on as "no charted depth areas within 12 km": NOAA's
+            # chart host went dark and the console told the operator Nome has no charted water. The pick's own `errors`
+            # tell them apart. A FAILED pick is `failed` and arms the 30 s breaker; a whole answer of "no band reaches
+            # here" (Denver) is a fact about the place and arms nothing - before, it armed the breaker too, so the next
+            # area's read within 30 s came back "ENC offline", an outage that had not happened.
+            pick_errors = []
+            band = _enc_pick_band(bbox, pick_errors)
             if band is None:
-                _enc_down_until = time.monotonic() + 30.0
-                return {"band": None, "features": [], "note": "no ENC coverage here (or offline)"}
+                if pick_errors:
+                    _enc_down_until = time.monotonic() + 30.0
+                    return {"band": None, "features": [], "failed": True,
+                            "note": "NOAA's chart service did not answer (%s)" % "; ".join(pick_errors)}
+                return {"band": None, "features": [], "note": "no ENC coverage here"}
         lm = _enc_layer_map(band)
         if not lm:
             # A forced band whose layer list cannot be had is a failed read, not an empty one.
-            return {"band": None, "features": [], "note": "the %s layer list could not be read" % _band_word(band)}
+            return {"band": None, "features": [], "failed": True,
+                    "note": "the %s layer list could not be read" % _band_word(band)}
         jobs = [(role, cls, lm[cls]) for role, classes in ENC_ROLES.items()
                 for cls in classes if cls in lm]
         # ── EVERY OTHER PUBLISHED LAYER, FETCHED AND CACHED (Andy, 2026-08-31: "download
@@ -10982,6 +11000,10 @@ class Handler(BaseHTTPRequestHandler):
                         body = dict(body, lat=glat, lon=glon)
                         found = {"geocoded": disp, "place": {"lat": glat, "lon": glon},
                                  "snapped": False, "note": snap.get("note")}
+                        if snap.get("failed"):
+                            # the chart could not be read: the water was NOT checked - a different
+                            # message to the operator, and to data_routes a skip, not a finding
+                            found["chart_failed"] = True
                 # ⚠⚠ THE GATE ABOVE IS NOW UP TO ~110 s OLD - a geocode (20 s) plus
                 # snap_to_water (90 s) - and the operator had the console for all of it.
                 # RE-TAKE it against the state this mutation will actually meet. Arming and

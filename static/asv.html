@@ -8237,6 +8237,12 @@ async function findPortByName(){
     if(f.snapped){
       showBanner("Port \"" + q + "\" → " + (f.geocoded || "") + ". " + (f.note || "")
                  + " Chart moved there; verify the berth before running.");
+    } else if(f.chart_failed){
+      // THE CHART COULD NOT BE READ (2026-11-21): the water was not checked, so nothing is known about the place -
+      // not "on land", not "no water". NOAA's chart host going dark read as "no charted depth areas" at Nome.
+      showBanner("Port \"" + q + "\" → " + (f.geocoded || "") + ". ⚠ " + (f.note || "the chart could not be read")
+                 + " — this is the PLACE CENTER, not a berth. Pan to a berth and use \"Save this view as a port\", "
+                 + "or find the port again once the chart answers.");
     } else {
       showBanner("Port \"" + q + "\" → " + (f.geocoded || "") + ". ⚠ " + (f.note || "no chart")
                  + " — this is the PLACE CENTER, which is on land. Pan to a berth and use "

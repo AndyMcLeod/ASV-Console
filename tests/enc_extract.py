@@ -749,6 +749,90 @@ check("13b. ... and /api/enc actually uses it - a helper nothing calls is a comm
       lambda: "_json_body_yielding(data)" in _fn and "json.dumps(data)" not in _fn,
       "the ENC route is the one that serves those extracts")
 
+# ⚠⚠ 14. "THE SERVICE DID NOT ANSWER" IS NOT "NO CHART HERE" (2026-11-21). NOAA's chart host went dark - no connection
+# at all - and a port found by name at Nome was flagged "no charted depth areas within 12 km": the band pick's failure
+# came back as "no ENC coverage here (or offline)" and snap_to_water read it as a fact about the place. data_routes 12g
+# went red as "a town centre is on land" and 12i passed on the outage's note. The pick's own `errors` tell the two apart:
+# a FAILED pick is `failed`, named, and arms the 30 s breaker (whose answers are `failed` too); a WHOLE "no band reaches
+# here" arms nothing - it used to, and the next area's read within 30 s then came back "ENC offline". snap_to_water
+# passes `failed` on, and the port route marks the answer `chart_failed` (port_slew.js 17e: the banner).
+# Hermetic: the band pick is stubbed, and the cache dir is a temp dir, so no real cache can answer.
+_d14 = tempfile.mkdtemp(prefix="asv_enc_unread_")
+_sav14 = (A.ENC_DIR, A._enc_pick_band, A._enc_down_until)
+try:
+    A.ENC_DIR = _d14
+    BB14 = (-30.0, 20.0, -29.9, 20.1)                 # mid-ocean, as 12: no real cache can exist
+
+    def _pick_fails(bbox, errors=None):
+        if errors is not None:
+            errors.append("harbor: its layer list could not be read")
+        return None
+
+    A._enc_pick_band = _pick_fails
+    A._enc_down_until = 0.0
+    t14 = time.monotonic()
+    down = A.fetch_enc_features(BB14)
+    armed = A._enc_down_until > t14
+    again = A.fetch_enc_features(BB14)                # inside the breaker's 30 s
+    A._enc_down_until = 0.0
+    snap_down = A.snap_to_water(20.05, -29.95, 1.0)
+    check("14. a band pick that FAILED is `failed` and NAMED (the service did not answer, and why), arms the 30 s "
+          "breaker, and the breaker's own answer is `failed` too",
+          lambda: down.get("failed") is True and down.get("band") is None
+                  and "did not answer" in (down.get("note") or "") and "layer list could not be read" in (down.get("note") or "")
+                  and armed and again.get("failed") is True,
+          "failed=%s note=%r breaker armed=%s; inside it: failed=%s note=%r"
+          % (down.get("failed"), down.get("note"), armed, again.get("failed"), again.get("note")))
+    check("14b. ... and snap_to_water says the chart could not be read - `failed`, the water not checked - never "
+          "\"no charted depth areas\"",
+          lambda: snap_down.get("ok") is False and snap_down.get("failed") is True
+                  and "did not answer" in (snap_down.get("note") or "") and "not checked" in (snap_down.get("note") or "")
+                  and "no charted depth areas" not in (snap_down.get("note") or ""),
+          "snap: %s" % snap_down)
+
+    # ACCEPTANCE: a WHOLE answer of "no band reaches here" is a fact about the place, and arms nothing
+    A._enc_pick_band = lambda bbox, errors=None: None
+    A._enc_down_until = 0.0
+    t14 = time.monotonic()
+    none = A.fetch_enc_features(BB14)
+    armed_none = A._enc_down_until > t14
+    snap_none = A.snap_to_water(20.05, -29.95, 1.0)
+    check("14c. ACCEPTANCE: a band pick that answered WHOLE with no band is not `failed`, says no coverage, and arms no "
+          "breaker - so the next area is not told \"ENC offline\" - and the snap still says no charted depth areas",
+          lambda: not none.get("failed") and none.get("note") == "no ENC coverage here" and not armed_none
+                  and snap_none.get("ok") is False and not snap_none.get("failed")
+                  and "no charted depth areas" in (snap_none.get("note") or ""),
+          "failed=%s note=%r breaker armed=%s; snap: %s" % (none.get("failed"), none.get("note"), armed_none, snap_none))
+
+    # a fetch that RAISES is a read that failed too
+    _ff = A.fetch_enc_features
+
+    def _raises(*a, **k):
+        raise OSError("simulated")
+
+    A.fetch_enc_features = _raises
+    try:
+        snap_raise = A.snap_to_water(20.05, -29.95, 1.0)
+    finally:
+        A.fetch_enc_features = _ff
+    check("14d. ... and a chart read that RAISES is `failed` too, the water not checked",
+          lambda: snap_raise.get("ok") is False and snap_raise.get("failed") is True
+                  and "not checked" in (snap_raise.get("note") or ""),
+          "snap: %s" % snap_raise)
+finally:
+    A.ENC_DIR, A._enc_pick_band, A._enc_down_until = _sav14
+    A._enc_down_until = 0.0
+    import shutil as _sh14
+    _sh14.rmtree(_d14, ignore_errors=True)
+
+# 14e. THE PORT ROUTE carries it to the page: the snap's `failed` becomes the answer's `chart_failed` (what data_routes
+# 12g/12i skip on, and the banner's branch). The route needs a live geocoder to drive, so this one is read.
+_rt = _enc_src[_enc_src.index("snap = snap_to_water(glat, glon, MIN_NAV_DEPTH_M)"):]
+_rt = _rt[:_rt.index("THE GATE ABOVE IS NOW UP TO")]
+check("14e. the port route marks a found place whose chart could not be read `chart_failed`, from the snap's `failed`",
+      lambda: re.search(r'if snap\.get\("failed"\):\s*\n(\s*#[^\n]*\n)*\s*found\["chart_failed"\] = True', _rt) is not None,
+      "the answer data_routes 12g/12i skip on, and findPortByName's banner branches on")
+
 print(("\n%d CHECK(S) FAILED (%d ran)" % (fails, ran)) if fails
       else ("\nall checks passed (%d)" % ran))
 sys.exit(1 if fails else 0)

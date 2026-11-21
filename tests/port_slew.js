@@ -56,6 +56,10 @@
 //   addPortHere loses its catch                               -> 17c, 17d
 //   the picker is not restored on a refusal                   -> 17c
 //
+// AND 17e, 2026-11-21: a port found by name whose chart could NOT BE READ (NOAA's chart host went dark) is told as
+// that - the console's note, "the PLACE CENTER, not a berth", find it again once the chart answers - never as
+// "which is on land"; a place with no water near it still is. Mutants in the commit's runner.
+//
 // ⚠ AND THE FIRST SWEEP OF THOSE SIX SCORED ALL SIX AS SURVIVED, for a reason that had
 // nothing to do with the checks: this suite had no ASV_HTML override, so every mutant
 // page was written to a sidecar the suite never read. The thirteen above cannot have
@@ -549,6 +553,32 @@ const NEWBASE = { lat: 38.7800, lon: -75.1400 };
           () => ap.threw === null && ap.moving === false
                 && /Add port failed/.test(ap.said || "") && /nothing was added/.test(ap.said || ""),
           "addPortHere: threw " + ap.threw + ", said \"" + ap.said + "\"");
+
+    // 17e. A CHART THAT COULD NOT BE READ IS NOT LAND (2026-11-21). NOAA's chart host went dark, the console could not
+    // look for water, and the banner said the found place was "the PLACE CENTER, which is on land" - for Nome, beside
+    // its harbor. The console now marks that answer `chart_failed`; the banner names the outage, says what the port
+    // is (the place center, not a berth) and what to do. A place the chart WAS read for, with no water near it, keeps
+    // its "on land" banner - driven both ways, the fetch answering as the console does.
+    const driveFind = async (found) => {
+      Object.assign(ctx, mk());
+      ctx.fetch = () => Promise.resolve({ ok: true, json: async () => ({
+        ports: [{ id: "x", name: "X" }], active: "x", spawn: { lat: 64.4975, lon: -165.4062 }, found }) });
+      let threw = null;
+      try { await vm.runInContext("findPortByName()", ctx); } catch (e) { threw = String(e); }
+      return { threw, banner: ctx.banners[ctx.banners.length - 1] || "" };
+    };
+    const unread = await driveFind({ geocoded: "Nome, Alaska", place: { lat: 64.4975, lon: -165.4062 }, snapped: false,
+      chart_failed: true, note: "NOAA's chart service did not answer (harbor: its layer list could not be read) - the water was not checked" });
+    const dry = await driveFind({ geocoded: "Denver, Colorado", place: { lat: 39.74, lon: -104.99 }, snapped: false,
+      note: "no charted depth areas within 12 km" });
+    check("17e. a port found by name whose CHART COULD NOT BE READ says so - the console's note, the place center "
+          + "not a berth, find it again once the chart answers - and never \"on land\"; a place read and found dry still "
+          + "says it is on land",
+          () => unread.threw === null && /did not answer/.test(unread.banner) && /PLACE CENTER, not a berth/.test(unread.banner)
+                && /once the chart answers/.test(unread.banner) && !/on land/.test(unread.banner)
+                && dry.threw === null && /no charted depth areas/.test(dry.banner) && /which is on land/.test(dry.banner)
+                && !/once the chart answers/.test(dry.banner),
+          "chart unread: \"" + unread.banner + "\" | read and dry: \"" + dry.banner + "\"");
   })();
 })();
 

@@ -100,7 +100,12 @@ launch.
   the console moves it 600 m to charted 3.6 m water before calling it a berth. If no
   navigable water is charted nearby (somewhere landlocked, or off-chart) the port is
   still created at the place center but **flagged unverified with the reason**, never
-  presented as a berth. A name that matches nothing is refused outright.
+  presented as a berth. A name that matches nothing is refused outright. **If the chart
+  itself cannot be read** (NOAA's chart service not answering) the console says so: the
+  port is created at the place center with the water *not checked*, and the banner says to
+  find it again once the chart answers - an outage is never reported as "no water here"
+  (since 21 November 2026; `tests/enc_extract.py` 14, `tests/port_slew.js` 17e, and
+  `tests/data_routes.py` 12g/12i SKIP on it rather than failing or passing on the outage).
 * **+ Save this view as a port…** — pins the chart's current center under a name you
   give it. This is the refinement step: once you can see the berth, put it exactly there.
 
