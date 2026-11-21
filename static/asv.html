@@ -153,7 +153,11 @@
     font-size:9px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;user-select:none;}
   .pprules-head::before{content:"\25BE";margin-right:-2px;}
   .pprules.fold .pprules-head::before{content:"\25B8";}
-  .pprules .pprsum{text-transform:none;letter-spacing:0;color:var(--ink-faint);font-size:8.5px;text-align:right;}
+  /* the summary on its own line under the title (beside it, it folded ROUTE RULES onto two lines), and only while the
+     section is folded: open, its rows say the same (2026-11-21) */
+  .pprules-head{flex-wrap:wrap;justify-content:flex-start;}
+  .pprules .pprsum{flex-basis:100%;padding-left:10px;text-transform:none;letter-spacing:0;color:var(--ink-faint);font-size:8.5px;text-align:left;}
+  .pprules:not(.fold) .pprsum{display:none;}
   .pprules-body{display:flex;flex-direction:column;gap:6px;}
   .pprules.fold .pprules-body{display:none;}
   .ppplan{border-top:1px solid var(--line);padding-top:5px;display:flex;align-items:center;justify-content:space-between;gap:6px;
@@ -330,8 +334,20 @@
   .ctl.small.punch{background:#123; border-color:var(--track); color:var(--track); font-weight:700;}
   .ctl.small.punch:hover{background:var(--track); color:#04121a;}
   .ctl.small.punch:disabled{opacity:.5; cursor:default;}
-  /* the Passage tab's Plan, Sail and Read chart across the card: a 40 px button folded "PLAN PASSAGE" onto two lines */
-  #passagePanel > button.ctl{width:auto;align-self:stretch;}
+  /* EVERY TAB'S OWN ACTIONS ACROSS THE CARD (2026-11-21, Andy: "Review the path planning panel and try to make it more
+     clear and user friendly"): `.ctl` is the map's 40 px square, so a tab's button with no rule of its own folded "PUNCH
+     OUT" onto two lines and "ADD TO PLAN" onto three - and Go, Search's Add to plan - while Reset beside them ran the full
+     width. The Passage tab alone had this rule (a 40 px button had folded "PLAN PASSAGE"); now every tab's buttons do. */
+  .ppbody > button.ctl{width:auto;align-self:stretch;}
+  /* Pattern | Bounded side by side, one switch - not two 40 px squares stacked under each other */
+  #sv_moderow .ppbtns{display:flex;flex:1;gap:2px;justify-content:flex-end;}
+  #sv_moderow .ppbtns .ctl{width:auto;flex:1;height:22px;padding:0 6px;}
+  /* a field wide enough for what it holds: at 50 px a 181.5 m spacing read "181.", and a typed latitude/longitude
+     gets 120 px on both tabs (the Passage tab's 64 px showed its "or click chart" as "or c") */
+  #pathPanel .prow > input[type=number]{width:64px;}
+  #pathPanel .prow > #gt_lat,#pathPanel .prow > #gt_lon,#pathPanel .prow > #ps_lat,#pathPanel .prow > #ps_lon{width:120px;}
+  /* Search's pattern by name: at 64 px "Expanding box" read "Expanc" */
+  #sr_type{width:118px;}
   .encbanner{position:absolute;left:50%;transform:translateX(-50%);bottom:120px;z-index:6;
     font-family:var(--mono);font-size:10px;color:#160d02;background:var(--warn);border-radius:3px;
     padding:4px 10px;max-width:80vw;text-align:center;display:none;}
@@ -7055,8 +7071,11 @@ const PATH_TAG = {survey: "SURVEY PATTERN", bound: "SURVEY AREA", search: "SEARC
 const PATH_TAB_KEY = "asv_path_tab_v1", PATH_FOLD_KEY = "asv_path_fold_v1", PATH_RULES_KEY = "asv_path_rules_fold_v1";
 const PATH_FOLLOW_KEY = "asv_path_follow_fold_v1";   // the Waypoints and end of plan section's fold (2026-10-14)
 let pathTab = PATH_TABS.includes(lsGet(PATH_TAB_KEY, "survey")) ? lsGet(PATH_TAB_KEY, "survey") : "survey";
-let pathFold = lsBool(PATH_FOLD_KEY, false), pathRulesFold = lsBool(PATH_RULES_KEY, false);
-let pathFollowFold = lsBool(PATH_FOLLOW_KEY, false);
+// ROUTE RULES AND WAYPOINTS AND END OF PLAN START FOLDED (2026-11-21, the path card review): open, their 15 rows sat under
+// every tab and made the Survey tab 2.7 screens tall; folded, each is one line that names its values. A fold the
+// operator has set (its key stored) is kept either way.
+let pathFold = lsBool(PATH_FOLD_KEY, false), pathRulesFold = lsBool(PATH_RULES_KEY, true);
+let pathFollowFold = lsBool(PATH_FOLLOW_KEY, true);
 let gotoTarget = null;                          // the Go-To tab's point, {lat, lon} or null - in memory, like every draft   // no `activeLine`: the chart highlights runLineIdx
 // CAMP-style 3-click survey pattern: A=start, B=diagonal end, C=spacing/direction
 let pat = {A:null, B:null, C:null, align:0};   // align 0=start 1=center 2=finish
@@ -23411,8 +23430,10 @@ function pathReadings(){
   set("#wp_n", String(n)); set("#wp_lines", String((mission.lines || []).length)); set("#wp_len", n > 1 ? fmtDist(len) : "--");
   set("#pp_plan .ppsum", n ? "plan: " + n + " wpts · " + fmtDist(len) : "plan: empty");
   const v = sel => { const el = $(sel); return el ? String(el.value).trim() : ""; };
-  set("#pp_rules .pprsum", "min " + (v("#sp_mindepth") || "--") + " m · buf " + (v("#sp_buffer") || "--") + " m · water "
-    + (v("#sp_water") ? v("#sp_water") + " m" : "auto") + " · " + spdTxt(roleSpeed("transit"))
+  // (2026-11-21: each value by its name - "7 kn" alone did not say it was the transit speed - and the No-wake speed)
+  set("#pp_rules .pprsum", "min " + (v("#sp_mindepth") || "--") + " m · buffer " + (v("#sp_buffer") || "--") + " m · water "
+    + (v("#sp_water") ? v("#sp_water") + " m" : "auto") + " · transit " + spdTxt(roleSpeed("transit"))
+    + " · no-wake " + (v("#sp_nowake") || "--") + " kn"
     + (v("#enf_openwater") === "off" ? " · open water off" : ""));
   const end = $("#c_completion");
   set("#pp_follow .pprsum", "arrive " + (v("#c_arrival") || "--") + " m · approach " + (v("#c_approach") || "--") + " m · "

@@ -26,6 +26,12 @@
 //   8     the first render runs once every name it reads is declared
 //   9     an END OF PLAN PICKED IS KEPT until the console reports it: the console's echo of the old one, every frame
 //         until the debounced save lands, no longer puts it back (it did, picked in the controls window - measured)
+//   6c    Route rules and Waypoints and end of plan START FOLDED, a fold the operator set kept; the summary on its own
+//         line, shown while folded, each value by name with the No-wake speed (6). 3 mutations, 3/3 caught (2026-11-21)
+//   10    every tab's own buttons run across the card (one rule, not the map's 40 px square), the fields fit their values
+//         (2026-11-21; the markup scanned for each tab body's direct buttons). 5 sidecar mutations, 5/5 caught: the
+//         rule back on the Passage tab alone; the rule gone; a tab button not a .ctl; Pattern | Bounded unset; a 64 px
+//         Passage latitude
 //
 // TEETH (1d, 6b, 9) - 7 sidecar mutations RUN, 7/7 caught:
 //   Arr m back on the command bar -> 1d          the section before Route rules -> 1d
@@ -152,13 +158,13 @@ const SRC = [decl("^const PATH_TABS = .*$"), decl("^const PATH_TAB_OF = .*$"), d
 function world() {
   const ids = ["#pathPanel", "#pp_draw", "#pp_fold", "#pp_rules", "#bnd_draw", "#r_draw", "#gt_lat", "#gt_lon", "#gt_range",
     "#gt_time", "#gt_go", "#gt_hint", "#tr_len", "#tr_time", "#sr_len", "#wp_n", "#wp_lines", "#wp_len", "#pp_plan .ppsum",
-    "#pp_rules .pprsum", "#sp_mindepth", "#sp_buffer", "#sp_water",
+    "#pp_rules .pprsum", "#sp_mindepth", "#sp_buffer", "#sp_water", "#sp_nowake",
     "#pp_follow", "#pp_follow .pprsum", "#c_arrival", "#c_approach", "#c_completion",
     "#pp_tab_survey", "#pp_tab_search", "#pp_tab_transit", "#pp_tab_passage", "#pp_tab_goto", "#pp_tab_wpt",
     "#sv_mode_pattern", "#sv_mode_bounded", "#boundPanel", "#sv_mode_hint"];
   const D = {};
   for (const i of ids) D[i] = mkEl(i);
-  D["#sp_mindepth"].value = "2"; D["#sp_buffer"].value = "5"; D["#sp_water"].value = "";
+  D["#sp_mindepth"].value = "2"; D["#sp_buffer"].value = "5"; D["#sp_water"].value = ""; D["#sp_nowake"].value = "4.5";
   D["#c_arrival"].value = "2"; D["#c_approach"].value = "1";
   D["#c_completion"].options = [{ text: "RTH" }, { text: "Complete" }, { text: "Loiter" }, { text: "Repeat" }];
   D["#c_completion"].selectedIndex = 0;
@@ -422,10 +428,11 @@ const tabOn = (w) => ["survey", "search", "transit", "passage", "goto", "wpt"].f
   a.set("mission", { waypoints: [], lines: [] }); a.pathReadings();
   const empty = w.D["#pp_plan .ppsum"].textContent;
   check("6. THE READINGS: the transit line's length and its time at the TRANSIT speed (2.00 km at 6 kn, 11 min); the "
-        + "plan at the foot of every tab (3 waypoints, its length; 'plan: empty' with none); Route rules in one line",
+        + "plan at the foot of every tab (3 waypoints, its length; 'plan: empty' with none); Route rules in one line, each "
+        + "value by its name and the No-wake speed with them (2026-11-21: '6 kn' alone did not say it was the transit speed)",
         () => r.tl === "2.00 km" && r.tt === "11m at 6 kn" && r.n === "3" && r.lines === "2"
               && r.plan === "plan: 3 wpts · 1.82 km" && empty === "plan: empty"
-              && r.rules === "min 2 m · buf 5 m · water auto · 6 kn",
+              && r.rules === "min 2 m · buffer 5 m · water auto · transit 6 kn · no-wake 4.5 kn",
         () => JSON.stringify({ r, empty }));
   const fol0 = w.D["#pp_follow .pprsum"].textContent;
   w.D["#c_arrival"].value = "5"; w.D["#c_completion"].selectedIndex = 2; a.pathReadings();
@@ -438,6 +445,15 @@ const tabOn = (w) => ["survey", "search", "transit", "passage", "goto", "wpt"].f
         () => fol0 === "arrive 2 m · approach 1 m · RTH" && fol1 === "arrive 5 m · approach 1 m · Loiter"
               && open === false && folded === true && rulesWith === false,
         () => JSON.stringify({ fol0, fol1, open, folded, rulesWith }));
+  // 6c (2026-11-21): the sandbox above declares the folds itself, so their START is judged in the page's own declaration
+  const folds = (H.match(/^let pathFold = .*\n^let pathFollowFold = .*$/m) || [""])[0];
+  check("6c. BOTH SECTIONS START FOLDED, each a line naming its values - Route rules and Waypoints and end of plan open "
+        + "were 15 rows under every tab (the Survey tab 2.7 screens tall) - and a fold the operator set is kept (each read "
+        + "from its own key); the summary sits on its own line under the title, shown while folded",
+        () => /pathRulesFold = lsBool\(PATH_RULES_KEY, true\)/.test(folds) && /pathFollowFold = lsBool\(PATH_FOLLOW_KEY, true\)/.test(folds)
+              && /pathFold = lsBool\(PATH_FOLD_KEY, false\)/.test(folds)
+              && /\.pprules \.pprsum\{flex-basis:100%;/.test(H) && /\.pprules:not\(\.fold\) \.pprsum\{display:none;\}/.test(H),
+        () => folds.replace(/\s+/g, " "));
 }
 
 // ── 7. what ends the drawing, and the search preview ───────────────────────────────────────────────────────────────────
@@ -519,6 +535,46 @@ check("8. THE FIRST RENDER RUNS AFTER EVERY NAME IT READS IS DECLARED - S (canCo
               && bRun.join(" ") === "loiter/loiter rth/rth" && cRun.join(" ") === "complete/complete complete/complete"
               && /^const COMPLETION_ECHO_MS = 5000;/m.test(H) && /syncCompletionSel\(s\);/.test(H),
         () => JSON.stringify({ aRun, bRun, cRun, saves: a.env.saves }));
+}
+
+// ── 10. EVERY TAB'S OWN BUTTONS ACROSS THE CARD (2026-11-21, Andy: "Review the path planning panel and try to make it
+// more clear and user friendly"). `.ctl` is the map's 40 px square; a button standing in a tab's body with no rule of
+// its own took it, so PUNCH OUT folded onto two lines and ADD TO PLAN onto three (measured in the lab: 40 x 34 px, Reset
+// below them 203 px), and Go and Search's Add to plan with them - the Passage tab alone had the full-width rule. The
+// markup is scanned for the buttons that stand DIRECTLY in each tab's body (comments, styles and scripts set aside), so
+// a button a later tab adds is covered or this goes red; and the fields sized to what they hold.
+{
+  const page = H.replace(/<!--[\s\S]*?-->/g, "").replace(/<style\b[\s\S]*?<\/style>/g, "").replace(/<script\b[\s\S]*?<\/script>/g, "");
+  const VOID = new Set(["input", "br", "img", "hr", "meta", "link", "col", "source"]);
+  const direct = {};
+  const re = /<\/?([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/g;
+  let m, open = null, depth = 0;
+  while ((m = re.exec(page))) {
+    const close = m[0][1] === "/", tag = m[1].toLowerCase(), attrs = m[2];
+    if (!open) {
+      const pb = !close && tag === "div" && /class="ppbody"/.test(attrs) && /id="([^"]+)"/.exec(attrs);
+      if (pb) { open = pb[1]; depth = 1; direct[open] = []; }
+      continue;
+    }
+    if (close) { if (--depth === 0) open = null; continue; }
+    if (tag === "button" && depth === 1) direct[open].push({ id: (/id="([^"]+)"/.exec(attrs) || [])[1], ctl: /class="[^"]*\bctl\b/.test(attrs) });
+    if (!VOID.has(tag) && !/\/\s*$/.test(attrs)) depth++;
+  }
+  const all = Object.values(direct).flat(), ids = all.map((b) => b.id);
+  const WANT = ["sp_punch", "sp_add", "sr_add", "sr_reset", "tr_follow", "tr_plan", "tr_sail", "tr_read", "gt_go", "gt_clr"];
+  check("10. EVERY TAB'S OWN BUTTONS RUN ACROSS THE CARD: every button standing in a tab's body is a .ctl, and ONE rule "
+        + "gives each the card's width (not the map's 40 px square) - not a rule per tab, which left Survey, Search and "
+        + "Go-To folding PUNCH OUT, ADD TO PLAN and GO; Pattern | Bounded side by side; the number fields 64 px, a typed "
+        + "latitude/longitude 120 px on both tabs, Search's pattern by name",
+        () => Object.keys(direct).length === 6 && WANT.every((id) => ids.includes(id)) && all.every((b) => b.ctl)
+              && /^\s*\.ctl\{width:40px;/m.test(H)
+              && /^\s*\.ppbody > button\.ctl\{width:auto;align-self:stretch;\}/m.test(H)
+              && !/#\w+Panel > button\.ctl\{/.test(H)
+              && /#sv_moderow \.ppbtns \.ctl\{width:auto;flex:1;/.test(H)
+              && /#pathPanel \.prow > input\[type=number\]\{width:64px;\}/.test(H)
+              && /#pathPanel \.prow > #gt_lat,#pathPanel \.prow > #gt_lon,#pathPanel \.prow > #ps_lat,#pathPanel \.prow > #ps_lon\{width:120px;\}/.test(H)
+              && /#sr_type\{width:118px;\}/.test(H),
+        () => Object.entries(direct).map(([k, v]) => k + ":" + v.map((b) => b.id + (b.ctl ? "" : "(NOT .ctl)")).join(",")).join(" "));
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");

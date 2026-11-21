@@ -1689,7 +1689,7 @@ point added to a plan. A tab with nothing drawn yet arms itself (Waypoints never
 there adds a waypoint); **Esc**, Add to plan, Follow, Sail passage and Go put the chart back to
 panning, and while it draws the chart says so (*DRAWING SURVEY PATTERN · ESC TO STOP*).
 **Route rules** under every tab is what every behavior routes by - Min depth, Water, Buffer,
-Transit kn, Open water, Channel rocks, the chart features - and the only copy: the command bar no longer
+Transit kn, No-wake kn, Open water, Channel rocks, the chart features - and the only copy: the command bar no longer
 repeats Buffer, Min depth or Transit kn. **Waypoints and end of plan**, under every tab after Route
 rules (2026-10-14, Andy: "Move waypoint approach and arrival status and end of plan to the Path
 Planning card"), holds what the command bar did: the arrival radius (Arrival m), the approach
@@ -1697,7 +1697,13 @@ radius (Approach m) and the End of plan; it folds to one line like Route rules. 
 picked is kept until the console reports it: the console's echo of the old one, every frame
 until the save lands, used to put the old one back - picked in the controls window, the pick was
 lost. The plan as a whole (waypoints, length, CLR PLAN) is the card's foot. The WPT / SURV / BND /
-SRCH / TRAN buttons are gone. `tests/path_card.js`.
+SRCH / TRAN buttons are gone. **Folded to start (2026-11-21, Andy: "Review the path planning panel
+and try to make it more clear and user friendly"):** both shared sections start folded to one line
+that names their values - Route rules reads *min 2 m · buffer 5 m · water auto · transit 7 kn ·
+no-wake 5 kn* - and a click on the title opens one; a fold set by hand is kept in this browser.
+Open, the rows below say the same, so the line is not shown. Every tab's own buttons (Punch Out,
+Add to plan, Go, Follow, Plan passage) run the card's width, and the fields are wide enough to show
+what they hold. `tests/path_card.js`.
 
 1. **Plan** — on the **Path planning card**: the **Waypoints** tab to drop/remove
    waypoints, or the **Survey** tab for a **CAMP-style 3-click survey pattern** (its switch on
