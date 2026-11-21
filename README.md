@@ -1703,7 +1703,11 @@ that names their values - Route rules reads *min 2 m · buffer 5 m · water auto
 no-wake 5 kn* - and a click on the title opens one; a fold set by hand is kept in this browser.
 Open, the rows below say the same, so the line is not shown. Every tab's own buttons (Punch Out,
 Add to plan, Go, Follow, Plan passage) run the card's width, and the fields are wide enough to show
-what they hold. `tests/path_card.js`.
+what they hold. **The readouts** - what a tab's drawing works out to: a survey's lines, line length
+and width; a search route's waypoints and length; a transit's or passage's points, length and time;
+a Go-To's bearing and range and time; the plan's waypoints, lines and length - sit in ONE strip per
+tab, a caption over each value, so they no longer read as more rows to set. Search's waypoint count
+is captioned **Route** (it said Legs, under the Legs setting). `tests/path_card.js`.
 
 1. **Plan** — on the **Path planning card**: the **Waypoints** tab to drop/remove
    waypoints, or the **Survey** tab for a **CAMP-style 3-click survey pattern** (its switch on

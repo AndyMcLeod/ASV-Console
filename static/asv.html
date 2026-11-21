@@ -348,6 +348,14 @@
   #pathPanel .prow > #gt_lat,#pathPanel .prow > #gt_lon,#pathPanel .prow > #ps_lat,#pathPanel .prow > #ps_lon{width:120px;}
   /* Search's pattern by name: at 64 px "Expanding box" read "Expanc" */
   #sr_type{width:118px;}
+  /* THE READOUTS (item 3): each tab's computed values in one strip, a caption over each value, so they read as what the
+     drawing works out to and not as more rows to set. Cells share a line and wrap when a value is long (a search route
+     "nogo-aware, 2 unroutable"); the hairlines between them are the strip's own color through a 1 px gap. */
+  .ppread{display:flex;flex-wrap:wrap;gap:1px;background:var(--line);border:1px solid var(--line);border-radius:2px;}
+  .ppread .prow{flex:1 1 auto;min-width:54px;flex-direction:column;align-items:flex-start;justify-content:flex-start;
+    gap:1px;padding:3px 6px 4px;background:#0c1722;}
+  .ppread label{font-size:7.5px;}
+  .ppread .phint{font-family:var(--mono);font-size:11px;line-height:1.2;}
   .encbanner{position:absolute;left:50%;transform:translateX(-50%);bottom:120px;z-index:6;
     font-family:var(--mono);font-size:10px;color:#160d02;background:var(--warn);border-radius:3px;
     padding:4px 10px;max-width:80vw;text-align:center;display:none;}
@@ -638,9 +646,14 @@
       <div class="prow"><label>Backwards</label><input type="checkbox" id="sp_reverse" style="width:auto" title="RUN THE SURVEY BACKWARDS: Punch Out walks the pattern from its other end - entered at the far end of its last line, the lines in reverse order and each the other way. The same coverage; the turns and leads are built for the reversed path. Recorded with the survey (✎ puts it back)."/></div>
       <div class="prow"><label>Spacing m</label><input type="number" id="sp_spacing" min="0.5" step="0.5" title="Line spacing - type to force it, or set it by placing the 3rd (C) point"/></div>
       <div class="prow"><label>Direction°</label><input type="number" id="sp_dir" min="0" max="359" step="1" title="Survey line bearing (°true) — type to rotate the pattern (keeps spacing + box), or set it by placing the 3rd (C) point"/></div>
-      <div class="prow"><label>Line len</label><span class="phint" id="sp_len" style="color:var(--ink);">--</span></div>
-      <div class="prow"><label>Width</label><span class="phint" id="sp_width" style="color:var(--ink);">--</span></div>
-      <div class="prow"><label>Lines</label><span class="phint" id="sp_count" style="color:var(--ink);">--</span></div>
+      <!-- THE READOUTS (2026-11-21, the path card review, item 3): what a tab's drawing WORKS OUT TO, in one strip -
+           a caption over each value, no boxes - so they no longer read as more rows to set among the ones that are.
+           The ids and their writers are unchanged (the controls window relays by id; the suites read them). -->
+      <div class="ppread" title="What this tab's drawing works out to - readings, not settings">
+        <div class="prow"><label>Lines</label><span class="phint" id="sp_count" style="color:var(--ink);">--</span></div>
+        <div class="prow"><label>Line len</label><span class="phint" id="sp_len" style="color:var(--ink);">--</span></div>
+        <div class="prow"><label>Width</label><span class="phint" id="sp_width" style="color:var(--ink);">--</span></div>
+      </div>
       <!-- THE SURVEY AREA (was its own BND card): only ever the polygon the survey's lines are clipped to, so it
            lives with the survey. Draw arms the chart for it ("bound"); the AREA show/hide toggle came with it. -->
       <div class="pparea" id="boundPanel">
@@ -757,17 +770,21 @@
       <div class="prow sr-parallel" style="display:none"><label>Lane len m</label><input type="number" id="sr_length" value="30" min="5" step="5" title="Length of each parallel lane"/></div>
       <div class="prow sr-parallel" style="display:none"><label>Spacing m</label><input type="number" id="sr_spacing" value="5" min="1" step="1" title="Across-track lane spacing"/></div>
       <div class="prow sr-parallel" style="display:none"><label>Lanes</label><input type="number" id="sr_lanes" value="8" min="1" max="80" step="1" title="Number of lanes"/></div>
-      <div class="prow"><label>Legs</label><span class="phint" id="sr_count" style="color:var(--ink);">--</span></div>
-      <div class="prow"><label>Length</label><span class="phint" id="sr_len" style="color:var(--ink);" title="The pattern's length as drawn (or as routed clear of the chart, once that is worked out)">--</span></div>
+      <div class="ppread" title="What this tab's drawing works out to - readings, not settings">
+        <div class="prow"><label>Route</label><span class="phint" id="sr_count" style="color:var(--ink);">--</span></div>
+        <div class="prow"><label>Length</label><span class="phint" id="sr_len" style="color:var(--ink);" title="The pattern's length as drawn (or as routed clear of the chart, once that is worked out)">--</span></div>
+      </div>
       <button class="ctl small" id="sr_add" disabled>Add to plan</button>
       <button class="ctl small" id="sr_reset" title="Discard the search pattern being drawn">Reset</button>
       <div class="phint" id="sr_hint">Click the chart to set the datum (search origin), then tune the params.</div>
     </div>
     <div class="ppbody" id="transitPanel" data-tab="transit">
       <div style="font-family:var(--mono);font-size:9px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;">Transit line</div>
-      <div class="prow"><label>Points</label><span class="phint" id="tr_count" style="color:var(--ink);">0</span></div>
-      <div class="prow"><label>Length</label><span class="phint" id="tr_len" style="color:var(--ink);" title="The drawn line's length, point to point. Follow routes it clear of the chart, which can be longer.">--</span></div>
-      <div class="prow"><label>Time</label><span class="phint" id="tr_time" style="color:var(--ink);" title="The drawn length at the Transit speed (Route rules), through the water - current and wind change it">--</span></div>
+      <div class="ppread" title="What this tab's drawing works out to - readings, not settings">
+        <div class="prow"><label>Points</label><span class="phint" id="tr_count" style="color:var(--ink);">0</span></div>
+        <div class="prow"><label>Length</label><span class="phint" id="tr_len" style="color:var(--ink);" title="The drawn line's length, point to point. Follow routes it clear of the chart, which can be longer.">--</span></div>
+        <div class="prow"><label>Time</label><span class="phint" id="tr_time" style="color:var(--ink);" title="The drawn length at the Transit speed (Route rules), through the water - current and wind change it">--</span></div>
+      </div>
       <button class="ctl small punch" id="tr_follow" disabled title="Drive the transit line now (ENC-routed around obstacles), station-keep at the end. Requires ARM.">Follow</button>
       <div class="prow" style="gap:4px">
         <button class="ctl small" id="tr_undo" title="Remove the last transit point" style="flex:1">Undo</button>
@@ -787,9 +804,11 @@
          kept: the controls window relays clicks by id. A Go-To past RTH_MAX_M on a diesel hull becomes one (goToOrPassage). -->
     <div class="ppbody" id="passagePanel" data-tab="passage">
       <div class="ppsub">A long passage (diesel hulls)</div>
-      <div class="prow"><label>Points</label><span class="phint" id="ps_count" style="color:var(--ink);">0</span></div>
-      <div class="prow"><label>Length</label><span class="phint" id="ps_len" style="color:var(--ink);" title="Her position, then the line's points, straight - the passage planned round the chart can be longer">--</span></div>
-      <div class="prow"><label>Time</label><span class="phint" id="ps_time" style="color:var(--ink);" title="That length at the Transit speed (Route rules), through the water">--</span></div>
+      <div class="ppread" title="What this tab's drawing works out to - readings, not settings">
+        <div class="prow"><label>Points</label><span class="phint" id="ps_count" style="color:var(--ink);">0</span></div>
+        <div class="prow"><label>Length</label><span class="phint" id="ps_len" style="color:var(--ink);" title="Her position, then the line's points, straight - the passage planned round the chart can be longer">--</span></div>
+        <div class="prow"><label>Time</label><span class="phint" id="ps_time" style="color:var(--ink);" title="That length at the Transit speed (Route rules), through the water">--</span></div>
+      </div>
       <div class="prow"><label>Lat</label><input type="number" id="ps_lat" step="0.00001" min="-90" max="90" placeholder="or click chart" title="A point's latitude, decimal degrees (north +). Add puts it at the end of the line: the new arrival."/></div>
       <div class="prow"><label>Lon</label><input type="number" id="ps_lon" step="0.00001" min="-180" max="180" placeholder="or click chart" title="A point's longitude, decimal degrees (east +, so west is negative)."/></div>
       <div class="prow" style="gap:4px">
@@ -812,8 +831,10 @@
       <div class="ppsub">Go-To a point</div>
       <div class="prow"><label>Lat</label><input type="number" id="gt_lat" step="0.00001" min="-90" max="90" placeholder="click chart" title="The point's latitude, decimal degrees (north +). Set by a chart click while drawing, or typed."/></div>
       <div class="prow"><label>Lon</label><input type="number" id="gt_lon" step="0.00001" min="-180" max="180" placeholder="click chart" title="The point's longitude, decimal degrees (east +, so west is negative). Set by a chart click while drawing, or typed."/></div>
-      <div class="prow"><label>Brg · range</label><span class="phint" id="gt_range" style="color:var(--ink);" title="From the boat, straight line">--</span></div>
-      <div class="prow"><label>Time</label><span class="phint" id="gt_time" style="color:var(--ink);" title="The straight-line range at the Transit speed (Route rules). The route Go plans goes round the chart's keep-outs and can be longer.">--</span></div>
+      <div class="ppread" title="What this tab's drawing works out to - readings, not settings">
+        <div class="prow"><label>Brg · range</label><span class="phint" id="gt_range" style="color:var(--ink);" title="From the boat, straight line">--</span></div>
+        <div class="prow"><label>Time</label><span class="phint" id="gt_time" style="color:var(--ink);" title="The straight-line range at the Transit speed (Route rules). The route Go plans goes round the chart's keep-outs and can be longer.">--</span></div>
+      </div>
       <button class="ctl small punch" id="gt_go" disabled title="Route her to the point, clear of the chart's keep-outs, and hold there. Requires ARM.">Go</button>
       <button class="ctl small" id="gt_clr" title="Discard the point">Clear</button>
       <div class="phint" id="gt_hint">Press Draw and click the chart to set the point, or type it. Then Go.</div>
@@ -822,9 +843,11 @@
          waypoint. Edit arms it; the gestures are the old WPT mode's. -->
     <div class="ppbody" id="wptPanel" data-tab="wpt">
       <div class="ppsub">The plan's waypoints</div>
-      <div class="prow"><label>Waypoints</label><span class="phint" id="wp_n" style="color:var(--ink);">--</span></div>
-      <div class="prow"><label>Survey lines</label><span class="phint" id="wp_lines" style="color:var(--ink);">--</span></div>
-      <div class="prow"><label>Length</label><span class="phint" id="wp_len" style="color:var(--ink);" title="Waypoint to waypoint, in plan order">--</span></div>
+      <div class="ppread" title="What this tab's drawing works out to - readings, not settings">
+        <div class="prow"><label>Waypoints</label><span class="phint" id="wp_n" style="color:var(--ink);">--</span></div>
+        <div class="prow"><label>Survey lines</label><span class="phint" id="wp_lines" style="color:var(--ink);">--</span></div>
+        <div class="prow"><label>Length</label><span class="phint" id="wp_len" style="color:var(--ink);" title="Waypoint to waypoint, in plan order">--</span></div>
+      </div>
       <div class="phint" id="wp_hint">Press Edit, then: drag a waypoint to move it, click one to delete it, click open water to add one, SHIFT-click a survey line to delete it. Edit a punched plan before Upload.</div>
     </div>
     <div class="pprules" id="pp_rules">

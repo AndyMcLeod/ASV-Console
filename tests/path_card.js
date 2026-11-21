@@ -32,6 +32,9 @@
 //         (2026-11-21; the markup scanned for each tab body's direct buttons). 5 sidecar mutations, 5/5 caught: the
 //         rule back on the Passage tab alone; the rule gone; a tab button not a .ctl; Pattern | Bounded unset; a 64 px
 //         Passage latitude
+//   11    each tab's computed readouts in ONE strip (.ppread), a caption over each value, none left outside; Search's
+//         readout captioned Route (2026-11-21, the card review's item 3; the markup scanned). 3 mutations, 3/3 caught:
+//         the Transit strip gone; Search's readout captioned Legs again; the cells label-beside-value rows again
 //
 // TEETH (1d, 6b, 9) - 7 sidecar mutations RUN, 7/7 caught:
 //   Arr m back on the command bar -> 1d          the section before Route rules -> 1d
@@ -575,6 +578,47 @@ check("8. THE FIRST RENDER RUNS AFTER EVERY NAME IT READS IS DECLARED - S (canCo
               && /#pathPanel \.prow > #gt_lat,#pathPanel \.prow > #gt_lon,#pathPanel \.prow > #ps_lat,#pathPanel \.prow > #ps_lon\{width:120px;\}/.test(H)
               && /#sr_type\{width:118px;\}/.test(H),
         () => Object.entries(direct).map(([k, v]) => k + ":" + v.map((b) => b.id + (b.ctl ? "" : "(NOT .ctl)")).join(",")).join(" "));
+}
+
+// ── 11. THE READOUTS IN ONE STRIP PER TAB (2026-11-21, the card review's item 3). A tab's computed values - the lines,
+// their length and width; a route's points, length and time - were label / value rows like the settings around them, so
+// what the drawing WORKS OUT TO read as more things to set. Each tab now has ONE .ppread strip, a caption over each value;
+// the ids and their writers are unchanged (the controls window relays by id, and 6 above reads them). The markup is
+// scanned: which readouts stand in which tab's strip, in order, and none left outside one. And Search's readout is the
+// route's waypoint count, captioned Route - it said "Legs" a row under the Legs SETTING.
+{
+  const page = H.replace(/<!--[\s\S]*?-->/g, "").replace(/<style\b[\s\S]*?<\/style>/g, "").replace(/<script\b[\s\S]*?<\/script>/g, "");
+  const VOID = new Set(["input", "br", "img", "hr", "meta", "link", "col", "source"]);
+  const strips = {}, outside = [];
+  const READ = ["sp_count", "sp_len", "sp_width", "sr_count", "sr_len", "tr_count", "tr_len", "tr_time", "ps_count", "ps_len",
+                "ps_time", "gt_range", "gt_time", "wp_n", "wp_lines", "wp_len"];
+  const re = /<\/?([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/g;
+  let m, body = null, inRead = 0, depth = 0;
+  while ((m = re.exec(page))) {
+    const close = m[0][1] === "/", tag = m[1].toLowerCase(), attrs = m[2];
+    if (!body) {
+      const pb = !close && tag === "div" && /class="ppbody"/.test(attrs) && /id="([^"]+)"/.exec(attrs);
+      if (pb) { body = pb[1]; depth = 1; inRead = 0; }
+      continue;
+    }
+    if (close) { if (inRead && depth === inRead) inRead = 0; if (--depth === 0) body = null; continue; }
+    const id = (/\bid="([^"]+)"/.exec(attrs) || [])[1];
+    if (tag === "div" && /class="ppread"/.test(attrs)) { (strips[body] = strips[body] || []).push([]); inRead = depth + 1; }
+    else if (id && READ.includes(id)) { if (inRead) strips[body][strips[body].length - 1].push(id); else outside.push(body + ":" + id); }
+    if (!VOID.has(tag) && !/\/\s*$/.test(attrs)) depth++;
+  }
+  const got = Object.fromEntries(Object.entries(strips).map(([k, v]) => [k, v.map((s) => s.join(","))]));
+  const WANT = { linePanel: ["sp_count,sp_len,sp_width"], searchPanel: ["sr_count,sr_len"], transitPanel: ["tr_count,tr_len,tr_time"],
+                 passagePanel: ["ps_count,ps_len,ps_time"], gotoPanel: ["gt_range,gt_time"], wptPanel: ["wp_n,wp_lines,wp_len"] };
+  const SR = page.slice(page.indexOf('id="searchPanel"'), page.indexOf('id="transitPanel"'));
+  check("11. THE READOUTS IN ONE STRIP PER TAB: each of the six tabs has exactly one .ppread holding its computed values in "
+        + "order (Survey: lines, line length, width) and no readout stands outside one; the strip a caption over each value "
+        + "(a column per cell, wrapping when a value is long); Search's readout captioned Route, 'Legs' left to the setting",
+        () => JSON.stringify(got) === JSON.stringify(WANT) && outside.length === 0
+              && READ.every((id) => page.split('id="' + id + '"').length === 2)
+              && /<label>Route<\/label><span class="phint" id="sr_count"/.test(SR) && SR.split("<label>Legs</label>").length === 2
+              && /\.ppread \.prow\{flex:1 1 auto;min-width:54px;flex-direction:column;/.test(H) && /\.ppread\{display:flex;flex-wrap:wrap;/.test(H),
+        () => JSON.stringify({ got, outside }));
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");

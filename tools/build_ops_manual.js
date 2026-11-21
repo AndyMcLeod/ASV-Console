@@ -336,7 +336,7 @@ c.push(TBL(["Control", "Effect"], [
   ["Align (Start / Center / Finish)", "Where the leftover margin across the area goes"],
   ["Spacing m", "Type to force a spacing instead of setting it by the third click"],
   ["Direction°", "Type to rotate the whole pattern to a bearing, keeping spacing and box"],
-  ["Line len / Width / Lines", "Derived readouts — what the current pattern actually is"],
+  ["Lines / Line len / Width", "Derived readouts — what the current pattern actually is, in one strip of captions over values under Direction (every tab has one: its readings, not settings)"],
 ], [2400, 6960]));
 c.push(H2("9.3  Constraining the area"));
 c.push(P("With the Survey switch on BOUNDED and no area yet, the card's Draw (and choosing the tab) arms the chart to draw the area. Once it is closed, Draw moves A, B and C instead, which then set only where the lines start and their spacing and direction."));
