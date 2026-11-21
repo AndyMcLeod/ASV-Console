@@ -1713,7 +1713,14 @@ zeros, "turns: arc" under Arc, "all three at 7 kn" under selectors saying 7, the
 Draw..." under the Survey switch's own note - is written empty and takes no room. A lead set still
 says the run it adds, Eased its spiral (or, on a hull that cannot ease, NOT AVAILABLE in amber); the
 speed note says the knots are commanded through the water and names any speed its selector cannot
-show. `tests/path_card.js` 12, `tests/speed_knots.js` 3b-3d.
+show. `tests/path_card.js` 12, `tests/speed_knots.js` 3b-3d. **The Survey tab in three
+sections**, headed and folding like Route rules: **Pattern** (the switch, Align, Backwards, Spacing,
+Direction, the readouts, the Area and Max depth), **Speeds, lead and turns** (Survey kn, Turn kn,
+Lead in/out, Turn shape - set for a hull and a sensor, then mostly left, so it starts FOLDED to one
+line naming each: "survey 7 kn · turn 7 kn · lead none · arc turns", an eased turn the hull cannot
+fly said NOT AVAILABLE there) and **Survey window** (Start, Duration h, the water strip). Punch Out,
+Add to plan, what they report and the Plan B note stay outside them: no fold hides what the punch
+says. A fold set by hand is kept in that browser. `tests/path_card.js` 13.
 
 1. **Plan** — on the **Path planning card**: the **Waypoints** tab to drop/remove
    waypoints, or the **Survey** tab for a **CAMP-style 3-click survey pattern** (its switch on

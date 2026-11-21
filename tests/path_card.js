@@ -39,6 +39,11 @@
 //         empty note takes no room, the area row's instruction (the Survey switch's note says it) gone. 4 mutations,
 //         4/4 caught: the empty rule gone; "lead: none" again; "turns: arc" again; the area row's instruction back.
 //         (The speed note's half is tests/speed_knots.js 3b-3d.)
+//   13    the Survey tab in three headed sections folding like Route rules - Pattern, Speeds lead and turns (folded to
+//         start), Survey window - each control in its own, Punch Out and the Plan B note outside them all, a fold set
+//         kept, each folded section's line naming what is in it (2026-11-21, item 5). 4 mutations, 4/4 caught: Speeds
+//         lead and turns open to start; the folds not applied; the summary dropping an eased turn NOT AVAILABLE; the
+//         window section renamed
 //
 // TEETH (1d, 6b, 9) - 7 sidecar mutations RUN, 7/7 caught:
 //   Arr m back on the command bar -> 1d          the section before Route rules -> 1d
@@ -161,14 +166,18 @@ const SRC = [decl("^const PATH_TABS = .*$"), decl("^const PATH_TAB_OF = .*$"), d
   grab("pathEscape"), grab("searchShown"), grab("setGotoTarget"), grab("gotoFromInputs"), grab("pathLen"), grab("pathTimeTxt"),
   grab("pathRender"), grab("pathReadings"),
   // the Survey tab's Pattern / Bounded switch (2026-10-16, 2e-2g)
-  grab("pathDrawMode"), grab("surveySetBounded"), grab("renderSurveyMode"), grab("boundaryActive")].join("\n");
-function world() {
+  grab("pathDrawMode"), grab("surveySetBounded"), grab("renderSurveyMode"), grab("boundaryActive"),
+  // the Survey tab's sections (2026-11-21, item 5, 13)
+  grab("lsBool"), decl("^const SV_SECS = .*$"), decl("^const svFold = .*$")].join("\n");
+function world(ls) {
   const ids = ["#pathPanel", "#pp_draw", "#pp_fold", "#pp_rules", "#bnd_draw", "#r_draw", "#gt_lat", "#gt_lon", "#gt_range",
     "#gt_time", "#gt_go", "#gt_hint", "#tr_len", "#tr_time", "#sr_len", "#wp_n", "#wp_lines", "#wp_len", "#pp_plan .ppsum",
     "#pp_rules .pprsum", "#sp_mindepth", "#sp_buffer", "#sp_water", "#sp_nowake",
     "#pp_follow", "#pp_follow .pprsum", "#c_arrival", "#c_approach", "#c_completion",
     "#pp_tab_survey", "#pp_tab_search", "#pp_tab_transit", "#pp_tab_passage", "#pp_tab_goto", "#pp_tab_wpt",
-    "#sv_mode_pattern", "#sv_mode_bounded", "#boundPanel", "#sv_mode_hint"];
+    "#sv_mode_pattern", "#sv_mode_bounded", "#boundPanel", "#sv_mode_hint",
+    "#sv_sec_pattern", "#sv_sec_run", "#sv_sec_window", "#sv_sec_pattern .pprsum", "#sv_sec_run .pprsum", "#sv_sec_window .pprsum",
+    "#sp_count", "#sp_len", "#sp_width", "#sp_maxdepth", "#sp_start", "#sp_dur"];
   const D = {};
   for (const i of ids) D[i] = mkEl(i);
   D["#sp_mindepth"].value = "2"; D["#sp_buffer"].value = "5"; D["#sp_water"].value = ""; D["#sp_nowake"].value = "4.5";
@@ -177,7 +186,7 @@ function world() {
   D["#c_completion"].selectedIndex = 0;
   const bodies = ["survey", "search", "transit", "passage", "goto", "wpt"].map(t => mkEl("body-" + t, { dataset: { tab: t } }));
   D["#pathPanel"].querySelectorAll = () => bodies;
-  const log = { renders: 0, readings: 0, ls: {}, seeds: 0, saves: 0 };
+  const log = { renders: 0, readings: 0, ls: Object.assign({}, ls), seeds: 0, saves: 0 };
   const env = { D, bodies, log, mapEl: { style: {} },
     seedPatternFromBoundary() { log.seeds++; }, saveMission() { log.saves++; },
     lsGet: (k, d) => (k in log.ls ? log.ls[k] : d), lsSet: (k, v) => { log.ls[k] = v; },
@@ -187,7 +196,7 @@ function world() {
     fmtDur: (s) => Math.round(s / 60) + "m", fmtBrgRange: () => "045° · 2.00 km",
     // ROLE-AWARE: transit 6 kn, survey 4 kn - a reading taken at the wrong role's speed says so
     roleSpeed: (r) => (r === "transit" ? "6" : "4"), roleSpeedMS: (r) => (r === "transit" ? 6 : 4) * 0.514444, spdTxt: (k) => k + " kn",
-    searchRoute: () => [], searchRouted: null };
+    searchRoute: () => [], searchRouted: null, lead: [0, 0], V: { STEERING_SETTLE_S: 0 } };
   // eslint-disable-next-line no-new-func
   const api = new Function("env", `"use strict";
     const $ = (s) => env.D[s] || null;
@@ -200,16 +209,17 @@ function world() {
     let pat = {A: null, B: null, C: null}, search = {type: "expbox", datum: null}, transit = [], asv = {lat: 43.07, lon: -70.71};
     let mission = {waypoints: [], lines: []}, armed = false, passageWps = [];
     const canCommand = () => armed;
+    const leadInM = () => env.lead[0], leadOutM = () => env.lead[1], V = env.V;
     ${SRC}
     return { setMode, pathSelect, pathDraw, pathEscape, pathStopDrawing, searchShown, setGotoTarget, gotoFromInputs, pathRender,
              pathReadings, surveySetBounded, pathDrawMode, boundaryActive,
              get mode(){ return mode; }, get tab(){ return pathTab; }, get target(){ return gotoTarget; },
-             get bounded(){ return surveyBounded; }, get patClip(){ return patClip; },
+             get bounded(){ return surveyBounded; }, get patClip(){ return patClip; }, get svFold(){ return svFold; },
              set: (k, v) => { if(k === "pat") pat = v; else if(k === "transit") transit = v; else if(k === "search") search = v;
                               else if(k === "boundary"){ boundary = v; boundaryClosed = v.length >= 3; } else if(k === "patClip") patClip = v;
                               else if(k === "mission") mission = v; else if(k === "armed") armed = v; else if(k === "tab") pathTab = v;
                               else if(k === "rulesFold") pathRulesFold = v; else if(k === "followFold") pathFollowFold = v; } };`)(env);
-  return { api, D, bodies, log };
+  return { api, D, bodies, log, env };
 }
 const shown = (w) => w.bodies.filter(b => b.classList.contains("on")).map(b => b.dataset.tab).join(",");
 const tabOn = (w) => ["survey", "search", "transit", "passage", "goto", "wpt"].filter(t => w.D["#pp_tab_" + t].classList.contains("on")).join(",");
@@ -661,6 +671,65 @@ check("8. THE FIRST RENDER RUNS AFTER EVERY NAME IT READS IS DECLARED - S (canCo
               && /\$\("#bnd_hint"\)\.textContent = "";/.test(grab("clearBoundary"))
               && /a chart click drops each corner, a click on the first closes it/.test(grab("renderSurveyMode")),
         () => JSON.stringify({ none, some, eased, tags }));
+}
+
+// ── 13. THE SURVEY TAB IN THREE SECTIONS (2026-11-21, the card review's item 5). The tab ran a column of rows with nothing
+// to say which belonged together. Now PATTERN (the lines and their area), SPEEDS, LEAD AND TURNS (set for a hull and a
+// sensor, then mostly left: folded to start) and SURVEY WINDOW, each headed and folding like Route rules, a fold set by
+// hand kept. Punch Out and what it reports - the Plan B note included - stay outside them: no fold hides what the
+// punch says. Folded, a section's line names what is in it, an eased turn this hull cannot fly too (its amber note
+// folds away with the section). The markup is scanned for which section holds each control; the folds and the lines
+// run in the sandbox on the page's own SV_SECS, svFold and lsBool.
+{
+  const LP = H.slice(H.indexOf('<div class="ppbody" id="linePanel"'), H.indexOf('<div class="ppbody" id="searchPanel"'))
+    .replace(/<!--[\s\S]*?-->/g, "").replace(/<style\b[\s\S]*?<\/style>/g, "");
+  const VOID = new Set(["input", "br", "img", "hr", "meta", "link", "col", "source"]);
+  const re = /<\/?([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/g, stack = [], where = {}, order = [];
+  let m;
+  while ((m = re.exec(LP))) {
+    const close = m[0][1] === "/", tag = m[1].toLowerCase(), attrs = m[2];
+    if (close) { stack.pop(); continue; }
+    const id = (/\bid="([^"]+)"/.exec(attrs) || [])[1];
+    const sec = /class="pprules svsec"/.test(attrs) && id ? id.replace("sv_sec_", "") : null;
+    if (sec) order.push(sec);
+    if (id) where[id] = stack.filter(Boolean).slice(-1)[0] || "none";
+    if (!VOID.has(tag) && !/\/\s*$/.test(attrs)) stack.push(sec);
+  }
+  const IN = { pattern: ["sv_moderow", "sv_mode_hint", "sp_align", "sp_reverse", "sp_spacing", "sp_dir", "sp_count", "sp_len", "sp_width",
+                         "boundPanel", "sp_maxdepth"],
+               run: ["sp_spd_survey", "sp_spd_turn", "sp_spd_note", "sp_lead_in", "sp_lead_out", "sp_lead_mode", "sp_lead_note",
+                     "sp_turn_ease", "sp_ease_note"],
+               window: ["sp_start", "sp_dur", "sp_tide", "sp_tide_ref", "sp_tide_note"],
+               none: ["sv_table", "sp_planb_note", "sp_punch", "sp_add", "sp_refuse", "sp_clear", "sp_reset", "sp_hint", "sp_strike"] };
+  const wrong = Object.entries(IN).flatMap(([s, ids]) => ids.filter((id) => where[id] !== s).map((id) => id + "@" + where[id]));
+  const heads = ["pattern", "run", "window"].every((k) => new RegExp('<div class="pprules-head" id="sv_sec_' + k
+    + '_head" title="[^"]+"><span>[^<]+</span><span class="pprsum"></span></div>').test(LP));
+  // the folds: the page's defaults, then a fold set by hand kept; the lines at the defaults, then with something in each
+  const w = world(), a = w.api; a.pathRender();
+  const dflt = [JSON.stringify(a.svFold), ["pattern", "run", "window"].map((k) => w.D["#sv_sec_" + k].classList.contains("fold")).join(",")];
+  const sum = () => ["pattern", "run", "window"].map((k) => w.D["#sv_sec_" + k + " .pprsum"].textContent);
+  w.D["#sp_count"].textContent = "6"; w.D["#sp_len"].textContent = "314 m"; w.D["#sp_width"].textContent = "181 m";
+  a.pathReadings(); const s0 = sum();
+  w.env.lead = [20, 0]; a.set("mission", { waypoints: [], lines: [], turn_ease: "eased" }); w.D["#sp_maxdepth"].value = "40";
+  w.D["#sp_start"].value = "2026-11-22T06:30"; w.D["#sp_dur"].value = "3"; a.pathReadings(); const s1 = sum();
+  w.env.V.STEERING_SETTLE_S = 4; a.pathReadings(); const s2 = sum()[1];
+  const w2 = world({ asv_path_sv_run_fold_v1: false, asv_path_sv_window_fold_v1: true }); w2.api.pathRender();
+  const kept = ["pattern", "run", "window"].map((k) => w2.D["#sv_sec_" + k].classList.contains("fold")).join(",");
+  check("13. THE SURVEY TAB IN THREE SECTIONS: Pattern, Speeds lead and turns, Survey window - in that order, each headed "
+        + "and folding like Route rules, each control in its own, Punch Out, its reports and the Plan B note outside them "
+        + "all, no row's old divider left; Speeds lead and turns FOLDED to start and a fold set by hand kept; folded, each "
+        + "line names what is in it - an eased turn this hull cannot fly, NOT AVAILABLE",
+        () => order.join(",") === "pattern,run,window" && wrong.length === 0 && heads && !/punchsep/.test(LP)
+              && dflt.join("|") === '{"pattern":false,"run":true,"window":false}|false,true,false' && kept === "false,false,true"
+              && s0.join("|") === "pattern · lines 6 · line len 314 m · width 181 m|survey 4 kn · turn 4 kn · lead none · arc turns"
+                                   + "|start on arrival · its own flight"
+              && s1.join("|") === "pattern · lines 6 · line len 314 m · width 181 m · max depth 40 m"
+                                   + "|survey 4 kn · turn 4 kn · lead 20 m in / 0 m out · eased turns NOT AVAILABLE"
+                                   + "|start 2026-11-22 06:30 · 3 h"
+              && s2 === "survey 4 kn · turn 4 kn · lead 20 m in / 0 m out · eased turns"
+              && /SV_SECS\.forEach\(\(\[k, key\]\) => \{ \$\("#sv_sec_" \+ k \+ "_head"\)\.onclick = \(\) => \{ svFold\[k\] = !svFold\[k\]; lsSet\(key, svFold\[k\]\); pathRender\(\); \}; \}\);/.test(H)
+              && /#pp_follow input, #pp_follow select, \.svsec input, \.svsec select/.test(H),
+        () => JSON.stringify({ order, wrong, heads, dflt, kept, s0, s1, s2 }));
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");

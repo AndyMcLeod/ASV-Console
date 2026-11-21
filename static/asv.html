@@ -160,6 +160,8 @@
   .pprules:not(.fold) .pprsum{display:none;}
   .pprules-body{display:flex;flex-direction:column;gap:6px;}
   .pprules.fold .pprules-body{display:none;}
+  /* the Survey tab's sections (item 5): its rows' own gap between them, a little more air above each head */
+  .ppbody .svsec{margin-top:2px;}
   .ppplan{border-top:1px solid var(--line);padding-top:5px;display:flex;align-items:center;justify-content:space-between;gap:6px;
     font-family:var(--mono);font-size:9px;color:var(--ink-dim);}
   .ppplan .ctl{height:18px;padding:0 6px;font-size:9px;}
@@ -634,99 +636,119 @@
       <div id="sv_head" style="display:none;font-family:var(--mono);font-size:9px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;"><span>Surveys, in run order</span><button class="ctl small" id="sv_punchall">Punch all</button></div>
       <div id="sv_table" style="display:none"></div>
       <div class="phint" id="sv_note" style="display:none"></div>
-      <!-- PATTERN OR BOUNDED (Andy, 2026-10-16: "For some surveys the boundary box is critical and should have a draw mode
-           or an input mode for pre-drawn surveys. Otherwise, allow the unbounded survey pattern 3 point draw
-           functionality"; asked, he chose this switch and importing a file). PATTERN is the three-click box, no area
-           applied - the Area row hidden, an area already drawn kept for Bounded. BOUNDED fills an area - drawn here, or
-           imported - and A, B and C set only the lines' start, spacing and direction (surveySetBounded). -->
-      <div class="prow" id="sv_moderow"><label>Survey</label><span class="ppbtns">
-        <button class="ctl small" id="sv_mode_pattern" title="PATTERN: the three-click survey. Draw (top of the card), then click A the start corner, B the opposite corner, C the line spacing and direction. Nothing bounds the lines.">Pattern</button>
-        <button class="ctl small" id="sv_mode_bounded" title="BOUNDED: the lines fill a survey area - draw it on the chart, or import one drawn elsewhere (GeoJSON, KML or CSV). A, B and C then set only the lines' start, spacing and direction.">Bounded</button></span></div>
-      <div class="phint" id="sv_mode_hint"></div>
-      <div class="prow"><label>Align</label>
-        <select id="sp_align" title="Where the leftover margin goes across the survey width">
-          <option value="0" selected>Start</option><option value="1">Center</option><option value="2">Finish</option>
-        </select></div>
-      <div class="prow"><label>Backwards</label><input type="checkbox" id="sp_reverse" style="width:auto" title="RUN THE SURVEY BACKWARDS: Punch Out walks the pattern from its other end - entered at the far end of its last line, the lines in reverse order and each the other way. The same coverage; the turns and leads are built for the reversed path. Recorded with the survey (✎ puts it back)."/></div>
-      <div class="prow"><label>Spacing m</label><input type="number" id="sp_spacing" min="0.5" step="0.5" title="Line spacing - type to force it, or set it by placing the 3rd (C) point"/></div>
-      <div class="prow"><label>Direction°</label><input type="number" id="sp_dir" min="0" max="359" step="1" title="Survey line bearing (°true) — type to rotate the pattern (keeps spacing + box), or set it by placing the 3rd (C) point"/></div>
-      <!-- THE READOUTS (2026-11-21, the path card review, item 3): what a tab's drawing WORKS OUT TO, in one strip -
-           a caption over each value, no boxes - so they no longer read as more rows to set among the ones that are.
-           The ids and their writers are unchanged (the controls window relays by id; the suites read them). -->
-      <div class="ppread" title="What this tab's drawing works out to - readings, not settings">
-        <div class="prow"><label>Lines</label><span class="phint" id="sp_count" style="color:var(--ink);">--</span></div>
-        <div class="prow"><label>Line len</label><span class="phint" id="sp_len" style="color:var(--ink);">--</span></div>
-        <div class="prow"><label>Width</label><span class="phint" id="sp_width" style="color:var(--ink);">--</span></div>
+      <!-- THE SURVEY TAB'S SECTIONS (2026-11-21, the path card review, item 5): the tab ran a column of rows with nothing to
+           say which belonged together. Three sections now, headed and folding like Route rules: PATTERN (the lines and
+           their area), SPEEDS, LEAD AND TURNS (set for a hull and a sensor, then left - it starts folded, its line naming
+           each), SURVEY WINDOW (the start, the duration, the water). A fold set by hand is kept (SV_SECS). Punch Out, Add to
+           plan and what they report stay outside them, and so does the Plan B note: no fold hides what the punch says. -->
+      <div class="pprules svsec" id="sv_sec_pattern">
+        <div class="pprules-head" id="sv_sec_pattern_head" title="The survey's lines - Pattern or Bounded, where the margin goes, which end it starts, spacing, direction, the area and the deepest water to survey - and what they work out to. Click to fold or open."><span>Pattern</span><span class="pprsum"></span></div>
+        <div class="pprules-body">
+          <!-- PATTERN OR BOUNDED (Andy, 2026-10-16: "For some surveys the boundary box is critical and should have a draw mode
+               or an input mode for pre-drawn surveys. Otherwise, allow the unbounded survey pattern 3 point draw
+               functionality"; asked, he chose this switch and importing a file). PATTERN is the three-click box, no area
+               applied - the Area row hidden, an area already drawn kept for Bounded. BOUNDED fills an area - drawn here, or
+               imported - and A, B and C set only the lines' start, spacing and direction (surveySetBounded). -->
+          <div class="prow" id="sv_moderow"><label>Survey</label><span class="ppbtns">
+            <button class="ctl small" id="sv_mode_pattern" title="PATTERN: the three-click survey. Draw (top of the card), then click A the start corner, B the opposite corner, C the line spacing and direction. Nothing bounds the lines.">Pattern</button>
+            <button class="ctl small" id="sv_mode_bounded" title="BOUNDED: the lines fill a survey area - draw it on the chart, or import one drawn elsewhere (GeoJSON, KML or CSV). A, B and C then set only the lines' start, spacing and direction.">Bounded</button></span></div>
+          <div class="phint" id="sv_mode_hint"></div>
+          <div class="prow"><label>Align</label>
+            <select id="sp_align" title="Where the leftover margin goes across the survey width">
+              <option value="0" selected>Start</option><option value="1">Center</option><option value="2">Finish</option>
+            </select></div>
+          <div class="prow"><label>Backwards</label><input type="checkbox" id="sp_reverse" style="width:auto" title="RUN THE SURVEY BACKWARDS: Punch Out walks the pattern from its other end - entered at the far end of its last line, the lines in reverse order and each the other way. The same coverage; the turns and leads are built for the reversed path. Recorded with the survey (✎ puts it back)."/></div>
+          <div class="prow"><label>Spacing m</label><input type="number" id="sp_spacing" min="0.5" step="0.5" title="Line spacing - type to force it, or set it by placing the 3rd (C) point"/></div>
+          <div class="prow"><label>Direction°</label><input type="number" id="sp_dir" min="0" max="359" step="1" title="Survey line bearing (°true) — type to rotate the pattern (keeps spacing + box), or set it by placing the 3rd (C) point"/></div>
+          <!-- THE READOUTS (2026-11-21, the path card review, item 3): what a tab's drawing WORKS OUT TO, in one strip -
+               a caption over each value, no boxes - so they no longer read as more rows to set among the ones that are.
+               The ids and their writers are unchanged (the controls window relays by id; the suites read them). -->
+          <div class="ppread" title="What this tab's drawing works out to - readings, not settings">
+            <div class="prow"><label>Lines</label><span class="phint" id="sp_count" style="color:var(--ink);">--</span></div>
+            <div class="prow"><label>Line len</label><span class="phint" id="sp_len" style="color:var(--ink);">--</span></div>
+            <div class="prow"><label>Width</label><span class="phint" id="sp_width" style="color:var(--ink);">--</span></div>
+          </div>
+          <!-- THE SURVEY AREA (was its own BND card): only ever the polygon the survey's lines are clipped to, so it
+               lives with the survey. Draw arms the chart for it ("bound"); the AREA show/hide toggle came with it. -->
+          <div class="pparea" id="boundPanel">
+            <div class="prow"><label>Area</label><span class="ppbtns">
+              <button class="ctl small" id="bnd_draw" title="Draw the survey area: each chart click drops a boundary point, a click on the first point closes it. Press again (or Esc) to stop.">Draw</button>
+              <button class="ctl small" id="bnd_import" title="IMPORT a survey area drawn elsewhere: a GeoJSON, KML or CSV file (a CSV: one corner a line, latitude then longitude, or a header naming the columns). The first area in the file is used and replaces the one here; the banner says what was read and where it is.">Import</button>
+              <button class="ctl small" id="bnd_close" title="Close the polygon (needs ≥3 points)">Close</button>
+              <button class="ctl small" id="bnd_clr" title="Delete the boundary polygon">Clear</button>
+              <button class="ctl small on" id="areaBtn" title="Show / hide the survey-area boundary overlay (persisted). It still clips the lines while hidden; drawing the area always shows it.">Show</button></span></div>
+            <div class="phint" id="bnd_hint"></div>
+          </div>
+          <div class="prow"><label>Max depth m</label><input type="number" id="sp_maxdepth" value="" min="0" max="1000" step="1" placeholder="none" title="Survey coverage maximum. Blank = no maximum (deep water is fine to survey). Deep water is never a nogo — the boat may transit it."/></div>
+        </div>
       </div>
-      <!-- THE SURVEY AREA (was its own BND card): only ever the polygon the survey's lines are clipped to, so it
-           lives with the survey. Draw arms the chart for it ("bound"); the AREA show/hide toggle came with it. -->
-      <div class="pparea" id="boundPanel">
-        <div class="prow"><label>Area</label><span class="ppbtns">
-          <button class="ctl small" id="bnd_draw" title="Draw the survey area: each chart click drops a boundary point, a click on the first point closes it. Press again (or Esc) to stop.">Draw</button>
-          <button class="ctl small" id="bnd_import" title="IMPORT a survey area drawn elsewhere: a GeoJSON, KML or CSV file (a CSV: one corner a line, latitude then longitude, or a header naming the columns). The first area in the file is used and replaces the one here; the banner says what was read and where it is.">Import</button>
-          <button class="ctl small" id="bnd_close" title="Close the polygon (needs ≥3 points)">Close</button>
-          <button class="ctl small" id="bnd_clr" title="Delete the boundary polygon">Clear</button>
-          <button class="ctl small on" id="areaBtn" title="Show / hide the survey-area boundary overlay (persisted). It still clips the lines while hidden; drawing the area always shows it.">Show</button></span></div>
-        <div class="phint" id="bnd_hint"></div>
+      <div class="pprules svsec" id="sv_sec_run">
+        <div class="pprules-head" id="sv_sec_run_head" title="The survey and turn speeds, the lead-in and lead-out, and the turn shape - set for a hull and a sensor, then mostly left. Folded, its line names each. Click to fold or open."><span>Speeds, lead and turns</span><span class="pprsum"></span></div>
+        <div class="pprules-body">
+          <!-- SPEED BY ROLE. A survey run is three jobs and they do not want one speed; the
+               console commands each as the boat moves between them. They start EQUAL, so a
+               console that has never been told otherwise behaves exactly as it always did.
+               IN WHOLE KNOTS since 2026-10-09, the hull's own range: the options are filled from the
+               vessel (fillSpeedSelects), so the markup carries none. -->
+          <div class="prow"><label>Survey kn</label>
+            <select id="sp_spd_survey" title="Speed held on the COVERAGE LINES — the one the sensor is specified at. The per-line plan times in the LINES table are computed from it. Whole knots, COMMANDED through the water: the current and the wind make her speed over the ground differ."></select></div>
+          <div class="prow"><label>Turn kn</label>
+            <select id="sp_spd_turn" title="Speed through the REVERSALS between lines. It also sets the RADIUS every generated turn is built at — a hull can only hold v/ω — so a slower turn is tighter and reaches less far outboard, which is what buys clearance from a dock at the end of a line. Whole knots, COMMANDED through the water."></select></div>
+          <div class="phint" id="sp_spd_note">speeds: --</div>
+          <!-- LEAD-IN / LEAD-OUT. The first stretch of a survey line is not usable data: the
+               steering is still settling onto the track after the reversal, and the IMU is
+               still settling with it. So the RUN is made longer than the COVERAGE — the boat
+               rolls out, steadies, and the coverage the operator drew starts exactly where
+               they drew it. The lead-out is the same argument at the far end.
+               DISTANCE OR DURATION, because settling is specified both ways: a steering
+               settle is a distance (boat lengths), an IMU settle is a time. A duration is
+               converted at the SURVEY speed, which is the speed the lead is flown at —
+               flying it at anything else is what the settling is there to avoid. -->
+          <div class="prow"><label>Lead in/out</label>
+            <span style="display:flex;gap:3px;align-items:center;">
+              <input type="number" id="sp_lead_in" value="0" min="0" max="2000" step="1" style="min-width:0" title="LEAD-IN — how far (or how long) the boat runs ON the line BEFORE the coverage starts, so steering and IMU are settled by the first usable ping. 0 = none. Applied by Punch Out, which is what checks the extra water is clear."/>
+              <input type="number" id="sp_lead_out" value="0" min="0" max="2000" step="1" style="min-width:0" title="LEAD-OUT — how far (or how long) the boat keeps running past the END of the coverage before the turn begins. 0 = none. Applied by Punch Out, which is what checks the extra water is clear."/>
+              <select id="sp_lead_mode" style="width:46px" title="Whether the two figures are a DISTANCE in meters or a DURATION in seconds. A duration is converted at the survey speed.">
+                <option value="m" selected>m</option><option value="s">s</option>
+              </select>
+            </span></div>
+          <div class="phint" id="sp_lead_note"></div>
+          <!-- EASED TURNS. Every reversal this console draws steps its curvature from nothing to
+               1/R the instant the boat leaves the line — an infinite rudder rate, which no hull
+               can answer, so it overshoots and settles. That settling is exactly what the lead-in
+               above exists to hide. An EASED turn ramps instead: a clothoid in, the arc, a
+               clothoid out, so the helm rate is constant and the boat rolls onto the next line
+               with the wheel already amidships.
+               OFF BY DEFAULT, and deliberately: it needs a few meters more outboard water and
+               roughly twice the waypoints, so a console that has never been told otherwise plans
+               exactly the turns it always did. The spiral length is the VESSEL's steering settle
+               time times the turn speed, so a profile that does not declare one cannot ease. -->
+          <div class="prow"><label>Turn shape</label>
+            <select id="sp_turn_ease" title="ARC is the plain reversal this console has always drawn: its curvature steps from zero to 1/R at the line end, which the hull answers by overshooting and settling. EASED ramps the curvature in and out over a spiral, so the steering rate is constant and the boat arrives on the next line already straight — at the cost of a little more outboard water and about twice the waypoints. Needs the vessel profile to declare a steering settle time.">
+              <option value="arc" selected>Arc</option><option value="eased">Eased</option>
+            </select></div>
+          <div class="phint" id="sp_ease_note"></div>
+        </div>
       </div>
-      <div class="prow"><label>Max depth m</label><input type="number" id="sp_maxdepth" value="" min="0" max="1000" step="1" placeholder="none" title="Survey coverage maximum. Blank = no maximum (deep water is fine to survey). Deep water is never a nogo — the boat may transit it."/></div>
-      <!-- SPEED BY ROLE. A survey run is three jobs and they do not want one speed; the
-           console commands each as the boat moves between them. They start EQUAL, so a
-           console that has never been told otherwise behaves exactly as it always did.
-           IN WHOLE KNOTS since 2026-10-09, the hull's own range: the options are filled from the
-           vessel (fillSpeedSelects), so the markup carries none. -->
-      <div class="prow punchsep"><label>Survey kn</label>
-        <select id="sp_spd_survey" title="Speed held on the COVERAGE LINES — the one the sensor is specified at. The per-line plan times in the LINES table are computed from it. Whole knots, COMMANDED through the water: the current and the wind make her speed over the ground differ."></select></div>
-      <div class="prow"><label>Turn kn</label>
-        <select id="sp_spd_turn" title="Speed through the REVERSALS between lines. It also sets the RADIUS every generated turn is built at — a hull can only hold v/ω — so a slower turn is tighter and reaches less far outboard, which is what buys clearance from a dock at the end of a line. Whole knots, COMMANDED through the water."></select></div>
-      <div class="phint" id="sp_spd_note">speeds: --</div>
-      <!-- LEAD-IN / LEAD-OUT. The first stretch of a survey line is not usable data: the
-           steering is still settling onto the track after the reversal, and the IMU is
-           still settling with it. So the RUN is made longer than the COVERAGE — the boat
-           rolls out, steadies, and the coverage the operator drew starts exactly where
-           they drew it. The lead-out is the same argument at the far end.
-           DISTANCE OR DURATION, because settling is specified both ways: a steering
-           settle is a distance (boat lengths), an IMU settle is a time. A duration is
-           converted at the SURVEY speed, which is the speed the lead is flown at —
-           flying it at anything else is what the settling is there to avoid. -->
-      <div class="prow punchsep"><label>Lead in/out</label>
-        <span style="display:flex;gap:3px;align-items:center;">
-          <input type="number" id="sp_lead_in" value="0" min="0" max="2000" step="1" style="min-width:0" title="LEAD-IN — how far (or how long) the boat runs ON the line BEFORE the coverage starts, so steering and IMU are settled by the first usable ping. 0 = none. Applied by Punch Out, which is what checks the extra water is clear."/>
-          <input type="number" id="sp_lead_out" value="0" min="0" max="2000" step="1" style="min-width:0" title="LEAD-OUT — how far (or how long) the boat keeps running past the END of the coverage before the turn begins. 0 = none. Applied by Punch Out, which is what checks the extra water is clear."/>
-          <select id="sp_lead_mode" style="width:46px" title="Whether the two figures are a DISTANCE in meters or a DURATION in seconds. A duration is converted at the survey speed.">
-            <option value="m" selected>m</option><option value="s">s</option>
-          </select>
-        </span></div>
-      <div class="phint" id="sp_lead_note"></div>
-      <!-- EASED TURNS. Every reversal this console draws steps its curvature from nothing to
-           1/R the instant the boat leaves the line — an infinite rudder rate, which no hull
-           can answer, so it overshoots and settles. That settling is exactly what the lead-in
-           above exists to hide. An EASED turn ramps instead: a clothoid in, the arc, a
-           clothoid out, so the helm rate is constant and the boat rolls onto the next line
-           with the wheel already amidships.
-           OFF BY DEFAULT, and deliberately: it needs a few meters more outboard water and
-           roughly twice the waypoints, so a console that has never been told otherwise plans
-           exactly the turns it always did. The spiral length is the VESSEL's steering settle
-           time times the turn speed, so a profile that does not declare one cannot ease. -->
-      <div class="prow"><label>Turn shape</label>
-        <select id="sp_turn_ease" title="ARC is the plain reversal this console has always drawn: its curvature steps from zero to 1/R at the line end, which the hull answers by overshooting and settling. EASED ramps the curvature in and out over a spiral, so the steering rate is constant and the boat arrives on the next line already straight — at the cost of a little more outboard water and about twice the waypoints. Needs the vessel profile to declare a steering settle time.">
-          <option value="arc" selected>Arc</option><option value="eased">Eased</option>
-        </select></div>
-      <div class="phint" id="sp_ease_note"></div>
-      <!-- THE SURVEY WINDOW (2026-11-19, Andy: "During survey planning, institute a start time and duration
-           functionality. Using this feature, examine tide level at start and total change through the duration of
-           the survey"). START: when she begins it. Blank = as soon as she gets there. A start later than she can be
-           there has Add to plan turn its HOLD on (the boat has no clock to wait on: she waits near its start - or at
-           home, its row's Wait, phase 4 - until Continue). DURATION: its survey time, hours. The window its water is read over runs from the start for the
-           longer of the duration and its own flight. Punch Out cuts at the lowest water predicted over that window
-           (flightWindow). The strip draws the water through it (tideStripRefresh, /api/water/series). -->
-      <div class="prow punchsep"><label>Start</label>
-        <input type="datetime-local" id="sp_start" style="width:168px;min-width:0" title="START TIME - when she is to begin this survey, in this computer's time. Blank = as soon as she gets there. Punch Out then cuts its lines at the lowest water predicted from this time through its duration, not from now. A start later than she can be there turns the survey's HOLD on when it is added to the plan: Upload sends her to WAIT for it - at water near its start that holds her at the lowest water of the wait, or at home (its row's Wait button) - until you press Continue on its row. Its row counts the wait down and says when it is time. Nothing releases her by itself."/></div>
-      <div class="prow"><label>Duration h</label>
-        <input type="number" id="sp_dur" value="" min="0.25" max="24" step="0.25" placeholder="flight" style="width:58px" title="DURATION - the hours this survey is to take, its survey time only (not the transit to it). Blank = its own flight, at the survey speed. The water is read over the longer of the two, so a duration shorter than the flight never shortens the window. At most 24 h: the predictions are read no further ahead."/></div>
-      <div class="prow" style="gap:4px"><div id="sp_tide" style="flex:1;min-width:0;height:34px"></div>
-        <button class="ctl small" id="sp_tide_ref" style="width:auto;min-width:22px;padding:0 5px" title="Read the water over the survey's window again - the strip is read when the start or duration changes, at Punch Out and at ✎, not as the drawing moves.">↻</button></div>
-      <div class="phint" id="sp_tide_note">tide: draw a pattern, then set a start or press Punch Out</div>
+      <div class="pprules svsec" id="sv_sec_window">
+        <div class="pprules-head" id="sv_sec_window_head" title="When the survey is to start and how long it is given, and the water predicted over that window. Click to fold or open."><span>Survey window</span><span class="pprsum"></span></div>
+        <div class="pprules-body">
+          <!-- THE SURVEY WINDOW (2026-11-19, Andy: "During survey planning, institute a start time and duration
+               functionality. Using this feature, examine tide level at start and total change through the duration of
+               the survey"). START: when she begins it. Blank = as soon as she gets there. A start later than she can be
+               there has Add to plan turn its HOLD on (the boat has no clock to wait on: she waits near its start - or at
+               home, its row's Wait, phase 4 - until Continue). DURATION: its survey time, hours. The window its water is read over runs from the start for the
+               longer of the duration and its own flight. Punch Out cuts at the lowest water predicted over that window
+               (flightWindow). The strip draws the water through it (tideStripRefresh, /api/water/series). -->
+          <div class="prow"><label>Start</label>
+            <input type="datetime-local" id="sp_start" style="width:168px;min-width:0" title="START TIME - when she is to begin this survey, in this computer's time. Blank = as soon as she gets there. Punch Out then cuts its lines at the lowest water predicted from this time through its duration, not from now. A start later than she can be there turns the survey's HOLD on when it is added to the plan: Upload sends her to WAIT for it - at water near its start that holds her at the lowest water of the wait, or at home (its row's Wait button) - until you press Continue on its row. Its row counts the wait down and says when it is time. Nothing releases her by itself."/></div>
+          <div class="prow"><label>Duration h</label>
+            <input type="number" id="sp_dur" value="" min="0.25" max="24" step="0.25" placeholder="flight" style="width:58px" title="DURATION - the hours this survey is to take, its survey time only (not the transit to it). Blank = its own flight, at the survey speed. The water is read over the longer of the two, so a duration shorter than the flight never shortens the window. At most 24 h: the predictions are read no further ahead."/></div>
+          <div class="prow" style="gap:4px"><div id="sp_tide" style="flex:1;min-width:0;height:34px"></div>
+            <button class="ctl small" id="sp_tide_ref" style="width:auto;min-width:22px;padding:0 5px" title="Read the water over the survey's window again - the strip is read when the start or duration changes, at Punch Out and at ✎, not as the drawing moves.">↻</button></div>
+          <div class="phint" id="sp_tide_note">tide: draw a pattern, then set a start or press Punch Out</div>
+        </div>
+      </div>
       <!-- PLAN B (the survey window phase 3): which of the drawing's lines a Plan B flies, and the outline it is judged
            against - shown only for a Plan B (showPlanBNote). -->
       <div class="phint" id="sp_planb_note" style="display:none"></div>
@@ -7103,6 +7125,10 @@ let pathTab = PATH_TABS.includes(lsGet(PATH_TAB_KEY, "survey")) ? lsGet(PATH_TAB
 // operator has set (its key stored) is kept either way.
 let pathFold = lsBool(PATH_FOLD_KEY, false), pathRulesFold = lsBool(PATH_RULES_KEY, true);
 let pathFollowFold = lsBool(PATH_FOLLOW_KEY, true);
+// THE SURVEY TAB'S SECTIONS (2026-11-21, the path card review, item 5): [section, its fold's key, folded to start].
+// Speeds, lead and turns - set for a hull and a sensor, then mostly left - starts folded; a fold set by hand is kept.
+const SV_SECS = [["pattern", "asv_path_sv_pattern_fold_v1", false], ["run", "asv_path_sv_run_fold_v1", true], ["window", "asv_path_sv_window_fold_v1", false]];
+const svFold = Object.fromEntries(SV_SECS.map(([k, key, d]) => [k, lsBool(key, d)]));
 let gotoTarget = null;                          // the Go-To tab's point, {lat, lon} or null - in memory, like every draft   // no `activeLine`: the chart highlights runLineIdx
 // CAMP-style 3-click survey pattern: A=start, B=diagonal end, C=spacing/direction
 let pat = {A:null, B:null, C:null, align:0};   // align 0=start 1=center 2=finish
@@ -23434,6 +23460,7 @@ function pathRender(){
   const fb = $("#pp_fold"); if(fb){ const t = pathFold ? "\u25B8" : "\u25BE"; if(fb.textContent !== t) fb.textContent = t; }
   const rules = $("#pp_rules"); if(rules) rules.classList.toggle("fold", pathRulesFold);
   const follow = $("#pp_follow"); if(follow) follow.classList.toggle("fold", pathFollowFold);
+  SV_SECS.forEach(([k]) => { const s = $("#sv_sec_" + k); if(s) s.classList.toggle("fold", svFold[k]); });
   pathReadings();
 }
 // The card's readings. Written only when they change: the card is mirrored to the controls window on every change.
@@ -23466,12 +23493,24 @@ function pathReadings(){
   const end = $("#c_completion");
   set("#pp_follow .pprsum", "arrive " + (v("#c_arrival") || "--") + " m · approach " + (v("#c_approach") || "--") + " m · "
     + (end && end.selectedIndex >= 0 ? end.options[end.selectedIndex].text : "--"));
+  // The Survey tab's sections (item 5): each one's line, read while it is folded, names what is in it - an eased turn
+  // this hull cannot fly included, since its amber note folds away with the section.
+  const txt = sel => { const el = $(sel); return el ? el.textContent : "--"; };
+  set("#sv_sec_pattern .pprsum", (surveyBounded ? "bounded" : "pattern") + " · lines " + txt("#sp_count") + " · line len "
+    + txt("#sp_len") + " · width " + txt("#sp_width") + (v("#sp_maxdepth") ? " · max depth " + v("#sp_maxdepth") + " m" : ""));
+  const li = leadInM(), lo = leadOutM();
+  set("#sv_sec_run .pprsum", "survey " + spdTxt(roleSpeed("survey")) + " · turn " + spdTxt(roleSpeed("turn"))
+    + " · lead " + (li > 0 || lo > 0 ? fmtDist(li) + " in / " + fmtDist(lo) + " out" : "none") + " · "
+    + (mission.turn_ease !== "eased" ? "arc turns" : (V.STEERING_SETTLE_S || 0) > 0 ? "eased turns" : "eased turns NOT AVAILABLE"));
+  set("#sv_sec_window .pprsum", "start " + (v("#sp_start") ? v("#sp_start").replace("T", " ") : "on arrival") + " · "
+    + (v("#sp_dur") ? v("#sp_dur") + " h" : "its own flight"));
 }
 PATH_TABS.forEach(t => { $("#pp_tab_" + t).onclick = () => pathSelect(t); });
 $("#pp_draw").onclick = pathDraw;
 $("#pp_fold").onclick = () => { pathFold = !pathFold; lsSet(PATH_FOLD_KEY, pathFold); pathRender(); };
 $("#pp_rules_head").onclick = () => { pathRulesFold = !pathRulesFold; lsSet(PATH_RULES_KEY, pathRulesFold); pathRender(); };
 $("#pp_follow_head").onclick = () => { pathFollowFold = !pathFollowFold; lsSet(PATH_FOLLOW_KEY, pathFollowFold); pathRender(); };
+SV_SECS.forEach(([k, key]) => { $("#sv_sec_" + k + "_head").onclick = () => { svFold[k] = !svFold[k]; lsSet(key, svFold[k]); pathRender(); }; });
 $("#bnd_draw").onclick = () => setMode("bound");   // toggles: drawing the area, or back to panning
 $("#gt_lat").onchange = gotoFromInputs;
 $("#gt_lon").onchange = gotoFromInputs;
@@ -23482,7 +23521,7 @@ $("#gt_go").onclick = () => {
   pathStopDrawing();
   goToOrPassage({lat: gotoTarget.lat, lon: gotoTarget.lon}).catch(err => flashNote("Go-To failed: " + ((err && err.message) || err)));
 };
-document.querySelectorAll("#pp_rules input, #pp_rules select, #pp_follow input, #pp_follow select")
+document.querySelectorAll("#pp_rules input, #pp_rules select, #pp_follow input, #pp_follow select, .svsec input, .svsec select")
   .forEach(el => el.addEventListener("change", () => pathReadings()));
 $("#sr_type").onchange = ()=>{ search.type = $("#sr_type").value; updateSearchPanel(); render(); };
 $("#sr_turn").onchange = ()=>{ search.turn = parseInt($("#sr_turn").value)||1; updateSearchPanel(); render(); };
