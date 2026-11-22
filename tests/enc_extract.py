@@ -566,6 +566,58 @@ else:
         import shutil as _sh
         _sh.rmtree(_d, ignore_errors=True)
 
+    # ── 11f. THE MARK SAYS WHERE THE ANSWER CAME FROM ────────────────────────────────
+    #
+    # The review before the S-57 merge (2026-11-21): the "(cached)" mark tested for a
+    # features_ file, which a read from NOAA's cells never writes, so every cells answer
+    # read as a fresh fetch. main() run for real on a stubbed fetch, in a temp directory:
+    # a cells answer is marked the cells' even where an old features_ file lies (the
+    # answer decides, not the disk), an ENCDirect answer read from its kept copy
+    # "(cached)", and a fresh ENCDirect fetch neither.
+    import contextlib as _cl
+    import io as _io
+    import importlib.util as _iu
+    _d = _tf.mkdtemp()
+    _sav11 = (A.ENC_DIR, A.fetch_enc_features, sys.argv)
+    try:
+        _sp = _iu.spec_from_file_location("warm_enc_11f", _warm)
+        _w = _iu.module_from_spec(_sp)
+        _sp.loader.exec_module(_w)
+        _at = {"cellport": (43.07, -70.71), "encport": (43.0, -70.0), "freshport": (42.0, -70.0)}
+        _pp = os.path.join(_d, "ports.json")
+        with open(_pp, "w", encoding="utf-8") as _f:
+            json.dump({"ports": [{"id": k, "lat": v[0], "lon": v[1]} for k, v in _at.items()]}, _f)
+        A.ENC_DIR = os.path.join(_d, "enc")
+        os.makedirs(A.ENC_DIR)
+        _cur = _w.cache_version()
+        for _k in ("cellport", "encport"):
+            with open(os.path.join(A.ENC_DIR, "features_%s_%s.json"
+                                   % (_cur, A._bbox_key(_w.bbox_around(*_at[_k])))), "w") as _f:
+                _f.write("{}")
+        _roles = [{"role": r} for r in ("land", "shore_line", "depth_area")]
+
+        def _fake_fetch(bbox, **_k):
+            if abs((bbox[1] + bbox[3]) / 2 - 43.07) < 1e-6:
+                return {"band": "enc_harbour", "features": list(_roles), "source": "cells", "cells": ["US5TEST1"]}
+            return {"band": "enc_harbour", "features": list(_roles)}
+        A.fetch_enc_features = _fake_fetch
+        sys.argv = ["warm_enc.py", "--ports-config", _pp]
+        _out = _io.StringIO()
+        with _cl.redirect_stdout(_out):
+            _rc = _w.main()
+        _line = {k: next((l.rstrip() for l in _out.getvalue().splitlines() if l.startswith("  " + k + " ")), "")
+                 for k in _at}
+        check("11f. the warm tool marks each answer by where it came from: NOAA's cells (an old features_ file "
+              "notwithstanding), ENCDirect's kept copy (cached), a fresh fetch neither",
+              lambda: _rc == 0 and _line["cellport"].endswith("from NOAA's cells")
+                      and _line["encport"].endswith("(cached)")
+                      and not _line["freshport"].endswith(("(cached)", "cells")),
+              lambda: (_rc, _line))
+    finally:
+        A.ENC_DIR, A.fetch_enc_features, sys.argv = _sav11
+        import shutil as _sh
+        _sh.rmtree(_d, ignore_errors=True)
+
 
 # ── 12: A PARTLY-FAILED EXTRACT IS NEVER CACHED ────────────────────────────────────────
 #

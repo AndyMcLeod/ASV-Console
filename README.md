@@ -3582,6 +3582,10 @@ plain. `tests/path_card.js` 15.
    *A boom, named.* NOAA charts a boom with a code newer than the catalog the reader carries, so
    it came out as "10" where ENCDirect says "boom". Now it says "boom". `tests/s57_reader.py` 4v.
 
+   *The warm tool's mark.* `tools/warm_enc.py` marked a port "(cached)" by a file the cells never
+   write, so every port read from them looked fetched afresh. It now says where each answer came
+   from. `tests/enc_extract.py` 11f.
+
    **The Passage tab, and a long Go-To as a passage (2026-10-14).** Andy: "consider another path
    planning behavior called 'passage' that disregards the 9-23 directive and allows for long path
    planning", and "do it in segments starting with beginning and end and then working inward". The

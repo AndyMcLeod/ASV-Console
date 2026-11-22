@@ -221,8 +221,14 @@ def main():
         for ft in feats:
             roles[ft.get("role")] = roles.get(ft.get("role"), 0) + 1
         band = d.get("band")
+        # WHERE THE ANSWER CAME FROM, said by the answer. A read from NOAA's cells (the
+        # console's chart source since 2026-11-21) keeps no features_ copy - each cell's
+        # read is kept beside the cell - so the file test above speaks for an ENCDirect
+        # answer alone. Asked of a cells answer it said nothing, as if every port were a
+        # fresh fetch (the 2026-11-21 review).
+        mark = "from NOAA's cells" if d.get("source") == "cells" else "(cached)" if hit else ""
         print("  %-20s %-14s %6d features in %5.1f s %s"
-              % (p["id"], band or "NO COVERAGE", len(feats), dt, "(cached)" if hit else ""))
+              % (p["id"], band or "NO COVERAGE", len(feats), dt, mark))
         if not band:
             print("        %s" % (d.get("note") or "no band"))
             worst = max(worst, 1)
