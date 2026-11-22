@@ -3554,6 +3554,13 @@ plain. `tests/path_card.js` 15.
    again for two minutes; the older copy is read meanwhile and said as an older chart. A read that
    runs out of memory is not taken as the copy's fault. `tests/enc_cells.py` 5i-5i3.
 
+   *A berthing chart's coverage that could not be read.* The berthing chart is read beside the
+   harbor chart, never in its place. When its coverage could not be read at all, the note said
+   what it would cover was unread (none was), named the band as read from ENCDirect (it was read
+   from nowhere), and the layered read called itself whole. Now the note says the harbor chart
+   alone is read where the berthing chart would chart the berths finer, no band is named as read
+   from ENCDirect unless it was, and the read is not called whole. `tests/enc_cells.py` 11.
+
    **The Passage tab, and a long Go-To as a passage (2026-10-14).** Andy: "consider another path
    planning behavior called 'passage' that disregards the 9-23 directive and allows for long path
    planning", and "do it in segments starting with beginning and end and then working inward". The

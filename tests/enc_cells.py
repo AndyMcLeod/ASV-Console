@@ -1446,6 +1446,43 @@ check("10g. A GRID IS ITS TILE'S, AND THE TILE THIS CONSOLE'S: one tied to a til
               % (g_ed is not None, asked_t, ran10, gm, g_ok is not None))
 clear(TILE)
 
+# ── 11. a coverage that could not be read, said as it is (review fix 10) ─────────────────────────────────────────────
+BE = [-70.16, 43.09, -70.13, 43.12]                   # a berthing cell inside the harbor cell
+be = Cell("US6TSTAA")
+be.area("M_COVR", BE, {"CATCOV": "1"})
+be.area("DEPARE", BE, {"DRVAL1": "3", "DRVAL2": "4"})
+BAND_NO["US6"] = 6
+net11 = Net(cat=catalog(boxes=dict(BOXES, US6TSTAA=BE)), zips=dict(ZIPS, US6TSTAA=be.zip()))
+src11 = fresh(net11)
+keep_all(src11, but=("US6TSTAA",))
+net11.down.add("US6TSTAA")                           # the berthing cell cannot be had, none is kept
+clear(TILE)
+A._enc_down_until = time.monotonic() + 600.0         # and ENCDirect is down: the berthing coverage is UNKNOWN
+try:
+    t11 = A.fetch_enc_tile(TILE)
+    lay11 = A.fetch_enc_layered(IN_HA)
+finally:
+    A._enc_down_until = 0.0
+check("11. A BERTHING CHART WHOSE COVERAGE CANNOT BE READ is said as what it is: the tile read without it (the harbor "
+      "chart where the berthing chart would chart the berths finer), not whole, not kept - and the layered read not "
+      "whole, its note the same, no water called unread. Its note said what the berthing chart would cover was "
+      "unread - none was - and the layered read called itself whole; and the band, never read from ENCDirect (down), "
+      "was named as read from ENCDirect",
+      lambda: t11.get("coverage_failed") == ["enc_berthing"] and not t11.get("complete")
+              and not os.path.exists(A._tile_path(TILE)) and not t11.get("unread_failed")
+              and (t11.get("note") or "").startswith("read without the berthing chart's coverage (")
+              and "the harbor chart alone is read" in t11["note"] and "is unread" not in t11["note"]
+              and not t11.get("encdirect_bands") and "ENCDirect service" not in (t11.get("stale") or "")
+              and lay11.get("coverage_failed") == ["enc_berthing"] and not lay11.get("complete")
+              and lay11.get("note") == t11["note"] and not lay11.get("unread_failed"),
+      lambda: "tile: coverage_failed %s complete %s kept %s unread_failed %s from ENCDirect %s note %r stale %r; "
+              "layered: complete %s note %r unread_failed %s" % (
+                  t11.get("coverage_failed"), t11.get("complete"), os.path.exists(A._tile_path(TILE)),
+                  t11.get("unread_failed"), t11.get("encdirect_bands"), t11.get("note"), t11.get("stale"),
+                  lay11.get("complete"), lay11.get("note"), lay11.get("unread_failed")))
+del BAND_NO["US6"]
+clear(TILE)
+
 shutil.rmtree(TMP, ignore_errors=True)
 print("\n" + ("%d CHECK(S) FAILED (%d ran)" % (fails, ran) if fails else "all checks passed (%d)" % ran))
 sys.exit(1 if fails else 0)

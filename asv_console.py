@@ -4156,7 +4156,10 @@ def _enc_tile_build(tile):
     # ENCDirect whole (ONE SOURCE A BAND), and the tile was kept as whole: served a week as the cells' chart, without the
     # pontoons and NOAA's corrections since ENCDirect's read, even once the cells could be read again. It is served and
     # said (`stale`), never kept, so it is read from the cells again after ENC_TILE_RETRY_S.
-    fell = [b for b in ENC_BANDS + [ENC_BERTHING] if sources.get(b) == "encdirect"] if cells_on else []
+    # A band whose coverage could not be read either (`coverage_failed`) was read from nowhere: it is not named as read
+    # from ENCDirect (fix 10 of that review).
+    fell = [b for b in ENC_BANDS + [ENC_BERTHING]
+            if sources.get(b) == "encdirect" and b not in cov_failed] if cells_on else []
     stale = []
     if cat_stale:
         # NOAA'S CATALOG COULD NOT BE REFRESHED (the 2026-11-21 review): the cells were read as its copy of that day
@@ -4183,8 +4186,19 @@ def _enc_tile_build(tile):
     if stale:
         out["stale"] = "; ".join(stale)
     if cov_failed:
-        out["note"] = "read without the %s chart's coverage (%s): what it would cover is unread" % (
-            " / ".join(_band_word(b) for b in sorted(cov_failed)), next(iter(cov_failed.values())))
+        # ⚠ THE BERTHING CHART'S COVERAGE UNKNOWN LEAVES NOTHING UNREAD (the 2026-11-21 review): it is read beside the
+        # harbor chart, never in its place, so where it would reach the harbor chart alone is read - the berths not
+        # charted finer. The note said what it would cover was unread, of water read whole.
+        cf = [b for b in sorted(cov_failed) if b != ENC_BERTHING]
+        says = []
+        if cf:
+            says.append("read without the %s chart's coverage (%s): what it would cover is unread" % (
+                " / ".join(_band_word(b) for b in cf), cov_failed[cf[0]]))
+        if ENC_BERTHING in cov_failed:
+            says.append("read without the %s chart's coverage (%s): the %s chart alone is read where it would chart "
+                        "the berths finer" % (_band_word(ENC_BERTHING), cov_failed[ENC_BERTHING],
+                                              _band_word(ENC_BANDS[0])))
+        out["note"] = "; ".join(says)
     elif cov_stale:
         out["note"] = "the %s chart's coverage from an older read (its live read failed)" % " / ".join(_band_word(b) for b in cov_stale)
     elif cells_stale:
@@ -4723,7 +4737,8 @@ def fetch_enc_layered(bbox, min_depth=0.0):
         out["note"] = notes[0] if notes else "no ENC coverage here"
     elif cov_failed:
         out["note"] = next((n for n in notes if n.startswith("read without")), notes[0] if notes else "")
-    if not partial and not unread_failed and not stale and not cells_stale:
+    # a band's coverage unknown is not the whole chart, even where no square is unread for it (the berthing chart's)
+    if not partial and not unread_failed and not stale and not cells_stale and not cov_failed:
         out["complete"] = True
     return out
 
