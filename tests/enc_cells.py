@@ -1601,6 +1601,83 @@ check("13b. ... and a band whose coverage ENCDirect read, in the cells' place, a
       lambda: "harbor %r; berthing %r" % (t13b.get("note"), t13c.get("note")))
 clear(TILE)
 
+# ── 14. ENCDirect's breaker, with the tile's child (review item 19) ──────────────────────────────────────────────────
+# (a) the console's side: the command line it spawns the child with, the breaker armed and not (the run captured)
+import subprocess                                    # noqa: E402
+cmds14 = []
+_run14 = A.subprocess.run
+A.subprocess.run = lambda cmd, **k: (cmds14.append(list(cmd)), subprocess.CompletedProcess(cmd, 9))[1]
+try:
+    A._enc_down_until = time.monotonic() + 20.0
+    A._enc_tile_build_child(TILE)
+    A._enc_down_until = 0.0
+    A._enc_tile_build_child(TILE)
+finally:
+    A.subprocess.run = _run14
+    A._enc_down_until = 0.0
+
+
+def down_s(cmd):
+    return float(cmd[cmd.index("--enc-down-s") + 1]) if "--enc-down-s" in cmd else None
+
+
+# (b) the child's side: its main run here, the cells unreadable, ENCDirect's coverage counted and failing
+net14 = Net()
+fresh(net14)
+net14.down.add("catalog")
+asked14 = []
+
+
+def cov14(band, tile):
+    asked14.append(band)
+    raise OSError("ENCDirect silent")
+
+
+out14 = os.path.join(TMP, "t14.build")
+
+
+def worker14(args):
+    """The child's main, run here: its exit code - or how it refused its command line (a build before the flag)."""
+    try:
+        return A._enc_tile_worker_main(args)
+    except SystemExit as e:
+        return "refused (exit %s)" % e.code
+
+
+args14 = ["--tile=" + ",".join(repr(float(v)) for v in TILE), "--enc-dir", A.ENC_DIR, "--out", out14,
+          "--s57-dir", A.S57_DIR, "--enc-source", "cells"]
+os.environ.pop("ASV_ENC_TILE_FAKE", None)
+_sav14 = (A.ENC_DIR, A.S57_DIR, A.ENC_SOURCE, A._enc_coverage)
+A._enc_coverage = cov14
+try:
+    A._enc_down_until = 0.0
+    rc14 = worker14(args14 + ["--enc-down-s", "25"])
+    got14, asked14_in, held14 = A._read_tile_jsonl(out14), list(asked14), A._enc_down_until - time.monotonic()
+    del asked14[:]
+    A._enc_down_until = 0.0
+    rc14b = worker14(args14)
+    got14b, asked14_no = A._read_tile_jsonl(out14), list(asked14)
+    A._enc_down_until = 0.0
+    worker14(args14 + ["--enc-down-s", "600"])                       # never held past the 30 s it is armed for
+    held14c = A._enc_down_until - time.monotonic()
+finally:
+    A.ENC_DIR, A.S57_DIR, A.ENC_SOURCE, A._enc_coverage = _sav14
+    A._enc_down_until = 0.0
+    enc_cells._discard(out14)
+check("14. ENCDIRECT'S BREAKER GOES WITH THE TILE'S CHILD: spawned while it is armed, the child is told its time left "
+      "and asks ENCDirect nothing when a cell fails - and, not having armed it, does not say NOAA was unreachable (the "
+      "console would arm it anew with every tile); a child told nothing asks, arms it and says so. The child, a new "
+      "process, started at 0 and asked ENCDirect again a tile",
+      lambda: down_s(cmds14[0]) is not None and 19.0 < down_s(cmds14[0]) <= 20.0 and down_s(cmds14[1]) is None
+              and rc14 == 0 and asked14_in == [] and got14 is not None and got14.get("offline") is False
+              and 20.0 < held14 <= 25.0
+              and rc14b == 0 and len(asked14_no) == 1 and got14b is not None and got14b.get("offline") is True
+              and 25.0 < held14c <= 30.0,
+      lambda: "spawned with %s then %s; told: asked %s offline %s held %.1f s; not told: asked %s offline %s; told 600 s: "
+              "held %.1f s" % (
+          down_s(cmds14[0]) if cmds14 else "-", down_s(cmds14[1]) if len(cmds14) > 1 else "-", asked14_in,
+          got14 and got14.get("offline"), held14, asked14_no, got14b and got14b.get("offline"), held14c))
+
 shutil.rmtree(TMP, ignore_errors=True)
 print("\n" + ("%d CHECK(S) FAILED (%d ran)" % (fails, ran) if fails else "all checks passed (%d)" % ran))
 sys.exit(1 if fails else 0)

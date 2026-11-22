@@ -3598,6 +3598,10 @@ plain. `tests/path_card.js` 15.
    their place too, the console's notes named ENCDirect's failure alone. They now name the cells'
    first, then ENCDirect's. `tests/enc_cells.py` 13, 13b.
 
+   *The breaker goes with the tile's reader.* A tile is read in a process of its own, which did
+   not know the console had stopped asking ENCDirect for a while: when a cell failed there, it
+   asked again, up to 20 s a tile against a silent host. It is now told. `tests/enc_cells.py` 14.
+
    **The Passage tab, and a long Go-To as a passage (2026-10-14).** Andy: "consider another path
    planning behavior called 'passage' that disregards the 9-23 directive and allows for long path
    planning", and "do it in segments starting with beginning and end and then working inward". The

@@ -4431,6 +4431,12 @@ def _enc_tile_build_child(tile):
     gout = "%s.%d.%d.build" % (_grid_path(tile), os.getpid(), threading.get_ident())   # its grid (THE PASSAGE GRID)
     cmd = [sys.executable, os.path.abspath(__file__), "--enc-tile-worker", "--tile=" + ",".join(repr(float(v)) for v in tile),
            "--enc-dir", ENC_DIR, "--out", out, "--grid-out", gout, "--s57-dir", S57_DIR, "--enc-source", ENC_SOURCE]
+    # ⚠ ENCDIRECT'S BREAKER GOES WITH THE CHILD (the 2026-11-21 review): a child is a new process, its breaker at 0, and
+    # one spawned while it was armed here (the cells are read through it) asked ENCDirect again when a cell failed -
+    # a listing, up to 20 s against a silent host, a tile. Its time left is passed; the child holds ENCDirect off as long.
+    left = _enc_down_until - time.monotonic()
+    if left > 0:
+        cmd += ["--enc-down-s", "%.1f" % left]
     try:
         r = subprocess.run(cmd, timeout=ENC_TILE_BUILD_TIMEOUT_S, cwd=APP_DIR)
     except subprocess.TimeoutExpired:
@@ -4471,7 +4477,7 @@ def _enc_tile_worker_main(argv):
     and write it to PATH as a tile file, complete or not; the console decides what to keep. ASV_ENC_TILE_FAKE (a JSON file:
     coverage / features / partial per band, `offline`, `crash`, or `exit_after_write`: a tile written, then a failing
     exit) stands in for NOAA, for tests/chart_read_stall.py."""
-    global ENC_DIR, S57_DIR, ENC_SOURCE
+    global ENC_DIR, S57_DIR, ENC_SOURCE, _enc_down_until
     import argparse as _ap
     ap = _ap.ArgumentParser()
     ap.add_argument("--tile", required=True)   # =W,S,E,N - a western longitude reads as an option otherwise
@@ -4480,8 +4486,15 @@ def _enc_tile_worker_main(argv):
     ap.add_argument("--grid-out")              # the tile's planning grid, when it is read whole (THE PASSAGE GRID)
     ap.add_argument("--s57-dir")               # the console's cells (S57_DIR) and its source (ENC_SOURCE): the child
     ap.add_argument("--enc-source", choices=("cells", "encdirect"))   # reads what the console would
+    ap.add_argument("--enc-down-s", type=float)  # ENCDirect's breaker, armed in the console for this much longer
     a = ap.parse_args(argv)
     tile = [float(v) for v in a.tile.split(",")]
+    # The console's breaker, held here too (at most the 30 s it is armed for). `inherited` is its end: the child says it
+    # found NOAA unreachable (`offline`, below) only when IT armed the breaker - one handed in, reported back, would be
+    # armed anew by the console with every tile, and ENCDirect never asked again while tiles were read.
+    if a.enc_down_s and a.enc_down_s > 0:
+        _enc_down_until = time.monotonic() + min(a.enc_down_s, 30.0)
+    inherited = _enc_down_until
     ENC_DIR = a.enc_dir
     if a.s57_dir:
         S57_DIR = a.s57_dir
@@ -4518,7 +4531,7 @@ def _enc_tile_worker_main(argv):
         old = _older_tile(tile)
         if old is not None:
             got = old
-    got["offline"] = time.monotonic() < _enc_down_until
+    got["offline"] = _enc_down_until > inherited and time.monotonic() < _enc_down_until
     _write_tile_jsonl(a.out, got)
     if a.grid_out and got.get("complete"):
         _write_grid(a.grid_out, got)
