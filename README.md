@@ -3335,7 +3335,9 @@ plain. `tests/path_card.js` 15.
    structures toggle, are outlined in **orange dashes** on the NOGO layer, and are counted on
    the Nogo row as *+N seabed*. An extract that arrived without one of its seabed layers is
    **refused**, because a missing depth layer would read as one gap over the whole area. The
-   row says the check was not made.
+   row says the check was not made. Since 2026-11-21 the chart is read from NOAA's cells, which
+   carry the pontoons themselves (below). A pontoon area fills its own hole, so on the cells the
+   check finds a gap only where the chart holds something the console still does not.
 
    **A dashed line whose dashes each end in a dot is a symbol, not a pier (2026-10-01).** At
    Bellingham a survey was cut along a 1.4 km line the chart draws southwest from the Whatcom
@@ -3443,9 +3445,36 @@ plain. `tests/path_card.js` 15.
    kept in the repository. `tools/s57_match.py` checks it against a cached ENCDirect read: on 14
    harbor areas, every feature ENCDirect served from a current cell paired with one read here, the
    same geometry and every kept property equal; what did not pair lies at the read's edge, in a
-   cell NOAA re-issued after the read, or in a cancelled cell ENCDirect still served. ENCDirect
+   cell NOAA re-issued after the read, or in a canceled cell ENCDirect still served. ENCDirect
    also lags the cells' weekly updates by days to weeks, and never served some classes at all -
-   pontoons above all. Nothing in the console reads cells yet. `tests/s57_reader.py`.
+   pontoons above all. Since phase 2 (below) the console reads its chart from them.
+   `tests/s57_reader.py`.
+
+   **NOAA's cells as the console's chart source (2026-11-21, phase 2).** The console now reads its
+   chart from NOAA's cells (`enc_cells.py`, over `s57.py`), and ENCDirect only where they cannot be
+   had. Each band of a tile comes whole from ONE source: when a band's cells cannot be had, its
+   coverage and its features both come from ENCDirect, never half from each. A cell is downloaded the
+   first time it is needed (`charts/s57/cells`, one zip an edition, the superseded one removed) and
+   parsed once; its read is kept in `charts/s57/read` (about 2.5 MB a cell) and read back after.
+   NOAA's catalog of cells is fetched again once a day. When a cell's current edition cannot be
+   downloaded and an older one is kept, the older one is used, the chart answer says so, and the tile
+   is not kept, so it is read again. A host that does not answer is left alone for 30 s, by every
+   process. Each class takes the name ENCDirect gave it in that band, so every role, rule and page
+   check reads the cells unchanged. What ENCDirect never served now arrives: the harbor chart's
+   PONTOONS are docks, kept clear and drawn like piers (a pontoon area is a `dock`, a pontoon line a
+   `dock_line`), and every other class it did not serve, in any band or in that one (virtual AIS
+   aids, magnetic variation areas, a submarine pipeline on the harbor chart among them), is carried
+   as `extra`, never a keep-out. On the Portsmouth tile
+   (-70.75, 43.0) the harbor band matches his ENCDirect read role for role, plus 339 pontoon lines
+   and 3 pontoon areas. The 3 areas are exactly the 3 floats the seabed-gap check found there
+   (Pepperrell Cove's two among them): held now as the chart's own pontoons, so the check finds no
+   gap. A tile read cold took 10 to 17 s; one read with the cells' reads kept, 4.6 s. The chart
+   card (`SRC`) is read from the cells too, its titles from NOAA's catalog. Tiles are now `tile_v4_`.
+   An ENCDirect tile (`tile_v3_`) is read again from the cells before it is served. It is served,
+   clearances and all, only when that read fails, so the first look at each cached area after this
+   change waits for a read. Two things still come from ENCDirect's host: the chart picture (`CHRT`),
+   which is blank while that host is down, and the fallback above. `--enc-source encdirect` puts
+   the old source back. `tests/enc_cells.py`.
 
    **The Passage tab, and a long Go-To as a passage (2026-10-14).** Andy: "consider another path
    planning behavior called 'passage' that disregards the 9-23 directive and allows for long path
@@ -3506,7 +3535,7 @@ plain. `tests/path_card.js` 15.
    STALE, and for those seconds the clearance guard judged nothing. Three changes, each measured:
    a tile is **built in a child process** (`asv_console.py --enc-tile-worker`; the console starts it,
    nothing to run by hand), so NOAA's answers are parsed there; a tile is **kept one feature per
-   line** (`charts/enc/tile_v2_<key>.jsonl`; `tile_v3_` since 2026-10-12), read back in thousands of small parses the other
+   line** (`charts/enc/tile_v2_<key>.jsonl`; `tile_v3_` since 2026-10-12, `tile_v4_` since 2026-11-21), read back in thousands of small parses the other
    threads run between; and the **garbage collector is held** while a tile is read, and what was read
    is frozen out of its later walks (with three tiles in memory, a full collection took 0.93 s before
    and 0.014 s after). A thread ticking at 20 Hz in place of the telemetry loop: reading a 22 MB tile,
@@ -4983,6 +5012,12 @@ folders by hand: `os._exit` skips `atexit`, so a cleanup registered there never 
 for the plan alone, as `--ports-config` and `--roc-config` do for theirs, so a second console can
 run a copy of a plan, or a rehearsal a fixture, without touching yours; a PATH whose folder does not
 exist yet is given the folder (`tests/state_dir.py` 4-4c).
+
+**`--enc-source cells|encdirect`** says where the chart is read from. `cells`, the default since
+2026-11-21, reads NOAA's S-57 cells (kept in `charts/s57`) and NOAA's older vector service,
+ENCDirect, only where they cannot be had; `encdirect` reads that service alone, as before. A suite
+that seeds the chart cache passes `encdirect`, so its console never reads or downloads the cells
+(`tests/energy_chartinfo.py`).
 
 **Playback.** Open **`/playback`** (or the **▶ Playback** link in the top bar) to
 replay any recording on the same chart: the boat drives its recorded track, the

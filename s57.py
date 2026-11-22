@@ -33,10 +33,8 @@ S-57 catalog as GDAL publishes it (data/s57/, MIT - see its README).
 """
 import csv
 import io
-import math
 import os
 import re
-import struct
 import zipfile
 
 FT = 0x1E          # field terminator
@@ -600,14 +598,18 @@ class Cell:
         return {"type": "MultiPolygon", "coordinates": polys}
 
     # -- the answer ---------------------------------------------------------------------------------------------------
-    def features_out(self):
+    def features_out(self, only=None):
         """Every feature as {"acronym", "objl", "prim", "attrs" {acronym: value text}, "geometry", "rcid", "foid"}.
-        An attribute whose code the catalog does not hold is kept under "ATTL<code>"."""
+        An attribute whose code the catalog does not hold is kept under "ATTL<code>". `only`, a set of class acronyms,
+        keeps those classes alone - their geometry is the only geometry built (a coverage read wants M_COVR, not the
+        whole cell)."""
         cat = catalog()
         out = []
         for rcid in sorted(self.features):
             f = self.features[rcid]
             acr = cat["objl"].get(f["objl"], ("OBJL%d" % f["objl"],))[0]
+            if only is not None and acr not in only:
+                continue
             attrs = {}
             for k, v in f["attf"].items():
                 attrs[cat["attl"].get(k, ("ATTL%d" % k,))[0]] = v
@@ -714,7 +716,8 @@ def usage_band(cell_name):
 
 # ── ENCDIRECT'S SHAPE ────────────────────────────────────────────────────────────────────────────────────────────────
 # NOAA's ENCDirect service publishes these same cells as map layers, and the console's model was built on what it
-# serves. A cell read here is put in that shape so it can stand where an ENCDirect answer stood (phase 2, not built):
+# serves. A cell read here is put in that shape so it stands where an ENCDirect answer stood (enc_cells.py, the console's
+# chart source since phase 2):
 #   LAYER NAMES. A layer is the object class's catalog name in words joined by "_" with the primitive after it -
 #     Shoreline_Construction_line, Buoy_Lateral_point - except where the name already ends in that word (Depth_Area,
 #     Navigation_Line), and except where it does not: Restricted_Area_area in the harbor and approach bands,
@@ -777,17 +780,40 @@ def encdirect_class(acronym, prim, layers):
     exc = ENCDIRECT_NAME_EXCEPTIONS.get((acronym, prim))
     if exc and exc in layers:
         return exc
-    cat = catalog()
-    code = cat["acr_objl"].get(acronym)
-    if code is None or prim not in _PRIM_WORD:
+    words = _class_words(acronym)
+    if not words or prim not in _PRIM_WORD:
         return None
-    words = [w[:1].upper() + w[1:] for w in re.split(r"[^A-Za-z0-9]+", cat["objl"][code][1]) if w]
     base = "_".join(words)
     want = {_squash(base + "_" + _PRIM_WORD[prim])}
-    if words and words[-1].lower() == _PRIM_WORD[prim]:
+    if words[-1].lower() == _PRIM_WORD[prim]:
         want.add(_squash(base))
     hits = sorted(L for L in layers if _squash(L) in want)
     return hits[0] if len(hits) == 1 else None
+
+
+def _class_words(acronym):
+    """The class's catalog name as capitalized words (BOYLAT -> ["Buoy", "Lateral"]), or None for a class it lacks."""
+    cat = catalog()
+    code = cat["acr_objl"].get(acronym)
+    if code is None:
+        return None
+    return [w[:1].upper() + w[1:] for w in re.split(r"[^A-Za-z0-9]+", cat["objl"][code][1]) if w] or None
+
+
+def layer_name(acronym, prim):
+    """The layer name BY THE RULE, for a class no band's list is asked about (the console's cell source, 2026-11-21):
+    ENCDirect's spelling where it has its own (ENCDIRECT_NAME_EXCEPTIONS), else the catalog name joined by "_" with the
+    primitive after it, not doubled where the name already ends in it (Depth_Area, Coverage_area). The bands' one
+    irregular pair, Restricted_Area_area / Restricted_Area, comes out "Restricted_Area" - the console's roles name both.
+    None for an object with no geometry of its own (a collection, primitive 255) or a class the catalog lacks."""
+    exc = ENCDIRECT_NAME_EXCEPTIONS.get((acronym, prim))
+    if exc:
+        return exc
+    words = _class_words(acronym)
+    if not words or prim not in _PRIM_WORD:
+        return None
+    base = "_".join(words)
+    return base if words[-1].lower() == _PRIM_WORD[prim] else base + "_" + _PRIM_WORD[prim]
 
 
 def encdirect_value(acronym, raw, wording=ENCDIRECT_WORDING):
@@ -827,16 +853,22 @@ def encdirect_value(acronym, raw, wording=ENCDIRECT_WORDING):
     return raw[:w] if w and isinstance(raw, str) else raw
 
 
-def encdirect_features(cell, layers, wording=ENCDIRECT_WORDING, raw=False):
+def encdirect_features(cell, layers, wording=ENCDIRECT_WORDING, raw=False, only=None):
     """The cell's objects as ENCDirect serves them for a band whose layer names are `layers`: [{"cls", "properties",
-    "geometry"}], soundings one point each. An object with no layer in the band, or no geometry, is left out and
-    counted in the second answer {(acronym, prim): count} - the caller says what it did not get. `raw` adds the
-    object's own attributes as "s57" (a comparison's evidence)."""
-    layers = set(layers)
+    "geometry", "rcid"}], soundings one point each (with "part", its place in the cluster). An object with no layer in
+    the band, or no geometry, is left out and counted in the second answer {(acronym, prim): count} - the caller says
+    what it did not get. `layers` may instead be a function (acronym, prim) -> name or None: the console's cell source
+    names every class it can (layer_name), where ENCDirect served only its bands' lists. `raw` adds the object's own
+    attributes as "s57" (a comparison's evidence); `only` keeps those class acronyms alone (Cell.features_out)."""
+    if callable(layers):
+        namer = layers
+    else:
+        layers = set(layers)
+        namer = lambda acronym, prim: encdirect_class(acronym, prim, layers)   # noqa: E731
     carries = catalog()["class_attrs"]
     out, left = [], {}
-    for f in cell.features_out():
-        cls = encdirect_class(f["acronym"], f["prim"], layers)
+    for f in cell.features_out(only):
+        cls = namer(f["acronym"], f["prim"])
         g = f["geometry"]
         if cls is None or g is None:
             k = (f["acronym"], f["prim"])
@@ -853,8 +885,9 @@ def encdirect_features(cell, layers, wording=ENCDIRECT_WORDING, raw=False):
         props["DSNM"] = cell.name
         extra = {"s57": f["attrs"], "acronym": f["acronym"]} if raw else {}
         if f["acronym"] == "SOUNDG" and g["type"] == "MultiPoint":
-            for c in g["coordinates"]:
-                out.append(dict(extra, cls=cls, properties=dict(props), geometry={"type": "Point", "coordinates": c}))
+            for i, c in enumerate(g["coordinates"]):
+                out.append(dict(extra, cls=cls, properties=dict(props), geometry={"type": "Point", "coordinates": c},
+                                rcid=f["rcid"], part=i))
             continue
-        out.append(dict(extra, cls=cls, properties=props, geometry=g))
+        out.append(dict(extra, cls=cls, properties=props, geometry=g, rcid=f["rcid"]))
     return out, left

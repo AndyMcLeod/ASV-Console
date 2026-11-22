@@ -3,7 +3,7 @@
 // Andy: "Look at the image included and try to generate logic that would emulate the path the red line follows. Generate
 // logic that would emulate this in our mission tests in our areas of experimentation." His chart is too big to cut a
 // suite fixture of at this scale, so this replays Go-Tos in his waters - his own two (Castine to the Thorofare, New Castle to Gloucester) and
-// eleven more across the same four areas - over the console's own chart cache (charts/enc, tile_v3_*),
+// eleven more across the same four areas - over the console's own chart cache (charts/enc, tile_v4_* or tile_v3_*),
 // each planned twice by the page's own planNogoRoute - the shortest clear way (V.OPEN_WATER false, the planner before
 // 2026-10-14) and open water first - for the DriX H-8 with the EM712 gondola as the console sets her (floor 4.0 m, buffer
 // 5 m, transit standoff 20 m, +0.5 m of water). Each route is measured against the chart's DANGERS - land, shoal water,
@@ -56,10 +56,16 @@ const AREAS = {
     { name: "gloucester_rockport", from: [42.600, -70.660], to: [42.660, -70.600] } ] },
 };
 
+// A tile's box from its name. tile_v4 (2026-11-21) is read from NOAA's cells, tile_v3 from ENCDirect; a cache moving
+// from one to the other holds both for a while, so each square is read from the newest copy it has.
+const tileKey = (f) => f.replace(/^tile_v\d+_/, "").replace(".jsonl", "");
 function tilesFor(B) {
   if (!fs.existsSync(CHARTS)) return [];
-  return fs.readdirSync(CHARTS).filter((f) => /^tile_v3_/.test(f)).filter((f) => {
-    const [w, s, e, n] = f.replace("tile_v3_", "").replace(".jsonl", "").split("_").map(Number);
+  const best = new Map();
+  for (const f of fs.readdirSync(CHARTS).filter((f) => /^tile_v[34]_.*\.jsonl$/.test(f)).sort().reverse())
+    if (!best.has(tileKey(f))) best.set(tileKey(f), f);           // v4 sorts after v3: reversed, the newest comes first
+  return [...best.values()].filter((f) => {
+    const [w, s, e, n] = tileKey(f).split("_").map(Number);
     return e > B.W && w < B.E && n > B.S && s < B.N;
   });
 }
@@ -86,8 +92,8 @@ function missingTiles(B, have) {
   const out = [];
   for (let w = Math.floor(B.W * 4) / 4; w < B.E; w += 0.25)
     for (let s = Math.floor(B.S * 4) / 4; s < B.N; s += 0.25) {
-      const nm = "tile_v3_" + w.toFixed(4) + "_" + s.toFixed(4) + "_" + (w + 0.25).toFixed(4) + "_" + (s + 0.25).toFixed(4) + ".jsonl";
-      if (!have.includes(nm)) out.push(nm);
+      const nm = w.toFixed(4) + "_" + s.toFixed(4) + "_" + (w + 0.25).toFixed(4) + "_" + (s + 0.25).toFixed(4);
+      if (!have.some((f) => tileKey(f) === nm)) out.push(nm);
     }
   return out;
 }
@@ -123,7 +129,7 @@ for (const [aName, A] of Object.entries(AREAS)) {
   const tiles = tilesFor(B);
   if (!tiles.length) { console.log("== " + aName + ": SKIPPED - no chart tile of it in " + CHARTS); skipped += A.cases.length; continue; }
   // the area's tiles not in the cache: unread squares, as the page's nogo.unread
-  const unread = missingTiles(B, tiles).map((f) => { const [w, s, e, n] = f.replace("tile_v3_", "").replace(".jsonl", "").split("_").map(Number);
+  const unread = missingTiles(B, tiles).map((f) => { const [w, s, e, n] = f.split("_").map(Number);
     return { W: w, S: s, E: e, N: n, failed: false }; });
   let t0 = Date.now();
   const feats = loadFeats(B, tiles);

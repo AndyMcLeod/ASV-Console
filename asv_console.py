@@ -79,6 +79,8 @@ import ofs_s3                              # the same OFS files from NOAA's S3 b
 import stofs                               # NOAA STOFS-3D's surge forecast at the gauges (a passage's planning water)
 import speed_zones                         # the states' no-wake / speed polygons, merged into the chart (/api/enc)
 import roc_tracks                          # Remote Operations Center tracking + moving HOME
+import s57                                 # NOAA's S-57 chart cells, read with the standard library (phase 1)
+import enc_cells                           # ... as the chart source: NOAA's catalog, the cells, per band and box
 
 # --------------------------------------------------------------------------- #
 #  Paths / constants                                                          #
@@ -146,7 +148,7 @@ BOOT_ID = "%d-%d" % (os.getpid(), int(time.time() * 1000))
 # of the program (tests/state_dir.py, tests/build_id.py) copy THIS list - so a new module is added here or a copied
 # console dies at import (stream_fusion.py, 2026-10-07: both suites hung on a console that never came up).
 BUILD_PY = ("asv_console.py", "currents.py", "stream_fusion.py", "ofs_s3.py", "stofs.py", "roc_tracks.py", "ais_service.py",
-            "gps_sim.py", "speed_zones.py")
+            "gps_sim.py", "speed_zones.py", "s57.py", "enc_cells.py")
 BUILD_RECHECK_S = 5.0                   # how often the files are looked at again (a stat of each, not a read)
 PAGE_BUILD_TOKEN = "__ASV_PAGE_BUILD__"  # replaced in asv.html with the fingerprint it was served at
 
@@ -2726,6 +2728,20 @@ ENC_LAYER_MAP_MAX_AGE_S = 86400         # a band's layer list is asked for again
                                          # listing is one 0.2 s request, and a republished service numbers its layers anew
                                          # (NOAA republished every band with group layers and prefixed names, 2026-10-19)
 ENC_DIR = os.path.join(CHART_DIR, "enc")
+# ⚠ NOAA'S CELLS FIRST, ENCDIRECT WHERE THEY CANNOT BE HAD (2026-11-21, Andy: "go ahead with phase 2, adding the cells
+# to the console as a chart source", and "the console should show the pontoons and the other features ENCDirect never
+# served"). ENCDirect - every answer below this line was its - stopped answering that day; NOAA's S-57 cells, the same
+# charts, did not. A band's features and its coverage are read from the cells (enc_cells.py, s57.py, kept in S57_DIR)
+# in ENCDirect's shape, and from ENCDirect only when a cell can be neither downloaded nor found kept (_cells_extract,
+# _cells_coverage). Measured against his cached ENCDirect reads (tools/s57_match.py, 14 harbor areas): every feature
+# ENCDirect served from a current cell pairs with one read here, the same geometry and every kept property equal. What
+# the cells add: every class they hold, named as ENCDirect named it (_cell_namer) - the pontoons above all
+# (Pontoon_line / Pontoon_area: docks, kept clear), and the virtual AIS marks, pipelines and boundaries, carried as
+# `extra` like ENCDirect's other informational layers; NOAA's weekly corrections the week they are issued (ENCDirect
+# lagged by days to weeks); and no canceled cell (ENCDirect served two). "encdirect" reads ENCDirect alone
+# (`--enc-source encdirect`: an operator's way back, and a harness's that serves its own seeded chart cache).
+ENC_SOURCE = "cells"
+S57_DIR = os.path.join(CHART_DIR, "s57")
 
 # S-57 object classes we fetch, grouped by the punch-out ROLE they play. Layer ids
 # differ per band, so we resolve them by class name at runtime (the ENCDirect
@@ -2742,13 +2758,18 @@ ENC_ROLES = {
                       "Gate_area", "Dam_area", "Hulk_area",
                       # A DRY DOCK is a basin walled from the water, gated at its seaward end: a structure, and
                       # served only as `extra` until 2026-10-12 (the review: "all ENC components understood").
-                      "Dry_Dock_area"],
+                      "Dry_Dock_area",
+                      # A PONTOON AS AN AREA (2026-11-21): ENCDirect publishes no such layer in any band, so the
+                      # harbor chart's 231 of them over 14 areas never reached the model; NOAA's cells hold them.
+                      "Pontoon_area"],
     # ... and the same structures as LINES - finger piers are typically charted as
     # Shoreline_Construction_line / Mooring_Warping_Facility_line.
     # ⚠ PONTOON IS PUBLISHED IN ONE BAND ONLY - THE COASTAL ONE - AND THIS SAID "IN NO BAND" FOR SIX WEEKS. It was
     # dropped from this list because the harbor and approach maps carry no such layer, and the comment generalized
     # that to every band; the live service lists `Pontoon_line` in enc_coastal (measured 2026-10-12, all six bands'
     # layer lists in tests/fixtures/enc_layer_maps.json). A class is resolved PER BAND - and checked in every band.
+    # ⇒ AND ENCDIRECT NEVER SERVED THE HARBOR BAND'S (2026-11-21): 1,584 pontoon lines over 14 harbor areas, Salem 486,
+    # Portsmouth 359 - the console's model of a marina was its seabed's gaps (skin.js). NOAA's cells hold every one.
     "dock_line":     ["Shoreline_Construction_line",
                       "Floating_Dock_line", "Mooring_Warping_Facility_line",
                       "Dyke_line", "Causeway_line", "Gate_line", "Dam_line", "Pontoon_line"],
@@ -2983,6 +3004,11 @@ def _enc_keep_props(props):
     that could not read the wire. Coercing here makes a new source safe by
     construction, and `tests/enc_extract.py` feeds this the string form so the
     guarantee is checked rather than asserted.
+
+    THAT DAY CAME (2026-11-21): NOAA's cells, read here by s57.py (_cells_extract).
+    s57.py gives a float or integer attribute as a number already - ENCDirect's
+    form, tests/s57_reader.py - and every feature it reads still comes through
+    this function, so a cell that carries a number as text is caught here too.
 
     An unreadable numeric attribute is DROPPED, not carried as text: absent
     means unknown and unknown is the conservative case, which is the answer the
@@ -3275,7 +3301,122 @@ def _bbox_key(bbox):
     return "%.4f_%.4f_%.4f_%.4f" % tuple(bbox)
 
 
-def fetch_enc_features(bbox, min_depth=0.0, band=None, extras=True, use_cache=True):
+# ── THE CELLS AS THE SOURCE (ENC_SOURCE, 2026-11-21) ─────────────────────────────────────────────────────────────────
+# A band's features and coverage read from NOAA's cells (enc_cells.CellSource), answered as ENCDirect answered them, so
+# a cell's answer stands where ENCDirect's stood: the same roles, the same kept properties, the same layer names.
+#   NAMES. The page finds a feature by its layer name (Gate_line, Wreck_point, Mooring_Warping_Facility_point...), so a
+#   class read from a cell takes the name ENCDirect gave it IN THAT BAND, else another band's name for it, else the
+#   rule's (s57.layer_name) - data/s57/encdirect_layers.json, every band's list as published 2026-10-12. The two forms
+#   of Restricted_Area come out as each band served them; a class ENCDirect never served (Pontoon_area) by the rule.
+#   WHAT ENCDIRECT NEVER SERVED is read too (Andy, 2026-11-21: "the console should show the pontoons and the other
+#   features ENCDirect never served"): the harbor band's pontoon lines and areas take the dock roles (ENC_ROLES) - kept
+#   clear and drawn as structures - and every other class arrives `extra`, as every layer the roles do not name always
+#   has: carried, never a keep-out. Among them the virtual AIS marks (NEWOBJ): a mark broadcast by radio with nothing in
+#   the water, so not an obstacle.
+#   ⚠ A BAND'S COVERAGE AND ITS FEATURES COME FROM ONE SOURCE (_enc_tile_build). ENCDirect's coverage with the cells'
+#   features says a band charts squares it holds nothing for (ENCDirect still served cells NOAA had canceled), and a square
+#   a band "covers" with no land and no depth in it reads as open water. So the layered read asks the cells for a
+#   band's coverage first and then reads that band's features from whichever source answered it - never the other.
+#   FAILURES. A cell that can be neither downloaded nor found kept, or will not read, raises here; the caller reads
+#   ENCDirect instead (fetch_enc_features) or reads that band from ENCDirect whole (_enc_tile_build). A cell read from an
+#   older copy (`stale_cells`) is served, never kept.
+_enc_cells_src = None
+_enc_cells_lock = threading.Lock()
+_ENC_LAYER_NAMES_PATH = os.path.join(APP_DIR, "data", "s57", "encdirect_layers.json")
+_enc_namers = {}
+
+
+def _cells():
+    """The process's one cell source (kept in S57_DIR, the console's shared TLS context)."""
+    global _enc_cells_src
+    with _enc_cells_lock:
+        if _enc_cells_src is None or _enc_cells_src.root != S57_DIR:
+            _enc_cells_src = enc_cells.CellSource(S57_DIR, ssl_context=_enc_ssl)
+        return _enc_cells_src
+
+
+def _cell_namer(band):
+    """namer(acronym, prim) for a cell read in `band`: ENCDirect's name for the class in that band, else in any band,
+    else the rule's (the block header); None for an object with no geometry of its own (a collection)."""
+    with _enc_cells_lock:
+        got = _enc_namers.get(band)
+        if got is not None:
+            return got
+        with open(_ENC_LAYER_NAMES_PATH, "r", encoding="utf-8") as f:
+            lists = json.load(f)["bands"]
+        mine = frozenset(lists.get(band) or ())
+        every = frozenset(n for names in lists.values() for n in names)
+        memo = {}
+
+        def namer(acronym, prim):
+            k = (acronym, prim)
+            if k not in memo:
+                memo[k] = (s57.encdirect_class(acronym, prim, mine) or s57.encdirect_class(acronym, prim, every)
+                           or s57.layer_name(acronym, prim))
+            return memo[k]
+        _enc_namers[band] = namer
+        return namer
+
+
+def _cells_extract(band, bbox, extras=True):
+    """One band's features reaching into the box, from NOAA's cells, in fetch_enc_features' answer: role, cls, the
+    kept properties, geometry and `oid` ("<CELL>:<record>"). Raises when a cell cannot be had or read."""
+    feats, info = _cells().band_features(band, bbox, _cell_namer(band))
+    out, counts = [], {}
+    for ft in feats:
+        cls = ft["cls"]
+        role = _ENC_ROLE_OF.get(cls) or ("extra" if extras else None)
+        if role is None:
+            continue
+        out.append({"role": role, "cls": cls, "props": _enc_keep_props(ft["properties"]),
+                    "geometry": ft["geometry"], "oid": ft["oid"]})
+        counts[cls] = counts.get(cls, 0) + 1
+    data = {"band": band, "features": out, "counts": counts, "partial": [], "source": "cells", "cells": info["cells"]}
+    if info["stale"]:
+        data["stale_cells"] = info["stale"]
+    else:
+        data["complete"] = True
+    return data
+
+
+def _cells_pick_band(bbox):
+    """_enc_pick_band's answer from the cells: the finest band whose cells chart depth or land in the box, or None when
+    no band's do. A band whose cells cannot be read RAISES - never a coarser band in its place (_enc_pick_band's rule)."""
+    for band in ENC_BANDS:
+        feats, _info = _cells().band_features(band, bbox, _cell_namer(band), only={"DEPARE", "LNDARE"})
+        if feats:
+            return band
+    return None
+
+
+def _cells_answer(bbox, band, extras):
+    """fetch_enc_features' answer from the cells - the band picked when not forced - or a `failed` one saying why the
+    cells could not be read. "No band charts this water" is an answer about the place, not a failure."""
+    try:
+        if band is None:
+            band = _cells_pick_band(bbox)
+            if band is None:
+                return {"band": None, "features": [], "note": "no ENC coverage here", "source": "cells"}
+        return _cells_extract(band, bbox, extras)
+    except Exception as e:                       # a cell that will not read is a failed read, whatever the fault
+        return {"band": None, "features": [], "failed": True,
+                "note": "NOAA's chart cells could not be read (%s)" % (str(e) or type(e).__name__)}
+
+
+def _cells_coverage(band, tile, stale=None):
+    """_enc_coverage's answer from the cells: the band's M_COVR polygons reaching into the tile that say "coverage
+    available" (the same test), as [[ring, ...], ...]. A cell read from an older copy is added to `stale`, a list."""
+    feats, info = _cells().band_features(band, tile, _cell_namer(band), only={"M_COVR"})
+    if stale is not None:
+        stale.extend(info["stale"])
+    polys = []
+    for ft in feats:
+        if str((ft.get("properties") or {}).get("CATCOV", "")).strip().lower() not in _ENC_NOT_COVERED:
+            polys.extend(_geom_polys(ft["geometry"]))
+    return polys
+
+
+def fetch_enc_features(bbox, min_depth=0.0, band=None, extras=True, use_cache=True, source=None):
     """Fetch + role-tag ENC vector features for a bbox, from the finest band with
     coverage. Returns {'band', 'features':[{role,cls,props,geometry}], 'counts'}.
     The assembled geometry caches to charts/enc/features_<key>.json; the min-depth
@@ -3286,10 +3427,19 @@ def fetch_enc_features(bbox, min_depth=0.0, band=None, extras=True, use_cache=Tr
     only (a coarser band filling in where no finer chart exists); `use_cache` False neither
     reads nor writes this function's own cache (the layered read caches the assembled
     tile instead). Each feature carries `oid`, the service's object id, so a feature
-    fetched by two tiles is kept once."""
+    fetched by two tiles is kept once.
+
+    `source` "cells" or "encdirect" reads that source alone - the layered read takes a band's coverage and its features
+    from ONE source (_cells_extract's header); None reads ENC_SOURCE's way: NOAA's cells, and ENCDirect only when they
+    cannot be read. A read from the cells keeps no copy here - each cell's read is kept beside it (enc_cells)."""
     global _enc_down_until
     key = _bbox_key(bbox)
     forced = band
+    if (source or ENC_SOURCE) == "cells":
+        data = _cells_answer(bbox, band, extras)
+        if not data.get("failed") or source == "cells":
+            return _enc_mark_shallow(data, min_depth)
+        print("[enc] %s for %s - reading ENCDirect instead" % (data.get("note"), key), flush=True)
     # cache version: v2 adds id-first fetch (piers/structures that the old spatial
     # query silently dropped) + the expanded structure classes; v3 splits lateral
     # channel marks into their own 'chan_mark' role and keeps CATLAM/COLOUR; v4 adds
@@ -3453,6 +3603,11 @@ def fetch_enc_features(bbox, min_depth=0.0, band=None, extras=True, use_cache=Tr
             data["complete"] = True
             if use_cache:
                 _cache_json(cache, data)
+    return _enc_mark_shallow(data, min_depth)
+
+
+def _enc_mark_shallow(data, min_depth):
+    """The min-depth 'shallow' tag, per request (fetch_enc_features' docstring)."""
     md = float(min_depth or 0.0)
     for ft in data["features"]:
         if ft["role"] == "depth_area":
@@ -3517,7 +3672,8 @@ ENC_TILE_BUILDS = 1
 _enc_build_sem = threading.BoundedSemaphore(ENC_TILE_BUILDS)
 ENC_TILE_FRESH_S = 7 * 86400   # a tile older than this is read again (behind the copy served): NOAA's weekly corrections
 ENC_TILE_RETRY_S = 120         # a tile served from an older copy is not read again for this long (offline: no hammering)
-_ENC_TILE_READER = 3           # the reader a tile was written by; an older one is read again before it is served
+# 4 (2026-11-21): NOAA's cells - a tile of 3 lacks what ENCDirect never served (the harbor band's pontoons above all).
+_ENC_TILE_READER = 4           # the reader a tile was written by; an older one is read again before it is served
 _ENC_NOT_COVERED = ("no coverage available", "2")
 _enc_tile_locks = {}
 _enc_tile_locks_lock = threading.Lock()
@@ -3886,7 +4042,8 @@ def _enc_tile_build(tile):
     """One tile, read band by band: the features that apply in it and the squares no chart covers. See the header."""
     global _enc_down_until
     fail = {"tile": tile, "features": [], "unread": [], "unread_failed": [tile], "bands": [], "partial": []}
-    if time.monotonic() < _enc_down_until:
+    cells_on = ENC_SOURCE == "cells"
+    if time.monotonic() < _enc_down_until and not cells_on:
         return dict(fail, note="ENC offline (no cache for this tile)")
     # EVERY BAND'S COVERAGE, OR WHAT IS KNOWN OF IT (2026-10-19). A tile failed WHOLE when any one band's coverage could
     # not be read - the overview band's, for a harbor tile - and NOAA was answering every other request with its fault.
@@ -3894,12 +4051,27 @@ def _enc_tile_build(tile):
     # UNKNOWN (`coverage_failed`): the squares a finer, known band covers are read as before, a square an unknown band
     # might cover is water that FAILED to read (never read from a coarser band in its place), and the tile is served but
     # not kept. The finest band unknown with no copy is the one case nothing can be read.
-    covs, cov_failed, cov_stale = [], {}, []
+    # THE CELLS FIRST (2026-11-21, the cells block above _cells_extract): a band's coverage is asked of NOAA's cells, and
+    # ENCDirect's path below is the band's only when they cannot answer it - and then the band's features are ENCDirect's
+    # too (`sources`): ONE SOURCE A BAND. ENCDirect's breaker stops ENCDirect alone; the cells are read through it.
+    covs, cov_failed, cov_stale, sources, cells_stale = [], {}, [], {}, []
     for b in ENC_BANDS + [ENC_BERTHING]:
+        if cells_on:
+            try:
+                covs.append(_cells_coverage(b, tile, cells_stale))
+                sources[b] = "cells"
+                continue
+            except Exception as e:                 # a cell that will not read fails the cells' answer, whatever the fault
+                print("[enc] tile %s: the %s cells could not be read (%s) - reading that band from ENCDirect"
+                      % (_bbox_key(tile), _band_word(b), str(e) or type(e).__name__), flush=True)
+        sources[b] = "encdirect"
+        offline = cells_on and time.monotonic() < _enc_down_until
         try:
+            if offline:                            # ENCDirect's breaker is armed: not asked (and not armed again)
+                raise OSError("ENC offline")
             covs.append(_enc_coverage(b, tile))
         except (OSError, ValueError, http.client.HTTPException) as e:
-            if isinstance(e, OSError):
+            if isinstance(e, OSError) and not offline:
                 _enc_down_until = time.monotonic() + 30.0
             old = _enc_coverage_old(b, tile)
             if old is not None:
@@ -3920,10 +4092,12 @@ def _enc_tile_build(tile):
     if bb:
         region = [max(tile[0], min(b[0] for b in bb)), max(tile[1], min(b[1] for b in bb)),
                   min(tile[2], max(b[2] for b in bb)), min(tile[3], max(b[3] for b in bb))]
-        d = fetch_enc_features(region, 0.0, band=ENC_BERTHING, extras=True, use_cache=False)
+        d = fetch_enc_features(region, 0.0, band=ENC_BERTHING, extras=True, use_cache=False,
+                               **({"source": sources[ENC_BERTHING]} if cells_on else {}))
         if d.get("band") is None:
             return dict(fail, note="the %s chart could not be read here (%s)" % (_band_word(ENC_BERTHING), d.get("note") or "no answer"))
         failed.update(d.get("partial") or [])
+        cells_stale.extend(d.get("stale_cells") or [])
         present.append(ENC_BERTHING)
         for ft in d.get("features") or []:
             ft = dict(ft)
@@ -3936,10 +4110,12 @@ def _enc_tile_build(tile):
             continue
         region = [min(x[0] for x in rects), min(x[1] for x in rects), max(x[2] for x in rects), max(x[3] for x in rects)]
         # Every band's every layer (the block header, 2026-10-12): the finest whole, a coarser one cut to its squares.
-        d = fetch_enc_features(region, 0.0, band=band, extras=True, use_cache=False)
+        d = fetch_enc_features(region, 0.0, band=band, extras=True, use_cache=False,
+                               **({"source": sources[band]} if cells_on else {}))
         if d.get("band") is None:
             return dict(fail, note="the %s chart could not be read here (%s)" % (_band_word(band), d.get("note") or "no answer"))
         failed.update(d.get("partial") or [])
+        cells_stale.extend(d.get("stale_cells") or [])
         present.append(band)
         for ft in d.get("features") or []:
             ft = dict(ft)
@@ -3954,17 +4130,23 @@ def _enc_tile_build(tile):
            "unread_failed": [list(x) for x in _merge_rects([lf[0] for lf in not_read if len(lf) > 3 and lf[3] == "unknown"])],
            "unread": [list(x) for x in _merge_rects([lf[0] for lf in not_read if len(lf) < 4 or lf[3] == "none"])],
            "leaves": len(leaves), "read_at": time.time(), "reader": _ENC_TILE_READER,
-           "coverage_failed": sorted(cov_failed), "coverage_stale": sorted(cov_stale)}
+           "coverage_failed": sorted(cov_failed), "coverage_stale": sorted(cov_stale), "sources": sources,
+           "stale_cells": sorted(set(cells_stale))}
     if cov_failed:
         out["note"] = "read without the %s chart's coverage (%s): what it would cover is unread" % (
             " / ".join(_band_word(b) for b in sorted(cov_failed)), next(iter(cov_failed.values())))
     elif cov_stale:
         out["note"] = "the %s chart's coverage from an older read (its live read failed)" % " / ".join(_band_word(b) for b in cov_stale)
-    if failed or cov_failed or cov_stale:
-        print("[enc] REFUSING TO CACHE tile %s: %d layer(s) failed (%s)%s%s - served once and re-read next time"
+    elif cells_stale:
+        # A cell whose current edition or update could not be downloaded, read from the copy kept: a whole chart, a
+        # correction or more behind - served, never kept, so the next read asks for the current one again.
+        out["note"] = "read from an older copy of %s (the current one could not be downloaded)" % ", ".join(sorted(set(cells_stale))[:4])
+    if failed or cov_failed or cov_stale or cells_stale:
+        print("[enc] REFUSING TO CACHE tile %s: %d layer(s) failed (%s)%s%s%s - served once and re-read next time"
               % (_bbox_key(tile), len(failed), ", ".join(sorted(failed)[:6]),
                  ("; coverage unknown: " + ", ".join(sorted(cov_failed))) if cov_failed else "",
-                 ("; coverage from an older read: " + ", ".join(cov_stale)) if cov_stale else ""), flush=True)
+                 ("; coverage from an older read: " + ", ".join(cov_stale)) if cov_stale else "",
+                 ("; cells from an older copy: " + ", ".join(sorted(set(cells_stale)))) if cells_stale else ""), flush=True)
     else:
         out["complete"] = True
     return out
@@ -3986,8 +4168,10 @@ def _enc_tile_build(tile):
 # a tile of this reader. ENC_TILE_IN_PROCESS builds in this process instead - for the suites that stub the service here.
 ENC_TILE_IN_PROCESS = False
 ENC_TILE_BUILD_TIMEOUT_S = 900
-_ENC_TILE_FMT = "tile_v3_%s.jsonl"
-_ENC_OLDER_TILE_FMTS = ("tile_v2_%s.jsonl", "tile_v1_%s.json")   # newest first
+# tile_v4 (2026-11-21): read from NOAA's cells (the cells block above _cells_extract). A tile_v3 is ENCDirect's: whole,
+# its clearances kept, and none of what that service never served - the harbor chart's pontoons above all.
+_ENC_TILE_FMT = "tile_v4_%s.jsonl"
+_ENC_OLDER_TILE_FMTS = ("tile_v3_%s.jsonl", "tile_v2_%s.jsonl", "tile_v1_%s.json")   # newest first
 
 
 def _tile_path(tile):
@@ -4025,13 +4209,20 @@ def _older_tile(tile):
                 when = os.path.getmtime(p)
             except OSError:
                 when = None
-        got["features"] = [_clr_unread(_enc_retag(ft)) for ft in got["features"]]
+        day = time.strftime("%Y-%m-%d", time.localtime(when)) if when else "earlier"
         got["read_at"] = when
         got["complete"] = False
-        got["stale"] = ("the chart could not be read again here; a copy read %s by an older reader is used - it holds no "
-                        "bridge or cable clearances, so nothing overhead is judged against her air draft, and it lacks "
-                        "the coarse charts' other layers"
-                        % (time.strftime("%Y-%m-%d", time.localtime(when)) if when else "earlier"))
+        if (got.get("reader") or 0) >= 3:
+            # ENCDirect's reader (tile_v3, 2026-10-12 to 11-21) kept every clearance and every layer that service
+            # served: what it lacks is what the service never served (_ENC_TILE_FMT's note).
+            got["features"] = [_enc_retag(ft) for ft in got["features"]]
+            got["stale"] = ("the chart could not be read again here; a copy read %s from NOAA's ENCDirect service is used - "
+                            "it lacks what that service never served: the harbor chart's pontoons, among others" % day)
+        else:
+            got["features"] = [_clr_unread(_enc_retag(ft)) for ft in got["features"]]
+            got["stale"] = ("the chart could not be read again here; a copy read %s by an older reader is used - it holds "
+                            "no bridge or cable clearances, so nothing overhead is judged against her air draft, and it "
+                            "lacks the coarse charts' other layers" % day)
         got["note"] = got["stale"]
         return got
     return None
@@ -4118,12 +4309,12 @@ def _enc_tile_build_child(tile):
     global _enc_down_until
     fail = {"tile": tile, "features": [], "unread": [], "unread_failed": [tile], "bands": [], "partial": []}
     older = [p for p in _older_tile_paths(tile) if os.path.exists(p)]
-    if time.monotonic() < _enc_down_until and not older:
+    if time.monotonic() < _enc_down_until and not older and ENC_SOURCE != "cells":
         return dict(fail, note="ENC offline (no cache for this tile)")
     out = "%s.%d.%d.build" % (_tile_path(tile), os.getpid(), threading.get_ident())
     gout = "%s.%d.%d.build" % (_grid_path(tile), os.getpid(), threading.get_ident())   # its grid (THE PASSAGE GRID)
     cmd = [sys.executable, os.path.abspath(__file__), "--enc-tile-worker", "--tile=" + ",".join(repr(float(v)) for v in tile),
-           "--enc-dir", ENC_DIR, "--out", out, "--grid-out", gout]
+           "--enc-dir", ENC_DIR, "--out", out, "--grid-out", gout, "--s57-dir", S57_DIR, "--enc-source", ENC_SOURCE]
     try:
         r = subprocess.run(cmd, timeout=ENC_TILE_BUILD_TIMEOUT_S, cwd=APP_DIR)
     except subprocess.TimeoutExpired:
@@ -4164,18 +4355,25 @@ def _enc_tile_worker_main(argv):
     and write it to PATH as a tile file, complete or not; the console decides what to keep. ASV_ENC_TILE_FAKE (a JSON file:
     coverage / features / partial per band, `offline`, `crash`, or `exit_after_write`: a tile written, then a failing
     exit) stands in for NOAA, for tests/chart_read_stall.py."""
-    global ENC_DIR
+    global ENC_DIR, S57_DIR, ENC_SOURCE
     import argparse as _ap
     ap = _ap.ArgumentParser()
     ap.add_argument("--tile", required=True)   # =W,S,E,N - a western longitude reads as an option otherwise
     ap.add_argument("--enc-dir", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--grid-out")              # the tile's planning grid, when it is read whole (THE PASSAGE GRID)
+    ap.add_argument("--s57-dir")               # the console's cells (S57_DIR) and its source (ENC_SOURCE): the child
+    ap.add_argument("--enc-source", choices=("cells", "encdirect"))   # reads what the console would
     a = ap.parse_args(argv)
     tile = [float(v) for v in a.tile.split(",")]
     ENC_DIR = a.enc_dir
+    if a.s57_dir:
+        S57_DIR = a.s57_dir
+    if a.enc_source:
+        ENC_SOURCE = a.enc_source
     fake = os.environ.get("ASV_ENC_TILE_FAKE")
     if fake:
+        ENC_SOURCE = "encdirect"               # the fake stands in for ENCDirect's two answers, below
         with open(fake, "r", encoding="utf-8") as f:
             F = json.load(f)
         if F.get("crash"):
@@ -4188,7 +4386,7 @@ def _enc_tile_worker_main(argv):
             return F.get("coverage", {}).get(band, [])
         g["_enc_coverage"] = cov
 
-        def feats(region, md=0.0, band=None, extras=True, use_cache=True):
+        def feats(region, md=0.0, band=None, extras=True, use_cache=True, source=None):
             if F.get("parse_mb"):                  # an answer as big as NOAA's, parsed as one (the stall it moves here)
                 json.loads("[" + ",".join(["[1.2345678, 42.1234567]"] * int(F["parse_mb"] * 40000)) + "]")
             return {"band": band, "features": [dict(x) for x in F.get("features", {}).get(band, [])],
@@ -4262,7 +4460,7 @@ def _tile_refresh_later(tile):
     the read itself, in memory here - only when it is whole. A read that fails leaves the copy as it was."""
     key = _bbox_key(tile)
     with _enc_tile_locks_lock:
-        if key in _enc_tile_refreshing or time.monotonic() < _enc_down_until:
+        if key in _enc_tile_refreshing or (ENC_SOURCE != "cells" and time.monotonic() < _enc_down_until):
             return
         _enc_tile_refreshing.add(key)
 
@@ -4346,7 +4544,7 @@ def fetch_enc_layered(bbox, min_depth=0.0):
         got = list(ex.map(fetch_enc_tile, tiles))
     md = float(min_depth or 0.0)
     feats, seen, unread, unread_failed, partial, bands, notes = [], set(), [], [], set(), set(), []
-    stale, read_at, aged, cov_failed, cov_stale = set(), [], 0, set(), set()
+    stale, read_at, aged, cov_failed, cov_stale, cells_stale = set(), [], 0, set(), set(), set()
 
     def into(rs, dst):
         for r in rs:
@@ -4373,6 +4571,7 @@ def fetch_enc_layered(bbox, min_depth=0.0):
             stale.add(d["stale"])
         cov_failed.update(d.get("coverage_failed") or [])
         cov_stale.update(d.get("coverage_stale") or [])
+        cells_stale.update(d.get("stale_cells") or [])
         if isinstance(d.get("read_at"), (int, float)):
             read_at.append(d["read_at"])
             if now - d["read_at"] > ENC_TILE_FRESH_S:
@@ -4406,12 +4605,14 @@ def fetch_enc_layered(bbox, min_depth=0.0):
            # the failed layers the model ACTS ON - the ones that made their tiles unread water
            "partial_named": sorted(c for c in partial if c in _ENC_ACTED_ON),
            # the bands whose coverage could not be read (their squares unread_failed) or came from an older read (2026-10-19)
-           "coverage_failed": sorted(cov_failed), "coverage_stale": sorted(cov_stale)}
+           "coverage_failed": sorted(cov_failed), "coverage_stale": sorted(cov_stale),
+           # cells read from an older copy - their current edition or update could not be downloaded (2026-11-21)
+           "stale_cells": sorted(cells_stale)}
     if finest is None:
         out["note"] = notes[0] if notes else "no ENC coverage here"
     elif cov_failed:
         out["note"] = next((n for n in notes if n.startswith("read without")), notes[0] if notes else "")
-    if not partial and not unread_failed and not stale:
+    if not partial and not unread_failed and not stale and not cells_stale:
         out["complete"] = True
     return out
 
@@ -5031,12 +5232,50 @@ ENC_USAGE = {"1": "Overview", "2": "General", "3": "Coastal",
              "4": "Approach", "5": "Harbor", "6": "Berthing"}
 
 
+def _cells_chart_info(bbox):
+    """fetch_chart_info's answer from NOAA's cells (ENC_SOURCE): the picked band's M_COVR and M_QUAL in ENCDirect's
+    shape, each cell's TITLE from NOAA's catalog (ENCDirect served none; the card shows it), or a `failed` answer
+    saying why the cells could not be read. Not kept: each cell's read is (enc_cells)."""
+    try:
+        band = _cells_pick_band(bbox)
+        if band is None:
+            return {"band": None, "cells": [], "quality": [], "note": "no ENC coverage here", "source": "cells"}
+        src = _cells()
+        feats, info = src.band_features(band, bbox, _cell_namer(band), only={"M_COVR", "M_QUAL"})
+        titles = {e["name"]: e.get("title") for e in src.cells_for(band, bbox)}
+    except Exception as e:                       # a cell that will not read is a failed read, whatever the fault
+        return {"band": None, "cells": [], "quality": [], "failed": True,
+                "note": "NOAA's chart cells could not be read (%s)" % (str(e) or type(e).__name__)}
+    out = {"band": band, "cells": [], "quality": [], "note": "", "source": "cells"}
+    slot = {cls: k for k, cls in ENC_META_CLASSES.items()}
+    for ft in feats:
+        k = slot.get(ft["cls"])
+        if k is None:
+            continue
+        props = dict(ft["properties"])
+        if k == "cells" and props.get("TITLE") in (None, "", " "):
+            props["TITLE"] = titles.get(str(props.get("DSNM") or "")[:8])
+        kept = {p: props.get(p) for p in META_KEEP_PROPS if props.get(p) not in (None, "", " ")}
+        if kept:
+            out[k].append({"props": kept, "geometry": ft["geometry"]})
+    if info["stale"]:
+        out["stale_cells"] = info["stale"]
+        out["note"] = "read from an older copy of %s (the current one could not be downloaded)" % ", ".join(info["stale"][:4])
+    return out
+
+
 def fetch_chart_info(bbox):
     """Chart-source metadata for a bbox: the ENC cells covering it + the
     zone-of-confidence polygons within it. Cached on disk like the feature
-    extract, and it never raises - an empty answer degrades the card, not the run."""
+    extract, and it never raises - an empty answer degrades the card, not the run.
+    NOAA's cells first (ENC_SOURCE, _cells_chart_info); ENCDirect's read, below, only when they cannot be read."""
     global _enc_down_until
     key = _bbox_key(bbox)
+    if ENC_SOURCE == "cells":
+        got = _cells_chart_info(bbox)
+        if not got.get("failed"):
+            return got
+        print("[enc] %s for %s - reading ENCDirect's chart information instead" % (got.get("note"), key), flush=True)
     cache = os.path.join(ENC_DIR, "chartinfo_v1_%s.json" % key)
     try:
         # As old as a tile that is read again, read again (ENC_TILE_FRESH_S): new cells and new surveys change it.
@@ -13491,7 +13730,7 @@ register_target_sensor("roc", _roc_targets)
 def main():
     global AIS_BASE, AIS_COLLECT_RADIUS_KM, AIS_SHOW_RADIUS_KM
     global AIS_SOURCE_ARG, AIS_NMEA_SPECS, AIS_OPENCPN
-    global PORTS_PATH
+    global PORTS_PATH, ENC_SOURCE
     ap = argparse.ArgumentParser(description="ASV Simulator Console (Phase 0, sim-first).")
     ap.add_argument("--host", default="127.0.0.1", help="bind address for the web UI")
     ap.add_argument("--port", type=int, default=DEFAULT_WEB_PORT, help="web UI port")
@@ -13590,7 +13829,14 @@ def main():
                          "operator's: a second console on a copy, a fixture for a rehearsal. Wins "
                          "over --state-dir for the plan alone, as --ports-config and --roc-config "
                          "do for theirs")
+    ap.add_argument("--enc-source", choices=("cells", "encdirect"), default=ENC_SOURCE,
+                    help="where the chart is read from: 'cells' (the default since 2026-11-21: NOAA's "
+                         "S-57 cells, kept in charts/s57, and NOAA's older vector service, ENCDirect, "
+                         "only where they cannot be had) or 'encdirect' (that service alone, as before). "
+                         "A test harness that seeds the chart cache passes 'encdirect', so its console "
+                         "never reads or downloads the cells")
     args = ap.parse_args()
+    ENC_SOURCE = args.enc_source               # before any chart is read; a tile's child is told it (--enc-source)
 
     # FIRST, before anything reads or writes state: a harness's console must never open the
     # operator's plan, even to read it (review #16). The single-file flags below still win.

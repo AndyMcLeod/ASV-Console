@@ -77,6 +77,9 @@ sys.excepthook = _crash_report
 APP = os.environ.get("ASV_APP") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path.insert(0, APP)
 import asv_console as A                                       # noqa: E402
+# This suite reads ENCDirect's path - the console's fallback since NOAA's cells became its source (2026-11-21);
+# the cells' own path is tests/enc_cells.py. Set here, so nothing below reaches the cells or their network.
+A.ENC_SOURCE = "encdirect"
 
 fails = 0
 ran = 0

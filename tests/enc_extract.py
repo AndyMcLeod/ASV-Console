@@ -319,6 +319,9 @@ check("7. the console logged NO exception while serving those requests",
 # point of it is the day a second source appears - a cell off a disk, an imported file -
 # when nothing else here would notice.
 import asv_console as A                                       # noqa: E402
+# This suite reads ENCDirect's path - the console's fallback since NOAA's cells became its source (2026-11-21);
+# the cells' own path is tests/enc_cells.py. Set here, so nothing below reaches the cells or their network.
+A.ENC_SOURCE = "encdirect"
 
 rock = A._enc_keep_props({"OBJNAM": "sounded rock", "VALSOU": "5.1", "JUNK": "x"})
 check("8. a VALSOU that arrives as TEXT leaves the extract as a number",
@@ -398,10 +401,18 @@ _declared = re.findall(r'"([A-Z][A-Za-z_]+)"', _blk)
 _roles = {m.group(1): re.findall(r'"([A-Z][A-Za-z_]+)"', m.group(2))
           for m in re.finditer(r'"([a-z_]+)":\s*\[([^\]]*)\]', _blk)}
 
-_nowhere = sorted(c for c in _declared if not any(c in m for m in _bands.values()))
-check("9. every ENC_ROLES class resolves in at least one of the six bands the service publishes (fetched %s)" % _fx["fetched"],
-      (lambda: len(_bands) == 6 and not _nowhere and len(_declared) > 40),
-      "%d classes, %d bands%s" % (len(_declared), len(_bands),
+# ... OR IS A NAME NOAA'S CELLS GIVE (2026-11-21): the console reads the cells first, and a class ENCDirect never served -
+# Pontoon_area - is named by the rule (asv_console._cell_namer). Such a class must be one the namer gives some catalog
+# class in some band: a typo still resolves nowhere. Named in the detail, so a cells-only class is never a surprise.
+import s57                                                     # noqa: E402
+_by_cells = {A._cell_namer(_b)(_acr, _p) for _b in _bands for _acr, _n, _ps in s57.catalog()["objl"].values()
+             for _p in (1, 2, 3)} - {None}
+_cells_only = sorted(c for c in _declared if not any(c in m for m in _bands.values()) and c in _by_cells)
+_nowhere = sorted(c for c in _declared if not any(c in m for m in _bands.values()) and c not in _by_cells)
+check("9. every ENC_ROLES class resolves in at least one of the six bands the service publishes (fetched %s), or is a "
+      "name the cells give a class ENCDirect never served" % _fx["fetched"],
+      (lambda: len(_bands) == 6 and not _nowhere and len(_declared) > 40 and _cells_only == ["Pontoon_area"]),
+      "%d classes, %d bands; from the cells alone: %s%s" % (len(_declared), len(_bands), ", ".join(_cells_only) or "none",
                                   "" if not _nowhere else " - RESOLVING NOWHERE, silently skipped: " + ", ".join(_nowhere)))
 _role_gaps = ["%s in %s" % (r, b) for r, cs in sorted(_roles.items()) for b in ("enc_harbour", "enc_approach")
               if not any(c in _bands[b] for c in cs)]

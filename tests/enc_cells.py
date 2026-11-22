@@ -1,0 +1,702 @@
+"""enc_cells.py - NOAA's cells as the console's chart source (enc_cells.py, asv_console's cells block), on cells this
+suite builds byte by byte (tests/lib/s57_writer.py), a catalog of its own and a network that is a function. Hermetic:
+no NOAA host is asked and nothing is written outside a temp folder; one real tile-build child, reading that folder.
+
+WHAT IT HOLDS THE SOURCE TO (Andy, 2026-11-21: "go ahead with phase 2, adding the cells to the console as a chart
+source", and "the console should show the pontoons and the other features ENCDirect never served"):
+  1  a class read from a cell takes ENCDirect's name for it in that band - the page keys on those names - else another
+     band's, else the rule's; the pontoons take the dock roles, the classes ENCDirect never served arrive `extra`;
+  2  a tile is built from the cells, every band, through ENCDirect's breaker;
+  3  ONE SOURCE A BAND: a band whose cells cannot be read is read from ENCDirect whole - coverage and features - and a
+     band the cells answered is never filled from ENCDirect;
+  4  a cell read from an older copy is served and never kept, and says so; the current one, once had, replaces it;
+  5  the catalog and the downloads: refreshed by age, a failed refresh keeps the copy, a download that is not a whole
+     cell refused, a cell the catalog does not name never read, the hold-offs kept on disk for the next process;
+  6  a cell is parsed once: its read kept beside it, by this reader, and read back;
+  7  the band pick, snap-to-water's read and the chart card read from the cells, ENCDirect only when they cannot be;
+  8  the console's one TLS context; the child that builds a tile reads the console's cells and source;
+  9  a tile ENCDirect's reader kept (tile_v3) is the fallback, its clearances kept, saying what it lacks; a re-read
+     behind a served tile is not stopped by ENCDirect's breaker.
+"""
+import io
+import json
+import math
+import os
+import shutil
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
+
+
+def _crash_report(_t, _e, _tb):
+    import traceback
+    print("  FAIL 0. the suite itself CRASHED before finishing - %s: %s" % (_t.__name__, _e))
+    print("".join(traceback.format_exception(_t, _e, _tb))[-500:])
+    print("\n1 CHECK(S) FAILED (crashed before finishing)")
+
+
+sys.excepthook = _crash_report
+
+APP = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+sys.path.insert(0, APP)
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+from s57_writer import W, edge_ptr, node_ptr, zipped    # noqa: E402
+import s57                                              # noqa: E402
+import enc_cells                                        # noqa: E402
+import asv_console as A                                 # noqa: E402
+
+fails = 0
+ran = 0
+
+
+def check(name, cond, detail=""):
+    global fails, ran
+    ran += 1
+    try:
+        ok = bool(cond()) if callable(cond) else bool(cond)
+        if callable(detail):
+            detail = detail()
+    except Exception as e:
+        ok = False
+        detail = "threw %s: %s" % (type(e).__name__, e)
+    print(("  ok   " if ok else "  FAIL ") + name + ("   [" + str(detail) + "]" if detail else ""))
+    if not ok:
+        fails += 1
+
+
+TMP = tempfile.mkdtemp(prefix="asv_enc_cells_")
+A.ENC_DIR = os.path.join(TMP, "enc")
+A.S57_DIR = os.path.join(TMP, "s57")
+A.ENC_SOURCE = "cells"
+A.ENC_TILE_IN_PROCESS = True
+os.makedirs(A.ENC_DIR)
+
+
+# ── the cells ───────────────────────────────────────────────────────────────────────────────────────────────────────
+class Cell:
+    """A cell being written, with squares, lines and points by coordinates."""
+    def __init__(self, name, edtn="1"):
+        self.name = name
+        self.w = W(name=name + ".000", edtn=edtn)
+        self.nid = 1000
+        self.fid = 1
+
+    def _node(self, lon, lat, rcnm=120):
+        self.nid += 1
+        self.w.node(self.nid, lon, lat, rcnm=rcnm)
+        return self.nid
+
+    def _edge(self, a, b):
+        self.nid += 1
+        self.w.edge(self.nid, a, b, [])
+        return self.nid
+
+    def area(self, acr, box, attrs=None):
+        w_, s_, e_, n_ = box
+        c = [self._node(w_, s_), self._node(e_, s_), self._node(e_, n_), self._node(w_, n_)]
+        es = [self._edge(c[i], c[(i + 1) % 4]) for i in range(4)]
+        return self.feature(acr, 3, attrs, [edge_ptr(e) for e in es])
+
+    def line(self, acr, a, b, attrs=None):
+        return self.feature(acr, 2, attrs, [edge_ptr(self._edge(self._node(*a), self._node(*b)))])
+
+    def point(self, acr, p, attrs=None):
+        return self.feature(acr, 1, attrs, [node_ptr(self._node(p[0], p[1], rcnm=110))])
+
+    def feature(self, acr, prim, attrs, ptrs):
+        self.fid += 1
+        self.w.feature(self.fid, acr, prim, attrs, ptrs)
+        return self.fid
+
+    def zip(self):
+        return zipped({"ENC_ROOT/%s/%s.000" % (self.name, self.name): self.w.bytes()})
+
+
+TILE = [-70.25, 43.0, -70.0, 43.25]
+HA, HB = [-70.20, 43.05, -70.10, 43.15], [-70.10, 43.05, -70.00, 43.15]     # two harbor cells, side by side
+AP = [-70.30, 42.95, -69.95, 43.30]                                         # the approach cell under the whole tile
+CO = [-71.0, 42.5, -69.5, 43.5]
+IN_HA = [-70.17, 43.08, -70.12, 43.13]
+
+ha = Cell("US5TSTAA")
+ha.area("M_COVR", HA, {"CATCOV": "1"})
+ha.area("DEPARE", HA, {"DRVAL1": "2.5", "DRVAL2": "5"})
+ha.area("LNDARE", [-70.19, 43.06, -70.18, 43.07])
+PONTON_LINE = ha.line("PONTON", (-70.15, 43.10), (-70.14, 43.10))
+PONTON_AREA = ha.area("PONTON", [-70.13, 43.11, -70.125, 43.115])
+NEWOBJ = ha.point("NEWOBJ", (-70.16, 43.12), {"OBJNAM": "V-AIS Test"})
+ha.area("MAGVAR", HA, {"VALMAG": "-15.2"})
+ha.line("PIPSOL", (-70.17, 43.06), (-70.17, 43.14))
+ha.area("RESARE", [-70.12, 43.13, -70.11, 43.14], {"CATREA": "27"})
+ha.point("TOPMAR", (-70.155, 43.125))
+ha.area("M_QUAL", HA, {"CATZOC": "2", "SURSTA": "20010101"})
+ha.line("SLCONS", (-70.15, 43.09), (-70.14, 43.09), {"CATSLC": "4"})
+
+hb = Cell("US5TSTAB")
+hb.area("M_COVR", HB, {"CATCOV": "1"})
+hb.area("DEPARE", HB, {"DRVAL1": "6", "DRVAL2": "10"})
+
+ap = Cell("US4TSTAA")
+ap.area("M_COVR", AP, {"CATCOV": "1"})
+ap.area("M_COVR", [-70.24, 43.20, -70.22, 43.22], {"CATCOV": "2"})          # "no coverage available": not coverage
+ap.area("DEPARE", AP, {"DRVAL1": "10", "DRVAL2": "20"})
+ap.area("RESARE", [-70.05, 43.20, -70.04, 43.21])
+
+co = Cell("US3TSTAA")
+co.area("M_COVR", CO, {"CATCOV": "1"})
+co.area("DEPARE", CO, {"DRVAL1": "20", "DRVAL2": "50"})
+co.area("RESARE", [-70.05, 43.20, -70.04, 43.21])
+
+ha2 = Cell("US5TSTAA", edtn="2")                     # the harbor cell's next edition: the pontoon gone, a wharf instead
+ha2.area("M_COVR", HA, {"CATCOV": "1"})
+ha2.area("DEPARE", HA, {"DRVAL1": "2.5", "DRVAL2": "5"})
+ha2.line("SLCONS", (-70.15, 43.10), (-70.14, 43.10), {"CATSLC": "4"})
+
+zz = Cell("US5TSTZZ")                                # a cell the catalog no longer names (canceled), still on disk
+zz.area("M_COVR", HA, {"CATCOV": "1"})
+zz.area("DEPARE", HA, {"DRVAL1": "0.5", "DRVAL2": "1"})
+
+ZIPS = {"US5TSTAA": ha.zip(), "US5TSTAB": hb.zip(), "US4TSTAA": ap.zip(), "US3TSTAA": co.zip()}
+ZIP_ED2 = ha2.zip()
+BAND_NO = {"US5": 5, "US4": 4, "US3": 3}
+TITLES = {"US5TSTAA": "Test Harbor A", "US5TSTAB": "Test Harbor B", "US4TSTAA": "Test Approach", "US3TSTAA": "Test Coast"}
+BOXES = {"US5TSTAA": HA, "US5TSTAB": HB, "US4TSTAA": AP, "US3TSTAA": CO}
+
+
+def merc(lon, lat):
+    r = 6378137.0
+    return [math.radians(lon) * r, r * math.log(math.tan(math.pi / 4 + math.radians(lat) / 2))]
+
+
+def catalog(eds=None):
+    """NOAA's catalog as it is shaped: EPSG:3857 footprints, enc_ed_up, scale_band, title."""
+    eds = eds or {}
+    feats = []
+    for name, (w_, s_, e_, n_) in BOXES.items():
+        ed, up = eds.get(name, (1, 0))
+        feats.append({"type": "Feature", "properties": {"enc_ed_up": "%s_ED%03d_UP%03d" % (name, ed, up),
+                                                        "scale_band": BAND_NO[name[:3]], "title": TITLES[name]},
+                      "geometry": {"type": "Polygon", "coordinates": [[merc(w_, s_), merc(e_, s_), merc(e_, n_),
+                                                                       merc(w_, n_), merc(w_, s_)]]}})
+    return json.dumps({"type": "FeatureCollection", "features": feats}).encode("utf-8")
+
+
+class Net:
+    """The network: url -> bytes. `down` names what does not answer (a cell, or "catalog"); `bad` cells answer an
+    error page; `http` cells answer HTTP 404."""
+    def __init__(self, cat=None, zips=None):
+        self.cat = cat or catalog()
+        self.zips = dict(zips or ZIPS)
+        self.down, self.bad, self.http = set(), set(), set()
+        self.calls = []
+
+    def __call__(self, url):
+        self.calls.append(url)
+        what = "catalog" if url == enc_cells.CATALOG_URL else url.rsplit("/", 1)[-1][:-4]
+        if what in self.http:
+            raise urllib.error.HTTPError(url, 404, "Not Found", {}, io.BytesIO(b""))
+        if what in self.down:
+            raise urllib.error.URLError("timed out")
+        if what == "catalog":
+            return self.cat
+        if what in self.bad:
+            return b"<html>Service unavailable</html>"
+        return self.zips[what]
+
+    def asked(self, name):
+        return self.calls.count(enc_cells.CELL_URL % name)
+
+
+def fresh(net, root=None, now=None):
+    """A cell source on a clean `root` (the suite's S57_DIR by default), as the console makes it - with `net`."""
+    root = root or A.S57_DIR
+    shutil.rmtree(root, ignore_errors=True)
+    src = enc_cells.CellSource(root, ssl_context=A._enc_ssl, fetch=net, now=now)
+    if root == A.S57_DIR:
+        A._enc_cells_src = src
+    return src
+
+
+def again(net, root=None, now=None):
+    """A second process on the same folder: a new source, nothing in memory, the files as they are."""
+    src = enc_cells.CellSource(root or A.S57_DIR, ssl_context=A._enc_ssl, fetch=net, now=now)
+    if (root or A.S57_DIR) == A.S57_DIR:
+        A._enc_cells_src = src
+    return src
+
+
+def keep_all(src, but=()):
+    """Every catalog cell downloaded and kept, but those named."""
+    for e in src.catalog():
+        if e["name"] not in but:
+            src.cell_path(e)
+
+
+def by_oid(feats, cell, rcid):
+    return [f for f in feats if f.get("oid") == "%s:%d" % (cell, rcid)]
+
+
+def raises(fn, kind=OSError):
+    try:
+        fn()
+    except kind:
+        return True
+    return False
+
+
+def files(d):
+    try:
+        return sorted(os.listdir(d))
+    except OSError:
+        return []
+
+
+ENTRY_B = {"name": "US5TSTAB", "key": "US5TSTAB_ED001_UP000"}
+
+# ── 1. names and roles ──────────────────────────────────────────────────────────────────────────────────────────────
+net = Net()
+fresh(net)
+hn, cn = A._cell_namer("enc_harbour"), A._cell_namer("enc_coastal")
+names = {"RESARE harbour": hn("RESARE", 3), "RESARE coastal": cn("RESARE", 3), "PONTON line harbour": hn("PONTON", 2),
+         "PONTON area": hn("PONTON", 3), "TOPMAR": hn("TOPMAR", 1), "M_QUAL": hn("M_QUAL", 3),
+         "BUAARE point": hn("BUAARE", 1), "collection": hn("C_AGGR", 4)}
+check("1. A CLASS READ FROM A CELL TAKES ENCDIRECT'S NAME FOR IT IN THAT BAND - the page finds features by these names - "
+      "else another band's, else the rule's: a restricted area is Restricted_Area_area in the harbor band and "
+      "Restricted_Area in the coastal; a harbor pontoon line Pontoon_line (served in the coastal band only); a pontoon "
+      "AREA, which no band served, Pontoon_area by the rule; ENCDirect's own spellings kept (Topmark_point, "
+      "Quality_of_Data_area, Builtup_Area_point, where the rule says Top_Mark / Of / Built_Up); a collection, no name",
+      lambda: names == {"RESARE harbour": "Restricted_Area_area", "RESARE coastal": "Restricted_Area",
+                        "PONTON line harbour": "Pontoon_line", "PONTON area": "Pontoon_area", "TOPMAR": "Topmark_point",
+                        "M_QUAL": "Quality_of_Data_area", "BUAARE point": "Builtup_Area_point", "collection": None},
+      lambda: names)
+
+ext = A._cells_extract("enc_harbour", HA)
+role = {(f["cls"]): f["role"] for f in ext["features"]}
+pl = by_oid(ext["features"], "US5TSTAA", PONTON_LINE)
+pa = by_oid(ext["features"], "US5TSTAA", PONTON_AREA)
+nw = by_oid(ext["features"], "US5TSTAA", NEWOBJ)
+dep = [f for f in ext["features"] if f["cls"] == "Depth_Area"]
+check("1b. THE PONTOONS ARE DOCKS (kept clear, drawn as structures): Pontoon_line dock_line, Pontoon_area dock - "
+      "and what ENCDirect never served besides arrives `extra`, never a keep-out: the virtual AIS mark (New_Object_point, "
+      "a broadcast with nothing in the water), magnetic variation, the pipeline; each with its oid <CELL>:<record>, its "
+      "numbers numbers (DRVAL1 2.5), the answer whole and named the cells'",
+      lambda: [f["role"] for f in pl] == ["dock_line"] and [f["role"] for f in pa] == ["dock"]
+              and [(f["cls"], f["role"]) for f in nw] == [("New_Object_point", "extra")]
+              and role.get("Magnetic_Variation_area") == "extra" and role.get("Pipeline_Submarine_on_land_line") == "extra"
+              and role.get("Shoreline_Construction_line") == "dock_line" and role.get("Restricted_Area_area") == "restricted"
+              and sorted(f["props"].get("DRVAL1") for f in dep) == [2.5, 6.0] and ext.get("complete")
+              and ext["source"] == "cells" and ext["cells"] == ["US5TSTAA", "US5TSTAB"],
+      lambda: "pontoon line %s, area %s, newobj %s, roles %s, depth %s, cells %s"
+              % ([f["role"] for f in pl], [f["role"] for f in pa], [(f["cls"], f["role"]) for f in nw],
+                 sorted(role.items()), [f["props"].get("DRVAL1") for f in dep], ext.get("cells")))
+named = A._cells_extract("enc_harbour", HA, extras=False)
+check("1c. ... and a read of the named roles alone (extras False) leaves the `extra` classes out, the pontoons in",
+      lambda: not any(f["role"] == "extra" for f in named["features"])
+              and by_oid(named["features"], "US5TSTAA", PONTON_LINE) and not by_oid(named["features"], "US5TSTAA", NEWOBJ),
+      lambda: sorted({f["role"] for f in named["features"]}))
+
+cov = A._cells_coverage("enc_approach", TILE)
+cov_h = A._cells_coverage("enc_harbour", TILE)       # the harbor cells just read WHOLE (1b): their coverage alone still
+bbs = lambda cs: sorted(A._geom_bbox({"type": "Polygon", "coordinates": c}) for c in cs)     # noqa: E731
+check("1d. A BAND'S COVERAGE from its cells' M_COVR: \"coverage available\" polygons only - the approach cell's "
+      "\"no coverage available\" square inside the tile is not coverage; and a band whose cells were just read whole "
+      "answers its coverage with the coverage alone, not every area in them",
+      lambda: bbs(cov) == [AP] and bbs(cov_h) == [HA, HB],
+      lambda: "approach %s; harbor %s" % (bbs(cov), bbs(cov_h)))
+near = A._cells_extract("enc_harbour", [-70.152, 43.098, -70.138, 43.102])      # a box round the pontoon line
+near_cls = sorted({f["cls"] for f in near["features"]})
+check("1e. A READ TAKES WHAT REACHES INTO ITS BOX (ENCDirect's envelope query): round the pontoon line, the pontoon and "
+      "the areas the box lies inside - not the virtual mark, the land or the pipeline elsewhere in the cell",
+      lambda: near_cls == ["Coverage_area", "Depth_Area", "Magnetic_Variation_area", "Pontoon_line",
+                           "Quality_of_Data_area"],
+      lambda: near_cls)
+
+# ── 2. a tile from the cells ────────────────────────────────────────────────────────────────────────────────────────
+A._enc_down_until = time.monotonic() + 30.0          # ENCDirect's breaker armed: the cells are read through it
+t2 = A._enc_tile_build(TILE)
+A._enc_down_until = 0.0
+fb = {(f["band"], f["cls"]) for f in t2["features"]}
+check("2. A TILE FROM THE CELLS, every band, with ENCDirect's breaker ARMED (it stops ENCDirect alone): whole, every "
+      "band's source the cells, the harbor chart where its two cells cover and the approach chart around them, the "
+      "coastal chart nowhere (the approach chart covers the whole tile), no water unread; the harbor pontoons in, "
+      "as docks; written by reader 4, kept as tile_v4",
+      lambda: t2.get("complete") and set(t2["sources"].values()) == {"cells"} and len(t2["sources"]) == 6
+              and t2["bands"] == ["enc_harbour", "enc_approach"] and not t2["unread"] and not t2["unread_failed"]
+              and ("enc_harbour", "Pontoon_line") in fb and ("enc_harbour", "Pontoon_area") in fb
+              and t2["reader"] == 4 and A._ENC_TILE_FMT == "tile_v4_%s.jsonl" and not t2.get("stale_cells"),
+      lambda: "complete %s sources %s bands %s unread %s/%s note %r" % (
+          t2.get("complete"), t2.get("sources"), t2.get("bands"), t2.get("unread"), t2.get("unread_failed"), t2.get("note")))
+
+# ── 3. one source a band ────────────────────────────────────────────────────────────────────────────────────────────
+net3 = Net()
+src3 = fresh(net3)
+keep_all(src3, but=("US5TSTAB",))
+net3.down.add("US5TSTAB")                            # one harbor cell cannot be had, and none is kept
+asked = {"cov": [], "feats": []}
+_cov0, _feat0 = A._enc_coverage, A.fetch_enc_features
+SQ_H = [[[HA[0], HA[1]], [HB[2], HA[1]], [HB[2], HA[3]], [HA[0], HA[3]], [HA[0], HA[1]]]]
+
+
+def encdirect_cov(band, tile):
+    asked["cov"].append(band)
+    return [SQ_H] if band == "enc_harbour" else []
+
+
+def feats_spy(region, md=0.0, band=None, extras=True, use_cache=True, source=None):
+    asked["feats"].append((band, source))
+    if source == "encdirect":
+        return {"band": band, "partial": [], "complete": True, "features": [
+            {"role": "depth_area", "cls": "Depth_Area", "props": {"DRVAL1": 3.0}, "oid": 9001,
+             "geometry": {"type": "Polygon", "coordinates": SQ_H}}]}
+    return _feat0(region, md, band=band, extras=extras, use_cache=use_cache, source=source)
+
+
+A._enc_coverage, A.fetch_enc_features = encdirect_cov, feats_spy
+try:
+    t3 = A._enc_tile_build(TILE)
+finally:
+    A._enc_coverage, A.fetch_enc_features = _cov0, _feat0
+h3 = [f for f in t3["features"] if f["band"] == "enc_harbour"]
+check("3. ONE SOURCE A BAND: a harbor cell that can be neither downloaded nor found kept makes the harbor band "
+      "ENCDirect's WHOLE - its coverage asked of ENCDirect and its features too (source encdirect), not one feature of "
+      "the harbor cell that WAS had - while the approach band, its cell kept, stays the cells'; the tile whole",
+      lambda: t3["sources"]["enc_harbour"] == "encdirect" and t3["sources"]["enc_approach"] == "cells"
+              and asked["cov"] == ["enc_harbour"] and ("enc_harbour", "encdirect") in asked["feats"]
+              and ("enc_approach", "cells") in asked["feats"] and [f["oid"] for f in h3] == [9001]
+              and t3.get("complete"),
+      lambda: "sources %s, ENCDirect coverage asked %s, features asked %s, harbor oids %s, complete %s, note %r"
+              % (t3.get("sources"), asked["cov"], asked["feats"], sorted({str(f["oid"]) for f in h3})[:5],
+                 t3.get("complete"), t3.get("note")))
+n3 = net3.asked("US5TSTAB")
+blocked = raises(lambda: again(net3).cell_path(ENTRY_B))
+neth = Net()
+neth.http.add("US5TSTAB")
+srch = fresh(neth, os.path.join(TMP, "s57_http"))
+http_twice = raises(lambda: srch.cell_path(ENTRY_B)) and raises(lambda: srch.cell_path(ENTRY_B))
+check("3b. ... and a download that did not answer HOLDS OFF the network (DOWN_S) ON DISK, so the next process - the next "
+      "tile's child - asks nothing either and fails at once; a refusal WITH an answer (HTTP 404) holds off nothing",
+      lambda: src3._marked("down.mark", enc_cells.DOWN_S) and blocked and net3.asked("US5TSTAB") == n3 == 1
+              and http_twice and neth.asked("US5TSTAB") == 2 and not srch._marked("down.mark", enc_cells.DOWN_S),
+      lambda: "marked %s; the next process refused %s, asked %d time(s); HTTP 404: refused twice %s, asked %d, marked %s"
+              % (src3._marked("down.mark", enc_cells.DOWN_S), blocked, net3.asked("US5TSTAB"), http_twice,
+                 neth.asked("US5TSTAB"), srch._marked("down.mark", enc_cells.DOWN_S)))
+
+# ── 4. a cell from an older copy ────────────────────────────────────────────────────────────────────────────────────
+net4 = Net(cat=catalog({"US5TSTAA": (2, 0)}), zips=dict(ZIPS, US5TSTAA=ZIP_ED2))
+src4 = fresh(net4)
+keep_all(src4, but=("US5TSTAA",))
+with open(os.path.join(src4.cells_dir, "US5TSTAA_ED001_UP000.zip"), "wb") as f:
+    f.write(ZIPS["US5TSTAA"])                        # last edition's copy, kept from before
+net4.down.add("US5TSTAA")                            # this edition does not come down
+A._enc_tile_mem.clear()
+t4 = A.fetch_enc_tile(TILE)
+kept4 = os.path.exists(A._tile_path(TILE))
+lay4 = A.fetch_enc_layered(IN_HA)
+check("4. A CELL WHOSE CURRENT EDITION CANNOT BE DOWNLOADED is read from the copy kept: the tile is served - the older "
+      "edition's pontoon in it - NOT complete, NOT kept, `stale_cells` and the note naming the cell; the layered read "
+      "says it too and is not whole",
+      lambda: not t4.get("complete") and not kept4 and t4.get("stale_cells") == ["US5TSTAA"]
+              and "older copy of US5TSTAA" in (t4.get("note") or "") and by_oid(t4["features"], "US5TSTAA", PONTON_LINE)
+              and lay4.get("stale_cells") == ["US5TSTAA"] and not lay4.get("complete"),
+      lambda: "complete %s kept %s stale_cells %s note %r; layered stale_cells %s complete %s"
+              % (t4.get("complete"), kept4, t4.get("stale_cells"), t4.get("note"), lay4.get("stale_cells"),
+                 lay4.get("complete")))
+net4.down.discard("US5TSTAA")
+os.remove(os.path.join(A.S57_DIR, "down.mark"))
+again(net4)
+A._enc_tile_mem.clear()
+t4b = A.fetch_enc_tile(TILE)
+c4 = files(src4.cells_dir)
+r4 = [n for n in files(src4.read_dir) if n.startswith("US5TSTAA_")]
+check("4b. ... and once it comes down, the current edition is read - the pontoon it removed gone, the wharf it added in "
+      "- the tile whole and kept, the older copy and its kept read removed",
+      lambda: t4b.get("complete") and os.path.exists(A._tile_path(TILE)) and not t4b.get("stale_cells")
+              and not by_oid(t4b["features"], "US5TSTAA", PONTON_LINE)
+              and "US5TSTAA_ED002_UP000.zip" in c4 and "US5TSTAA_ED001_UP000.zip" not in c4
+              and len(r4) == 1 and r4[0].startswith("US5TSTAA_ED002_UP000."),
+      lambda: "complete %s kept %s; cells %s; reads %s" % (t4b.get("complete"), os.path.exists(A._tile_path(TILE)), c4, r4))
+os.remove(A._tile_path(TILE))
+
+# ── 5. the catalog and the downloads ────────────────────────────────────────────────────────────────────────────────
+clock = [time.time()]
+net5 = Net()
+src5 = fresh(net5, now=lambda: clock[0])
+src5.catalog()
+n_first = net5.calls.count(enc_cells.CATALOG_URL)
+clock[0] += 3600
+src5.catalog()
+n_young = net5.calls.count(enc_cells.CATALOG_URL)
+clock[0] += enc_cells.CATALOG_MAX_AGE_S
+net5.cat = catalog({"US5TSTAA": (2, 0)})
+cat_old = {e["name"]: e["ed"] for e in src5.catalog()}
+n_old = net5.calls.count(enc_cells.CATALOG_URL)
+check("5. THE CATALOG is fetched when there is none, not again while it is young, and again once older than "
+      "CATALOG_MAX_AGE_S - the new editions taken",
+      lambda: (n_first, n_young, n_old) == (1, 1, 2) and cat_old["US5TSTAA"] == 2,
+      lambda: "asked %d, %d, %d; US5TSTAA edition %s" % (n_first, n_young, n_old, cat_old.get("US5TSTAA")))
+clock[0] += enc_cells.CATALOG_MAX_AGE_S * 2
+net5.down.add("catalog")
+src5b = again(net5, now=lambda: clock[0])
+kept_cat = {e["name"]: e["ed"] for e in src5b.catalog()}
+n_fail = net5.calls.count(enc_cells.CATALOG_URL)
+src5c = again(net5, now=lambda: clock[0])
+src5c._down_until = 0.0
+os.remove(os.path.join(A.S57_DIR, "down.mark"))      # the network hold-off gone: only the catalog's own mark is left
+src5c.catalog()
+n_held = net5.calls.count(enc_cells.CATALOG_URL)
+src_none = fresh(Net(), os.path.join(TMP, "s57_none"))
+src_none._fetch = lambda url: (_ for _ in ()).throw(urllib.error.URLError("no route"))
+check("5b. A REFRESH THAT FAILS keeps the catalog it had (catalog_stale) and MARKS the try on disk: the next process "
+      "does not ask again inside CATALOG_RETRY_S; with no catalog kept at all, the read FAILS (OSError) - never an "
+      "empty catalog",
+      lambda: kept_cat.get("US5TSTAA") == 2 and src5b.catalog_stale and n_fail == n_old + 1 and n_held == n_fail
+              and raises(src_none.catalog),
+      lambda: "kept %s stale %s; asked %d then %d (held); none kept raises %s"
+              % (kept_cat, src5b.catalog_stale, n_fail, n_held, raises(src_none.catalog)))
+
+net5d = Net()
+net5d.bad.add("US5TSTAB")
+src5d = fresh(net5d, os.path.join(TMP, "s57_bad"))
+bad_refused = raises(lambda: src5d.cell_path(ENTRY_B))
+os.makedirs(src5d.cells_dir, exist_ok=True)
+with open(os.path.join(src5d.cells_dir, "US5TSTZZ_ED001_UP000.zip"), "wb") as f:
+    f.write(zz.zip())                                # canceled: on disk, not in the catalog
+zz_seen = [ft for ft in src5d.band_features("enc_harbour", IN_HA, A._cell_namer("enc_harbour"))[0]
+           if str(ft.get("oid", "")).startswith("US5TSTZZ")]
+check("5c. A DOWNLOAD THAT IS NOT A WHOLE CELL (an error page served as the file) is refused and not kept - the read "
+      "fails rather than reading it - and a cell the catalog no longer names (canceled) is never read, though a copy "
+      "of it lies in the folder",
+      lambda: bad_refused and "US5TSTAB_ED001_UP000.zip" not in files(src5d.cells_dir) and not zz_seen,
+      lambda: "refused %s, cells kept %s, canceled features read %d" % (bad_refused, files(src5d.cells_dir), len(zz_seen)))
+
+# ── 6. a cell parsed once ───────────────────────────────────────────────────────────────────────────────────────────
+parses = []
+_read_zip0 = s57.read_zip
+
+
+def counted(path):
+    parses.append(os.path.basename(path))
+    return _read_zip0(path)
+
+
+s57.read_zip = counted
+try:
+    net6 = Net()
+    src6 = fresh(net6)
+    e6 = next(e for e in src6.catalog() if e["name"] == "US5TSTAA")
+    p6, _st = src6.cell_path(e6)
+    namer6 = A._cell_namer("enc_harbour")
+    f_first = src6.features(p6, namer6)
+    rd = files(src6.read_dir)
+    n1 = len(parses)
+    f_again = again(net6).features(p6, namer6)
+    n2 = len(parses)
+    f_only = again(net6).features(p6, namer6, only={"M_COVR"})
+    n3_ = len(parses)
+    tag = enc_cells.reader_tag()
+    rpath = os.path.join(src6.read_dir, rd[0]) if rd else ""
+    other = rpath.replace("." + tag + ".", ".0123456789ab.")
+    os.replace(rpath, other)
+    again(net6).features(p6, namer6)
+    n4 = len(parses)
+    after_other = files(src6.read_dir)
+    with open(rpath, "rb") as f:
+        lines = f.read().splitlines(True)
+    with open(rpath, "wb") as f:
+        f.writelines(lines[:-1])                     # cut short
+    f_cut = again(net6).features(p6, namer6)
+    n5 = len(parses)
+finally:
+    s57.read_zip = _read_zip0
+canon = lambda fs: sorted(json.dumps(f, sort_keys=True) for f in fs)     # noqa: E731
+check("6. A CELL IS PARSED ONCE: its read kept beside it (<key>.<reader>.jsonl) and read back by the next process with "
+      "no parse - the same features, record for record; a read of one class from the kept read alone",
+      lambda: n1 == 1 and rd == ["US5TSTAA_ED001_UP000.%s.jsonl" % tag] and n2 == 1 and canon(f_again) == canon(f_first)
+              and n3_ == 1 and canon(f_only) == canon([f for f in f_first if f["cls"] == "Coverage_area"]),
+      lambda: "parses %d/%d/%d, reads %s, same %s, only M_COVR %d" % (
+          n1, n2, n3_, rd, canon(f_again) == canon(f_first), len(f_only)))
+check("6b. ... and a read kept by ANOTHER reader (its tag not this reader's) is not used - the cell parsed again and the "
+      "other read removed - nor is one cut short: parsed again, the same features",
+      lambda: n4 == 2 and after_other == [os.path.basename(rpath)] and n5 == 3 and canon(f_cut) == canon(f_first),
+      lambda: "parses %d then %d; reads after %s" % (n4, n5, after_other))
+
+# ── 7. the band pick, the unforced read, snap-to-water and the chart card ──────────────────────────────────────────
+net7 = Net()
+fresh(net7)
+before7 = files(A.ENC_DIR)
+u7 = A.fetch_enc_features(IN_HA, 2.0)
+snap = A.snap_to_water(43.10, -70.15, 2.0)
+ci = A.fetch_chart_info(IN_HA)
+after7 = files(A.ENC_DIR)
+picks = []
+_pick0 = A._enc_pick_band
+A._enc_pick_band = lambda bbox, errors=None: picks.append(bbox)
+try:
+    far = A.fetch_enc_features([-105.0, 39.7, -104.9, 39.8], 0.0)
+finally:
+    A._enc_pick_band = _pick0
+cells_ci = {c["props"].get("DSNM"): c["props"] for c in ci.get("cells") or []}
+check("7. THE UNFORCED READ (snap-to-water's) picks the finest band whose cells chart depth or land in the box - harbor "
+      "- from the cells, whole, pontoons and all, the shallow tag per request; snap-to-water finds the charted water "
+      "there; the CHART CARD reads the harbor band's cells (DSNM, CATCOV, NOAA's TITLE for each - ENCDirect served none) "
+      "and zones of confidence (CATZOC a number); nothing of theirs written to the ENC cache",
+      lambda: u7.get("band") == "enc_harbour" and u7.get("source") == "cells" and u7.get("complete")
+              and by_oid(u7["features"], "US5TSTAA", PONTON_LINE)
+              and any(f["role"] == "depth_area" and f["shallow"] is False for f in u7["features"])
+              and snap.get("ok") and snap.get("depth_m") == 2.5
+              and ci.get("band") == "enc_harbour" and ci.get("source") == "cells"
+              and cells_ci.get("US5TSTAA.000") == {"DSNM": "US5TSTAA.000", "TITLE": "Test Harbor A",
+                                                    "CATCOV": "coverage available"}
+              and [q["props"].get("CATZOC") for q in ci["quality"]] == [2] and before7 == after7,
+      lambda: "band %s source %s complete %s; snap %s; card band %s cells %s quality %s; enc cache %s -> %s" % (
+          u7.get("band"), u7.get("source"), u7.get("complete"), snap, ci.get("band"), cells_ci,
+          [q["props"] for q in ci.get("quality") or []], before7, after7))
+check("7b. WATER NO CELL CHARTS is an answer about the place - \"no ENC coverage here\", not failed - and ENCDirect is not "
+      "asked about it",
+      lambda: far.get("note") == "no ENC coverage here" and not far.get("failed") and not picks,
+      lambda: "note %r failed %s, ENCDirect asked %d" % (far.get("note"), far.get("failed"), len(picks)))
+
+net7c = Net()
+src7c = fresh(net7c)
+net7c.down.add("catalog")                            # no catalog kept, none to be had
+picks = []
+
+
+def pick_down(bbox, errors=None):
+    picks.append(bbox)
+    if errors is not None:
+        errors.append("harbor: no answer")
+    return None
+
+
+A._enc_pick_band = pick_down
+try:
+    fb7 = A.fetch_enc_features(IN_HA, 0.0)
+    only7 = A.fetch_enc_features(IN_HA, 0.0, band="enc_harbour", source="cells", use_cache=False)
+    n_only = len(picks)
+    A._enc_down_until = 0.0                          # the unforced read's ENCDirect failure armed its breaker
+    ci7 = A.fetch_chart_info(IN_HA)
+finally:
+    A._enc_pick_band = _pick0
+    A._enc_down_until = 0.0
+check("7c. CELLS THAT CANNOT BE READ AT ALL send the read to ENCDirect - the unforced read and the chart card each ask it "
+      "(here it does not answer either, and says so) - while a read FORCED to the cells (the layered read's) fails as "
+      "the cells' and asks ENCDirect nothing",
+      lambda: fb7.get("failed") and "chart service did not answer" in (fb7.get("note") or "")
+              and only7.get("failed") and "cells could not be read" in (only7.get("note") or "")
+              and n_only == 1 and ci7.get("failed") and len(picks) == 2,
+      lambda: "unforced %r; forced to the cells %r (ENCDirect asked %d); card %r (asked %d)" % (
+          fb7.get("note"), only7.get("note"), n_only, ci7.get("note"), len(picks)))
+
+# ── 8. the TLS context, and the child ───────────────────────────────────────────────────────────────────────────────
+ctxs = []
+_urlopen0 = urllib.request.urlopen
+
+
+class _Resp:
+    def __init__(self, data):
+        self.data = data
+
+    def read(self):
+        return self.data
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def rec(req, timeout=None, context=None, **_k):
+    ctxs.append(context)
+    return _Resp(catalog())
+
+
+shutil.rmtree(A.S57_DIR, ignore_errors=True)
+A._enc_cells_src = None
+urllib.request.urlopen = rec
+try:
+    got8 = A._cells().catalog()
+finally:
+    urllib.request.urlopen = _urlopen0
+check("8. THE CELLS ARE FETCHED ON THE CONSOLE'S ONE TLS CONTEXT (_enc_ssl, made once - a context per request cost a "
+      "tile 22.5 s of CPU) and kept in S57_DIR",
+      lambda: len(ctxs) == 1 and ctxs[0] is A._enc_ssl() and len(got8) == 4
+              and os.path.exists(os.path.join(A.S57_DIR, "enc.geojson")),
+      lambda: "contexts %s, the console's %s, cells %d" % (len(ctxs), bool(ctxs) and ctxs[0] is A._enc_ssl(), len(got8)))
+
+net8 = Net()
+src8 = fresh(net8)
+keep_all(src8)                                       # the child needs no network: catalog young, every cell kept
+os.environ.pop("ASV_ENC_TILE_FAKE", None)
+A.ENC_TILE_IN_PROCESS = False
+A._enc_tile_mem.clear()
+A._enc_down_until = time.monotonic() + 30.0          # ENCDirect's breaker armed in the console: the child still reads
+try:
+    t8 = A.fetch_enc_tile(TILE)
+finally:
+    A.ENC_TILE_IN_PROCESS = True
+    A._enc_down_until = 0.0
+check("8b. THE CHILD THAT BUILDS A TILE reads the console's cells (--s57-dir) as the console's source (--enc-source), "
+      "ENCDirect's breaker armed or not: the tile whole from the cells, the pontoons in, kept as tile_v4",
+      lambda: t8.get("complete") and set((t8.get("sources") or {}).values()) == {"cells"}
+              and by_oid(t8["features"], "US5TSTAA", PONTON_LINE) and os.path.exists(A._tile_path(TILE)),
+      lambda: "complete %s sources %s note %r kept %s" % (t8.get("complete"), t8.get("sources"), t8.get("note"),
+                                                          os.path.exists(A._tile_path(TILE))))
+
+# ── 9. ENCDirect's tiles, and the re-read behind ────────────────────────────────────────────────────────────────────
+T9, T9b = [-69.75, 43.0, -69.5, 43.25], [-69.5, 43.0, -69.25, 43.25]
+span = {"role": "bridge_span", "cls": "Bridge_area", "props": {"VERCLR": 20.0}, "oid": 7, "band": "enc_harbour",
+        "geometry": {"type": "Polygon", "coordinates": [[[-69.7, 43.1], [-69.69, 43.1], [-69.69, 43.11], [-69.7, 43.1]]]}}
+v3 = {"tile": T9, "bands": ["enc_harbour"], "unread": [], "unread_failed": [], "partial": [], "complete": True,
+      "reader": 3, "read_at": time.time() - 86400, "features": [span]}
+A._write_tile_jsonl(os.path.join(A.ENC_DIR, "tile_v3_%s.jsonl" % A._bbox_key(T9)), v3)
+v2 = dict(v3, tile=T9b)
+v2.pop("reader")
+A._write_tile_jsonl(os.path.join(A.ENC_DIR, "tile_v2_%s.jsonl" % A._bbox_key(T9b)), v2)
+o3, o2 = A._older_tile(T9), A._older_tile(T9b)
+check("9. A TILE ENCDIRECT'S READER KEPT (tile_v3, reader 3) is the fallback when a tile cannot be read: served stale, "
+      "saying it lacks what that service never served (the pontoons) - its bridge clearances KEPT, judged as read; an "
+      "older reader's (tile_v2) still has its spans marked clearance-unread",
+      lambda: o3 and not o3.get("complete") and "pontoons" in (o3.get("stale") or "")
+              and not any(f.get("clr_unread") for f in o3["features"])
+              and o2 and [f.get("clr_unread") for f in o2["features"]] == [True]
+              and "no bridge or cable clearances" in (o2.get("stale") or ""),
+      lambda: "v3 %r clr_unread %s; v2 %r clr_unread %s" % (
+          (o3 or {}).get("stale"), [f.get("clr_unread") for f in (o3 or {}).get("features", [])],
+          ((o2 or {}).get("stale") or "")[:60], [f.get("clr_unread") for f in (o2 or {}).get("features", [])]))
+
+builds = []
+_now0 = A._tile_build_now
+
+
+def build_rec(tile):
+    builds.append(list(tile))
+    return {"tile": tile, "features": [], "bands": [], "unread": [], "unread_failed": [tile], "partial": []}
+
+
+A._tile_build_now = build_rec
+try:
+    for src_mode, t in (("cells", T9), ("encdirect", T9b)):
+        A.ENC_SOURCE = src_mode
+        A._enc_down_until = time.monotonic() + 30.0
+        A._tile_refresh_later(t)
+        for _ in range(200):
+            with A._enc_tile_locks_lock:
+                if A._bbox_key(t) not in A._enc_tile_refreshing:
+                    break
+            time.sleep(0.01)
+finally:
+    A._tile_build_now = _now0
+    A.ENC_SOURCE = "cells"
+    A._enc_down_until = 0.0
+check("9b. THE RE-READ BEHIND A SERVED TILE is not stopped by ENCDirect's breaker when the cells are the source (it was "
+      "ENCDirect's own hold) - and still is when ENCDirect is",
+      lambda: builds == [T9],
+      lambda: "re-reads started %s" % builds)
+
+shutil.rmtree(TMP, ignore_errors=True)
+print("\n" + ("%d CHECK(S) FAILED (%d ran)" % (fails, ran) if fails else "all checks passed (%d)" % ran))
+sys.exit(1 if fails else 0)

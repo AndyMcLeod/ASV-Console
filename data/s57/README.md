@@ -17,6 +17,15 @@ below; its LICENSE.TXT lists no exception for these files.
 Two of the files are not in the same encoding: `s57attributes.csv` is UTF-8 and `s57expectedinput.csv` is Latin-1.
 `s57.py` reads each file as UTF-8 first and falls back to Latin-1.
 
+## ENCDirect's layer names
+
+`encdirect_layers.json` is not from GDAL. It lists the layer names each band of NOAA's ENCDirect service published on
+2026-10-12, the names only, copied from `tests/fixtures/enc_layer_maps.json`. The console's page finds a feature by
+its layer name, for example `Gate_line` or `Wreck_point`. So when the console reads a feature from a cell
+(`enc_cells.py`), it names the feature the way that band of ENCDirect named it. If that band never published the
+class, the console uses another band's name for it. If no band did, the console names it by the rule in `s57.py`
+(`layer_name`).
+
 ## GDAL's license (MIT)
 
 > In general GDAL/OGR is licensed under an MIT style license with the following terms:

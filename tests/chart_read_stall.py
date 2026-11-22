@@ -47,6 +47,9 @@ sys.excepthook = _crash_report
 APP = os.environ.get("ASV_APP") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path.insert(0, APP)
 import asv_console as A                                       # noqa: E402
+# This suite reads ENCDirect's path - the console's fallback since NOAA's cells became its source (2026-11-21);
+# the cells' own path is tests/enc_cells.py. Set here, so nothing below reaches the cells or their network.
+A.ENC_SOURCE = "encdirect"
 
 fails = 0
 ran = 0
@@ -382,9 +385,11 @@ finally:
 src = open(os.path.join(APP, "asv_console.py"), encoding="utf-8").read()
 main_at = src.index('if __name__ == "__main__":')
 check("5. THE WIRING: a tile is built in a child by default (ENC_TILE_IN_PROCESS False, _tile_build_now), kept "
-      "as tile_v3 lines (the 2026-10-12 reader), and the worker is dispatched before main() starts anything",
+      "as tile_v4 lines (the 2026-11-21 reader, NOAA's cells; ENCDirect's tile_v3 the newest older copy), and the "
+      "worker is dispatched before main() starts anything",
       lambda: A.ENC_TILE_IN_PROCESS is False and "return _enc_tile_build_child(tile)" in src
-              and A._ENC_TILE_FMT == "tile_v3_%s.jsonl" and "tile_v2_%s.jsonl" in A._ENC_OLDER_TILE_FMTS
+              and A._ENC_TILE_FMT == "tile_v4_%s.jsonl" and A._ENC_OLDER_TILE_FMTS[0] == "tile_v3_%s.jsonl"
+              and "tile_v2_%s.jsonl" in A._ENC_OLDER_TILE_FMTS
               and src.index('sys.argv[1] == "--enc-tile-worker"', main_at) < src.index("    main()", main_at),
       "asv_console.py")
 

@@ -197,8 +197,13 @@ srvlog = tempfile.TemporaryFile(mode="w+")
 os.makedirs(ENC_DIR, exist_ok=True)
 with open(SEED_FILE, "w", encoding="utf-8") as f:
     json.dump(SEED, f)
+# --enc-source encdirect (2026-11-21): the seeded file is ENCDirect's chart-info cache, which the
+# console reads only with ENCDirect as its source. With the cells (the default) the card is read
+# from NOAA's cells instead - their catalog downloaded into the app's own charts/s57 on a clean
+# clone, which is neither hermetic nor this suite's to write. The cells' card: tests/enc_cells.py 7.
 proc = subprocess.Popen([sys.executable, "asv_console.py", "--sim", "--browser", "none",
-                         "--port", str(port), "--no-ais-service", "--no-log", *STATE.args()],
+                         "--port", str(port), "--no-ais-service", "--no-log", "--enc-source", "encdirect",
+                         *STATE.args()],
                         cwd=APP, stdout=srvlog, stderr=subprocess.STDOUT)
 try:
     up = False
