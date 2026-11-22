@@ -4165,6 +4165,15 @@ def _enc_tile_build(tile):
         out["catalog_stale"] = min(cat_stale)
         stale.append("NOAA's cell catalog could not be refreshed: the chart is read as its copy of %s named the "
                      "cells - a correction NOAA issued since is not in it" % out["catalog_stale"])
+    if cells_stale:
+        # ⚠ A CELL READ FROM AN OLDER COPY IS AN OLDER CHART IN USE (the 2026-11-21 review). It was said in the tile's
+        # note alone, which the layered read passes on only when no band was read or a coverage is unknown - and the
+        # page reads `stale`: the chart was a correction or more behind and nothing on the page said so.
+        cs = sorted(set(cells_stale))
+        stale.append("the current edition or update of %s could not be downloaded: %s read from an older copy - a "
+                     "correction NOAA issued since is not in it"
+                     % (", ".join(cs[:4]) + (" and %d more" % (len(cs) - 4) if len(cs) > 4 else ""),
+                        "it is" if len(cs) == 1 else "they are"))
     if fell:
         out["encdirect_bands"] = fell
         stale.append("NOAA's cells could not be read here for the %s chart%s: %s from NOAA's ENCDirect service, which "

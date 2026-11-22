@@ -411,13 +411,17 @@ kept4 = os.path.exists(A._tile_path(TILE))
 lay4 = A.fetch_enc_layered(IN_HA)
 check("4. A CELL WHOSE CURRENT EDITION CANNOT BE DOWNLOADED is read from the copy kept: the tile is served - the older "
       "edition's pontoon in it - NOT complete, NOT kept, `stale_cells` and the note naming the cell; the layered read "
-      "says it too and is not whole",
+      "says it too and is not whole - and says it where the PAGE reads it, `stale` (OLDER CHART IN USE): it was in "
+      "the tile's note alone, which the layered read passes on only when no band was read (review fix 7)",
       lambda: not t4.get("complete") and not kept4 and t4.get("stale_cells") == ["US5TSTAA"]
               and "older copy of US5TSTAA" in (t4.get("note") or "") and by_oid(t4["features"], "US5TSTAA", PONTON_LINE)
-              and lay4.get("stale_cells") == ["US5TSTAA"] and not lay4.get("complete"),
-      lambda: "complete %s kept %s stale_cells %s note %r; layered stale_cells %s complete %s"
+              and lay4.get("stale_cells") == ["US5TSTAA"] and not lay4.get("complete")
+              and lay4.get("stale") == ["the current edition or update of US5TSTAA could not be downloaded: it is read "
+                                        "from an older copy - a correction NOAA issued since is not in it"]
+              and t4.get("stale") == lay4["stale"][0],
+      lambda: "complete %s kept %s stale_cells %s note %r; layered stale_cells %s complete %s stale %r"
               % (t4.get("complete"), kept4, t4.get("stale_cells"), t4.get("note"), lay4.get("stale_cells"),
-                 lay4.get("complete")))
+                 lay4.get("complete"), lay4.get("stale")))
 net4.down.discard("US5TSTAA")
 os.remove(os.path.join(A.S57_DIR, "down.mark"))
 again(net4)

@@ -3534,6 +3534,11 @@ plain. `tests/path_card.js` 15.
    `enc_cells.py` and the tables, so no one has to bump a number. A kept tile of the other source,
    or of another reader, is read again first; when that read fails it is served as an older chart
    that says how it was read, and its grid is not served. `tests/enc_cells.py` 3, 10 to 10g.
+   *An older cell copy the page never showed.* A cell whose current edition or update could not
+   be downloaded is read from the copy kept, and the tile is served, not kept. That was said only
+   in the tile's note, which the chart read passes on when no chart was read at all, so the page
+   said nothing while the chart was a correction or more behind. Now it is said where the page
+   reads it: OLDER CHART IN USE, naming the cell. `tests/enc_cells.py` 4.
 
    **The Passage tab, and a long Go-To as a passage (2026-10-14).** Andy: "consider another path
    planning behavior called 'passage' that disregards the 9-23 directive and allows for long path
