@@ -54,6 +54,9 @@ DOWN_S = 30.0                   # after a request that failed, the network is no
 REFUSED_S = 120.0               # a cell whose download answered but was refused (not whole, a member damaged, not the
                                 # edition and update the catalog names) is not downloaded again for this long, by any
                                 # process: an older copy is served meanwhile
+CATALOG_DROP_MAX = 0.05         # a refreshed catalog naming fewer than 19 in 20 as many cells as the copy kept, or with 1
+                                # in 20 of its own entries unreadable, is refused (the 2026-11-21 review): NOAA's of
+                                # 2026-11-21 names 7114 cells and every entry reads
 # A FILE'S TIME MAY RUN A LITTLE AHEAD OF time.time(): on Windows the two are kept at different resolutions (Python
 # 3.11's clock was seen stepping by whole milliseconds; the file system stamps to a tenth of a microsecond), and one fresh
 # file in eleven read as written in the future - so a mark checked just after it was written was not honored, and
@@ -289,9 +292,9 @@ class CellSource:
                     and not self._marked("catalog.mark", CATALOG_RETRY_S):
                 try:
                     data = self._get(CATALOG_URL)
-                    d = json.loads(data.decode("utf-8"))
-                    if not isinstance(d, dict) or not d.get("features"):
-                        raise ValueError("NOAA's cell catalog came back empty")
+                    why = self._catalog_refused(json.loads(data.decode("utf-8")), path)
+                    if why:
+                        raise ValueError("NOAA's cell catalog was refused: %s" % why)
                     _write(path, data)
                     refreshed = True
                 except (OSError, ValueError) as e:
@@ -316,29 +319,58 @@ class CellSource:
             return self._index
 
     @staticmethod
-    def _parse_catalog(path):
-        with open(path, "rb") as f:
-            d = json.loads(f.read().decode("utf-8"))
+    def _catalog_entries(d):
+        """(entries, n): the cells a catalog names, as catalog() gives them, and how many entries (features) it has.
+        An entry that does not read - no edition and update, a scale band that is not one, no footprint - names none."""
+        feats = d.get("features") if isinstance(d, dict) else None
+        feats = feats if isinstance(feats, list) else []
         out = []
-        for ft in (d or {}).get("features") or []:
-            p = ft.get("properties") or {}
-            m = _ED_UP.match(str(p.get("enc_ed_up") or ""))
+        for ft in feats:
             try:
+                p = ft.get("properties") or {}
+                m = _ED_UP.match(str(p.get("enc_ed_up") or ""))
                 band = BAND_OF_USAGE.get(int(p.get("scale_band") or 0))
-            except (TypeError, ValueError):
-                band = None
-            if not m or not band:
+                if not m or not band:
+                    continue
+                pts = [_merc_inv(q[0], q[1]) for q in _pts((ft.get("geometry") or {}).get("coordinates"))]
+            except (AttributeError, TypeError, ValueError, IndexError):
                 continue
-            pts = [_merc_inv(q[0], q[1]) for q in _pts((ft.get("geometry") or {}).get("coordinates"))]
             if not pts:
                 continue
             out.append({"name": m.group(1), "ed": int(m.group(2)), "up": int(m.group(3)), "key": m.group(0),
                         "band": band, "title": p.get("title"),
                         "bbox": (min(q[0] for q in pts), min(q[1] for q in pts),
                                  max(q[0] for q in pts), max(q[1] for q in pts))})
+        return out, len(feats)
+
+    @staticmethod
+    def _parse_catalog(path):
+        with open(path, "rb") as f:
+            out, _n = CellSource._catalog_entries(json.loads(f.read().decode("utf-8")))
         if not out:
             raise ValueError("NOAA's cell catalog names no cells")
         return out
+
+    @classmethod
+    def _catalog_refused(cls, d, path):
+        """Why a refreshed catalog `d` is not taken - or None. ⚠ A REFRESH IS READ BEFORE IT IS KEPT (the 2026-11-21
+        review). One was kept whenever it was JSON with a feature: a cell left out of it, or an entry that did not read,
+        was read as canceled - the harbor chart gone and the tile kept whole - and a schema change overwrote the good
+        copy, so every read failed until a day had passed. Refused: one naming no cell, one with more than
+        CATALOG_DROP_MAX of its own entries unreadable, and one naming fewer than (1 - CATALOG_DROP_MAX) as many cells
+        as the copy kept. A refusal is a failed refresh: the copy kept is read, said past its age (catalog_stale)."""
+        entries, n = cls._catalog_entries(d)
+        if not entries:
+            return "it names no cells (%d entries)" % n
+        if len(entries) < (1.0 - CATALOG_DROP_MAX) * n:
+            return "%d of its %d entries do not read" % (n - len(entries), n)
+        try:
+            kept = len(cls._parse_catalog(path)) if os.path.exists(path) else 0
+        except (OSError, ValueError):
+            kept = 0
+        if len(entries) < (1.0 - CATALOG_DROP_MAX) * kept:
+            return "it names %d cells, the copy kept %d" % (len(entries), kept)
+        return None
 
     def cells_for(self, band, box):
         """The band's current cells whose footprint reaches into the box, by name."""

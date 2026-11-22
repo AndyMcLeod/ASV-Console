@@ -3539,6 +3539,13 @@ plain. `tests/path_card.js` 15.
    in the tile's note, which the chart read passes on when no chart was read at all, so the page
    said nothing while the chart was a correction or more behind. Now it is said where the page
    reads it: OLDER CHART IN USE, naming the cell. `tests/enc_cells.py` 4.
+   *A catalog kept unread.* A refresh of NOAA's cell catalog was kept whenever it was JSON with an
+   entry in it. A cell left out of it, or an entry that did not read, was taken as canceled: the
+   harbor chart gone and the tile kept as whole. A renamed field overwrote the good copy, and every
+   read failed until a day had passed. Now a refresh is read before it is kept. One with more than
+   1 in 20 of its entries unreadable, or naming fewer than 19 in 20 as many cells as the copy kept,
+   is refused: the copy kept is read and said as a catalog that could not be refreshed. NOAA's
+   catalog of 2026-11-21 names 7,114 cells and every entry reads. `tests/enc_cells.py` 5h.
 
    **The Passage tab, and a long Go-To as a passage (2026-10-14).** Andy: "consider another path
    planning behavior called 'passage' that disregards the 9-23 directive and allows for long path

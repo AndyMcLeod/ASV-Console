@@ -766,6 +766,79 @@ check("5g. WHAT A ZIP HOLDS (_check_cell_zip): the base's edition and update, ra
                     "re-issued, then 4": (1, 4), "re-issued, then 1": "refused"},
       lambda: "%s" % g)
 
+# ── 5h. a refreshed catalog taken only when it reads as NOAA's (review fix 8) ────────────────────────────────────────
+BOX40 = {"US5TC%03d" % i: [-70.0 + i * 0.001, 43.0, -69.9995 + i * 0.001, 43.0005] for i in range(40)}
+clock8 = [time.time()]
+root8 = os.path.join(TMP, "s57_cat8")
+net8 = Net(cat=catalog(boxes=BOX40))
+src8 = fresh(net8, root8, now=lambda: clock8[0])
+first8 = len(src8.catalog())
+CAT8 = os.path.join(root8, "enc.geojson")
+
+
+def body8(drop=0, bad=0, add=0, rename=False):
+    """NOAA's catalog of BOX40 less its first `drop` cells, `bad` of the rest with a scale band that does not read
+    ("5H"), `add` cells more, its edition field renamed (a schema change) if `rename`."""
+    boxes = dict(list(BOX40.items())[drop:])
+    boxes.update({"US5TD%03d" % i: [-69.0, 43.0, -68.9995, 43.0005] for i in range(add)})
+    d = json.loads(catalog(boxes=boxes))
+    for ft in d["features"][:bad]:
+        ft["properties"]["scale_band"] = "5H"
+    if rename:
+        for ft in d["features"]:
+            ft["properties"]["enc_edition"] = ft["properties"].pop("enc_ed_up")
+    return json.dumps(d).encode("utf-8")
+
+
+def refresh8(body):
+    """A day on, NOAA's catalog answers `body`: the cells a new process reads, its catalog_stale, the copy kept."""
+    clock8[0] += enc_cells.CATALOG_MAX_AGE_S + 60
+    net8.cat = body
+    enc_cells._discard(os.path.join(root8, "catalog.mark"))     # the last try's hold-off gone: each try its own
+    s = again(net8, root8, now=lambda: clock8[0])
+    try:
+        n = len(s.catalog())
+    except OSError:
+        n = None
+    except ValueError:
+        n = "the copy kept does not read"
+    with open(CAT8, "rb") as f:
+        return n, s.catalog_stale, f.read()
+
+
+cat8 = {"one of 40 gone (canceled)": refresh8(body8(drop=1))}
+taken1 = open(CAT8, "rb").read()
+for k, b in (("three more gone", body8(drop=4)), ("three that do not read", body8(drop=1, bad=3)),
+             ("its edition field renamed", body8(drop=1, rename=True)), ("not NOAA's at all", b'{"features": [{}]}')):
+    cat8[k] = refresh8(b)
+cat8["one in, none gone"] = refresh8(body8(drop=1, add=1))
+nokeep = {}
+for k, b in (("none kept, three of 40 that do not read", body8(bad=3)), ("none kept, one of 40", body8(bad=1)),
+             ("none kept, an empty catalog", b'{"type": "FeatureCollection", "features": []}')):
+    s0 = fresh(Net(cat=b), os.path.join(TMP, "s57_cat8b"))
+    try:
+        nokeep[k] = len(s0.catalog())
+    except OSError:
+        nokeep[k] = "refused"
+    except ValueError:
+        nokeep[k] = "kept, and no read of it"
+said8 = {k: (v[0], bool(v[1]), v[2] == taken1) for k, v in cat8.items()}
+check("5h. A REFRESHED CATALOG IS TAKEN ONLY WHEN IT READS AS NOAA'S: read before it is kept - one naming fewer than "
+      "19 in 20 of the cells the copy kept names, or not reading in 1 in 20 of its own entries (a field renamed, a "
+      "scale band that does not read, a body that is no catalog at all), is refused and the copy kept, said as a "
+      "catalog not refreshed (catalog_stale) - while a cell canceled or one added is taken. A refresh was taken "
+      "whenever it was JSON with a feature: a cell left out or unreadable was read as canceled (the harbor chart "
+      "gone, the tile kept whole), and a schema change overwrote the good copy and failed every read for a day",
+      lambda: first8 == 40 and said8 == {"one of 40 gone (canceled)": (39, False, True),
+                                         "three more gone": (39, True, True),
+                                         "three that do not read": (39, True, True),
+                                         "its edition field renamed": (39, True, True),
+                                         "not NOAA's at all": (39, True, True),
+                                         "one in, none gone": (40, False, False)}
+              and nokeep == {"none kept, three of 40 that do not read": "refused", "none kept, one of 40": 39,
+                             "none kept, an empty catalog": "refused"},
+      lambda: "first %d; %s; with none kept %s" % (first8, said8, nokeep))
+
 # ── 6. a cell parsed once ───────────────────────────────────────────────────────────────────────────────────────────
 parses = []
 _read_zip0 = s57.read_zip
