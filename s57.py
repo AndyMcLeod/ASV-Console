@@ -786,7 +786,9 @@ def usage_band(cell_name):
 #     "pier" for "pier ( jetty)", "seawall" for "sea wall", "yacht harbor" for "yacht harbour/marina" - and it CUTS one
 #     field at 30 characters ("wreck showing any portion of h"). Every entry was paired, object for object, between a
 #     cell and his cached ENCDirect answer for the same day (tools/s57_match.py), or is the one text ENCDirect served
-#     for that attribute whose catalog meaning differs only in its spacing.
+#     for that attribute whose catalog meaning differs only in its spacing. CATOBS 10 is a code the catalog here does
+#     not hold (a later edition's), so the catalog alone gives "10"; ENCDirect serves it "boom" (Portsmouth's two
+#     harbor booms, US5PSMCC 1103 and 1104, among others).
 #   A BLANK, NOT NOTHING. A meaning-valued attribute a class CARRIES (the catalog's attribute set for it) and the
 #     object leaves out is served as " " - a restricted area with no CATREA, a pier line with no CATSLC: 58 of 58
 #     paired cases over 14 areas, and absent on every class that does not carry it. CATWRK's blank is the text '" "'.
@@ -809,7 +811,7 @@ ENCDIRECT_MEANING = frozenset(("CATREA", "CATWRK", "CATOBS", "CATBRG", "CATSLC",
                                "CATGAT", "CATCOV"))
 ENCDIRECT_WORDING = {
     "CATHAF": {"5": "yacht harbor"},
-    "CATOBS": {"1": "snag/stump"},
+    "CATOBS": {"1": "snag/stump", "10": "boom"},
     "CATSCF": {"28": "landing/launching place for boats"},
     "CATSLC": {"2": "groin", "4": "pier", "5": "promenade", "6": "wharf", "10": "seawall"},
     "CATWRK": {"1": "non-dangerous wreck (test)", "5": "wreck showing any portion of h"},

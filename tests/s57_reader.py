@@ -7,7 +7,8 @@ a sounding cluster's depths, the corrections (a moved buoy, a deleted attribute,
 a deleted one; in a second cell a coordinate and a pointer deleted from the middle, an edge's node moved, a
 national and a vector attribute corrected, an object pointer inserted), a boundary at the data limit, a gap in the
 corrections, an update issued after a day, a ring that does not close; a pond on an island in a lake, a hole
-touching its own ring with another listed first, a re-issued base, a node an update deleted. The writer
+touching its own ring with another listed first, a re-issued base, a node an update deleted, a code the catalog
+does not hold. The writer
 (tests/lib/s57_writer.py)
 encodes ISO 8211 independently of the reader's decoder - its field formats are typed out there, not parsed by s57.py
 - so a decoder fault cannot be mirrored by the writer and pass.
@@ -547,6 +548,10 @@ check("4s. the catalog's own words when asked for (wording=None): \"pier ( jetty
 check("4t. a list of codes is each code's meaning, in order (CATREA 9,23)",
       lambda: s57.encdirect_value("CATREA", "9,23") == "military area,ecological reserve",
       lambda: s57.encdirect_value("CATREA", "9,23"))
+check("4v. a code the catalog does not hold is ENCDirect's word where it has one: CATOBS 10 is \"boom\" (it was \"10\"), "
+      "alone and in a list",
+      lambda: s57.encdirect_value("CATOBS", "10") == "boom" and s57.encdirect_value("CATOBS", "1,10") == "snag/stump,boom",
+      lambda: (s57.encdirect_value("CATOBS", "10"), s57.encdirect_value("CATOBS", "1,10")))
 
 print(("\n%d CHECK(S) FAILED (%d ran)" % (fails, ran)) if fails else ("\nall checks passed (%d)" % ran))
 sys.exit(1 if fails else 0)

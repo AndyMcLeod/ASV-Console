@@ -3579,6 +3579,9 @@ plain. `tests/path_card.js` 15.
    through it was said to be missing its edge, which was there. Now the reader names the node.
    `tests/s57_reader.py` 2v.
 
+   *A boom, named.* NOAA charts a boom with a code newer than the catalog the reader carries, so
+   it came out as "10" where ENCDirect says "boom". Now it says "boom". `tests/s57_reader.py` 4v.
+
    **The Passage tab, and a long Go-To as a passage (2026-10-14).** Andy: "consider another path
    planning behavior called 'passage' that disregards the 9-23 directive and allows for long path
    planning", and "do it in segments starting with beginning and end and then working inward". The
