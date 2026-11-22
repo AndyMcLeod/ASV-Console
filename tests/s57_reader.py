@@ -7,7 +7,8 @@ a sounding cluster's depths, the corrections (a moved buoy, a deleted attribute,
 a deleted one; in a second cell a coordinate and a pointer deleted from the middle, an edge's node moved, a
 national and a vector attribute corrected, an object pointer inserted), a boundary at the data limit, a gap in the
 corrections, an update issued after a day, a ring that does not close; a pond on an island in a lake, a hole
-touching its own ring with another listed first, a re-issued base. The writer (tests/lib/s57_writer.py)
+touching its own ring with another listed first, a re-issued base, a node an update deleted. The writer
+(tests/lib/s57_writer.py)
 encodes ISO 8211 independently of the reader's decoder - its field formats are typed out there, not parsed by s57.py
 - so a decoder fault cannot be mirrored by the writer and pass.
 
@@ -277,6 +278,22 @@ check("2j. a ring that does not close is NO geometry, and said - never a polygon
       lambda: f0[106]["geometry"] is None and any("106" in p and "close" in p for p in c0.problems), lambda: c0.problems)
 check("2k. a point whose node is missing is no geometry, and said",
       lambda: f0[107]["geometry"] is None and any("107" in p and "missing" in p for p in c0.problems), lambda: c0.problems)
+def deleted(rcnm, rcid):
+    """The base with one vector deleted by an update, read: (cell, features by rcid)."""
+    u = W(name="US5TEST1.009", updn=9, isdt="20260901")
+    u.raw([("VRID", _field("VRID", [(rcnm, rcid, 2, 2)]))])
+    c = s57.Cell().read_base(B0).apply_update(u.bytes(), 9)
+    return c, by_rcid(c)
+
+
+cdn, fdn = deleted(120, 12)                     # node 12: the slipway 108's edge 21 ends there, the square 102's 22 too
+cde, fde = deleted(130, 24)                     # edge 24 (a side of 102's hole, used by nothing else)
+check("2v. what is missing is said as what it is: a NODE an update deleted is that node of its edge, not the edge "
+      "(it was said as the edge, which is there) - a line's and an area's - and an edge deleted is the edge",
+      lambda: fdn[108]["geometry"] is None and "feature 108: node (120, 12) of edge (130, 21) missing" in cdn.problems
+              and fdn[102]["geometry"] is None and "feature 102: node (120, 12) of edge (130, 22) missing" in cdn.problems
+              and fde[102]["geometry"] is None and "feature 102: edge (130, 24) missing" in cde.problems,
+      lambda: (cdn.problems, cde.problems))
 check("2l. a national attribute (NATF, UCS-2) reads as its text",
       lambda: f0[112]["attrs"].get("NOBJNM") == "Île Test", lambda: f0[112]["attrs"])
 check("2m. the exchange set's CATALOG.031 and text files are not taken for a cell",

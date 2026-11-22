@@ -480,6 +480,18 @@ class Cell:
             return None
         return v
 
+    def _edge_fault(self, rcnm, rcid):
+        """Why a boundary pointer gives no line, said: the edge missing, which of its nodes is, or its ends not named.
+        (The 2026-11-21 review: every one was said as the edge missing - an update had deleted the NODE.)"""
+        e = self.vectors.get((rcnm, rcid)) if rcnm == RCNM_EDGE else None
+        if e is None:
+            return "edge %s missing" % ((rcnm, rcid),)
+        ends = [p[:2] for p in e["vrpt"] if p[4] in (1, 2)] or [p[:2] for p in e["vrpt"]][:2]
+        gone = [n for n in ends if self._node(*n) is None]
+        if gone:
+            return "node %s of edge %s missing" % (gone[0], (rcnm, rcid))
+        return "edge %s names no beginning and end node" % ((rcnm, rcid),)
+
     def _edge_line(self, rcid):
         """An edge's points, begin node to end node, as [[lon, lat], ...] - or None when a part is missing."""
         e = self.vectors.get((RCNM_EDGE, rcid))
@@ -528,7 +540,7 @@ class Cell:
             for (rcnm, rcid, ornt, usag, mask) in f["fspt"]:
                 ln = self._edge_line(rcid) if rcnm == RCNM_EDGE else None
                 if ln is None:
-                    self.problems.append("feature %d: edge %s missing" % (f["rcid"], (rcnm, rcid)))
+                    self.problems.append("feature %d: %s" % (f["rcid"], self._edge_fault(rcnm, rcid)))
                     return None
                 if ornt == 2:
                     ln = ln[::-1]
@@ -551,7 +563,7 @@ class Cell:
         for (rcnm, rcid, ornt, usag, mask) in f["fspt"]:
             ln = self._edge_line(rcid) if rcnm == RCNM_EDGE else None
             if ln is None:
-                self.problems.append("feature %d: edge %s missing" % (f["rcid"], (rcnm, rcid)))
+                self.problems.append("feature %d: %s" % (f["rcid"], self._edge_fault(rcnm, rcid)))
                 return None
             if ornt == 2:
                 ln = ln[::-1]

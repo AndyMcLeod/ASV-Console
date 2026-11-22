@@ -3575,6 +3575,10 @@ plain. `tests/path_card.js` 15.
    twice. Neither case is in any of the 116 cells kept here, and their reads are unchanged.
    `tests/s57_reader.py` 2s-2u, 3v-3x.
 
+   *What is missing, said as what it is.* When an update deleted a node, every line and area
+   through it was said to be missing its edge, which was there. Now the reader names the node.
+   `tests/s57_reader.py` 2v.
+
    **The Passage tab, and a long Go-To as a passage (2026-10-14).** Andy: "consider another path
    planning behavior called 'passage' that disregards the 9-23 directive and allows for long path
    planning", and "do it in segments starting with beginning and end and then working inward". The
