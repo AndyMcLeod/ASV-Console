@@ -3433,6 +3433,20 @@ plain. `tests/path_card.js` 15.
    no longer read, so an area visited only before this change has no chart offline until it has been
    read online once.
 
+   **NOAA's chart cells, read here (2026-11-21, phase 1 of an S-57 chart source).** ENCDirect's host
+   stopped answering on 21 November; NOAA's S-57 cells (charts.noaa.gov/ENCs, the same charts) did
+   not. `s57.py` reads a cell with the standard library alone - ISO 8211, the base cell and its
+   update files in order, vector topology to points, lines and rings, the area's holes - and gives
+   its features as ENCDirect serves them: the same layer names, the same value forms (ENCDirect's
+   own words for a category, its blanks, INFORM cut at 254). The S-57 object and attribute
+   catalog is GDAL's three tables, in `data/s57/` with GDAL's MIT notice; NOAA's cells are not
+   kept in the repository. `tools/s57_match.py` checks it against a cached ENCDirect read: on 14
+   harbor areas, every feature ENCDirect served from a current cell paired with one read here, the
+   same geometry and every kept property equal; what did not pair lies at the read's edge, in a
+   cell NOAA re-issued after the read, or in a cancelled cell ENCDirect still served. ENCDirect
+   also lags the cells' weekly updates by days to weeks, and never served some classes at all -
+   pontoons above all. Nothing in the console reads cells yet. `tests/s57_reader.py`.
+
    **The Passage tab, and a long Go-To as a passage (2026-10-14).** Andy: "consider another path
    planning behavior called 'passage' that disregards the 9-23 directive and allows for long path
    planning", and "do it in segments starting with beginning and end and then working inward". The
