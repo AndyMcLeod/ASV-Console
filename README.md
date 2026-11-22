@@ -3513,6 +3513,15 @@ plain. `tests/path_card.js` 15.
    read, as a feature that cannot be built does; before, the change was dropped and the read
    served as whole. All 115 of NOAA's zips kept here pass; the 35 kept under an edition and update
    hold the one their name says, and none has such an update. `tests/enc_cells.py` 5f, 5g, 6d.
+   *A passage grid not tied to its tile.* The passage planner plans on each tile's grid alone, and
+   a grid on disk was served whatever tile it was made from, and never aged. A grid made from a
+   tile an older reader kept (ENCDirect's, without the pontoons) was served after the cells came
+   in. A tile read again whole whose grid could not be replaced (Windows refuses while a reader
+   holds the file) left the old grid beside the new tile. Nothing read a grid's tile again, so a
+   passage could be planned on a chart the tiles had long since moved past. Now a grid is served
+   only when it was made from the tile kept now, the same read of it; any other is made again from
+   that tile. A grid whose tile is older than a week is served and the tile read again behind it,
+   as a tile is. `tests/passage_grid.py` 4c, 6.
 
    **The Passage tab, and a long Go-To as a passage (2026-10-14).** Andy: "consider another path
    planning behavior called 'passage' that disregards the 9-23 directive and allows for long path

@@ -5219,43 +5219,70 @@ def _enc_grid_worker_main(argv):
 _enc_grid_locks = {}
 
 
+def _grid_of_tile(tile, got):
+    """`got` - a grid file's (header, bytes), or None - when it was made from the tile kept now: the same read
+    (`read_at`) of this reader's whole tile. Else None.
+    ⚠ A GRID IS ITS TILE'S, OR NOTHING (the 2026-11-21 review). A grid on disk was served whatever tile it was made from,
+    and never aged: one made from a tile an older reader kept (ENCDirect's tile_v3, no pontoons) was served after this
+    reader's tiles came in; a tile read again whole whose grid could not be replaced (a Windows reader held the old one)
+    left the old grid served beside the new tile; and a grid was never read again, so a passage was planned on a chart
+    the tiles had long since moved past. The page plans a passage on the grid alone."""
+    if got is None:
+        return None
+    head = _read_tile_head(_tile_path(tile))
+    if not (isinstance(head, dict) and head.get("complete") and head.get("read_at") == got[0].get("read_at")):
+        return None
+    return got
+
+
 def fetch_enc_grid(tile):
-    """A tile's grid: (header, bytes) - or (None, note) when the tile cannot be read whole. From disk; else made from
-    the cached tile in a child; else the tile read (fetch_enc_tile, whose child makes the grid too)."""
+    """A tile's grid: (header, bytes) - or (None, note) when the tile cannot be read whole. From disk when made from the
+    tile kept now (_grid_of_tile); else made from the cached tile in a child; else the tile read (fetch_enc_tile, whose
+    child makes the grid too). A grid whose tile is older than ENC_TILE_FRESH_S is served and the tile read again
+    behind it, as fetch_enc_tile serves a tile."""
     key = _bbox_key(tile)
     with _enc_tile_locks_lock:
         lk = _enc_grid_locks.setdefault(key, threading.Lock())
     with lk:
-        got = _grid_read(_grid_path(tile))
+        got = _grid_make(tile, key)
+    when = got[0].get("read_at") if got[0] is not None else None
+    if isinstance(when, (int, float)) and time.time() - when > ENC_TILE_FRESH_S:
+        _tile_refresh_later(tile)
+    return got
+
+
+def _grid_make(tile, key):
+    """fetch_enc_grid's grid, under its lock."""
+    got = _grid_of_tile(tile, _grid_read(_grid_path(tile)))
+    if got is not None:
+        return got
+    if _read_tile_head(_tile_path(tile)) is None:
+        d = fetch_enc_tile(tile)
+        if not d.get("complete"):
+            return None, d.get("note") or ("the tile was not read whole: " + ", ".join(d.get("partial") or [])
+                                           if d.get("partial") else "the tile was not read")
+        got = _grid_of_tile(tile, _grid_read(_grid_path(tile)))
         if got is not None:
             return got
-        if _read_tile_head(_tile_path(tile)) is None:
-            d = fetch_enc_tile(tile)
-            if not d.get("complete"):
-                return None, d.get("note") or ("the tile was not read whole: " + ", ".join(d.get("partial") or [])
-                                               if d.get("partial") else "the tile was not read")
-            got = _grid_read(_grid_path(tile))
-            if got is not None:
-                return got
-        out = "%s.%d.%d.build" % (_grid_path(tile), os.getpid(), threading.get_ident())
-        cmd = [sys.executable, os.path.abspath(__file__), "--enc-grid-worker",
-               "--tile=" + ",".join(repr(float(v)) for v in tile), "--enc-dir", ENC_DIR, "--out", out]
+    out = "%s.%d.%d.build" % (_grid_path(tile), os.getpid(), threading.get_ident())
+    cmd = [sys.executable, os.path.abspath(__file__), "--enc-grid-worker",
+           "--tile=" + ",".join(repr(float(v)) for v in tile), "--enc-dir", ENC_DIR, "--out", out]
+    try:
+        r = subprocess.run(cmd, timeout=ENC_TILE_BUILD_TIMEOUT_S, cwd=APP_DIR)
+    except (subprocess.TimeoutExpired, OSError) as e:
+        return None, "the grid for this tile could not be made (%s)" % type(e).__name__
+    got = _grid_read(out) if r.returncode == 0 else None
+    if got is None:
         try:
-            r = subprocess.run(cmd, timeout=ENC_TILE_BUILD_TIMEOUT_S, cwd=APP_DIR)
-        except (subprocess.TimeoutExpired, OSError) as e:
-            return None, "the grid for this tile could not be made (%s)" % type(e).__name__
-        got = _grid_read(out) if r.returncode == 0 else None
-        if got is None:
-            try:
-                os.remove(out)
-            except OSError:
-                pass
-            return None, "the grid for this tile could not be made (exit %s)" % r.returncode
-        try:
-            _replace_retrying(out, _grid_path(tile))
-        except OSError as e:
-            print("[enc] could not keep the grid %s: %s" % (key, e), file=sys.stderr)
-        return got
+            os.remove(out)
+        except OSError:
+            pass
+        return None, "the grid for this tile could not be made (exit %s)" % r.returncode
+    try:
+        _replace_retrying(out, _grid_path(tile))
+    except OSError as e:
+        print("[enc] could not keep the grid %s: %s" % (key, e), file=sys.stderr)
+    return got
 
 
 def _read_tile_head(path):
@@ -11127,7 +11154,7 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("four edges")
         except (KeyError, ValueError, IndexError):
             return self._send(400, json.dumps({"error": "usage: /api/enc/grid?tile=W,S,E,N (one 0.25 degree chart tile)"}))
-        got = _grid_read(_grid_path(tile))
+        got = _grid_of_tile(tile, _grid_read(_grid_path(tile)))     # a grid of the tile kept now, or none
         if got is None:
             return self._send(404, json.dumps({"error": "no grid for that tile: read the chart along the passage first"}))
         self._send(200, got[1], "application/octet-stream")

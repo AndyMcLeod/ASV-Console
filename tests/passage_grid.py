@@ -19,11 +19,15 @@ WHAT IS PINNED:
   4    A CACHED TILE WITHOUT A GRID: made in a child of its own (--enc-grid-worker), the tile NOT read into this
        process; asked again, from disk with no child; a tile not cached is read (fetch_enc_tile) and its grid comes
        with it;
+  4c   A GRID IS ITS TILE'S, OR NOTHING (the 2026-11-21 review): one kept with no tile of this reader's, or made from an
+       earlier read of the tile (its `read_at` not the tile's), is not served - made again from the tile kept now, also
+       when the tile's own child could not replace it; a grid whose tile is past ENC_TILE_FRESH_S is served and the tile
+       read again behind it;
   5    THE CORRIDOR READ WITH GRIDS: a job of its own (not the same tiles' plain read), its tally from the grids'
        headers without reading a tile into this process, its status listing the tiles; a tile that cannot be gridded
        listed failed;
   6    OVER HTTP (a console of its own): /api/enc/grid routed ahead of /api/enc; the grid's bytes as an
-       octet-stream; no grid a 404, a malformed tile a 400; a corridor read with grids over a seeded tile makes it.
+       octet-stream; no grid of the tile (one kept from another read of it) a 404, a malformed tile a 400; a corridor read with grids over a seeded tile makes it.
 
   python tests/passage_grid.py   # exit 0 = pass
 """
@@ -288,6 +292,83 @@ try:
           lambda: "grid %s; children %s; tiles read %s; again children %d; uncached: grid %s, read %s"
                   % (h4 and h4["bands"], [r[2] for r in first_runs], first_reads, len(again_runs), h5 is not None, tiles_read))
 
+    # ── 4c. a grid is its tile's, or nothing ────────────────────────────────────────────────────────────────────
+    def tile_got(t, read_at, feats):
+        return {"tile": t, "features": feats, "bands": ["enc_coastal"], "unread": [], "unread_failed": [],
+                "partial": [], "complete": True, "read_at": read_at}
+
+    def tile_read_at(t):
+        return (A._read_tile_head(A._tile_path(t)) or {}).get("read_at")
+
+    now4 = time.time()
+    t7 = [-69.25, 43.0, -69.0, 43.25]                # a grid kept, its tile not: made from a tile an older reader kept
+    A._write_grid(A._grid_path(t7), tile_got(t7, 1000.0, []))
+    orphan_served = A._grid_of_tile(t7, A._grid_read(A._grid_path(t7))) is not None
+    with_fake(FAKE)
+    del tiles_read[:]
+    h7, _b7 = A.fetch_enc_grid(t7)
+    reads7 = list(tiles_read)
+    t10 = [-68.5, 43.0, -68.25, 43.25]               # the same, and the tile's child cannot replace the grid kept
+    A._write_grid(A._grid_path(t10), tile_got(t10, 1000.0, []))
+    _replace0 = A._replace_retrying
+
+    def held_grid(src, dst, *a, **k):
+        if dst == A._grid_path(t10):
+            raise OSError("held open by a reader")
+        return _replace0(src, dst, *a, **k)
+    A._replace_retrying = held_grid
+    try:
+        h10, _b10 = A.fetch_enc_grid(t10)
+    finally:
+        A._replace_retrying = _replace0
+    for f in os.listdir(TMP):
+        if f.endswith(".build"):
+            os.remove(os.path.join(TMP, f))
+    t8 = [-69.0, 43.0, -68.75, 43.25]                # the tile read again; its grid from the read before
+    A._write_tile_jsonl(A._tile_path(t8), tile_got(t8, now4, FAKE["features"]["enc_coastal"]))
+    A._write_grid(A._grid_path(t8), tile_got(t8, now4 - 3600.0, []))
+    with_fake({"crash": True})                       # NOAA can give nothing: only the cached tile can answer
+    del runs[:]
+    del tiles_read[:]
+    h8, _b8 = A.fetch_enc_grid(t8)
+    runs8, reads8 = [r[2] for r in runs], list(tiles_read)
+    refreshed = []
+    _refresh0 = A._tile_refresh_later
+    A._tile_refresh_later = lambda t: refreshed.append(list(t))
+    try:
+        t9 = [-68.75, 43.0, -68.5, 43.25]            # a tile and its grid, read 8 days ago
+        old9 = tile_got(t9, now4 - 8 * 86400.0, FAKE["features"]["enc_coastal"])
+        A._write_tile_jsonl(A._tile_path(t9), old9)
+        A._write_grid(A._grid_path(t9), old9)
+        del runs[:]
+        h9, _b9 = A.fetch_enc_grid(t9)
+        runs9, refreshed9 = len(runs), list(refreshed)
+        del refreshed[:]
+        h8b, _b8b = A.fetch_enc_grid(t8)             # the grid made just now, of a fresh tile
+        refreshed8 = list(refreshed)
+    finally:
+        A._tile_refresh_later = _refresh0
+    check("4c. A GRID IS ITS TILE'S, OR NOTHING: one kept with no tile of this reader's (made from a tile an older reader "
+          "kept) is not served - the tile is read and the grid made from it; one made from an earlier read of the tile "
+          "is made again from the tile kept now, in a child, nothing read from NOAA - also when the tile's own child "
+          "could not replace the grid kept (a reader held it); a grid whose tile is older than "
+          "ENC_TILE_FRESH_S is served and the tile read again behind it, a fresh one not. A grid on disk was served "
+          "whatever tile it was made from, and never aged: the page plans a passage on the grid alone (the 2026-11-21 "
+          "review)",
+          lambda: not orphan_served and h7 is not None and reads7 == [t7] and h7.get("read_at") != 1000.0
+                  and h7.get("read_at") == tile_read_at(t7)
+                  and h10 is not None and h10.get("read_at") == tile_read_at(t10) is not None
+                  and h8 is not None and h8.get("read_at") == now4 and not reads8 and len(runs8) == 1
+                  and "--enc-grid-worker" in runs8[0]
+                  and h9 is not None and h9.get("read_at") == old9["read_at"] and refreshed9 == [t9] and runs9 == 0
+                  and h8b is not None and not refreshed8,
+          lambda: "orphan served %s; then read_at %s (tile %s) tiles read %s; grid held: read_at %s (tile %s); earlier "
+                  "read's grid: read_at %s (tile %s) children %s tiles read %s; aged: served %s re-read %s children %d; "
+                  "fresh re-read %s"
+                  % (orphan_served, h7 and h7.get("read_at"), tile_read_at(t7), reads7, h10 and h10.get("read_at"),
+                     tile_read_at(t10), h8 and h8.get("read_at"), now4,
+                     runs8, reads8, h9 is not None, refreshed9, runs9, refreshed8))
+
     # ── 5. the corridor read with grids ─────────────────────────────────────────────────────────────────────────
     with_fake({"crash": True})
     route = [{"lat": 43.10, "lon": -69.95}, {"lat": 43.10, "lon": -69.70}]    # t4 and t5, both gridded now
@@ -405,6 +486,9 @@ A._write_tile_jsonl(SEED, {"tile": OT, "features": [{"role": "depth_area", "cls"
                                                      "props": {"DRVAL1": 3000.0, "DRVAL2": 4000.0},
                                                      "geometry": {"type": "Polygon", "coordinates": [[[-150.0, 20.0], [-149.75, 20.0], [-149.75, 20.25], [-150.0, 20.25], [-150.0, 20.0]]]}}],
                            "bands": ["enc_general"], "unread": [], "unread_failed": [], "partial": [], "complete": True})
+# a grid kept from another read of that tile (a read_at the seeded tile does not have): not the tile's, so not served
+A._write_grid(SEED_GRID, {"tile": OT, "features": [], "bands": ["enc_general"], "unread": [], "unread_failed": [],
+                          "partial": [], "complete": True, "read_at": 1000.0})
 STATE = ConsoleState()
 port = free_port()
 log = tempfile.TemporaryFile(mode="w+")
@@ -439,9 +523,9 @@ try:
     gi, ei = src.find('elif self.path.startswith("/api/enc/grid"):'), src.find('elif self.path.startswith("/api/enc"):\n            self._serve_enc()')
     order = 0 <= gi < ei
     disk = open(SEED_GRID, "rb").read() if os.path.exists(SEED_GRID) else None
-    check("6. OVER HTTP (a console of its own): /api/enc/grid routed AHEAD of /api/enc; no grid yet a 404 in words, a "
-          "malformed tile a 400; a corridor read with grids over a seeded mid-ocean tile makes its grid, which is then "
-          "served as an octet-stream, the file's own bytes",
+    check("6. OVER HTTP (a console of its own): /api/enc/grid routed AHEAD of /api/enc; no grid of the tile yet - one "
+          "kept from another read of it - a 404 in words, a malformed tile a 400; a corridor read with grids over a "
+          "seeded mid-ocean tile makes its grid, which is then served as an octet-stream, the file's own bytes",
           lambda: up and order and before[0] == 404 and b"read the chart" in before[2] and bad[0] == 400
                   and st.get("state") == "done" and st.get("tiles") == [OT] and after[0] == 200
                   and after[1] == "application/octet-stream" and disk is not None and after[2] == disk,
