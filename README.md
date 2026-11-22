@@ -3586,6 +3586,10 @@ plain. `tests/path_card.js` 15.
    write, so every port read from them looked fetched afresh. It now says where each answer came
    from. `tests/enc_extract.py` 11f.
 
+   *A file being replaced, waited out.* On Windows a file cannot be opened for a moment while
+   another process replaces it. That failed a chart read, and in one place threw a good cell copy
+   away. The read now waits it out, and opens each cell once. `tests/enc_cells.py` 12.
+
    **The Passage tab, and a long Go-To as a passage (2026-10-14).** Andy: "consider another path
    planning behavior called 'passage' that disregards the 9-23 directive and allows for long path
    planning", and "do it in segments starting with beginning and end and then working inward". The

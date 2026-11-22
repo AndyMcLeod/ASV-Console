@@ -63,6 +63,7 @@ CATALOG_DROP_MAX = 0.05         # a refreshed catalog naming fewer than 19 in 20
 # tests/enc_cells.py 5b failed. A time further ahead than this is a clock set back since: a catalog from then is due, a
 # mark from then holds nothing.
 CLOCK_SLACK_S = 2.0
+SHARE_WAITS_S = (0.05, 0.1, 0.2, 0.4)   # a file another process is replacing is tried again after each (_read_file)
 FETCH_TIMEOUT_S = 60.0
 MEMO_CELLS = 12                 # cells' reads held in one process (one is 5-30 MB: a tile reads each band's cells twice)
 USER_AGENT = "ASV-Console/1.0"
@@ -173,6 +174,21 @@ def _write(path, data):
         except OSError:
             pass
         raise
+
+
+def _read_file(path):
+    """The bytes of `path`. ⚠ A SHARING VIOLATION IS WAITED OUT (the 2026-11-21 review): on Windows an open fails with
+    PermissionError while another process's os.replace of the file is landing, and that failed the band's whole read -
+    40 of 19,500 reads with five processes on one store. Tried again after each of SHARE_WAITS_S (0.75 s in all), then
+    raised."""
+    for wait in SHARE_WAITS_S + (None,):
+        try:
+            with open(path, "rb") as f:
+                return f.read()
+        except PermissionError:
+            if wait is None:
+                raise
+            time.sleep(wait)
 
 
 def _discard(path):
@@ -345,8 +361,7 @@ class CellSource:
 
     @staticmethod
     def _parse_catalog(path):
-        with open(path, "rb") as f:
-            out, _n = CellSource._catalog_entries(json.loads(f.read().decode("utf-8")))
+        out, _n = CellSource._catalog_entries(json.loads(_read_file(path).decode("utf-8")))
         if not out:
             raise ValueError("NOAA's cell catalog names no cells")
         return out
@@ -483,8 +498,7 @@ class CellSource:
         # by that build - or damaged on disk since - is not read as the edition and update its name says. A mislabeled
         # copy is renamed to what it holds (an older copy, still served stale); a damaged one goes. Either way this read
         # fails, and the cell is asked for again.
-        with open(path, "rb") as f:
-            data = f.read()
+        data = _read_file(path)
         m = _ED_UP.match(key)
         try:
             held = _check_cell_zip(data, name)
@@ -501,13 +515,15 @@ class CellSource:
             except OSError:
                 _discard(path)
             raise ValueError("cell %s: the copy kept as %s holds edition %d update %d" % (name, key, held[0], held[1]))
-        del data
         # ⚠ A COPY THAT DOES NOT READ IS NOT THE CHART (the 2026-11-21 review): whole by its CRCs and its DSID, a zip
         # whose records the reader cannot read stayed the cell's copy, every read of it failing until NOAA's next
         # edition. It goes, and is not asked for again for REFUSED_S (NOAA serves the same zip): the older copy, kept
         # until a newer one reads (_prune_cells), is served stale meanwhile.
+        # ⚠ THE BYTES CHECKED ARE THE BYTES READ - the file is not opened again: a second open could fail on a sharing
+        # violation (another process's replace landing), and its failure, caught here, discarded a good copy as one
+        # that does not read and held the cell off for REFUSED_S.
         try:
-            cell = s57.read_zip(path)
+            cell = s57.read_zip(data)
             feats, left = s57.encdirect_features(cell, lambda acronym, prim: (acronym, prim))
         except MemoryError:
             raise
@@ -516,6 +532,7 @@ class CellSource:
                 _discard(path)
                 self._mark("refused_%s.mark" % name)
             raise ValueError("cell %s: the copy %s does not read (%s: %s)" % (name, key, type(e).__name__, e))
+        del data
         # ⚠ A FEATURE WHOSE GEOMETRY CANNOT BE BUILT IS A FAILED READ OF ITS CLASS, KEPT AND SAID (the 2026-11-21
         # review). A point, line or area with no geometry is one whose vectors are missing - an update deleted a wreck's
         # node and left the wreck, or an area's ring does not close (s57 records why in cell.problems). It was dropped

@@ -1483,6 +1483,66 @@ check("11. A BERTHING CHART WHOSE COVERAGE CANNOT BE READ is said as what it is:
 del BAND_NO["US6"]
 clear(TILE)
 
+# ── 12. a file another process is replacing (review item 16) ─────────────────────────────────────────────────────────
+# On Windows an open fails with PermissionError while another process's os.replace of the file lands. Played here by
+# failing chosen opens of a file by name - builtins.open AND io.open, which zipfile calls - and nothing else.
+import builtins                                      # noqa: E402
+_open12 = (builtins.open, io.open)
+held12, seen12 = {}, {}                              # name -> the opens of it that fail (1 = the first); opens counted
+
+
+def _sharing(file, *a, **k):
+    n = os.path.basename(os.fspath(file)) if isinstance(file, (str, bytes, os.PathLike)) else None
+    if n in held12:
+        seen12[n] = seen12.get(n, 0) + 1
+        if seen12[n] in held12[n]:
+            raise PermissionError(13, "The process cannot access the file because it is being used by another process",
+                                  os.fspath(file))
+    return _open12[0](file, *a, **k)
+
+
+def shared12(sub, name, fail, read):
+    """`read(src, path)` on a store of its own (the harbor cell kept), the opens `fail` of the file `name` failing:
+    (its answer or the exception's name, the opens of `name`, the cells kept, refused marked, NOAA asked since)."""
+    net = Net()
+    src = fresh(net, os.path.join(TMP, sub))
+    p, _st = src.cell_path(next(e for e in src.catalog() if e["name"] == "US5TSTAA"))
+    src = again(net, src.root)                       # the next process: nothing in memory
+    calls = len(net.calls)
+    held12.clear()
+    seen12.clear()
+    held12[name] = set(fail)
+    builtins.open = io.open = _sharing
+    try:
+        try:
+            got = read(src, p)
+        except Exception as e:                       # noqa: BLE001
+            got = type(e).__name__
+    finally:
+        builtins.open, io.open = _open12
+    return (got, seen12.get(name, 0), files(src.cells_dir), src._marked("refused_US5TSTAA.mark", enc_cells.REFUSED_S),
+            len(net.calls) - calls)
+
+
+ZIP12 = "US5TSTAA_ED001_UP000.zip"
+cat12 = shared12("s57_share_cat", "enc.geojson", {1, 2}, lambda s, p: len(s.catalog()))
+zip12 = shared12("s57_share_zip", ZIP12, {1, 2}, lambda s, p: len(s.features(p, namer9)))
+once12 = shared12("s57_share_once", ZIP12, {2}, lambda s, p: len(s.features(p, namer9)))
+held12_ = shared12("s57_share_held", ZIP12, range(1, 99), lambda s, p: len(s.features(p, namer9)))
+check("12. A FILE ANOTHER PROCESS IS REPLACING is waited out: the catalog and a cell read whole though their first two "
+      "opens fail, NOAA not asked; the cell opened ONCE a read (a second open that fails threw a good copy away as one "
+      "that does not read, held off); and one that stays held fails the read, the copy kept, not held off. Every "
+      "sharing violation failed the band's whole read",
+      lambda: cat12[0] == len(BOXES) and cat12[1] == 3 and cat12[4] == 0
+              and isinstance(zip12[0], int) and zip12[0] > 0 and zip12[1] == 3 and zip12[2] == [ZIP12] and not zip12[3]
+              and zip12[4] == 0
+              and isinstance(once12[0], int) and once12[0] > 0 and once12[1] == 1 and once12[2] == [ZIP12]
+              and not once12[3]
+              and held12_[0] == "PermissionError" and held12_[1] == len(enc_cells.SHARE_WAITS_S) + 1
+              and held12_[2] == [ZIP12] and not held12_[3],
+      lambda: "(answer, opens, kept, held off, NOAA asked): catalog %s; cell %s; second open fails %s; held %s" % (
+          cat12, zip12, once12, held12_))
+
 shutil.rmtree(TMP, ignore_errors=True)
 print("\n" + ("%d CHECK(S) FAILED (%d ran)" % (fails, ran) if fails else "all checks passed (%d)" % ran))
 sys.exit(1 if fails else 0)
