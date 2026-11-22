@@ -3594,6 +3594,10 @@ plain. `tests/path_card.js` 15.
    reader took them for UCS-2, so a note such as a dumping ground's "Continuing use." read as
    nonsense. Each is now read in the encoding its file declares. `tests/s57_reader.py` 2w.
 
+   *The cells' own failure, said.* When NOAA's cells could not be read and ENCDirect failed in
+   their place too, the console's notes named ENCDirect's failure alone. They now name the cells'
+   first, then ENCDirect's. `tests/enc_cells.py` 13, 13b.
+
    **The Passage tab, and a long Go-To as a passage (2026-10-14).** Andy: "consider another path
    planning behavior called 'passage' that disregards the 9-23 directive and allows for long path
    planning", and "do it in segments starting with beginning and end and then working inward". The

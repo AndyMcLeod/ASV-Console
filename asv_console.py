@@ -3415,6 +3415,14 @@ def _cells_answer(bbox, band, extras):
                 "note": "NOAA's chart cells could not be read (%s)" % (str(e) or type(e).__name__)}
 
 
+def _cells_then(cells_why, encdirect_why):
+    """The note of a read the cells failed and ENCDirect, read in their place, failed too: both causes, the cells'
+    first. ⚠ THE CELLS' OWN FAILURE IS SAID (the 2026-11-21 review): every served note - the tile's, snap-to-water's,
+    the chart card's - named ENCDirect's failure alone, and the cells' reason, the source the console reads, reached
+    only its log."""
+    return "%s, and ENCDirect in their place: %s" % (cells_why, encdirect_why)
+
+
 def _cells_coverage(band, tile, stale=None, catalog=None):
     """_enc_coverage's answer from the cells: the band's M_COVR polygons reaching into the tile that say "coverage
     available" (the same test), as [[ring, ...], ...]. A cell read from an older copy is added to `stale`, a list; the
@@ -3457,6 +3465,8 @@ def fetch_enc_features(bbox, min_depth=0.0, band=None, extras=True, use_cache=Tr
         if not data.get("failed") or source == "cells":
             return _enc_mark_shallow(data, min_depth)
         print("[enc] %s for %s - reading ENCDirect instead" % (data.get("note"), key), flush=True)
+        got = fetch_enc_features(bbox, min_depth, band, extras, use_cache, source="encdirect")
+        return dict(got, note=_cells_then(data.get("note"), got.get("note"))) if got.get("failed") else got
     # cache version: v2 adds id-first fetch (piers/structures that the old spatial
     # query silently dropped) + the expanded structure classes; v3 splits lateral
     # channel marks into their own 'chan_mark' role and keeps CATLAM/COLOUR; v4 adds
@@ -4072,6 +4082,10 @@ def _enc_tile_build(tile):
     # ENCDirect's path below is the band's only when they cannot answer it - and then the band's features are ENCDirect's
     # too (`sources`): ONE SOURCE A BAND. ENCDirect's breaker stops ENCDirect alone; the cells are read through it.
     covs, cov_failed, cov_stale, sources, cells_stale, cat_stale = [], {}, [], {}, [], []
+    cells_why = {}                                 # band -> why its cells could not be read (said with ENCDirect's, below)
+
+    def said(b, why):                              # ENCDirect's failure of band b, the cells' before it (_cells_then)
+        return _cells_then("its cells could not be read (%s)" % cells_why[b], why) if b in cells_why else why
     for b in ENC_BANDS + [ENC_BERTHING]:
         if cells_on:
             try:
@@ -4079,8 +4093,9 @@ def _enc_tile_build(tile):
                 sources[b] = "cells"
                 continue
             except Exception as e:                 # a cell that will not read fails the cells' answer, whatever the fault
+                cells_why[b] = str(e) or type(e).__name__
                 print("[enc] tile %s: the %s cells could not be read (%s) - reading that band from ENCDirect"
-                      % (_bbox_key(tile), _band_word(b), str(e) or type(e).__name__), flush=True)
+                      % (_bbox_key(tile), _band_word(b), cells_why[b]), flush=True)
         sources[b] = "encdirect"
         offline = cells_on and time.monotonic() < _enc_down_until
         try:
@@ -4096,7 +4111,7 @@ def _enc_tile_build(tile):
                 cov_stale.append(b)
             else:
                 covs.append(None)
-                cov_failed[b] = _enc_fault_say(e)
+                cov_failed[b] = said(b, _enc_fault_say(e))
     berth = covs.pop()
     if covs[0] is None:
         return dict(fail, note="the chart's coverage could not be read here (%s: %s)" % (_band_word(ENC_BANDS[0]), cov_failed[ENC_BANDS[0]]))
@@ -4112,7 +4127,8 @@ def _enc_tile_build(tile):
         d = fetch_enc_features(region, 0.0, band=ENC_BERTHING, extras=True, use_cache=False,
                                **({"source": sources[ENC_BERTHING]} if cells_on else {}))
         if d.get("band") is None:
-            return dict(fail, note="the %s chart could not be read here (%s)" % (_band_word(ENC_BERTHING), d.get("note") or "no answer"))
+            return dict(fail, note="the %s chart could not be read here (%s)" % (_band_word(ENC_BERTHING),
+                                                                                  said(ENC_BERTHING, d.get("note") or "no answer")))
         failed.update(d.get("partial") or [])
         cells_stale.extend(d.get("stale_cells") or [])
         cat_stale.extend([d["catalog_stale"]] if d.get("catalog_stale") else [])
@@ -4131,7 +4147,8 @@ def _enc_tile_build(tile):
         d = fetch_enc_features(region, 0.0, band=band, extras=True, use_cache=False,
                                **({"source": sources[band]} if cells_on else {}))
         if d.get("band") is None:
-            return dict(fail, note="the %s chart could not be read here (%s)" % (_band_word(band), d.get("note") or "no answer"))
+            return dict(fail, note="the %s chart could not be read here (%s)" % (_band_word(band),
+                                                                                  said(band, d.get("note") or "no answer")))
         failed.update(d.get("partial") or [])
         cells_stale.extend(d.get("stale_cells") or [])
         cat_stale.extend([d["catalog_stale"]] if d.get("catalog_stale") else [])
@@ -5429,18 +5446,21 @@ def _cells_chart_info(bbox):
     return out
 
 
-def fetch_chart_info(bbox):
+def fetch_chart_info(bbox, source=None):
     """Chart-source metadata for a bbox: the ENC cells covering it + the
     zone-of-confidence polygons within it. Cached on disk like the feature
     extract, and it never raises - an empty answer degrades the card, not the run.
-    NOAA's cells first (ENC_SOURCE, _cells_chart_info); ENCDirect's read, below, only when they cannot be read."""
+    NOAA's cells first (ENC_SOURCE, _cells_chart_info); ENCDirect's read, below, only when they cannot be read -
+    and when it fails too, both are said (_cells_then). `source` "encdirect" reads ENCDirect's alone."""
     global _enc_down_until
     key = _bbox_key(bbox)
-    if ENC_SOURCE == "cells":
+    if (source or ENC_SOURCE) == "cells":
         got = _cells_chart_info(bbox)
         if not got.get("failed"):
             return got
         print("[enc] %s for %s - reading ENCDirect's chart information instead" % (got.get("note"), key), flush=True)
+        alt = fetch_chart_info(bbox, source="encdirect")
+        return dict(alt, note=_cells_then(got.get("note"), alt.get("note"))) if alt.get("failed") else alt
     cache = os.path.join(ENC_DIR, "chartinfo_v1_%s.json" % key)
     try:
         # As old as a tile that is read again, read again (ENC_TILE_FRESH_S): new cells and new surveys change it.

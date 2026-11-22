@@ -1543,6 +1543,64 @@ check("12. A FILE ANOTHER PROCESS IS REPLACING is waited out: the catalog and a 
       lambda: "(answer, opens, kept, held off, NOAA asked): catalog %s; cell %s; second open fails %s; held %s" % (
           cat12, zip12, once12, held12_))
 
+# ── 13. the cells' own failure, said (review item 18) ────────────────────────────────────────────────────────────────
+net13 = Net()
+fresh(net13)
+net13.down.add("catalog")                            # no catalog kept, none to be had: the cells cannot be read
+clear(TILE)
+A._enc_down_until = time.monotonic() + 600.0         # and ENCDirect, read in their place, is down
+try:
+    snap13 = A.snap_to_water(43.10, -70.15, 2.0)
+    ci13 = A.fetch_chart_info(IN_HA)
+    t13 = A.fetch_enc_tile(TILE)
+finally:
+    A._enc_down_until = 0.0
+
+
+def both13(note):
+    """The note names the cells' failure, then ENCDirect's in their place."""
+    n = note or ""
+    return ("cells could not be read" in n and "NOAA's cell catalog could not be read" in n
+            and "ENCDirect in their place: " in n and "ENC offline" in n
+            and n.index("cells could not be read") < n.index("ENCDirect in their place"))
+
+
+check("13. WHEN THE CELLS FAIL AND ENCDIRECT TOO, the served note names the cells' failure first, then ENCDirect's: "
+      "snap-to-water's, the chart card's, the tile's - each named ENCDirect's alone, the cells' reaching only the log",
+      lambda: snap13.get("failed") and both13(snap13.get("note")) and "the water was not checked" in snap13["note"]
+              and ci13.get("failed") and both13(ci13.get("note"))
+              and not t13.get("complete") and both13(t13.get("note")),
+      lambda: "snap %r; card %r; tile %r" % (snap13.get("note"), ci13.get("note"), t13.get("note")))
+
+
+def feats13(region, md=0.0, band=None, extras=True, use_cache=True, source=None):
+    if source == "encdirect":                        # ENCDirect gives the band's coverage, then fails its features
+        return {"band": None, "features": [], "failed": True, "note": "the harbor layer list could not be read"}
+    return _feat0(region, md, band=band, extras=extras, use_cache=use_cache, source=source)
+
+
+asked = {"cov": [], "feats": []}
+def cov13c(band, tile):                              # the berthing chart's coverage too, read first in the tile
+    return [SQ_H] if band in ("enc_harbour", "enc_berthing") else []
+
+
+A._enc_coverage, A.fetch_enc_features = encdirect_cov, feats13
+try:
+    t13b = A._enc_tile_build(TILE)
+    A._enc_coverage = cov13c
+    t13c = A._enc_tile_build(TILE)
+finally:
+    A._enc_coverage, A.fetch_enc_features = _cov0, _feat0
+check("13b. ... and a band whose coverage ENCDirect read, in the cells' place, and whose features it then could not: the "
+      "tile's note names the cells' failure too - the harbor chart's, and the berthing chart's",
+      lambda: (t13b.get("note") or "").startswith("the harbor chart could not be read here (its cells could not be read (")
+              and "ENCDirect in their place: the harbor layer list could not be read)" in t13b["note"]
+              and (t13c.get("note") or "").startswith("the berthing chart could not be read here (its cells could not "
+                                                      "be read (")
+              and "ENCDirect in their place: " in t13c["note"],
+      lambda: "harbor %r; berthing %r" % (t13b.get("note"), t13c.get("note")))
+clear(TILE)
+
 shutil.rmtree(TMP, ignore_errors=True)
 print("\n" + ("%d CHECK(S) FAILED (%d ran)" % (fails, ran) if fails else "all checks passed (%d)" % ran))
 sys.exit(1 if fails else 0)
