@@ -3561,6 +3561,12 @@ plain. `tests/path_card.js` 15.
    alone is read where the berthing chart would chart the berths finer, no band is named as read
    from ENCDirect unless it was, and the read is not called whole. `tests/enc_cells.py` 11.
 
+   *Corrections the reader suite did not make.* The review changed the reader six ways that the
+   suite let pass: a delete one place late, and an edge's node, a national attribute, a node's
+   attribute or an object pointer left uncorrected, and a boundary at the edge of a cell's data
+   taken as a hole. A second test cell now makes each of those corrections, and each check says
+   the cell before and after it. `tests/s57_reader.py` 3n-3u.
+
    **The Passage tab, and a long Go-To as a passage (2026-10-14).** Andy: "consider another path
    planning behavior called 'passage' that disregards the 9-23 directive and allows for long path
    planning", and "do it in segments starting with beginning and end and then working inward". The

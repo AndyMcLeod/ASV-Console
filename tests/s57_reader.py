@@ -4,8 +4,10 @@ NOAA file, no console.
 WHY BUILT HERE. A real cell exercises what the cell happens to hold; one written here holds each rule the reader must
 keep, and nothing else: an edge stored the other way, a ring's edges listed out of order, a hole, two outer rings,
 a sounding cluster's depths, the corrections (a moved buoy, a deleted attribute, an inserted pointer, a new object,
-a deleted one), a gap in the corrections, an update issued after a day, a ring that does not close. The writer below
-encodes ISO 8211 independently of the reader's decoder - its field formats are typed out here, not parsed by s57.py
+a deleted one; in a second cell a coordinate and a pointer deleted from the middle, an edge's node moved, a
+national and a vector attribute corrected, an object pointer inserted), a boundary at the data limit, a gap in the
+corrections, an update issued after a day, a ring that does not close. The writer (tests/lib/s57_writer.py)
+encodes ISO 8211 independently of the reader's decoder - its field formats are typed out there, not parsed by s57.py
 - so a decoder fault cannot be mirrored by the writer and pass.
 
 The comparison with NOAA's real cells against the console's cached ENCDirect answers is tools/s57_match.py.
@@ -263,6 +265,83 @@ check("3m. ... and an update issued ON the day is applied (the day's chart inclu
 check("3k. through=0 withholds every update", lambda: c0.updates_applied == [] and c0.updates_withheld == [1, 2])
 check("3l. an update deleting an object that is not there is said, not silent",
       lambda: any("not there" in p for p in s57.Cell().read_base(B0).apply_update(B2, 2).problems))
+
+# A second cell, for the corrections the first does not make (the 2026-11-21 review: a delete taken one place late, an
+# edge's node pointer, a boundary truncated at the data limit, a national attribute, a vector's attributes and an
+# object pointer were each ignorable and the suite still passed). Each check names the cell before and after.
+def lnam(rcid):
+    return (550).to_bytes(2, "little") + int(rcid).to_bytes(4, "little") + (1).to_bytes(2, "little")
+
+
+tb = W(name="US5TEST2.000")
+for rid, lo, la in ((1, -70.0, 44.0), (2, -69.9, 44.0), (3, -69.9, 44.1), (4, -70.0, 44.1), (5, -69.8, 44.0)):
+    tb.node(rid, lo, la, rcnm=120)
+tb.raw([("VRID", _field("VRID", [(110, 6, 1, 1)])),                          # an isolated node, its position quality
+        ("ATTV", _field("ATTV", [(ATTL["QUAPOS"], "4"), (ATTL["POSACC"], "10")])),
+        ("SG2D", _field("SG2D", [(round(44.05 * COMF), round(-69.95 * COMF))]))])
+tb.edge(10, 1, 2, [(-69.97, 43.99), (-69.95, 43.98), (-69.93, 43.99)])
+tb.edge(11, 2, 3, [])
+tb.edge(12, 3, 4, [])
+tb.edge(13, 4, 1, [])
+tb.edge(14, 2, 5, [])
+tb.feature(200, "COALNE", 2, None, [edge_ptr(10)])
+tb.feature(201, "COALNE", 2, None, [edge_ptr(11), edge_ptr(12), edge_ptr(13)])
+tb.feature(202, "SLCONS", 2, {"WATLEV": "2"}, [edge_ptr(14)])
+tb.feature(203, "DEPARE", 3, {"DRVAL1": "5"},                                # its west side the cell's data limit
+           [edge_ptr(10), edge_ptr(11), edge_ptr(12), edge_ptr(13, 1, 3)])
+tb.feature(204, "LNDARE", 1, None, [node_ptr(6)], natf={"NOBJNM": "Île Vieille", "NINFOM": "à retirer"})
+tb.raw([("FRID", _field("FRID", [(100, 205, 255, 2, OBJL["C_AGGR"], 1, 1)])), ("FOID", _field("FOID", [(550, 205, 1)])),
+        ("FFPT", _field("FFPT", [(lnam(200), 2, ""), (lnam(202), 2, "")]))])  # a collection of two
+tu = W(name="US5TEST2.001", updn=1, isdt="20260401")
+tu.raw([("VRID", _field("VRID", [(130, 10, 2, 3)])), ("SGCC", _field("SGCC", [(2, 2, 1)]))])       # a coordinate deleted
+tu.raw([("FRID", _field("FRID", [(100, 201, 2, 2, OBJL["COALNE"], 2, 3)])),                        # a pointer deleted
+        ("FSPC", _field("FSPC", [(2, 2, 1)]))])
+tu.raw([("VRID", _field("VRID", [(130, 14, 2, 3)])), ("VRPC", _field("VRPC", [(3, 2, 1)])),        # its end node 5 -> 3
+        ("VRPT", _field("VRPT", [(_name(120, 3), 255, 255, 2, 255)]))])
+tu.raw([("FRID", _field("FRID", [(100, 204, 1, 2, OBJL["LNDARE"], 2, 3)])),                        # renamed, note gone
+        ("NATF", _field("NATF", [(ATTL["NOBJNM"], "Île Neuve"), (ATTL["NINFOM"], DELC)]))])
+tu.raw([("VRID", _field("VRID", [(110, 6, 2, 3)])),                                                # surveyed now
+        ("ATTV", _field("ATTV", [(ATTL["QUAPOS"], "1"), (ATTL["POSACC"], DELC)]))])
+tu.raw([("FRID", _field("FRID", [(100, 205, 255, 2, OBJL["C_AGGR"], 2, 3)])),                      # a member inserted
+        ("FFPC", _field("FFPC", [(1, 2, 1)])), ("FFPT", _field("FFPT", [(lnam(201), 2, "")]))])
+T0, T1 = tb.bytes(), tu.bytes()
+ct0 = s57.Cell().read_base(T0)
+ct1 = s57.Cell().read_base(T0).apply_update(T1, 1)
+t0, t1 = by_rcid(ct0), by_rcid(ct1)
+check("3n. an update DELETES a coordinate from the middle of an edge (SGCC 2): the one at its index goes, the rest stay",
+      lambda: t0[200]["geometry"]["coordinates"] == [[-70.0, 44.0], [-69.97, 43.99], [-69.95, 43.98], [-69.93, 43.99],
+                                                      [-69.9, 44.0]]
+      and t1[200]["geometry"]["coordinates"] == [[-70.0, 44.0], [-69.97, 43.99], [-69.93, 43.99], [-69.9, 44.0]],
+      lambda: (t0[200]["geometry"], t1[200]["geometry"]))
+check("3o. an update deletes a pointer from the middle of a line (FSPC 2): the edge at its index goes, the line in two",
+      lambda: t0[201]["geometry"]["coordinates"] == [[-69.9, 44.0], [-69.9, 44.1], [-70.0, 44.1], [-70.0, 44.0]]
+      and t1[201]["geometry"] == {"type": "MultiLineString",
+                                  "coordinates": [[[-69.9, 44.0], [-69.9, 44.1]], [[-70.0, 44.1], [-70.0, 44.0]]]},
+      lambda: (t0[201]["geometry"], t1[201]["geometry"]))
+check("3p. an update moves an edge's END to another node (VRPC): the object drawn on it runs to the new node",
+      lambda: t0[202]["geometry"]["coordinates"] == [[-69.9, 44.0], [-69.8, 44.0]]
+      and t1[202]["geometry"]["coordinates"] == [[-69.9, 44.0], [-69.9, 44.1]],
+      lambda: (t0[202]["geometry"], t1[202]["geometry"]))
+check("3q. an exterior edge truncated by the cell's data limit (USAG 3) is exterior: the ring closes with it, no hole "
+      "is made of it",
+      lambda: t0[203]["geometry"]["type"] == "Polygon" and len(t0[203]["geometry"]["coordinates"]) == 1
+      and {(-70.0, 44.0), (-69.9, 44.0), (-69.9, 44.1), (-70.0, 44.1)} <= {tuple(p) for p in t0[203]["geometry"]["coordinates"][0]}
+      and not any("203" in p for p in ct0.problems), lambda: (t0[203]["geometry"], ct0.problems))
+check("3r. an update corrects a national attribute (NATF): the name replaced, a deleted one gone",
+      lambda: t0[204]["attrs"] == {"NOBJNM": "Île Vieille", "NINFOM": "à retirer"}
+      and t1[204]["attrs"] == {"NOBJNM": "Île Neuve"}, lambda: (t0[204]["attrs"], t1[204]["attrs"]))
+# 3s and 3t are on the cell's own record: no answer the console reads carries a vector's attributes or an object's
+# pointers to others yet, so the record is held as NOAA corrects it for the day one does.
+check("3s. an update corrects a node's own attributes (ATTV): its position quality surveyed, its accuracy deleted",
+      lambda: ct0.vectors[(110, 6)]["attv"] == {ATTL["QUAPOS"]: "4", ATTL["POSACC"]: "10"}
+      and ct1.vectors[(110, 6)]["attv"] == {ATTL["QUAPOS"]: "1"},
+      lambda: (ct0.vectors[(110, 6)]["attv"], ct1.vectors[(110, 6)]["attv"]))
+check("3t. an update inserts an object pointer at an index (FFPC): the collection's new member second of three",
+      lambda: [p[0] for p in ct0.features[205]["ffpt"]] == [lnam(200), lnam(202)]
+      and [p[0] for p in ct1.features[205]["ffpt"]] == [lnam(200), lnam(201), lnam(202)],
+      lambda: ([p[0].hex() for p in ct0.features[205]["ffpt"]], [p[0].hex() for p in ct1.features[205]["ffpt"]]))
+check("3u. ... and the update read whole: nothing in it said as a problem",
+      lambda: not ct1.problems and ct1.updates_applied == [1], lambda: (ct1.problems, ct1.updates_applied))
 
 # ── 4. ENCDirect's shape ────────────────────────────────────────────────────────────────────────────────────────────
 print("4. ENCDirect's shape")
