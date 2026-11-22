@@ -51,6 +51,9 @@ BAND_OF_USAGE = {1: "enc_overview", 2: "enc_general", 3: "enc_coastal", 4: "enc_
 CATALOG_MAX_AGE_S = 86400.0     # NOAA publishes corrections daily; the catalog says which cells have them
 CATALOG_RETRY_S = 120.0         # a catalog that could not be refreshed is not asked for again for this long
 DOWN_S = 30.0                   # after a request that failed, the network is not asked again for this long
+REFUSED_S = 120.0               # a cell whose download answered but was refused (not whole, a member damaged, not the
+                                # edition and update the catalog names) is not downloaded again for this long, by any
+                                # process: an older copy is served meanwhile
 # A FILE'S TIME MAY RUN A LITTLE AHEAD OF time.time(): on Windows the two are kept at different resolutions (Python
 # 3.11's clock was seen stepping by whole milliseconds; the file system stamps to a tenth of a microsecond), and one fresh
 # file in eleven read as written in the future - so a mark checked just after it was written was not honored, and
@@ -169,15 +172,46 @@ def _write(path, data):
         raise
 
 
+def _discard(path):
+    """The file goes, if it can (one held open by another process stays till next time)."""
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
 def _check_cell_zip(data, name):
-    """The download is a zip holding the cell's base file - not an error page, not half a file."""
+    """(edition, update) the download HOLDS - a zip of the cell's base file and its updates in an unbroken run, every
+    member whole by its CRC - or ValueError: an error page, half a file, a damaged member, a gap. The edition is the
+    base's DSID EDTN; the update the last update file's number, else the base's UPDN (a re-issued base).
+    ⚠ WHAT IT HOLDS, NOT WHAT IT WAS ASKED FOR (the 2026-11-21 review): a zip was kept as the edition and update the
+    catalog named whatever it held, so one served behind its catalog was kept as current - and, its name taken, never
+    downloaded again until the next update; and a member damaged inside a whole zip passed, the good older copy was
+    removed, and the cell could not be read until the next update."""
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as z:
-            names = [n.replace("\\", "/").rsplit("/", 1)[-1].upper() for n in z.namelist()]
-    except (zipfile.BadZipFile, ValueError) as e:
-        raise ValueError("cell %s: not a whole zip (%s)" % (name, e))
-    if name.upper() + ".000" not in names:
-        raise ValueError("cell %s: the zip holds no %s.000" % (name, name))
+            members = {}
+            for n in z.namelist():
+                m = re.match(r"^%s\.(\d{3})$" % re.escape(name.upper()), n.replace("\\", "/").rsplit("/", 1)[-1].upper())
+                if m:
+                    members[int(m.group(1))] = n
+            if 0 not in members:
+                raise ValueError("the zip holds no %s.000" % name)
+            bad = z.testzip()
+            if bad is not None:
+                raise ValueError("its member %s is damaged" % bad)
+            ds = s57.dataset_id(z.read(members[0]))
+            ed, base_up = int(ds.get("EDTN") or 0), int(ds.get("UPDN") or 0)
+    except ValueError as e:
+        raise ValueError("cell %s: %s" % (name, e))
+    except Exception as e:                       # BadZipFile, a zlib error inside a member, a record cut short
+        raise ValueError("cell %s: not a whole zip (%s: %s)" % (name, type(e).__name__, e))
+    ups = sorted(k for k in members if k)
+    if ups != list(range(base_up + 1, base_up + 1 + len(ups))):  # all 115 of NOAA's zips read here: a base at 0, a run from 1
+        raise ValueError("cell %s: the zip's updates %s do not run on from its base's update %d" % (name, ups, base_up))
+    if not ed:
+        raise ValueError("cell %s: its base names no edition" % name)
+    return ed, (ups[-1] if ups else base_up)
 
 
 class CellSource:
@@ -328,29 +362,55 @@ class CellSource:
 
     def cell_path(self, entry):
         """(path, stale): the cell's zip as the catalog names it, downloaded when not kept; when it cannot be, the
-        newest older copy kept and stale True; OSError when there is none."""
+        newest older copy kept and stale True; OSError when there is none. A download is kept as what it HOLDS
+        (_check_cell_zip): one behind the catalog under its own name - an older copy, served stale - and one ahead of
+        it (the catalog behind NOAA's zips) under its own name too, served as the chart. A download refused with an
+        answer is not asked for again for REFUSED_S (mark refused_<CELL>.mark)."""
+        name, mine = entry["name"], (entry["ed"], entry["up"])
         want = os.path.join(self.cells_dir, entry["key"] + ".zip")
+        mark = "refused_%s.mark" % name
         with self._lock:
             if os.path.exists(want):
                 return want, False
+            kept = self._kept(name)
+            if kept and kept[0][:2] > mine:        # newer than the catalog names: NOAA's zip ahead of its catalog
+                return kept[0][2], False
             try:
-                data = self._get(CELL_URL % entry["name"])
-                _check_cell_zip(data, entry["name"])
+                if self._marked(mark, REFUSED_S):
+                    raise OSError("its last download was refused - asked again shortly")
+                data = self._get(CELL_URL % name)
+                try:
+                    held = _check_cell_zip(data, name)
+                except ValueError:
+                    self._mark(mark)
+                    raise
+                if held != mine:
+                    other = os.path.join(self.cells_dir, "%s_ED%03d_UP%03d.zip" % (name, held[0], held[1]))
+                    if not kept or held > kept[0][:2]:
+                        _write(other, data)        # kept as what it is: a truer copy than any kept
+                    if held > mine:
+                        self._prune_cells(name, keep=other)
+                        return other, False
+                    self._mark(mark)
+                    raise ValueError("NOAA's zip of %s holds edition %d update %d, its catalog names edition %d "
+                                     "update %d" % (name, held[0], held[1], mine[0], mine[1]))
                 _write(want, data)
             except (OSError, ValueError) as e:
                 if os.path.exists(want):           # another process wrote it first
                     return want, False
-                older = [k for k in self._kept(entry["name"]) if k[2] != want]
+                older = [k for k in self._kept(name) if k[2] != want]
                 if older:
                     return older[0][2], True
-                raise OSError("cell %s could not be downloaded (%s)" % (entry["name"], e))
-            for _ed, _up, p in self._kept(entry["name"]):
-                if p != want:                      # an older copy, now superseded (one held open stays till next time)
-                    try:
-                        os.remove(p)
-                    except OSError:
-                        pass
+                raise OSError("cell %s could not be downloaded (%s)" % (name, e))
+            self._prune_cells(name, keep=want)
+            _discard(os.path.join(self.root, mark))
             return want, False
+
+    def _prune_cells(self, name, keep):
+        """Every other copy of the cell goes, now superseded (one held open stays till next time)."""
+        for _ed, _up, p in self._kept(name):
+            if p != keep:
+                _discard(p)
 
     # -- a cell's read, kept -------------------------------------------------------------------------------------------
     def _read_path(self, path):
@@ -380,6 +440,30 @@ class CellSource:
         (acronym, prim) of every class a feature of which could not be built."""
         key = os.path.basename(path)[:-4]           # "US5NH1BC_ED005_UP003": the copy read, edition and update
         name = key.split("_", 1)[0]
+        # ⚠ THE COPY MUST HOLD WHAT ITS NAME SAYS (the 2026-11-21 review): a build before it kept a download under the
+        # name the catalog gave whatever the zip held. The same check as a download's (_check_cell_zip), so a copy kept
+        # by that build - or damaged on disk since - is not read as the edition and update its name says. A mislabeled
+        # copy is renamed to what it holds (an older copy, still served stale); a damaged one goes. Either way this read
+        # fails, and the cell is asked for again.
+        with open(path, "rb") as f:
+            data = f.read()
+        m = _ED_UP.match(key)
+        try:
+            held = _check_cell_zip(data, name)
+        except ValueError:
+            if m:
+                _discard(path)
+            raise
+        if m and held != (int(m.group(2)), int(m.group(3))):
+            other = os.path.join(os.path.dirname(path), "%s_ED%03d_UP%03d.zip" % (name, held[0], held[1]))
+            try:
+                if os.path.exists(other):
+                    raise OSError("a copy of that is kept")
+                os.replace(path, other)
+            except OSError:
+                _discard(path)
+            raise ValueError("cell %s: the copy kept as %s holds edition %d update %d" % (name, key, held[0], held[1]))
+        del data
         cell = s57.read_zip(path)
         feats, left = s57.encdirect_features(cell, lambda acronym, prim: (acronym, prim))
         # ⚠ A FEATURE WHOSE GEOMETRY CANNOT BE BUILT IS A FAILED READ OF ITS CLASS, KEPT AND SAID (the 2026-11-21
@@ -388,8 +472,11 @@ class CellSource:
         # here and the read kept and served as whole: a danger gone without a word. Now the class is named, kept in the
         # read's header for every process, and the console reads the band's answer as one whose layer did not arrive
         # (`partial`). An object with no geometry of its own (a collection, prim 255) is not a failure. None in 115 of
-        # NOAA's cells read here.
-        failed = sorted({k for k in left if k[1] in (s57.PRIM_POINT, s57.PRIM_LINE, s57.PRIM_AREA)})
+        # NOAA's cells read here. So is a feature an update changes that is not there (cell.lost): NOAA charts it, and
+        # this read does not hold it - the update and the base not one chain. An update deleting one not there is not.
+        objl = s57.catalog()["objl"]
+        lost = {(objl.get(o, ("OBJL%d" % o,))[0], p) for o, p in cell.lost}
+        failed = sorted({k for k in set(left) | lost if k[1] in (s57.PRIM_POINT, s57.PRIM_LINE, s57.PRIM_AREA)})
         if failed:
             print("[cells] %s: %s could not be built (%s)" % (key, ", ".join("%s/%d" % k for k in failed),
                                                             "; ".join(cell.problems[:3]) or "no geometry"), flush=True)

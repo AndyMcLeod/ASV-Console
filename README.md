@@ -3499,7 +3499,20 @@ plain. `tests/path_card.js` 15.
    on, that water is unread until it is read again; the tile is not kept, and the readout says
    NOT READ WHOLE. A coverage area that cannot be built makes the band's coverage unknown. The
    failure is kept with the cell's read, so every process says it. None of the 115 NOAA cells
-   read here has such a feature. `tests/enc_cells.py` 6c.
+   read here has such a feature. `tests/enc_cells.py` 6c. *A download not checked against what it
+   holds.* A cell's zip was kept under the edition and update the catalog named, whatever it held,
+   and only its base file was looked for. A zip NOAA served behind its catalog was kept as current
+   and, its name taken, not downloaded again until the next update. A zip with a damaged file
+   inside replaced the good older copy, and the cell could not be read until the next update. Now
+   every download is checked: each file whole by its checksum, the base's edition, an unbroken run
+   of updates. It is kept under the name of what it holds. One behind the catalog is served as an
+   older copy, its tile not kept, and is asked for again two minutes later. One ahead of the
+   catalog is the chart. A refused download leaves the older copy in place. A copy an earlier build
+   kept under the wrong name is renamed to what it holds. An update that changes a feature the
+   cell does not hold (its base and updates not one chain) now makes that feature's class a failed
+   read, as a feature that cannot be built does; before, the change was dropped and the read
+   served as whole. All 115 of NOAA's zips kept here pass; the 35 kept under an edition and update
+   hold the one their name says, and none has such an update. `tests/enc_cells.py` 5f, 5g, 6d.
 
    **The Passage tab, and a long Go-To as a passage (2026-10-14).** Andy: "consider another path
    planning behavior called 'passage' that disregards the 9-23 directive and allows for long path

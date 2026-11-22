@@ -315,6 +315,8 @@ class Cell:
         self.updates_applied = []   # update numbers, in order
         self.updates_withheld = []  # present but not applied (read_zip `through` / `issued_by`)
         self.problems = []          # what could not be read, said - never silently dropped
+        self.lost = []              # (OBJL, PRIM) of a feature an update changes that is not there, or changes by an
+                                    # instruction not known: NOAA charts it, this read does not hold it as charted
 
     # -- reading ------------------------------------------------------------------------------------------------------
     @staticmethod
@@ -421,6 +423,7 @@ class Cell:
                     f = self.features.get(rcid)
                     if f is None:
                         self.problems.append("update %s modifies feature %d, which is not there" % (number, rcid))
+                        self.lost.append((frid.get("OBJL") or 0, frid.get("PRIM")))
                         continue
                     f["rver"] = frid.get("RVER", f["rver"])
                     self._attr_update(f["attf"], self._flat(rec, "ATTF"))
@@ -437,6 +440,7 @@ class Cell:
                                      "feature %d object pointers" % rcid)
                 else:
                     self.problems.append("feature %d: update instruction %r" % (rcid, ruin))
+                    self.lost.append((frid.get("OBJL") or 0, frid.get("PRIM")))
             elif "VRID" in rec:
                 v0 = self._one(rec, "VRID")
                 key, ruin = (v0["RCNM"], v0["RCID"]), v0.get("RUIN")
@@ -675,6 +679,20 @@ def read_zip(path_or_bytes, cell=None, through=None, issued_by=None):
         base = [n for n in names if n.endswith(".000")][0]
         ups = {int(n[-3:]): n for n in names if not n.endswith(".000")}
         return _assemble(base, ups, z.read, through, issued_by)
+
+
+def dataset_id(buf):
+    """An S-57 file's DSID ({DSNM, EDTN, UPDN, ISDT, ...}) from its FIRST data record alone - which edition and update
+    a file is, without reading the rest (enc_cells checks a download by it); {} when that record holds none."""
+    defs, p = _read_ddr(buf)
+    if len(buf) - p < 24:
+        raise S57Error("no data record after the descriptive record")
+    ld = _leader(buf[p:p + 24])
+    for tag, data in _directory(buf[p:p + ld["reclen"]], ld):
+        if tag == "DSID" and tag in defs:
+            groups = _decode_field(defs[tag], data)
+            return dict(groups[0]) if groups else {}
+    return {}
 
 
 def _issue_date(buf):

@@ -263,7 +263,7 @@ def files(d):
         return []
 
 
-ENTRY_B = {"name": "US5TSTAB", "key": "US5TSTAB_ED001_UP000"}
+ENTRY_B = {"name": "US5TSTAB", "key": "US5TSTAB_ED001_UP000", "ed": 1, "up": 0}
 
 # ── 1. names and roles ──────────────────────────────────────────────────────────────────────────────────────────────
 net = Net()
@@ -629,6 +629,134 @@ check("5e. A CATALOG FROM THE FUTURE (written under a clock set back since) IS D
       lambda: "edition %s, asked %d, catalog_stale %s; a mark 1 s ahead %s, an hour ahead %s"
               % (fut.get("US5TSTAA"), asked_f, src5f.catalog_stale, near, far))
 
+# ── 5f. a download kept as what it holds ────────────────────────────────────────────────────────────────────────────
+HU = [-70.20, 43.16, -70.10, 43.24]                  # a harbor cell of its own, north of HA
+P_UP0, P_UP1 = (-70.15, 43.20), (-70.14, 43.21)      # its obstruction, and where update 1 moves it
+BOX_U = {"US5TSTUP": HU}
+
+
+def harbor_u():
+    c = Cell("US5TSTUP")
+    c.area("M_COVR", HU, {"CATCOV": "1"})
+    c.area("DEPARE", HU, {"DRVAL1": "3", "DRVAL2": "6"})
+    c.w.node(5000, *P_UP0, rcnm=110)
+    c.w.feature(4, "OBSTRN", 1, {"VALSOU": "0.5", "WATLEV": "3"}, [node_ptr(5000)])
+    return c
+
+
+up_u = W(name="US5TSTUP.001", updn=1, isdt="20261120")           # update 1: the obstruction's node moved, in place
+up_u.raw([("VRID", _field("VRID", [(110, 5000, 2, 3)])), ("SGCC", _field("SGCC", [(3, 1, 1)])),
+          ("SG2D", _field("SG2D", [(round(P_UP1[1] * COMF), round(P_UP1[0] * COMF))]))])
+U0, U1 = harbor_u().zip(), harbor_u().zip(updates=[(1, up_u.bytes())])
+_ub = up_u.bytes()
+_i = U1.index(_ub) + len(_ub) // 2                   # the zip is stored: the update's bytes lie in it as they are
+U1_BAD = U1[:_i] + bytes([U1[_i] ^ 0xFF]) + U1[_i + 1:]        # one byte of update 1 damaged: its CRC no longer matches
+
+
+def u_read(src):
+    """(obstructions, stale cells) of the harbor band over HU, read through `src`."""
+    fs, info = src.band_features("enc_harbour", HU, A._cell_namer("enc_harbour"))
+    return obstructions(fs), info["stale"]
+
+
+def u_source(eds, zip_, kept=None):
+    """A source on a clean folder of its own: the catalog names the cell at `eds`, NOAA serves `zip_`, and `kept` is
+    {file name: bytes} lying in the cells folder already."""
+    net = Net(cat=catalog({"US5TSTUP": eds}, boxes=BOX_U), zips={"US5TSTUP": zip_})
+    src = fresh(net, os.path.join(TMP, "s57_u"))
+    for n, b in (kept or {}).items():
+        os.makedirs(src.cells_dir, exist_ok=True)
+        with open(os.path.join(src.cells_dir, n), "wb") as f:
+            f.write(b)
+    return net, src
+
+
+AT0, AT1 = [("US5TSTUP_ED001_UP000:4", P_UP0)], [("US5TSTUP_ED001_UP001:4", P_UP1)]
+net_u, src_u = u_source((1, 1), U0)                  # NOAA's zip still update 0, its catalog naming update 1
+behind = u_read(src_u)
+f_behind = files(src_u.cells_dir)
+behind2 = u_read(again(net_u, src_u.root))           # the next process, inside REFUSED_S
+n_behind = net_u.asked("US5TSTUP")
+net_u.zips["US5TSTUP"] = U1                          # NOAA catches up
+u_mark = os.path.join(src_u.root, "refused_US5TSTUP.mark")
+past = time.time() - enc_cells.REFUSED_S - 1
+os.utime(u_mark, (past, past))
+caught = u_read(again(net_u, src_u.root))
+f_caught = files(src_u.cells_dir)
+mark_gone = not os.path.exists(u_mark)
+net_d, src_d = u_source((1, 1), U1_BAD, kept={"US5TSTUP_ED001_UP000.zip": U0})
+damaged = u_read(src_d)
+f_damaged = files(src_d.cells_dir)
+marked_d = src_d._marked("refused_US5TSTUP.mark", enc_cells.REFUSED_S)
+net_a, src_a = u_source((1, 0), U1)                  # NOAA's zip AHEAD of its catalog
+ahead_r = u_read(src_a)
+ahead_r2 = u_read(again(net_a, src_a.root))
+f_ahead, n_ahead = files(src_a.cells_dir), net_a.asked("US5TSTUP")
+net_m, src_m = u_source((1, 1), U1, kept={"US5TSTUP_ED001_UP001.zip": U0})    # update 0 kept under update 1's name
+mis_raised = raises(lambda: u_read(src_m), ValueError)
+f_mis = files(src_m.cells_dir)
+mis_after = u_read(src_m)
+f_mis2 = files(src_m.cells_dir)
+net_r, src_r = u_source((1, 1), U1, kept={"US5TSTUP_ED001_UP001.zip": U1_BAD})    # damaged on disk since
+rot_raised = raises(lambda: u_read(src_r), ValueError)
+f_rot = files(src_r.cells_dir)
+net_f, src_f = u_source((1, 2), U0, kept={"US5TSTUP_ED001_UP001.zip": U1})    # NOAA's zip behind the copy kept
+further = u_read(src_f)
+f_further = files(src_f.cells_dir)
+check("5f. A DOWNLOAD IS KEPT AS WHAT IT HOLDS - its base's edition, its updates' numbers, every member whole by its "
+      "CRC: NOAA's zip still at update 0 while its catalog names update 1 is kept under update 0's name and served as an "
+      "older copy (stale), and the next process does not download it again inside REFUSED_S; once NOAA catches up, "
+      "update 1 is read and the older copy removed. A zip with a damaged member is refused, the good older copy kept and "
+      "served stale; one behind the copy kept is not kept, the copy served. A zip AHEAD of its catalog is kept as it is "
+      "and read as the chart, not downloaded again. A copy kept "
+      "under a name it does not hold is renamed to what it holds and its read fails, and the next read downloads the "
+      "cell; a copy damaged on disk goes. A zip was kept under whatever its catalog named, only its .000 looked for: "
+      "behind, it was served as current and, its name taken, never downloaded again; damaged, it replaced the good copy "
+      "(the 2026-11-21 review)",
+      lambda: behind == (AT0, ["US5TSTUP"]) and f_behind == ["US5TSTUP_ED001_UP000.zip"] and behind2 == behind
+              and n_behind == 1 and caught == (AT1, []) and f_caught == ["US5TSTUP_ED001_UP001.zip"] and mark_gone
+              and damaged == (AT0, ["US5TSTUP"]) and f_damaged == ["US5TSTUP_ED001_UP000.zip"] and marked_d
+              and ahead_r == (AT1, []) and ahead_r2 == ahead_r and f_ahead == ["US5TSTUP_ED001_UP001.zip"]
+              and n_ahead == 1 and mis_raised and f_mis == ["US5TSTUP_ED001_UP000.zip"] and mis_after == (AT1, [])
+              and f_mis2 == ["US5TSTUP_ED001_UP001.zip"] and rot_raised and f_rot == []
+              and further == (AT1, ["US5TSTUP"]) and f_further == ["US5TSTUP_ED001_UP001.zip"],
+      lambda: "behind %s %s, next process %s, asked %d; caught up %s %s, mark gone %s; damaged %s %s marked %s; ahead "
+              "%s %s %s asked %d; mislabeled raised %s %s, then %s %s; damaged on disk raised %s %s; behind the copy "
+              "kept %s %s"
+              % (behind, f_behind, behind2, n_behind, caught, f_caught, mark_gone, damaged, f_damaged, marked_d,
+                 ahead_r, ahead_r2, f_ahead, n_ahead, mis_raised, f_mis, mis_after, f_mis2, rot_raised, f_rot,
+                 further, f_further))
+
+BASE_U = harbor_u().w.bytes()
+
+
+def held(members, base=None):
+    """What _check_cell_zip finds a zip of the base (or `base`) and the update numbers `members` to hold, or its
+    refusal."""
+    fs = {"ENC_ROOT/US5TSTUP/US5TSTUP.000": BASE_U if base is None else base} if base is not False else {}
+    for n in members:
+        fs["ENC_ROOT/US5TSTUP/US5TSTUP.%03d" % n] = up_u.bytes()
+    try:
+        return enc_cells._check_cell_zip(zipped(fs), "US5TSTUP")
+    except ValueError:
+        return "refused"
+
+
+reissued = W(name="US5TSTUP.000", updn=3)            # a base NOAA re-issued at update 3 (none among its 115 cells here)
+g = {"base": held([]), "run": held([1, 2, 3]), "from 2": held([2, 3]), "a gap": held([1, 3]),
+     "no .000": held([1], base=False), "no edition": held([], base=W(name="US5TSTUP.000", edtn="").bytes()),
+     "an error page": "refused" if raises(lambda: enc_cells._check_cell_zip(b"<html>busy</html>", "US5TSTUP"),
+                                          ValueError) else "taken",
+     "re-issued": held([], base=reissued.bytes()), "re-issued, then 4": held([4], base=reissued.bytes()),
+     "re-issued, then 1": held([1], base=reissued.bytes())}
+check("5g. WHAT A ZIP HOLDS (_check_cell_zip): the base's edition and update, raised by an unbroken run of updates from "
+      "the next - a run from anywhere else, a gap, no base, a base naming no edition, an error page are refused; a base "
+      "NOAA re-issued at an update holds that update, and the run goes on from it",
+      lambda: g == {"base": (1, 0), "run": (1, 3), "from 2": "refused", "a gap": "refused", "no .000": "refused",
+                    "no edition": "refused", "an error page": "refused", "re-issued": (1, 3),
+                    "re-issued, then 4": (1, 4), "re-issued, then 1": "refused"},
+      lambda: "%s" % g)
+
 # ── 6. a cell parsed once ───────────────────────────────────────────────────────────────────────────────────────────
 parses = []
 _read_zip0 = s57.read_zip
@@ -733,6 +861,25 @@ check("6c. A FEATURE WHOSE GEOMETRY CANNOT BE BUILT IS A FAILED READ OF ITS CLAS
                   ext6c["partial"], ext6c.get("complete"), ext6c.get("note"), pick6c, t6c.get("complete"), kept6c,
                   t6c.get("partial"), lay6c.get("unread_failed"), ext6c2["partial"], parses, cov6d))
 A._enc_tile_mem.clear()
+
+up_lost = W(name="US5TSTUP.001", updn=1, isdt="20261120")         # update 1, not of this base's chain:
+up_lost.feature(99, "WRECKS", 1, {"VALSOU": "2"}, ruin=3)        # it changes a wreck the base does not hold,
+up_lost.feature(98, "OBSTRN", 1, ruin=2)                         # and deletes an obstruction it does not hold
+up_odd = W(name="US5TSTUP.001", updn=1, isdt="20261120")
+up_odd.feature(4, "OBSTRN", 1, {"VALSOU": "9"}, ruin=7)          # an instruction S-57 does not have
+reads6d = []
+for up6d in (up_lost, up_odd):
+    _n, s6d = u_source((1, 1), harbor_u().zip(updates=[(1, up6d.bytes())]))
+    f6d, i6d = s6d.band_features("enc_harbour", HU, A._cell_namer("enc_harbour"))
+    reads6d.append((i6d["partial"], i6d["failed_cells"], obstructions(f6d)))
+check("6d. AN UPDATE THAT CHANGES A FEATURE THE CELL DOES NOT HOLD is a failed read of that feature's class: NOAA charts "
+      "a wreck this read does not hold, so the wrecks are `partial`; the update deleting an obstruction not there is "
+      "no failure, and the cell's own obstruction is read. One changing the obstruction by an instruction S-57 does not "
+      "have leaves the obstructions `partial`. Each change was dropped with a line in cell.problems, and the read "
+      "served as whole",
+      lambda: reads6d == [(["Wreck_point"], ["US5TSTUP"], [("US5TSTUP_ED001_UP001:4", P_UP0)]),
+                          (["Obstruction_point"], ["US5TSTUP"], [("US5TSTUP_ED001_UP001:4", P_UP0)])],
+      lambda: "%s" % reads6d)
 
 # ── 7. the band pick, the unforced read, snap-to-water and the chart card ──────────────────────────────────────────
 net7 = Net()
