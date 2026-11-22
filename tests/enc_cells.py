@@ -12,7 +12,8 @@ source", and "the console should show the pontoons and the other features ENCDir
   4  a cell read from an older copy is served and never kept, and says so; the current one, once had, replaces it;
      a cell two tiles read at two updates is one feature, the newer update's; at two editions, two, both held;
   5  the catalog and the downloads: refreshed by age, a failed refresh keeps the copy, a download that is not a whole
-     cell refused, a cell the catalog does not name never read, the hold-offs kept on disk for the next process;
+     cell refused, a cell the catalog does not name never read, the hold-offs kept on disk for the next process; a
+     catalog past its age said in every process and what is read through it never kept; one from the future due;
   6  a cell is parsed once: its read kept beside it, by this reader, and read back;
   7  the band pick, snap-to-water's read and the chart card read from the cells, ENCDirect only when they cannot be;
   8  the console's one TLS context; the child that builds a tile reads the console's cells and source;
@@ -552,6 +553,81 @@ check("5c. A DOWNLOAD THAT IS NOT A WHOLE CELL (an error page served as the file
       "of it lies in the folder",
       lambda: bad_refused and "US5TSTAB_ED001_UP000.zip" not in files(src5d.cells_dir) and not zz_seen,
       lambda: "refused %s, cells kept %s, canceled features read %d" % (bad_refused, files(src5d.cells_dir), len(zz_seen)))
+
+net5s = Net()
+src5s = fresh(net5s)
+keep_all(src5s)                                      # every cell kept, as the catalog of that day named them
+CAT_PATH = os.path.join(A.S57_DIR, "enc.geojson")
+then = time.time() - 3 * 86400
+os.utime(CAT_PATH, (then, then))
+day = time.strftime("%Y-%m-%d", time.gmtime(then))
+net5s.down.add("catalog")                            # three days on, NOAA's catalog does not answer
+again(net5s)
+A._enc_tile_mem.clear()
+t5s = A.fetch_enc_tile(TILE)
+kept5s = os.path.exists(A._tile_path(TILE))
+lay5s = A.fetch_enc_layered(IN_HA)
+far5s = A._enc_tile_build([-105.0, 39.75, -104.75, 40.0])       # no cell covers it: its coverage read alone says it
+n_cat = net5s.calls.count(enc_cells.CATALOG_URL)
+src5s2 = again(net5s)                                # the next process (the next tile's child), held off by the mark
+src5s2._down_until = 0.0
+os.remove(os.path.join(A.S57_DIR, "down.mark"))
+src5s2.catalog()
+n_cat2 = net5s.calls.count(enc_cells.CATALOG_URL)
+ci5s = A.fetch_chart_info(IN_HA)
+u5s = A.fetch_enc_features(IN_HA, 0.0)
+check("5d. A CATALOG PAST ITS AGE THAT CANNOT BE REFRESHED IS SAID, in every process, and what is read through it is "
+      "served and NEVER KEPT: the tile not whole and not kept, its `stale` naming the catalog copy's day (the page shows "
+      "it as an older chart in use), the layered read, the chart card, the unforced read (not whole) and a tile no cell "
+      "covers saying it too; the next "
+      "process, held off by the mark, asks nothing and says it as well. Only the process whose refresh failed knew, "
+      "nobody asked it, and the next tile's child read the old copy as current - its tile kept a week as whole (the "
+      "2026-11-21 review)",
+      lambda: not t5s.get("complete") and not kept5s and t5s.get("catalog_stale") == day
+              and day in (t5s.get("stale") or "") and any(day in s for s in lay5s.get("stale") or [])
+              and not lay5s.get("complete") and far5s.get("catalog_stale") == day and src5s2.catalog_stale == day
+              and n_cat2 == n_cat and day in (ci5s.get("note") or "")
+              and u5s.get("catalog_stale") == day and not u5s.get("complete") and u5s.get("features"),
+      lambda: "tile complete %s kept %s catalog_stale %s stale %r; layered stale %s complete %s; uncovered tile %s; next "
+              "process %s, asked %d then %d; card %r; unforced read complete %s catalog_stale %s" % (
+                  t5s.get("complete"), kept5s, t5s.get("catalog_stale"), (t5s.get("stale") or "")[:60],
+                  [s[:40] for s in lay5s.get("stale") or []], lay5s.get("complete"), far5s.get("catalog_stale"),
+                  src5s2.catalog_stale, n_cat, n_cat2, ci5s.get("note"), u5s.get("complete"), u5s.get("catalog_stale")))
+net5s.down.discard("catalog")
+os.remove(os.path.join(A.S57_DIR, "catalog.mark"))
+again(net5s)
+A._enc_tile_mem.clear()
+t5s_ok = A.fetch_enc_tile(TILE)
+kept5s_ok = os.path.exists(A._tile_path(TILE))
+check("5d2. ... and once the catalog is refreshed, the tile is read whole and kept, and says nothing of it",
+      lambda: t5s_ok.get("complete") and kept5s_ok and not t5s_ok.get("catalog_stale") and not t5s_ok.get("stale"),
+      lambda: "complete %s kept %s catalog_stale %s" % (t5s_ok.get("complete"), kept5s_ok, t5s_ok.get("catalog_stale")))
+os.remove(A._tile_path(TILE))
+A._enc_tile_mem.clear()
+
+net5f = Net(cat=catalog({"US5TSTAA": (2, 0)}))
+src5f = fresh(net5f, os.path.join(TMP, "s57_future"))
+os.makedirs(src5f.root)
+with open(os.path.join(src5f.root, "enc.geojson"), "wb") as f:
+    f.write(catalog())                               # edition 1, written while the clock was three days ahead
+ahead = time.time() + 3 * 86400
+os.utime(os.path.join(src5f.root, "enc.geojson"), (ahead, ahead))
+fut = {e["name"]: e["ed"] for e in src5f.catalog()}
+asked_f = net5f.calls.count(enc_cells.CATALOG_URL)
+mark5f = os.path.join(src5f.root, "down.mark")
+with open(mark5f, "wb"):
+    pass
+os.utime(mark5f, (time.time() + 1, time.time() + 1))
+near = src5f._marked("down.mark", enc_cells.DOWN_S)
+os.utime(mark5f, (time.time() + 3600, time.time() + 3600))
+far = src5f._marked("down.mark", enc_cells.DOWN_S)
+check("5e. A CATALOG FROM THE FUTURE (written under a clock set back since) IS DUE - refreshed, NOAA's new edition taken; "
+      "taken as young, it was not refreshed until the clock caught up (the 2026-11-21 review) - and a hold-off mark a "
+      "moment ahead of the clock is honored (on Windows one fresh file in eleven read as written in the future, and 5b "
+      "failed), one an hour ahead is not",
+      lambda: fut.get("US5TSTAA") == 2 and asked_f == 1 and not src5f.catalog_stale and near and not far,
+      lambda: "edition %s, asked %d, catalog_stale %s; a mark 1 s ahead %s, an hour ahead %s"
+              % (fut.get("US5TSTAA"), asked_f, src5f.catalog_stale, near, far))
 
 # ── 6. a cell parsed once ───────────────────────────────────────────────────────────────────────────────────────────
 parses = []

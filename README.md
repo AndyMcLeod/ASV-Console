@@ -3483,7 +3483,15 @@ plain. `tests/path_card.js` 15.
    keep the first tile's copy of each feature, so an update that moved an obstruction across the
    tile edge was dropped, and the obstruction stood where the old update had charted it. Now the
    newer update's copy is kept. A new edition renumbers its features, so two editions' copies are
-   both kept until then. `tests/enc_cells.py` 4c, 4d.
+   both kept until then. `tests/enc_cells.py` 4c, 4d. *A catalog that cannot be refreshed.* Only
+   the process whose refresh failed knew. The next tile's process, held off from asking again,
+   read the old copy as current, and its tile was kept a week as whole. Now any process that reads
+   a catalog copy past its day says so. The tile is served but not kept, so it is read again once
+   the catalog is. The chart readout shows "OLDER CHART IN USE" with the copy's date, and the
+   chart card says it too. A catalog copy dated in the future (a clock set back since) is now
+   refreshed, where before it was taken as new until the clock caught up. A hold-off mark a moment
+   in the future now counts. On Windows one freshly written file in eleven read that way, so a
+   hold-off was sometimes skipped. `tests/enc_cells.py` 5d, 5e.
 
    **The Passage tab, and a long Go-To as a passage (2026-10-14).** Andy: "consider another path
    planning behavior called 'passage' that disregards the 9-23 directive and allows for long path

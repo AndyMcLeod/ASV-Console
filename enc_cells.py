@@ -14,7 +14,7 @@ answer stands where ENCDirect's stood. The console names, keeps and classifies t
 WHERE THE CELLS COME FROM. NOAA's Chart Locator catalog (CATALOG_URL, every current cell's footprint, usage band and
 edition/update, "US5NH1BC_ED005_UP003") is kept at <root>/enc.geojson and read again after CATALOG_MAX_AGE_S; a cell is
 kept as <root>/cells/<CELL>_ED<n>_UP<n>.zip and downloaded again when the catalog names a newer edition or update - the
-zip holds the base cell and every update to date, applied in order (s57.read_zip). A CANCELLED CELL is not in the
+zip holds the base cell and every update to date, applied in order (s57.read_zip). A CANCELED CELL is not in the
 catalog, so it is never read: ENCDirect still served two canceled cells (Lewes, Bellingham).
 
 A CELL IS PARSED ONCE. Reading one takes 1.5-4 s and 10-50 MB (measured on a harbor, approach, coastal and general
@@ -26,8 +26,9 @@ own code and tables (reader_tag), so a changed reader reads every cell again.
 WHAT FAILS, AND HOW. A cell that cannot be downloaded is read from the newest older copy kept, and named in `stale`
 (the console then serves the read once and does not keep it); with no copy, the read FAILS (OSError) - never an empty
 answer, because "this water has no chart" is a fact about the place and a failed download is not. A catalog that
-cannot be refreshed is read from the copy kept (`catalog_stale`); with none, the read fails. After a failed request
-the network is not asked again for DOWN_S, so an outage costs one timeout, not one per cell.
+cannot be refreshed is read from the copy kept, and SAID: `catalog_stale` is that copy's date, in every process that
+reads it past its age - the console serves what it reads then and does not keep it; with no copy, the read fails.
+After a failed request the network is not asked again for DOWN_S, so an outage costs one timeout, not one per cell.
 """
 import hashlib
 import io
@@ -50,6 +51,12 @@ BAND_OF_USAGE = {1: "enc_overview", 2: "enc_general", 3: "enc_coastal", 4: "enc_
 CATALOG_MAX_AGE_S = 86400.0     # NOAA publishes corrections daily; the catalog says which cells have them
 CATALOG_RETRY_S = 120.0         # a catalog that could not be refreshed is not asked for again for this long
 DOWN_S = 30.0                   # after a request that failed, the network is not asked again for this long
+# A FILE'S TIME MAY RUN A LITTLE AHEAD OF time.time(): on Windows the two are kept at different resolutions (Python
+# 3.11's clock was seen stepping by whole milliseconds; the file system stamps to a tenth of a microsecond), and one fresh
+# file in eleven read as written in the future - so a mark checked just after it was written was not honored, and
+# tests/enc_cells.py 5b failed. A time further ahead than this is a clock set back since: a catalog from then is due, a
+# mark from then holds nothing.
+CLOCK_SLACK_S = 2.0
 FETCH_TIMEOUT_S = 60.0
 MEMO_CELLS = 12                 # cells' reads held in one process (one is 5-30 MB: a tile reads each band's cells twice)
 USER_AGENT = "ASV-Console/1.0"
@@ -73,7 +80,7 @@ def reader_tag():
 
 
 def _merc_inv(x, y):
-    """EPSG:3857 metres -> (lon, lat) degrees."""
+    """EPSG:3857 meters -> (lon, lat) degrees."""
     r = 6378137.0
     return math.degrees(x / r), math.degrees(2 * math.atan(math.exp(y / r)) - math.pi / 2)
 
@@ -192,7 +199,7 @@ class CellSource:
         self._catalog_tried = -1e18
         self._down_until = 0.0
         self._memo = {}              # (path, only) -> [records]
-        self.catalog_stale = False
+        self.catalog_stale = None    # the date of the catalog copy read past its age (its refresh failed or held off)
 
     # -- the network ------------------------------------------------------------------------------------------------
     @staticmethod
@@ -206,7 +213,7 @@ class CellSource:
     # waited out a whole FETCH_TIMEOUT_S before reading the copies kept. A mark's age is its file's.
     def _marked(self, name, secs):
         try:
-            return 0 <= time.time() - os.path.getmtime(os.path.join(self.root, name)) < secs
+            return -CLOCK_SLACK_S <= time.time() - os.path.getmtime(os.path.join(self.root, name)) < secs
         except OSError:
             return False
 
@@ -233,14 +240,17 @@ class CellSource:
     # -- the catalog --------------------------------------------------------------------------------------------------
     def catalog(self):
         """Every current cell as {"name", "ed", "up", "key", "band", "bbox" (lon/lat), "title"}. Refreshed after
-        CATALOG_MAX_AGE_S; the copy kept when the refresh fails; OSError with no copy at all."""
+        CATALOG_MAX_AGE_S; the copy kept when the refresh fails, and `catalog_stale` its date; OSError with no copy."""
         path = os.path.join(self.root, "enc.geojson")
         with self._lock:
             try:
                 age = self._now() - os.path.getmtime(path)
             except OSError:
                 age = None
-            due = age is None or age > CATALOG_MAX_AGE_S
+            # a copy from the FUTURE is due too: its age is not known (the clock was set back since it was written), and
+            # taken as young it was never refreshed until the clock caught up (the 2026-11-21 review)
+            due = age is None or age > CATALOG_MAX_AGE_S or age < -CLOCK_SLACK_S
+            refreshed = False
             if due and time.monotonic() - self._catalog_tried > CATALOG_RETRY_S \
                     and not self._marked("catalog.mark", CATALOG_RETRY_S):
                 try:
@@ -249,17 +259,22 @@ class CellSource:
                     if not isinstance(d, dict) or not d.get("features"):
                         raise ValueError("NOAA's cell catalog came back empty")
                     _write(path, data)
-                    self.catalog_stale = False
+                    refreshed = True
                 except (OSError, ValueError) as e:
                     # A FAILED refresh is not tried again for CATALOG_RETRY_S - in this process or the next (the mark).
                     self._catalog_tried = time.monotonic()
                     self._mark("catalog.mark")
                     if age is None and not os.path.exists(path):
                         raise OSError("NOAA's cell catalog could not be read (%s)" % e)
-                    self.catalog_stale = True
             elif age is None:
                 raise OSError("NOAA's cell catalog could not be read (asked again shortly)")
             st = os.stat(path)
+            # ⚠ A CATALOG PAST ITS AGE IS SAID, IN EVERY PROCESS (the 2026-11-21 review): only the process whose refresh
+            # failed knew, and nobody asked it - the next tile's child, held off by the mark, read the old copy as
+            # current, and its tile was kept a week as whole. The copy's own age decides, whoever tried.
+            left = self._now() - st.st_mtime
+            self.catalog_stale = (None if refreshed or -CLOCK_SLACK_S <= left <= CATALOG_MAX_AGE_S
+                                  else time.strftime("%Y-%m-%d", time.gmtime(st.st_mtime)))
             key = (st.st_mtime, st.st_size)
             if self._index is None or key != self._index_key:
                 self._index = self._parse_catalog(path)
@@ -445,10 +460,12 @@ class CellSource:
     # -- the two questions --------------------------------------------------------------------------------------------
     def band_features(self, band, box, namer, only=None):
         """(features, info): the band's features reaching into the box, whole (as ENCDirect's query served them), and
-        {"cells": [names read], "stale": [names read from an older copy]}. Raises OSError / ValueError when a cell
-        cannot be had or read at all."""
+        {"cells": [names read], "stale": [names read from an older copy], "catalog_stale": the date of the catalog copy
+        read past its age, or None}. Raises OSError / ValueError when a cell cannot be had or read at all."""
         out, info = [], {"cells": [], "stale": []}
-        for e in self.cells_for(band, box):
+        entries = self.cells_for(band, box)
+        info["catalog_stale"] = self.catalog_stale
+        for e in entries:
             path, stale = self.cell_path(e)
             info["cells"].append(e["name"])
             if stale:

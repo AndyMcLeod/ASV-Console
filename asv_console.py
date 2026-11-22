@@ -3375,7 +3375,9 @@ def _cells_extract(band, bbox, extras=True):
     data = {"band": band, "features": out, "counts": counts, "partial": [], "source": "cells", "cells": info["cells"]}
     if info["stale"]:
         data["stale_cells"] = info["stale"]
-    else:
+    if info.get("catalog_stale"):
+        data["catalog_stale"] = info["catalog_stale"]
+    if not info["stale"] and not info.get("catalog_stale"):
         data["complete"] = True
     return data
 
@@ -3404,12 +3406,15 @@ def _cells_answer(bbox, band, extras):
                 "note": "NOAA's chart cells could not be read (%s)" % (str(e) or type(e).__name__)}
 
 
-def _cells_coverage(band, tile, stale=None):
+def _cells_coverage(band, tile, stale=None, catalog=None):
     """_enc_coverage's answer from the cells: the band's M_COVR polygons reaching into the tile that say "coverage
-    available" (the same test), as [[ring, ...], ...]. A cell read from an older copy is added to `stale`, a list."""
+    available" (the same test), as [[ring, ...], ...]. A cell read from an older copy is added to `stale`, a list; the
+    catalog copy's date to `catalog`, a list, when it was read past its age."""
     feats, info = _cells().band_features(band, tile, _cell_namer(band), only={"M_COVR"})
     if stale is not None:
         stale.extend(info["stale"])
+    if catalog is not None and info.get("catalog_stale"):
+        catalog.append(info["catalog_stale"])
     polys = []
     for ft in feats:
         if str((ft.get("properties") or {}).get("CATCOV", "")).strip().lower() not in _ENC_NOT_COVERED:
@@ -4055,11 +4060,11 @@ def _enc_tile_build(tile):
     # THE CELLS FIRST (2026-11-21, the cells block above _cells_extract): a band's coverage is asked of NOAA's cells, and
     # ENCDirect's path below is the band's only when they cannot answer it - and then the band's features are ENCDirect's
     # too (`sources`): ONE SOURCE A BAND. ENCDirect's breaker stops ENCDirect alone; the cells are read through it.
-    covs, cov_failed, cov_stale, sources, cells_stale = [], {}, [], {}, []
+    covs, cov_failed, cov_stale, sources, cells_stale, cat_stale = [], {}, [], {}, [], []
     for b in ENC_BANDS + [ENC_BERTHING]:
         if cells_on:
             try:
-                covs.append(_cells_coverage(b, tile, cells_stale))
+                covs.append(_cells_coverage(b, tile, cells_stale, cat_stale))
                 sources[b] = "cells"
                 continue
             except Exception as e:                 # a cell that will not read fails the cells' answer, whatever the fault
@@ -4099,6 +4104,7 @@ def _enc_tile_build(tile):
             return dict(fail, note="the %s chart could not be read here (%s)" % (_band_word(ENC_BERTHING), d.get("note") or "no answer"))
         failed.update(d.get("partial") or [])
         cells_stale.extend(d.get("stale_cells") or [])
+        cat_stale.extend([d["catalog_stale"]] if d.get("catalog_stale") else [])
         present.append(ENC_BERTHING)
         for ft in d.get("features") or []:
             ft = dict(ft)
@@ -4117,6 +4123,7 @@ def _enc_tile_build(tile):
             return dict(fail, note="the %s chart could not be read here (%s)" % (_band_word(band), d.get("note") or "no answer"))
         failed.update(d.get("partial") or [])
         cells_stale.extend(d.get("stale_cells") or [])
+        cat_stale.extend([d["catalog_stale"]] if d.get("catalog_stale") else [])
         present.append(band)
         for ft in d.get("features") or []:
             ft = dict(ft)
@@ -4133,6 +4140,13 @@ def _enc_tile_build(tile):
            "leaves": len(leaves), "read_at": time.time(), "reader": _ENC_TILE_READER,
            "coverage_failed": sorted(cov_failed), "coverage_stale": sorted(cov_stale), "sources": sources,
            "stale_cells": sorted(set(cells_stale))}
+    if cat_stale:
+        # NOAA'S CATALOG COULD NOT BE REFRESHED (the 2026-11-21 review): the cells were read as its copy of that day
+        # names them, and a correction NOAA issued since is not in them. Served and said - `stale`, which the page shows
+        # as an older chart in use - and never kept, so the tile is read again once the catalog is.
+        out["catalog_stale"] = min(cat_stale)
+        out["stale"] = ("NOAA's cell catalog could not be refreshed: the chart is read as its copy of %s named the "
+                        "cells - a correction NOAA issued since is not in it" % out["catalog_stale"])
     if cov_failed:
         out["note"] = "read without the %s chart's coverage (%s): what it would cover is unread" % (
             " / ".join(_band_word(b) for b in sorted(cov_failed)), next(iter(cov_failed.values())))
@@ -4142,12 +4156,15 @@ def _enc_tile_build(tile):
         # A cell whose current edition or update could not be downloaded, read from the copy kept: a whole chart, a
         # correction or more behind - served, never kept, so the next read asks for the current one again.
         out["note"] = "read from an older copy of %s (the current one could not be downloaded)" % ", ".join(sorted(set(cells_stale))[:4])
-    if failed or cov_failed or cov_stale or cells_stale:
-        print("[enc] REFUSING TO CACHE tile %s: %d layer(s) failed (%s)%s%s%s - served once and re-read next time"
+    elif cat_stale:
+        out["note"] = out["stale"]
+    if failed or cov_failed or cov_stale or cells_stale or cat_stale:
+        print("[enc] REFUSING TO CACHE tile %s: %d layer(s) failed (%s)%s%s%s%s - served once and re-read next time"
               % (_bbox_key(tile), len(failed), ", ".join(sorted(failed)[:6]),
                  ("; coverage unknown: " + ", ".join(sorted(cov_failed))) if cov_failed else "",
                  ("; coverage from an older read: " + ", ".join(cov_stale)) if cov_stale else "",
-                 ("; cells from an older copy: " + ", ".join(sorted(set(cells_stale)))) if cells_stale else ""), flush=True)
+                 ("; cells from an older copy: " + ", ".join(sorted(set(cells_stale)))) if cells_stale else "",
+                 ("; NOAA's catalog not refreshed since " + min(cat_stale)) if cat_stale else ""), flush=True)
     else:
         out["complete"] = True
     return out
@@ -5287,6 +5304,11 @@ def _cells_chart_info(bbox):
     if info["stale"]:
         out["stale_cells"] = info["stale"]
         out["note"] = "read from an older copy of %s (the current one could not be downloaded)" % ", ".join(info["stale"][:4])
+    if info.get("catalog_stale"):
+        out["catalog_stale"] = info["catalog_stale"]
+        out["note"] = ((out["note"] + "; ") if out["note"] else "") + (
+            "NOAA's cell catalog could not be refreshed: the cells are read as its copy of %s named them"
+            % info["catalog_stale"])
     return out
 
 
