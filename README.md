@@ -3602,6 +3602,11 @@ plain. `tests/path_card.js` 15.
    not know the console had stopped asking ENCDirect for a while: when a cell failed there, it
    asked again, up to 20 s a tile against a silent host. It is now told. `tests/enc_cells.py` 14.
 
+   *One cell's download holds only that cell.* The console's request threads share one cell
+   source, and one lock held every download: a read of a cell already in memory waited out
+   another cell's download, up to a minute against a silent host. A download now holds its own
+   cell's lock, and the catalog's refresh its own. `tests/enc_cells.py` 15.
+
    **The Passage tab, and a long Go-To as a passage (2026-10-14).** Andy: "consider another path
    planning behavior called 'passage' that disregards the 9-23 directive and allows for long path
    planning", and "do it in segments starting with beginning and end and then working inward". The

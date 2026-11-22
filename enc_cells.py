@@ -246,7 +246,14 @@ class CellSource:
         self._ssl = ssl_context
         self._fetch = fetch or (lambda url: self._urlopen(url, self._ssl() if callable(self._ssl) else self._ssl))
         self._now = now or time.time
+        # ⚠ NO LOCK IS HELD ACROSS THE NETWORK BUT ONE CELL'S, OR THE CATALOG'S (the 2026-11-21 review): one lock held
+        # every cell's download and the catalog's refresh, and the console's one source serves every request thread - so
+        # a read of a cell kept and in memory waited out another cell's download, up to FETCH_TIMEOUT_S against a silent
+        # host. `_lock` keeps the memo and the lock tables, held for no I/O; a cell's download holds that cell's lock
+        # (a second ask for it waits, then finds it kept), the catalog's refresh the catalog's.
         self._lock = threading.RLock()
+        self._cell_locks = {}
+        self._catalog_lock = threading.Lock()
         self._index = None
         self._index_key = None
         self._catalog_tried = -1e18
@@ -295,7 +302,7 @@ class CellSource:
         """Every current cell as {"name", "ed", "up", "key", "band", "bbox" (lon/lat), "title"}. Refreshed after
         CATALOG_MAX_AGE_S; the copy kept when the refresh fails, and `catalog_stale` its date; OSError with no copy."""
         path = os.path.join(self.root, "enc.geojson")
-        with self._lock:
+        with self._catalog_lock:                    # one refresh at a time: every read needs the catalog it gives
             try:
                 age = self._now() - os.path.getmtime(path)
             except OSError:
@@ -407,6 +414,11 @@ class CellSource:
             pass
         return sorted(out, reverse=True)
 
+    def _cell_lock(self, name):
+        """The lock a download of the cell holds in this process: one at a time, another cell's not waiting on it."""
+        with self._lock:
+            return self._cell_locks.setdefault(name, threading.Lock())
+
     def cell_path(self, entry):
         """(path, stale): the cell's zip as the catalog names it, downloaded when not kept; when it cannot be, the
         newest older copy kept and stale True; OSError when there is none. A download is kept as what it HOLDS
@@ -417,7 +429,7 @@ class CellSource:
         name, mine = entry["name"], (entry["ed"], entry["up"])
         want = os.path.join(self.cells_dir, entry["key"] + ".zip")
         mark = "refused_%s.mark" % name
-        with self._lock:
+        with self._cell_lock(name):
             if os.path.exists(want):
                 return want, False
             kept = self._kept(name)

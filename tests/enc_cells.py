@@ -1678,6 +1678,84 @@ check("14. ENCDIRECT'S BREAKER GOES WITH THE TILE'S CHILD: spawned while it is a
           down_s(cmds14[0]) if cmds14 else "-", down_s(cmds14[1]) if len(cmds14) > 1 else "-", asked14_in,
           got14 and got14.get("offline"), held14, asked14_no, got14b and got14b.get("offline"), held14c))
 
+# ── 15. no lock across the network but the cell's own (review item 20) ──────────────────────────────────────────────
+# One source shared by threads, as the console's request threads share it. A download in flight is played by a fetch
+# that waits on a gate; each read measured runs on a thread of its own, so a build that waits never hangs the suite.
+import threading                                     # noqa: E402
+
+
+class GateNet(Net):
+    """Net, a fetch of what `hold` names (a cell, or "catalog") waiting at `gate` - `inside` set once one is."""
+    def __init__(self):
+        Net.__init__(self)
+        self.hold, self.gate, self.inside = set(), threading.Event(), threading.Event()
+
+    def __call__(self, url):
+        if ("catalog" if url == enc_cells.CATALOG_URL else url.rsplit("/", 1)[-1][:-4]) in self.hold:
+            self.inside.set()
+            self.gate.wait(10.0)
+        return Net.__call__(self, url)
+
+
+def within(fn, secs=2.0):
+    """fn() on a thread of its own: [its answer or the exception's name, finished within `secs`, the thread]."""
+    box = [None, False, None]
+
+    def run():
+        try:
+            box[0] = fn()
+        except Exception as e:                       # noqa: BLE001
+            box[0] = type(e).__name__
+    box[2] = threading.Thread(target=run, daemon=True)
+    box[2].start()
+    box[2].join(secs)
+    box[1] = not box[2].is_alive()
+    return box
+
+
+net15 = GateNet()
+clock15 = [time.time()]
+src15 = fresh(net15, os.path.join(TMP, "s57_lock"), now=lambda: clock15[0])
+nm_ap, nm_ha = A._cell_namer("enc_approach"), A._cell_namer("enc_harbour")
+e15 = {e["name"]: e for e in src15.catalog()}
+src15.band_features("enc_approach", IN_HA, nm_ap)    # the approach cell kept, read and in memory
+p15_ap, _st = src15.cell_path(e15["US4TSTAA"])
+net15.hold.add("US5TSTAA")
+dl15 = within(lambda: src15.cell_path(e15["US5TSTAA"])[0], secs=0)   # the harbor cell's download, in flight
+net15.inside.wait(5.0)
+memo15 = within(lambda: len(src15.band_features("enc_approach", IN_HA, nm_ap)[0]))
+other15 = within(lambda: os.path.basename(src15.cell_path(e15["US5TSTAB"])[0]))
+same15 = within(lambda: src15.cell_path(e15["US5TSTAA"])[0], secs=0.3)   # the SAME cell: waits for the download
+flight15 = dl15[2].is_alive()                       # the download still waiting at the gate as the reads ran
+net15.gate.set()
+for t in (dl15, memo15, other15, same15):
+    t[2].join(10.0)
+asked15 = net15.asked("US5TSTAA")
+# the catalog's refresh in flight: a read of a cell in memory does not wait for it
+net15.hold, net15.inside, net15.gate = {"catalog"}, threading.Event(), threading.Event()
+clock15[0] += enc_cells.CATALOG_MAX_AGE_S + 60.0
+cat15 = within(lambda: len(src15.catalog()), secs=0)
+net15.inside.wait(5.0)
+feat15 = within(lambda: len(src15.features(p15_ap, nm_ap)))
+kept15 = within(lambda: os.path.basename(src15.cell_path(e15["US4TSTAA"])[0]))
+catflight15 = cat15[2].is_alive()
+net15.gate.set()
+for t in (cat15, feat15, kept15):
+    t[2].join(10.0)
+check("15. NO LOCK IS HELD ACROSS THE NETWORK BUT THE CELL'S OWN: while one cell downloads, a read of a cell kept and in "
+      "memory answers at once and another cell downloads too; a second ask for the cell downloading waits, then finds it "
+      "kept (NOAA asked once); and the catalog's refresh in flight holds no read of a cell in memory. One lock held "
+      "every download and refresh, and the console's request threads waited out one another's - up to 60 s a silent "
+      "host",
+      lambda: flight15 and memo15[1] and isinstance(memo15[0], int) and memo15[0] > 0
+              and other15[1] and other15[0] == "US5TSTAB_ED001_UP000.zip"
+              and not same15[1] and dl15[0] and same15[0] == dl15[0] and asked15 == 1
+              and catflight15 and feat15[1] and isinstance(feat15[0], int) and feat15[0] > 0
+              and kept15[1] and kept15[0] == "US4TSTAA_ED001_UP000.zip" and cat15[0] == len(BOXES),
+      lambda: "download in flight %s; memo read %s; other cell %s; same cell %s (download %s, NOAA asked %d); catalog "
+              "in flight %s; memo read %s; kept cell %s; catalog %s" % (
+          flight15, memo15[:2], other15[:2], same15[:2], dl15[0], asked15, catflight15, feat15[:2], kept15[:2], cat15[0]))
+
 shutil.rmtree(TMP, ignore_errors=True)
 print("\n" + ("%d CHECK(S) FAILED (%d ran)" % (fails, ran) if fails else "all checks passed (%d)" % ran))
 sys.exit(1 if fails else 0)
