@@ -3522,6 +3522,18 @@ plain. `tests/path_card.js` 15.
    only when it was made from the tile kept now, the same read of it; any other is made again from
    that tile. A grid whose tile is older than a week is served and the tile read again behind it,
    as a tile is. `tests/passage_grid.py` 4c, 6.
+   *A chart read from ENCDirect kept as the cells'.* With the cells the source, a band whose cells
+   could not be had (a download that timed out, and the hold on the network then keeping the next
+   band's off too) is read from ENCDirect whole, and the tile was kept as whole: served for a week
+   as the cells' chart, without the pontoons and NOAA's corrections since ENCDirect's read, even
+   once the cells could be read again. A tile kept by a console run with ENCDirect the source
+   (`--enc-source encdirect`) was served the same way once the cells were, and one kept by an
+   earlier build of the cell reader was served after the reader changed. Now a band read from
+   ENCDirect is served and said (OLDER CHART IN USE) and never kept, so the cells are asked again
+   two minutes later. Each tile records the reader that wrote it, a hash of `s57.py`,
+   `enc_cells.py` and the tables, so no one has to bump a number. A kept tile of the other source,
+   or of another reader, is read again first; when that read fails it is served as an older chart
+   that says how it was read, and its grid is not served. `tests/enc_cells.py` 3, 10 to 10g.
 
    **The Passage tab, and a long Go-To as a passage (2026-10-14).** Andy: "consider another path
    planning behavior called 'passage' that disregards the 9-23 directive and allows for long path

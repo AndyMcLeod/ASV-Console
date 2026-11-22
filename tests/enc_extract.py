@@ -155,10 +155,17 @@ _T = float(_TDEG.group(1))
 import math as _m                                              # noqa: E402
 TILE = [_m.floor(BBOX[0] / _T) * _T, _m.floor(BBOX[1] / _T) * _T, (_m.floor(BBOX[0] / _T) + 1) * _T, (_m.floor(BBOX[1] / _T) + 1) * _T]
 CACHE = os.path.join(ENC_DIR, _CVER.group(1) + "_%s.jsonl" % ("%.4f_%.4f_%.4f_%.4f" % tuple(TILE)))
+_GVER = re.search(r'_ENC_GRID_FMT = "(grid_v\d+)_%s\.bin"', _SRC)
+if not _GVER:
+    raise SystemExit("test setup: cannot find the passage grid's file name in asv_console.py")
+GRID = os.path.join(ENC_DIR, _GVER.group(1) + "_%s.bin" % ("%.4f_%.4f_%.4f_%.4f" % tuple(TILE)))
+HAD_GRID = os.path.exists(GRID)
 SENTINEL = {
     # a mid-ocean tile no chart covers - so a band, and these two features, can only have come from this file
     "tile": TILE, "bands": ["enc_general"], "unread": [], "unread_failed": [], "partial": [], "complete": True,
     "band": "sentinel-band",
+    # a tile of the console's own reader of the cells (its default), or it is read again from NOAA (review fix 6)
+    "sources": {"enc_general": "cells"}, "cells_reader": __import__("enc_cells").reader_tag(),
     "features": [
         {"role": "depth_area", "cls": "DepthArea",
          "props": {"DRVAL1": 3.0}, "geometry": {"type": "Point", "coordinates": [-139.95, 10.05]}},
@@ -283,10 +290,11 @@ finally:
         proc.wait(timeout=10)
     except Exception:
         proc.kill()
-    try:
-        os.remove(CACHE)                             # never leave the sentinel behind
-    except OSError:
-        pass
+    for _f in (CACHE,) + (() if HAD_GRID else (GRID,)):
+        try:
+            os.remove(_f)                            # never leave the sentinel behind - nor a grid a read of it made
+        except OSError:
+            pass
 
 srvlog.seek(0)
 server_out = srvlog.read()

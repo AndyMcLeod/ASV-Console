@@ -430,7 +430,9 @@ SEED2 = A._tile_path(TILE2)
 A.ENC_DIR = _sav_dir
 for _seed, _tile in ((SEED, TILE), (SEED2, TILE2)):
     A._write_tile_jsonl(_seed, {"tile": _tile, "features": [], "bands": ["enc_general"], "unread": [],
-                                "unread_failed": [], "partial": [], "complete": True})
+                                "unread_failed": [], "partial": [], "complete": True,
+                                # a tile of the console's own reader of the cells (its default), or it is read again
+                                "sources": {"enc_general": "cells"}, "cells_reader": A.enc_cells.reader_tag()})
 STATE = ConsoleState()
 port = free_port()
 log = tempfile.TemporaryFile(mode="w+")

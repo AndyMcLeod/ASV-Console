@@ -56,6 +56,9 @@ sys.excepthook = _crash_report
 APP = os.environ.get("ASV_APP") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path.insert(0, APP)
 import asv_console as A                                       # noqa: E402
+# the tiles below are ENCDirect-shaped fakes with no `sources`: read as the ENCDirect console's (with the cells, a tile
+# with no reader of the cells' is not current, and its grid is not served - review fix 6)
+A.ENC_SOURCE = "encdirect"
 
 fails = 0
 ran = 0
@@ -481,11 +484,12 @@ OT = [-150.0, 20.0, -149.75, 20.25]
 A.ENC_DIR = ENC_DIR
 SEED, SEED_GRID = A._tile_path(OT), A._grid_path(OT)
 A.ENC_DIR = TMP
-had_grid = os.path.exists(SEED_GRID)
 A._write_tile_jsonl(SEED, {"tile": OT, "features": [{"role": "depth_area", "cls": "Depth_Area", "oid": 1,
                                                      "props": {"DRVAL1": 3000.0, "DRVAL2": 4000.0},
                                                      "geometry": {"type": "Polygon", "coordinates": [[[-150.0, 20.0], [-149.75, 20.0], [-149.75, 20.25], [-150.0, 20.25], [-150.0, 20.0]]]}}],
-                           "bands": ["enc_general"], "unread": [], "unread_failed": [], "partial": [], "complete": True})
+                           "bands": ["enc_general"], "unread": [], "unread_failed": [], "partial": [], "complete": True,
+                           # a tile of the console's own reader of the cells (its default), or it is read again from NOAA
+                           "sources": {"enc_general": "cells"}, "cells_reader": A.enc_cells.reader_tag()})
 # a grid kept from another read of that tile (a read_at the seeded tile does not have): not the tile's, so not served
 A._write_grid(SEED_GRID, {"tile": OT, "features": [], "bands": ["enc_general"], "unread": [], "unread_failed": [],
                           "partial": [], "complete": True, "read_at": 1000.0})
@@ -537,7 +541,7 @@ finally:
         proc.wait(10)
     except Exception:
         proc.kill()
-    for f in (SEED,) + (() if had_grid else (SEED_GRID,)):
+    for f in (SEED, SEED_GRID):                  # (the suite wrote the grid itself - the one kept from another read)
         try:
             os.remove(f)
         except OSError:

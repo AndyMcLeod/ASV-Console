@@ -4150,14 +4150,29 @@ def _enc_tile_build(tile):
            "unread": [list(x) for x in _merge_rects([lf[0] for lf in not_read if len(lf) < 4 or lf[3] == "none"])],
            "leaves": len(leaves), "read_at": time.time(), "reader": _ENC_TILE_READER,
            "coverage_failed": sorted(cov_failed), "coverage_stale": sorted(cov_stale), "sources": sources,
-           "stale_cells": sorted(set(cells_stale))}
+           "stale_cells": sorted(set(cells_stale)), "cells_reader": enc_cells.reader_tag() if cells_on else None}
+    # ⚠ A BAND READ FROM ENCDIRECT IS NOT THE CELLS' CHART (the 2026-11-21 review). With the cells the source, a band whose
+    # cells could not be had - a download that timed out, and DOWN_S then holding the next band's off too - is read from
+    # ENCDirect whole (ONE SOURCE A BAND), and the tile was kept as whole: served a week as the cells' chart, without the
+    # pontoons and NOAA's corrections since ENCDirect's read, even once the cells could be read again. It is served and
+    # said (`stale`), never kept, so it is read from the cells again after ENC_TILE_RETRY_S.
+    fell = [b for b in ENC_BANDS + [ENC_BERTHING] if sources.get(b) == "encdirect"] if cells_on else []
+    stale = []
     if cat_stale:
         # NOAA'S CATALOG COULD NOT BE REFRESHED (the 2026-11-21 review): the cells were read as its copy of that day
         # names them, and a correction NOAA issued since is not in them. Served and said - `stale`, which the page shows
         # as an older chart in use - and never kept, so the tile is read again once the catalog is.
         out["catalog_stale"] = min(cat_stale)
-        out["stale"] = ("NOAA's cell catalog could not be refreshed: the chart is read as its copy of %s named the "
-                        "cells - a correction NOAA issued since is not in it" % out["catalog_stale"])
+        stale.append("NOAA's cell catalog could not be refreshed: the chart is read as its copy of %s named the "
+                     "cells - a correction NOAA issued since is not in it" % out["catalog_stale"])
+    if fell:
+        out["encdirect_bands"] = fell
+        stale.append("NOAA's cells could not be read here for the %s chart%s: %s from NOAA's ENCDirect service, which "
+                     "lags NOAA's corrections and never served the harbor chart's pontoons, among others"
+                     % (" / ".join(_band_word(b) for b in fell), "s" if len(fell) > 1 else "",
+                        "they are read" if len(fell) > 1 else "it is read"))
+    if stale:
+        out["stale"] = "; ".join(stale)
     if cov_failed:
         out["note"] = "read without the %s chart's coverage (%s): what it would cover is unread" % (
             " / ".join(_band_word(b) for b in sorted(cov_failed)), next(iter(cov_failed.values())))
@@ -4167,15 +4182,16 @@ def _enc_tile_build(tile):
         # A cell whose current edition or update could not be downloaded, read from the copy kept: a whole chart, a
         # correction or more behind - served, never kept, so the next read asks for the current one again.
         out["note"] = "read from an older copy of %s (the current one could not be downloaded)" % ", ".join(sorted(set(cells_stale))[:4])
-    elif cat_stale:
+    elif stale:
         out["note"] = out["stale"]
-    if failed or cov_failed or cov_stale or cells_stale or cat_stale:
-        print("[enc] REFUSING TO CACHE tile %s: %d layer(s) failed (%s)%s%s%s%s - served once and re-read next time"
+    if failed or cov_failed or cov_stale or cells_stale or cat_stale or fell:
+        print("[enc] REFUSING TO CACHE tile %s: %d layer(s) failed (%s)%s%s%s%s%s - served once and re-read next time"
               % (_bbox_key(tile), len(failed), ", ".join(sorted(failed)[:6]),
                  ("; coverage unknown: " + ", ".join(sorted(cov_failed))) if cov_failed else "",
                  ("; coverage from an older read: " + ", ".join(cov_stale)) if cov_stale else "",
                  ("; cells from an older copy: " + ", ".join(sorted(set(cells_stale)))) if cells_stale else "",
-                 ("; NOAA's catalog not refreshed since " + min(cat_stale)) if cat_stale else ""), flush=True)
+                 ("; NOAA's catalog not refreshed since " + min(cat_stale)) if cat_stale else "",
+                 ("; bands from ENCDirect: " + ", ".join(fell)) if fell else ""), flush=True)
     else:
         out["complete"] = True
     return out
@@ -4217,10 +4233,34 @@ def _older_tile_paths(tile):
     return [os.path.join(ENC_DIR, f % _bbox_key(tile)) for f in _ENC_OLDER_TILE_FMTS]
 
 
+def _tile_not_current(got):
+    """Why a whole tile_v4 kept is not this console's chart - (how it was read, for "a copy read <day> ...", and what
+    it lacks or "") - or None when it is: every band read from ENC_SOURCE, and with the cells, by this cell reader
+    (enc_cells.reader_tag, kept as `cells_reader`).
+    ⚠ A KEPT TILE IS THE CHART OF THE SOURCE AND READER THAT WROTE IT (the 2026-11-21 review). A tile_v4 was served as
+    current whatever wrote it: one a console run with --enc-source encdirect kept, read later with the cells the
+    source; and one a build of the cell reader before this one kept (reader_tag hashes the reader so that no one has to
+    bump a number - and a tile carried none, so a reader change never reached the tiles kept)."""
+    src, order = got.get("sources") or {}, ENC_BANDS + [ENC_BERTHING]
+    other = sorted((b for b, s in src.items() if s != ENC_SOURCE),            # finest first, as the bands are read
+                   key=lambda b: (order.index(b) if b in order else len(order), b))
+    if other and ENC_SOURCE == "cells":
+        return ("with the %s chart%s from NOAA's ENCDirect service" % (" / ".join(_band_word(b) for b in other),
+                                                                       "s" if len(other) > 1 else ""),
+                "it lags NOAA's corrections and lacks what that service never served: the harbor chart's pontoons, "
+                "among others")
+    if other:
+        return "from NOAA's cells, where this console reads NOAA's ENCDirect service", ""
+    if ENC_SOURCE == "cells" and got.get("cells_reader") != enc_cells.reader_tag():
+        return "by an earlier build of the cell reader", ""
+    return None
+
+
 def _older_tile(tile):
     """A whole tile an older reader kept, re-tagged, with `stale` saying what it lacks - or None. Read in the CHILD
-    (one of them is a single 25-30 MB JSON parse). Never kept as a tile of this reader."""
-    for p in _older_tile_paths(tile):
+    (one of them is a single 25-30 MB JSON parse). Never kept as a tile of this reader. The first copy asked is this
+    format's own when it is not this console's chart (_tile_not_current): it is newer than any older reader's."""
+    for p in [_tile_path(tile)] + _older_tile_paths(tile):
         try:
             if p.endswith(".jsonl"):
                 got = _read_tile_jsonl(p)
@@ -4231,6 +4271,9 @@ def _older_tile(tile):
             got = None
         if not (isinstance(got, dict) and got.get("complete") and isinstance(got.get("features"), list)):
             continue
+        why = _tile_not_current(got) if p == _tile_path(tile) else None
+        if p == _tile_path(tile) and why is None:
+            continue                               # this console's own chart: never a fallback for itself
         got.pop("n", None)
         when = got.get("read_at")
         if not isinstance(when, (int, float)):
@@ -4241,7 +4284,10 @@ def _older_tile(tile):
         day = time.strftime("%Y-%m-%d", time.localtime(when)) if when else "earlier"
         got["read_at"] = when
         got["complete"] = False
-        if (got.get("reader") or 0) >= 3:
+        if why is not None:
+            got["stale"] = "the chart could not be read again here; a copy read %s %s is used%s" % (
+                day, why[0], " - " + why[1] if why[1] else "")
+        elif (got.get("reader") or 0) >= 3:
             # ENCDirect's reader (tile_v3, 2026-10-12 to 11-21) kept every clearance and every layer that service
             # served: what it lacks is what the service never served (_ENC_TILE_FMT's note).
             got["features"] = [_enc_retag(ft) for ft in got["features"]]
@@ -4338,7 +4384,8 @@ def _enc_tile_build_child(tile):
     global _enc_down_until
     fail = {"tile": tile, "features": [], "unread": [], "unread_failed": [tile], "bands": [], "partial": []}
     older = [p for p in _older_tile_paths(tile) if os.path.exists(p)]
-    if time.monotonic() < _enc_down_until and not older and ENC_SOURCE != "cells":
+    if (time.monotonic() < _enc_down_until and not older and ENC_SOURCE != "cells"
+            and not os.path.exists(_tile_path(tile))):     # (a tile_v4 not this console's chart is a fallback too)
         return dict(fail, note="ENC offline (no cache for this tile)")
     out = "%s.%d.%d.build" % (_tile_path(tile), os.getpid(), threading.get_ident())
     gout = "%s.%d.%d.build" % (_grid_path(tile), os.getpid(), threading.get_ident())   # its grid (THE PASSAGE GRID)
@@ -4536,8 +4583,9 @@ def fetch_enc_tile(tile):
             got = _read_tile_jsonl(path)
             if got is not None:
                 got.pop("n", None)
-                if not got.get("complete"):
-                    got = None
+                if not got.get("complete") or _tile_not_current(got) is not None:
+                    got = None                     # not this console's chart: read again first (_older_tile serves it
+                                                   # if that read fails)
                 elif not isinstance(got.get("read_at"), (int, float)):
                     try:
                         got["read_at"] = os.path.getmtime(path)
@@ -5232,6 +5280,8 @@ def _grid_of_tile(tile, got):
     head = _read_tile_head(_tile_path(tile))
     if not (isinstance(head, dict) and head.get("complete") and head.get("read_at") == got[0].get("read_at")):
         return None
+    if _tile_not_current(head) is not None:        # the tile itself not this console's chart: nor is its grid
+        return None
     return got
 
 
@@ -5256,7 +5306,8 @@ def _grid_make(tile, key):
     got = _grid_of_tile(tile, _grid_read(_grid_path(tile)))
     if got is not None:
         return got
-    if _read_tile_head(_tile_path(tile)) is None:
+    head = _read_tile_head(_tile_path(tile))
+    if head is None or _tile_not_current(head) is not None:     # no tile of this console's: read it
         d = fetch_enc_tile(tile)
         if not d.get("complete"):
             return None, d.get("note") or ("the tile was not read whole: " + ", ".join(d.get("partial") or [])

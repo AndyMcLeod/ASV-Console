@@ -371,14 +371,19 @@ finally:
 h3 = [f for f in t3["features"] if f["band"] == "enc_harbour"]
 check("3. ONE SOURCE A BAND: a harbor cell that can be neither downloaded nor found kept makes the harbor band "
       "ENCDirect's WHOLE - its coverage asked of ENCDirect and its features too (source encdirect), not one feature of "
-      "the harbor cell that WAS had - while the approach band, its cell kept, stays the cells'; the tile whole",
+      "the harbor cell that WAS had - while the approach band, its cell kept, stays the cells'; the tile NOT whole: "
+      "the band ENCDirect's is said (`stale`, `encdirect_bands`), so it is never kept as the cells' chart (review "
+      "fix 6)",
       lambda: t3["sources"]["enc_harbour"] == "encdirect" and t3["sources"]["enc_approach"] == "cells"
               and asked["cov"] == ["enc_harbour"] and ("enc_harbour", "encdirect") in asked["feats"]
               and ("enc_approach", "cells") in asked["feats"] and [f["oid"] for f in h3] == [9001]
-              and t3.get("complete"),
-      lambda: "sources %s, ENCDirect coverage asked %s, features asked %s, harbor oids %s, complete %s, note %r"
-              % (t3.get("sources"), asked["cov"], asked["feats"], sorted({str(f["oid"]) for f in h3})[:5],
-                 t3.get("complete"), t3.get("note")))
+              and not t3.get("complete") and t3.get("encdirect_bands") == ["enc_harbour"]
+              and "for the harbor chart: it is read from NOAA's ENCDirect" in (t3.get("stale") or "")
+              and t3.get("note") == t3["stale"] and t3.get("cells_reader") == enc_cells.reader_tag(),
+      lambda: "sources %s, ENCDirect coverage asked %s, features asked %s, harbor oids %s, complete %s, from "
+              "ENCDirect %s, note %r" % (t3.get("sources"), asked["cov"], asked["feats"],
+                                         sorted({str(f["oid"]) for f in h3})[:5], t3.get("complete"),
+                                         t3.get("encdirect_bands"), t3.get("note")))
 n3 = net3.asked("US5TSTAB")
 blocked = raises(lambda: again(net3).cell_path(ENTRY_B))
 neth = Net()
@@ -1055,6 +1060,207 @@ check("9b. THE RE-READ BEHIND A SERVED TILE is not stopped by ENCDirect's breake
       "ENCDirect's own hold) - and still is when ENCDirect is",
       lambda: builds == [T9],
       lambda: "re-reads started %s" % builds)
+
+
+# ── 10. this console's chart: its source's, its reader's (review fix 6) ──────────────────────────────────────────────
+def clear(t):
+    """No copy of the tile anywhere: not in memory, not on disk."""
+    with A._enc_tile_locks_lock:
+        A._enc_tile_mem.pop(A._bbox_key(t), None)
+    for p in [A._tile_path(t)] + A._older_tile_paths(t):
+        if os.path.exists(p):
+            os.remove(p)
+
+
+def kept_as(t, drop=(), **over):
+    """A whole tile_v4 at `t` as this console keeps one - its one feature a sentinel (oid 4242) no read of the cells
+    gives - with `over` in its header and `drop` left out of it. Its file's bytes."""
+    got = dict({"tile": t, "bands": ["enc_harbour"], "unread": [], "unread_failed": [], "partial": [], "complete": True,
+                "reader": A._ENC_TILE_READER, "read_at": time.time() - 3600, "sources": dict(ALL_CELLS),
+                "cells_reader": enc_cells.reader_tag(),
+                "features": [{"role": "depth_area", "cls": "Depth_Area", "props": {"DRVAL1": 3.0}, "oid": 4242,
+                              "band": "enc_harbour", "geometry": {"type": "Polygon", "coordinates": SQ_H}}]}, **over)
+    for k in drop:
+        got.pop(k, None)
+    A._write_tile_jsonl(A._tile_path(t), got)
+    with open(A._tile_path(t), "rb") as f:
+        return f.read()
+
+
+def sentinel(d):
+    return any(f.get("oid") == 4242 for f in (d or {}).get("features") or [])
+
+
+ALL_CELLS = {b: "cells" for b in A.ENC_BANDS + [A.ENC_BERTHING]}
+ALL_ED = {b: "encdirect" for b in A.ENC_BANDS + [A.ENC_BERTHING]}
+
+net10 = Net()
+src10 = fresh(net10)
+keep_all(src10, but=("US5TSTAB",))
+net10.down.add("US5TSTAB")                           # check 3's harbor cell: neither downloaded nor kept
+clear(TILE)
+A._enc_coverage, A.fetch_enc_features = encdirect_cov, feats_spy
+try:
+    t10 = A.fetch_enc_tile(TILE)
+finally:
+    A._enc_coverage, A.fetch_enc_features = _cov0, _feat0
+check("10. A TILE WITH A BAND READ FROM ENCDIRECT IS NOT KEPT as the cells' chart: served and said, not whole, held "
+      "ENC_TILE_RETRY_S and then read from the cells again - never written to disk. It was kept, and served a week as "
+      "the cells' chart (no pontoons, none of NOAA's corrections since ENCDirect's read) even once the cells could be "
+      "read again",
+      lambda: not t10.get("complete") and t10.get("encdirect_bands") == ["enc_harbour"] and t10.get("stale")
+              and isinstance(t10.get("retry_at"), float) and not os.path.exists(A._tile_path(TILE)),
+      lambda: "complete %s from ENCDirect %s retry_at %s kept %s stale %r" % (
+          t10.get("complete"), t10.get("encdirect_bands"), t10.get("retry_at"), os.path.exists(A._tile_path(TILE)),
+          t10.get("stale")))
+
+net10b = Net()
+fresh(net10b)
+clear(TILE)
+kept_as(TILE, drop=("cells_reader",), sources=dict(ALL_ED))
+A._enc_down_until = time.monotonic() + 600.0         # ENCDirect's breaker ARMED (it stops ENCDirect alone): the cells
+try:
+    t10b = A.fetch_enc_tile(TILE)
+finally:
+    A._enc_down_until = 0.0
+head10b = A._read_tile_head(A._tile_path(TILE)) or {}
+check("10b. A TILE KEPT BY A CONSOLE RUN WITH ENCDIRECT THE SOURCE (--enc-source encdirect), on disk when the cells are "
+      "the source, is read again FIRST: from the cells, whole, kept as theirs (this reader's tag, every band the cells') "
+      "- the copy's sentinel gone. It was served as the cells' chart, without the pontoons",
+      lambda: t10b.get("complete") and set(t10b["sources"].values()) == {"cells"} and not sentinel(t10b)
+              and head10b.get("cells_reader") == enc_cells.reader_tag()
+              and set((head10b.get("sources") or {}).values()) == {"cells"} and net10b.asked("US5TSTAA") == 1,
+      lambda: "complete %s sources %s sentinel %s; kept: reader %s sources %s; harbor cell asked %d" % (
+          t10b.get("complete"), t10b.get("sources"), sentinel(t10b), head10b.get("cells_reader"),
+          head10b.get("sources"), net10b.asked("US5TSTAA")))
+
+net10c = Net()
+net10c.down.add("catalog")
+fresh(net10c)                                        # no catalog kept and NOAA's cannot be had: no cell can be read
+clear(TILE)
+before10c = kept_as(TILE, drop=("cells_reader",), sources=dict(ALL_ED, enc_approach="cells"))
+V3_10 = os.path.join(A.ENC_DIR, "tile_v3_%s.jsonl" % A._bbox_key(TILE))
+A._write_tile_jsonl(V3_10, dict(v3, tile=TILE))      # and ENCDirect's older reader's copy (its span, oid 7)
+A._enc_down_until = time.monotonic() + 30.0          # ENCDirect's breaker: nor can ENCDirect be read
+try:
+    t10c = A.fetch_enc_tile(TILE)
+finally:
+    A._enc_down_until = 0.0
+with open(A._tile_path(TILE), "rb") as _f:
+    after10c = _f.read()
+check("10c. ... and when that read fails, the copy kept is served - before any older reader's (tile_v3, oid 7) - "
+      "not whole, held ENC_TILE_RETRY_S, saying it was read with ENCDirect's bands and what that lacks; the copy left "
+      "as it was",
+      lambda: not t10c.get("complete") and sentinel(t10c) and not any(f.get("oid") == 7 for f in t10c["features"])
+              and ("with the harbor / coastal / general / overview / berthing charts from NOAA's ENCDirect service is "
+                   "used - it lags NOAA's corrections" in (t10c.get("stale") or ""))
+              and t10c.get("note") == t10c["stale"] and isinstance(t10c.get("retry_at"), float)
+              and after10c == before10c and os.path.exists(V3_10),
+      lambda: "complete %s sentinel %s oids %s retry_at %s copy unchanged %s; stale %r" % (
+          t10c.get("complete"), sentinel(t10c), sorted({str(f.get("oid")) for f in t10c.get("features") or []})[:4],
+          t10c.get("retry_at"), after10c == before10c, t10c.get("stale")))
+
+net10d = Net()
+fresh(net10d)
+clear(TILE)
+kept_as(TILE, cells_reader="0123456789abcdef")     # another build of the cell reader
+A._enc_down_until = time.monotonic() + 600.0       # (ENCDirect's breaker armed: the cells alone)
+try:
+    t10d = A.fetch_enc_tile(TILE)
+    clear(TILE)
+    kept_as(TILE, drop=("cells_reader",))          # kept before a tile named its reader
+    t10d2 = A.fetch_enc_tile(TILE)
+    clear(TILE)
+    kept_as(TILE)                                  # this reader's
+    calls10 = len(net10d.calls)
+    t10d3 = A.fetch_enc_tile(TILE)
+    own10 = A._older_tile(TILE)                    # this reader's tile, and no older copy: no fallback
+finally:
+    A._enc_down_until = 0.0
+check("10d. A TILE AN EARLIER BUILD OF THE CELL READER KEPT - its cells_reader another tag, or none (kept before a tile "
+      "carried one) - is read again; the tag hashes s57.py, enc_cells.py and the tables, so no one has to bump a number "
+      "for a reader change to reach the tiles kept. A tile of THIS reader is served as kept, nothing asked of NOAA - and "
+      "is never its own fallback (_older_tile)",
+      lambda: t10d.get("complete") and not sentinel(t10d) and t10d2.get("complete") and not sentinel(t10d2)
+              and t10d3.get("complete") and sentinel(t10d3) and len(net10d.calls) == calls10 and own10 is None,
+      lambda: "other tag: complete %s sentinel %s; none: complete %s sentinel %s; this reader's: complete %s sentinel %s, "
+              "NOAA asked %d, its own fallback %s" % (
+                  t10d.get("complete"), sentinel(t10d), t10d2.get("complete"), sentinel(t10d2), t10d3.get("complete"),
+                  sentinel(t10d3), len(net10d.calls) - calls10, own10 is not None))
+
+TAG = enc_cells.reader_tag()
+nc = {"cells, mixed": A._tile_not_current({"sources": {"enc_harbour": "encdirect", "enc_approach": "cells"}, "cells_reader": TAG}),
+      "cells, this reader": A._tile_not_current({"sources": dict(ALL_CELLS), "cells_reader": TAG}),
+      "cells, none named": A._tile_not_current({})}
+A.ENC_SOURCE = "encdirect"
+try:
+    nc.update({"encdirect, the cells'": A._tile_not_current({"sources": dict(ALL_CELLS), "cells_reader": TAG}),
+               "encdirect, its own": A._tile_not_current({"sources": dict(ALL_ED)}),
+               "encdirect, none named": A._tile_not_current({})})
+finally:
+    A.ENC_SOURCE = "cells"
+check("10e. WHOSE CHART A KEPT TILE IS (_tile_not_current): with the cells the source, one with a band ENCDirect's names "
+      "that band and what it lacks; one naming no source is an earlier reader's; this reader's is current - with "
+      "ENCDirect the source, a tile of the cells' is not its chart, and its own, or one naming none (kept before tiles "
+      "named a source), is",
+      lambda: nc["cells, mixed"] == ("with the harbor chart from NOAA's ENCDirect service",
+                                     "it lags NOAA's corrections and lacks what that service never served: the harbor "
+                                     "chart's pontoons, among others")
+              and nc["cells, this reader"] is None and nc["cells, none named"] == ("by an earlier build of the cell reader", "")
+              and nc["encdirect, the cells'"] == ("from NOAA's cells, where this console reads NOAA's ENCDirect service", "")
+              and nc["encdirect, its own"] is None and nc["encdirect, none named"] is None,
+      lambda: "; ".join("%s: %r" % kv for kv in nc.items()))
+
+ran10 = []
+_run0 = A.subprocess.run
+
+
+def run_rec(cmd, **kw):
+    ran10.append([c for c in cmd if c.startswith("--enc-")][:1])
+    return A.subprocess.CompletedProcess(cmd, 3)
+
+
+A.subprocess.run = run_rec
+A.ENC_SOURCE = "encdirect"
+A._enc_down_until = time.monotonic() + 30.0
+try:
+    clear(TILE)
+    g_none = A._enc_tile_build_child(TILE)
+    kept_as(TILE)
+    g_v4 = A._enc_tile_build_child(TILE)
+finally:
+    A.subprocess.run = _run0
+    A.ENC_SOURCE = "cells"
+    A._enc_down_until = 0.0
+check("10f. ... so with ENCDirect the source and its breaker tripped, a tile with no copy kept is offline at once, no "
+      "child started - while one with a tile_v4 of the cells kept starts the child, which serves that copy when its "
+      "read fails",
+      lambda: g_none.get("note") == "ENC offline (no cache for this tile)" and ran10 == [["--enc-tile-worker"]]
+              and "exit 3" in (g_v4.get("note") or ""),
+      lambda: "no copy: %r; a copy of the cells': %r; children %s" % (g_none.get("note"), g_v4.get("note"), ran10))
+
+clear(TILE)
+T_AT = time.time() - 60
+kept_as(TILE, drop=("cells_reader",), sources=dict(ALL_ED), read_at=T_AT)
+g_ed = A._grid_of_tile(TILE, ({"read_at": T_AT}, b""))
+asked_t, ran10[:] = [], []
+_fet0 = A.fetch_enc_tile
+A.fetch_enc_tile = lambda t: (asked_t.append(list(t)), {"tile": t, "complete": False, "note": "not read here"})[1]
+A.subprocess.run = run_rec
+try:
+    gm = A._grid_make(TILE, A._bbox_key(TILE))
+finally:
+    A.fetch_enc_tile = _fet0
+    A.subprocess.run = _run0
+kept_as(TILE, read_at=T_AT)
+g_ok = A._grid_of_tile(TILE, ({"read_at": T_AT}, b""))
+check("10g. A GRID IS ITS TILE'S, AND THE TILE THIS CONSOLE'S: one tied to a tile the ENCDirect console kept (the same "
+      "read_at) is not served, and that tile is read (fetch_enc_tile) before any grid is made - none made of it - while "
+      "the grid of this console's tile is served",
+      lambda: g_ed is None and asked_t == [TILE] and not ran10 and gm == (None, "not read here") and g_ok is not None,
+      lambda: "ENCDirect's tile: grid %s, tiles read %s, grid children %s, made %r; this console's: grid %s"
+              % (g_ed is not None, asked_t, ran10, gm, g_ok is not None))
+clear(TILE)
 
 shutil.rmtree(TMP, ignore_errors=True)
 print("\n" + ("%d CHECK(S) FAILED (%d ran)" % (fails, ran) if fails else "all checks passed (%d)" % ran))
