@@ -3491,7 +3491,15 @@ plain. `tests/path_card.js` 15.
    chart card says it too. A catalog copy dated in the future (a clock set back since) is now
    refreshed, where before it was taken as new until the clock caught up. A hold-off mark a moment
    in the future now counts. On Windows one freshly written file in eleven read that way, so a
-   hold-off was sometimes skipped. `tests/enc_cells.py` 5d, 5e.
+   hold-off was sometimes skipped. `tests/enc_cells.py` 5d, 5e. *A feature that cannot be built.*
+   A point, line or area whose geometry the reader cannot build (an update deleted a wreck's
+   position and left the wreck, or an area's outline does not close) was dropped without a word,
+   and the read was kept and served as whole. Now its class counts as a layer that did not arrive
+   whole, the way a failed layer from ENCDirect always did. Where the class is one the console acts
+   on, that water is unread until it is read again; the tile is not kept, and the readout says
+   NOT READ WHOLE. A coverage area that cannot be built makes the band's coverage unknown. The
+   failure is kept with the cell's read, so every process says it. None of the 115 NOAA cells
+   read here has such a feature. `tests/enc_cells.py` 6c.
 
    **The Passage tab, and a long Go-To as a passage (2026-10-14).** Andy: "consider another path
    planning behavior called 'passage' that disregards the 9-23 directive and allows for long path

@@ -680,6 +680,60 @@ check("6b. ... and a read kept by ANOTHER reader (its tag not this reader's) is 
       lambda: n4 == 2 and after_other == [os.path.basename(rpath)] and n5 == 3 and canon(f_cut) == canon(f_first),
       lambda: "parses %d then %d; reads after %s" % (n4, n5, after_other))
 
+# a harbor cell whose update deletes the wreck's node (the wreck left standing) and a corner node of its depth area
+bk = Cell("US5TSTXX")
+bk.area("M_COVR", HX, {"CATCOV": "1"})              # nodes 1001-1004, edges 1005-1008
+bk.area("DEPARE", HX, {"DRVAL1": "8", "DRVAL2": "12"})   # nodes 1009-1012, edges 1013-1016
+bk.w.node(5000, -70.02, 43.10, rcnm=110)
+bk.w.feature(4, "WRECKS", 1, {"CATWRK": "2", "WATLEV": "3"}, [node_ptr(5000)])
+bk.w.feature(9, "C_AGGR", 255, {}, [])               # a collection: no geometry of its own, and no failure
+up_bk = W(name="US5TSTXX.001", updn=1, isdt="20261120")
+up_bk.raw([("VRID", _field("VRID", [(110, 5000, 2, 2)]))])
+up_bk.raw([("VRID", _field("VRID", [(120, 1009, 2, 2)]))])
+bc = Cell("US5TSTXX")                                # ... and one whose update deletes a corner of its COVERAGE
+bc.area("M_COVR", HX, {"CATCOV": "1"})
+bc.area("DEPARE", HX, {"DRVAL1": "8", "DRVAL2": "12"})
+up_bc = W(name="US5TSTXX.001", updn=1, isdt="20261120")
+up_bc.raw([("VRID", _field("VRID", [(120, 1001, 2, 2)]))])
+net6c = Net(cat=catalog({"US5TSTXX": (1, 1)}, boxes=BOX_X),
+            zips={"US5TSTXX": bk.zip(updates=[(1, up_bk.bytes())]), "US4TSTXX": apx.zip()})
+fresh(net6c)
+A._enc_tile_mem.clear()
+ext6c = A._cells_extract("enc_harbour", HX)
+pick6c = raises(lambda: A._cells_pick_band(HX))
+t6c = A.fetch_enc_tile(TILE)
+kept6c = os.path.exists(A._tile_path(TILE))
+lay6c = A.fetch_enc_layered([-70.06, 43.06, -70.01, 43.14])
+WANT6C = ["Depth_Area", "Wreck_point"]
+parses = []
+s57.read_zip = counted
+try:
+    again(net6c)
+    ext6c2 = A._cells_extract("enc_harbour", HX)    # the next process, from the kept read
+finally:
+    s57.read_zip = _read_zip0
+A._enc_tile_mem.clear()
+net6d = Net(cat=catalog({"US5TSTXX": (1, 1)}, boxes=BOX_X),
+            zips={"US5TSTXX": bc.zip(updates=[(1, up_bc.bytes())]), "US4TSTXX": apx.zip()})
+fresh(net6d)
+cov6d = raises(lambda: A._cells_coverage("enc_harbour", TILE))
+check("6c. A FEATURE WHOSE GEOMETRY CANNOT BE BUILT IS A FAILED READ OF ITS CLASS, not a feature quietly gone: an update "
+      "that deleted a wreck's node and a corner of a depth area leaves both classes `partial` (the read not whole, the "
+      "note naming the cell); the band pick will not pass the band by for a coarser one; the tile is not kept and the "
+      "layered read holds its water unread, as for a layer that did not arrive; the next process reads the same from "
+      "the kept read, parsing nothing; a coverage area not built fails the band's coverage; a collection, with no "
+      "geometry of its own, is no failure. Both were dropped, the read kept and served as whole (the 2026-11-21 review)",
+      lambda: ext6c["partial"] == WANT6C and not ext6c.get("complete") and "US5TSTXX" in (ext6c.get("note") or "")
+              and not [f for f in ext6c["features"] if f["cls"] in WANT6C] and pick6c
+              and not t6c.get("complete") and not kept6c and set(WANT6C) <= set(t6c.get("partial") or [])
+              and any(r[0] <= -70.05 and r[2] >= -70.01 for r in lay6c.get("unread_failed") or [])
+              and ext6c2["partial"] == WANT6C and not parses and cov6d,
+      lambda: "partial %s complete %s note %r; pick raises %s; tile complete %s kept %s partial %s; layered unread_failed "
+              "%s; next process partial %s parses %s; coverage raises %s" % (
+                  ext6c["partial"], ext6c.get("complete"), ext6c.get("note"), pick6c, t6c.get("complete"), kept6c,
+                  t6c.get("partial"), lay6c.get("unread_failed"), ext6c2["partial"], parses, cov6d))
+A._enc_tile_mem.clear()
+
 # ── 7. the band pick, the unforced read, snap-to-water and the chart card ──────────────────────────────────────────
 net7 = Net()
 fresh(net7)

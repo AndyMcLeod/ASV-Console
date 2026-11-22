@@ -358,7 +358,7 @@ class CellSource:
 
     @staticmethod
     def _load_read(rpath, only):
-        """The records of a kept read (only the classes in `only`), or None when there is none whole."""
+        """(records, failed) of a kept read (only the classes in `only`), or None when there is none whole."""
         try:
             with open(rpath, "r", encoding="utf-8") as f:
                 head = json.loads(f.readline())
@@ -370,17 +370,29 @@ class CellSource:
                         out.append(json.loads(js))
         except (OSError, ValueError):
             return None
-        if not isinstance(head, dict) or head.get("n") != n:
+        if not isinstance(head, dict) or head.get("n") != n or not isinstance(head.get("failed"), list):
             return None                            # not this reader's whole read: read the cell again
-        return out
+        return out, [tuple(k) for k in head["failed"] if only is None or k[0] in only]
 
     def _parse(self, path, rpath):
-        """The cell read here (s57.read_zip, then ENCDirect's shape for EVERY class, named later) and kept at `rpath`:
-        a header line, then one record a line, its class acronym before a tab."""
+        """(records, failed): the cell read here (s57.read_zip, then ENCDirect's shape for EVERY class, named later)
+        and kept at `rpath` - a header line, then one record a line, its class acronym before a tab. `failed`: the
+        (acronym, prim) of every class a feature of which could not be built."""
         key = os.path.basename(path)[:-4]           # "US5NH1BC_ED005_UP003": the copy read, edition and update
         name = key.split("_", 1)[0]
         cell = s57.read_zip(path)
-        feats, _left = s57.encdirect_features(cell, lambda acronym, prim: (acronym, prim))
+        feats, left = s57.encdirect_features(cell, lambda acronym, prim: (acronym, prim))
+        # ⚠ A FEATURE WHOSE GEOMETRY CANNOT BE BUILT IS A FAILED READ OF ITS CLASS, KEPT AND SAID (the 2026-11-21
+        # review). A point, line or area with no geometry is one whose vectors are missing - an update deleted a wreck's
+        # node and left the wreck, or an area's ring does not close (s57 records why in cell.problems). It was dropped
+        # here and the read kept and served as whole: a danger gone without a word. Now the class is named, kept in the
+        # read's header for every process, and the console reads the band's answer as one whose layer did not arrive
+        # (`partial`). An object with no geometry of its own (a collection, prim 255) is not a failure. None in 115 of
+        # NOAA's cells read here.
+        failed = sorted({k for k in left if k[1] in (s57.PRIM_POINT, s57.PRIM_LINE, s57.PRIM_AREA)})
+        if failed:
+            print("[cells] %s: %s could not be built (%s)" % (key, ", ".join("%s/%d" % k for k in failed),
+                                                            "; ".join(cell.problems[:3]) or "no geometry"), flush=True)
         recs = []
         for ft in feats:
             acronym, prim = ft.pop("cls")
@@ -390,14 +402,14 @@ class CellSource:
             ft["oid"] = "%s:%d" % (key, ft["rcid"]) + (":%d" % ft["part"] if "part" in ft else "")
             ft["a"], ft["p"] = acronym, prim
             recs.append(ft)
-        body = [json.dumps({"cell": name, "n": len(recs)}) + "\n"]
+        body = [json.dumps({"cell": name, "n": len(recs), "failed": [list(k) for k in failed]}) + "\n"]
         body += ["%s\t%s\n" % (r["a"], json.dumps(r, separators=(",", ":"))) for r in recs]
         try:
             _write(rpath, "".join(body).encode("utf-8"))
         except OSError:
             pass                                   # kept next time; this read is whole in memory
         self._prune_reads(name, keep=rpath)
-        return recs
+        return recs, failed
 
     def _prune_reads(self, name, keep):
         """Every other kept read of the cell goes: an older edition's, or another reader's."""
@@ -413,12 +425,16 @@ class CellSource:
             pass
 
     def _records(self, path, only):
-        """The cell's records - from this process's memo, else its kept read, else parsed here and kept."""
+        """(records, failed) of the cell - from this process's memo, else its kept read, else parsed here and kept."""
         okey = frozenset(only) if only is not None else None
+
+        def cut(got):
+            recs, failed = got
+            return ([r for r in recs if r["a"] in okey], [k for k in failed if k[0] in okey])
         with self._lock:
             whole = self._memo.get((path, None))
             if whole is not None:
-                return whole if okey is None else [r for r in whole if r["a"] in okey]
+                return whole if okey is None else cut(whole)
             got = self._memo.get((path, okey))
             if got is not None:
                 return got
@@ -429,25 +445,29 @@ class CellSource:
             if got is not None:
                 return got
             rpath = self._read_path(path)
-            recs = self._load_read(rpath, okey)
-            if recs is None:
-                recs = self._parse(path, rpath)
+            got = self._load_read(rpath, okey)
+            if got is None:
+                got = self._parse(path, rpath)
                 if okey is not None:
-                    recs = [r for r in recs if r["a"] in okey]
+                    got = cut(got)
             with self._lock:
-                self._memo[(path, okey)] = recs
+                self._memo[(path, okey)] = got
                 while len(self._memo) > MEMO_CELLS:
                     self._memo.pop(next(iter(self._memo)))
-        return recs
+        return got
 
-    def features(self, path, namer, only=None):
+    def features(self, path, namer, only=None, failed=None):
         """The cell's features in ENCDirect's shape (s57.encdirect_features), each with `oid`
         "<CELL>_ED<n>_UP<n>:<record>" (a sounding ":<n>" more) - the identity two tiles reading one feature from the
         same update share; read from different updates, two ids, both kept - named by `namer(acronym, prim)`
-        (None leaves the class out). `only`: those class acronyms alone. ⚠ The geometry and properties are the kept
+        (None leaves the class out). `only`: those class acronyms alone. `failed`, a list: each class a feature of
+        which could not be built is appended, by its name (_parse). ⚠ The geometry and properties are the kept
         read's own objects, shared by every answer: copy before changing one."""
         out = []
-        for r in self._records(path, only):
+        recs, bad = self._records(path, only)
+        if failed is not None:
+            failed.extend(namer(a, p) or a for a, p in bad)
+        for r in recs:
             cls = namer(r["a"], r["p"])
             if cls is None:
                 continue
@@ -461,14 +481,22 @@ class CellSource:
     def band_features(self, band, box, namer, only=None):
         """(features, info): the band's features reaching into the box, whole (as ENCDirect's query served them), and
         {"cells": [names read], "stale": [names read from an older copy], "catalog_stale": the date of the catalog copy
-        read past its age, or None}. Raises OSError / ValueError when a cell cannot be had or read at all."""
+        read past its age, or None, "partial": [classes a feature of which could not be built, in any cell read -
+        where it lay is not known, so it counts for any box its cell reaches], "failed_cells": [those cells]}.
+        Raises OSError / ValueError when a cell cannot be had or read at all."""
         out, info = [], {"cells": [], "stale": []}
         entries = self.cells_for(band, box)
         info["catalog_stale"] = self.catalog_stale
+        partial, failed_cells = set(), []
         for e in entries:
             path, stale = self.cell_path(e)
             info["cells"].append(e["name"])
             if stale:
                 info["stale"].append(e["name"])
-            out.extend(ft for ft in self.features(path, namer, only) if hits_box(ft["geometry"], box))
+            bad = []
+            out.extend(ft for ft in self.features(path, namer, only, failed=bad) if hits_box(ft["geometry"], box))
+            if bad:
+                partial.update(bad)
+                failed_cells.append(e["name"])
+        info["partial"], info["failed_cells"] = sorted(partial), failed_cells
         return out, info

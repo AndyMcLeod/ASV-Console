@@ -3372,12 +3372,18 @@ def _cells_extract(band, bbox, extras=True):
         out.append({"role": role, "cls": cls, "props": _enc_keep_props(ft["properties"]),
                     "geometry": ft["geometry"], "oid": ft["oid"]})
         counts[cls] = counts.get(cls, 0) + 1
-    data = {"band": band, "features": out, "counts": counts, "partial": [], "source": "cells", "cells": info["cells"]}
+    # a class a feature of which could not be built (enc_cells._parse) is a layer that did not arrive whole: `partial`,
+    # as ENCDirect's failed layer was - a tile missing one the model acts on is unread water, and is not kept
+    data = {"band": band, "features": out, "counts": counts, "partial": list(info.get("partial") or []),
+            "source": "cells", "cells": info["cells"]}
+    if info.get("failed_cells"):
+        data["note"] = "%s of %s could not be read whole" % (", ".join(data["partial"][:4]),
+                                                           ", ".join(info["failed_cells"][:4]))
     if info["stale"]:
         data["stale_cells"] = info["stale"]
     if info.get("catalog_stale"):
         data["catalog_stale"] = info["catalog_stale"]
-    if not info["stale"] and not info.get("catalog_stale"):
+    if not info["stale"] and not info.get("catalog_stale") and not data["partial"]:
         data["complete"] = True
     return data
 
@@ -3386,7 +3392,10 @@ def _cells_pick_band(bbox):
     """_enc_pick_band's answer from the cells: the finest band whose cells chart depth or land in the box, or None when
     no band's do. A band whose cells cannot be read RAISES - never a coarser band in its place (_enc_pick_band's rule)."""
     for band in ENC_BANDS:
-        feats, _info = _cells().band_features(band, bbox, _cell_namer(band), only={"DEPARE", "LNDARE"})
+        feats, info = _cells().band_features(band, bbox, _cell_namer(band), only={"DEPARE", "LNDARE"})
+        if info.get("partial"):                  # its depth or land not read whole: not known to chart none here
+            raise OSError("%s of %s could not be read whole" % (", ".join(info["partial"]),
+                                                                 ", ".join(info["failed_cells"][:4])))
         if feats:
             return band
     return None
@@ -3411,6 +3420,8 @@ def _cells_coverage(band, tile, stale=None, catalog=None):
     available" (the same test), as [[ring, ...], ...]. A cell read from an older copy is added to `stale`, a list; the
     catalog copy's date to `catalog`, a list, when it was read past its age."""
     feats, info = _cells().band_features(band, tile, _cell_namer(band), only={"M_COVR"})
+    if info.get("partial"):                      # a coverage area not built: what the band covers is not known
+        raise OSError("the coverage of %s could not be read whole" % ", ".join(info["failed_cells"][:4]))
     if stale is not None:
         stale.extend(info["stale"])
     if catalog is not None and info.get("catalog_stale"):
@@ -5309,6 +5320,10 @@ def _cells_chart_info(bbox):
         out["note"] = ((out["note"] + "; ") if out["note"] else "") + (
             "NOAA's cell catalog could not be refreshed: the cells are read as its copy of %s named them"
             % info["catalog_stale"])
+    if info.get("partial"):
+        out["partial"] = info["partial"]
+        out["note"] = ((out["note"] + "; ") if out["note"] else "") + (
+            "%s of %s could not be read whole" % (", ".join(info["partial"]), ", ".join(info["failed_cells"][:4])))
     return out
 
 
