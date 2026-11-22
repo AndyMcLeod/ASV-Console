@@ -3590,6 +3590,10 @@ plain. `tests/path_card.js` 15.
    another process replaces it. That failed a chart read, and in one place threw a good cell copy
    away. The read now waits it out, and opens each cell once. `tests/enc_cells.py` 12.
 
+   *A national name in its own encoding.* NOAA writes the national attributes in Latin-1; the
+   reader took them for UCS-2, so a note such as a dumping ground's "Continuing use." read as
+   nonsense. Each is now read in the encoding its file declares. `tests/s57_reader.py` 2w.
+
    **The Passage tab, and a long Go-To as a passage (2026-10-14).** Andy: "consider another path
    planning behavior called 'passage' that disregards the 9-23 directive and allows for long path
    planning", and "do it in segments starting with beginning and end and then working inward". The

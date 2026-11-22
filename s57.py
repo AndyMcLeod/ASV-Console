@@ -150,10 +150,11 @@ def _parse_formats(fmt):
 
 
 class _FieldDef:
-    __slots__ = ("tag", "name", "labels", "repeat", "formats")
+    __slots__ = ("tag", "name", "labels", "repeat", "formats", "ucs2")
 
-    def __init__(self, tag, name, labels, repeat, formats):
+    def __init__(self, tag, name, labels, repeat, formats, ucs2=False):
         self.tag, self.name, self.labels, self.repeat, self.formats = tag, name, labels, repeat, formats
+        self.ucs2 = ucs2        # its text at lexical level 2 (UCS-2), as its field control says
 
 
 def _leader(rec):
@@ -190,6 +191,12 @@ def _read_ddr(buf):
         if tag == "0000":
             continue
         body = data[ld["fcl"]:] if ld["fcl"] else data
+        # ⚠ A FIELD'S LEXICAL LEVEL IS ITS FIELD CONTROL'S, never assumed (the 2026-11-21 review): the control's last
+        # three characters, its truncated escape sequence, are "%/A" for level 2 (UCS-2), "-A " for level 1 (Latin-1),
+        # blank for level 0 (ASCII). NATF was read as UCS-2 always; NOAA writes it at level 1 (271 of the 273 files
+        # of the 116 cells kept here, the DSSI's NALL 1 beside it; the other two "%/A", NALL 2), so its text read as
+        # nonsense ("Continuing use." as CJK) and a level-1 delete could not delete.
+        ucs2 = ld["fcl"] >= 9 and data[6:9] == b"%/A"
         parts = body.split(bytes([UT]))
         name = parts[0].decode("latin-1") if parts else ""
         arr = parts[1].decode("latin-1") if len(parts) > 1 else ""
@@ -203,7 +210,7 @@ def _read_ddr(buf):
                 formats = formats + [formats[-1]] * (len(labels) - len(formats))
             else:
                 raise S57Error("field %s: %d labels, %d formats" % (tag, len(labels), len(formats)))
-        defs[tag] = _FieldDef(tag, name, labels, repeat, formats)
+        defs[tag] = _FieldDef(tag, name, labels, repeat, formats, ucs2)
     return defs, ld["reclen"]
 
 
@@ -267,8 +274,9 @@ def _decode_field(fd, data, ucs2=False):
     return groups
 
 
-def _iso8211_records(buf, ucs2_tags=()):
-    """Every data record of an ISO 8211 file as {tag: [groups, ...] (one list per field occurrence)}."""
+def _iso8211_records(buf):
+    """Every data record of an ISO 8211 file as {tag: [groups, ...] (one list per field occurrence)}; a field's text
+    decoded at the lexical level its field control says (_read_ddr)."""
     if len(buf) < 24:
         raise S57Error("too short to be an ISO 8211 file (%d bytes)" % len(buf))
     defs, p = _read_ddr(buf)
@@ -285,7 +293,7 @@ def _iso8211_records(buf, ucs2_tags=()):
             fd = defs.get(tag)
             if fd is None or tag == "0001":
                 continue
-            ucs2 = tag in ucs2_tags
+            ucs2 = fd.ucs2
             if ucs2 and data.endswith(b"\x1e\x00"):
                 # A field at lexical level 2 (UCS-2: NATF) may end in a TWO-byte terminator, 1E 00, which the
                 # directory's one-byte strip does not see: it is no part of the last value.
@@ -364,7 +372,7 @@ class Cell:
             self.somf = p.get("SOMF") or self.somf
 
     def read_base(self, buf):
-        for rec in _iso8211_records(buf, ucs2_tags=("NATF",)):
+        for rec in _iso8211_records(buf):
             if "DSID" in rec or "DSPM" in rec:
                 self._dataset(rec)
             elif "FRID" in rec:
@@ -405,7 +413,7 @@ class Cell:
                 target[g["ATTL"]] = g["ATVL"]
 
     def apply_update(self, buf, number=None):
-        for rec in _iso8211_records(buf, ucs2_tags=("NATF",)):
+        for rec in _iso8211_records(buf):
             if "DSID" in rec or "DSPM" in rec:
                 d = self._one(rec, "DSID")
                 if d:

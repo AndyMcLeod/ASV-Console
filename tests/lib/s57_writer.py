@@ -57,16 +57,24 @@ def _record(fields, ddr=False):
     return lead + dir_ + area
 
 
-def _ddr():
+# A field's lexical level is said in its field control's last three characters, its truncated escape sequence
+# (S-57 3.1 part 3, 7.2.2.1): blank level 0 (ASCII), "-A " level 1 (Latin-1), "%/A" level 2 (UCS-2). Only NATF's is
+# written other than 0 here: at level `nall`. NOAA writes NATF at level 1; the reader reads it by the control.
+LEXICAL = {0: b"   ", 1: b"-A ", 2: b"%/A"}
+
+
+def _ddr(nall=2):
     fields = [("0000", b"0000;&   test" + FT),
               ("0001", b"0100;&   ISO 8211 Record Identifier" + UT + UT + b"(b12)" + FT)]
     for tag, (arr, fmt, _enc) in F.items():
-        ctl = b"1600;&   " if arr.startswith("*") else b"1600;&   "
+        ctl = b"1600;&" + (LEXICAL[nall] if tag == "NATF" else LEXICAL[0])
         fields.append((tag, ctl + tag.encode() + UT + arr.encode() + UT + fmt.encode() + FT))
     return _record(fields, ddr=True)
 
 
-def _field(tag, groups):
+def _field(tag, groups, nall=2):
+    """A field's bytes; NATF's text ("U") at lexical level `nall` - UCS-2 at 2, its unit and field terminators two
+    bytes, else Latin-1."""
     enc = F[tag][2]
     out = b""
     for g in groups:
@@ -76,12 +84,14 @@ def _field(tag, groups):
                 out += int(v).to_bytes(e[1], "little", signed=bool(e[2]))
             elif e[0] == "B":
                 out += v
-            elif e[0] == "U":
+            elif e[0] == "U" and nall == 2:
                 out += str(v).encode("utf-16-le") + b"\x1f\x00"
+            elif e[0] == "U":
+                out += str(v).encode("latin-1") + UT
             else:
                 s = ("" if v is None else str(v)).encode("latin-1")
                 out += s.ljust(int(e[0][1:]))[:int(e[0][1:])] if len(e[0]) > 1 else s + UT
-    return out + (b"\x1e\x00" if tag == "NATF" else FT)
+    return out + (b"\x1e\x00" if tag == "NATF" and nall == 2 else FT)
 
 
 def _name(rcnm, rcid):
@@ -97,9 +107,10 @@ ATTL = CAT["acr_attl"]
 
 class W:
     """A cell being written: records in order; .bytes() is the file."""
-    def __init__(self, name="US5TEST1.000", updn=0, isdt="20260101", edtn="1", reissue=0):
+    def __init__(self, name="US5TEST1.000", updn=0, isdt="20260101", edtn="1", reissue=0, nall=2):
         """`updn`: an update file of that number. `reissue`: a BASE re-issued at that update - its DSID UPDN, every
-        update through it held in the base (S-57 3.1)."""
+        update through it held in the base (S-57 3.1). `nall`: NATF's lexical level (NOAA's 1; 2 UCS-2)."""
+        self.nall = nall
         head = [("0001", b"\x01\x00" + FT),
                 ("DSID", _field("DSID", [(10, 1, 2 if updn else 1, 5, name, edtn, str(updn or reissue),
                                           "" if updn else "20260101", isdt, "03.1", 1, "2.0", "", 1, 550, "")]))]
@@ -133,7 +144,7 @@ class W:
         if attrs:
             f.append(("ATTF", _field("ATTF", [(ATTL[k], v) for k, v in attrs.items()])))
         if natf:
-            f.append(("NATF", _field("NATF", [(ATTL[k], v) for k, v in natf.items()])))
+            f.append(("NATF", _field("NATF", [(ATTL[k], v) for k, v in natf.items()], self.nall)))
         if fspc:
             f.append(("FSPC", _field("FSPC", [fspc])))
         if ptrs:
@@ -144,7 +155,7 @@ class W:
         self.recs.append(_record([self._rid()] + fields))
 
     def bytes(self):
-        return _ddr() + b"".join(self.recs)
+        return _ddr(self.nall) + b"".join(self.recs)
 
 
 def edge_ptr(rcid, ornt=1, usag=1):

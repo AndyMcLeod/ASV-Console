@@ -8,7 +8,7 @@ a deleted one; in a second cell a coordinate and a pointer deleted from the midd
 national and a vector attribute corrected, an object pointer inserted), a boundary at the data limit, a gap in the
 corrections, an update issued after a day, a ring that does not close; a pond on an island in a lake, a hole
 touching its own ring with another listed first, a re-issued base, a node an update deleted, a code the catalog
-does not hold. The writer
+does not hold, a national attribute at NOAA's lexical level (1). The writer
 (tests/lib/s57_writer.py)
 encodes ISO 8211 independently of the reader's decoder - its field formats are typed out there, not parsed by s57.py
 - so a decoder fault cannot be mirrored by the writer and pass.
@@ -297,6 +297,26 @@ check("2v. what is missing is said as what it is: a NODE an update deleted is th
       lambda: (cdn.problems, cde.problems))
 check("2l. a national attribute (NATF, UCS-2) reads as its text",
       lambda: f0[112]["attrs"].get("NOBJNM") == "Île Test", lambda: f0[112]["attrs"])
+# NATF at lexical level 1, NOAA's own form (its field control "-A "), corrected by a level-1 update; and level 2 holding
+# what Latin-1 cannot. The reader read NATF as UCS-2 always: NOAA's "Continuing use." came out as CJK.
+n1 = W(name="US5TEST3.000", nall=1)
+n1.node(1, -70.0, 43.0)
+n1.feature(1, "LNDARE", 1, None, [node_ptr(1)], natf={"NINFOM": "Continuing use.", "NOBJNM": "Île Basse"})
+n1u = W(name="US5TEST3.001", updn=1, isdt="20260401", nall=1)
+n1u.raw([("FRID", _field("FRID", [(100, 1, 1, 2, OBJL["LNDARE"], 2, 3)])),
+         ("NATF", _field("NATF", [(ATTL["NOBJNM"], "Île Haute"), (ATTL["NINFOM"], DELC)], 1))])
+n2 = W(name="US5TEST4.000", nall=2)
+n2.node(1, -70.0, 43.0)
+n2.feature(1, "LNDARE", 1, None, [node_ptr(1)], natf={"NOBJNM": "Ōkawa"})
+fn1 = by_rcid(s57.Cell().read_base(n1.bytes()))[1]["attrs"]
+fn1u = by_rcid(s57.Cell().read_base(n1.bytes()).apply_update(n1u.bytes(), 1))[1]["attrs"]
+fn2 = by_rcid(s57.Cell().read_base(n2.bytes()))[1]["attrs"]
+check("2w. a national attribute is read at the LEXICAL LEVEL ITS FIELD CONTROL SAYS: level 1 (Latin-1, NOAA's form) as "
+      "its text - \"Continuing use.\", not CJK - and a level-1 update replaces one and deletes one; level 2 (UCS-2) "
+      "holds what Latin-1 cannot",
+      lambda: fn1 == {"NINFOM": "Continuing use.", "NOBJNM": "Île Basse"} and fn1u == {"NOBJNM": "Île Haute"}
+              and fn2 == {"NOBJNM": "Ōkawa"},
+      lambda: ascii((fn1, fn1u, fn2)))                # ascii: a Windows console's code page has no O-macron
 check("2m. the exchange set's CATALOG.031 and text files are not taken for a cell",
       lambda: c0.name == "US5TEST1.000")
 check("2n. a zip of two cells is refused, naming both - not one of them picked",
