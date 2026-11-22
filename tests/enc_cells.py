@@ -1759,6 +1759,70 @@ check("15. NO LOCK IS HELD ACROSS THE NETWORK BUT THE CELL'S OWN: while one cell
               "in flight %s; memo read %s; kept cell %s; catalog %s" % (
           flight15, memo15[:2], other15[:2], same15[:2], dl15[0], asked15, catflight15, feat15[:2], kept15[:2], cat15[0]))
 
+# ── 16. a replace refused while another process holds the file (2026-11-22) ─────────────────────────────────────────
+# On Windows os.replace fails (PermissionError) while any process has the old file open, and lands once it is closed.
+# Played here by refusing the replaces onto the files `match` names for `held_s` from the first - by the CLOCK, not a
+# count of tries, so a retry that does not wait is not taken for one that does.
+_replace16 = os.replace
+
+
+def replaced16(match, held_s, do):
+    """do() with os.replace onto a file `match(name)` refused for `held_s`: (do's answer or the exception's name, the
+    replaces tried onto such a file)."""
+    tries, first = [0], [None]
+
+    def rep(src, dst, *a, **k):
+        if match(os.path.basename(os.fspath(dst))):
+            tries[0] += 1
+            first[0] = time.monotonic() if first[0] is None else first[0]
+            if time.monotonic() - first[0] < held_s:
+                raise PermissionError(13, "Access is denied", os.fspath(src))
+        return _replace16(src, dst, *a, **k)
+    os.replace = rep
+    try:
+        try:
+            got = do()
+        except Exception as e:                       # noqa: BLE001
+            got = type(e).__name__
+    finally:
+        os.replace = _replace16
+    return got, tries[0]
+
+
+def refresh16(sub, held_s):
+    """A day on, NOAA's catalog names US5TSTAA's edition 2 and its replace is refused for `held_s`: (the edition read,
+    the replaces tried, catalog_stale, the failure marked, the .part files left)."""
+    clock, net = [time.time()], Net()
+    src = fresh(net, os.path.join(TMP, sub), now=lambda: clock[0])
+    src.catalog()
+    clock[0] += enc_cells.CATALOG_MAX_AGE_S + 60.0
+    net.cat = catalog({"US5TSTAA": (2, 0)})
+    ed, tries = replaced16(lambda n: n == "enc.geojson", held_s,
+                           lambda: {e["name"]: e["ed"] for e in src.catalog()}.get("US5TSTAA"))
+    return (ed, tries, src.catalog_stale, src._marked("catalog.mark", enc_cells.CATALOG_RETRY_S),
+            [n for n in files(src.root) if n.endswith(".part")])
+
+
+cat16 = refresh16("s57_replace_cat", 0.2)            # held 0.2 s: waited out
+held16 = refresh16("s57_replace_held", 1e9)          # held throughout: the refresh fails, as before
+net16 = Net()
+src16 = fresh(net16, os.path.join(TMP, "s57_replace_read"))
+p16, _st = src16.cell_path(next(e for e in src16.catalog() if e["name"] == "US5TSTAA"))
+rd16 = replaced16(lambda n: n.endswith(".jsonl"), 0.2, lambda: len(src16.features(p16, namer9)))
+kept16 = files(src16.read_dir)
+check("16. A REPLACE REFUSED WHILE ANOTHER PROCESS HOLDS THE FILE IS WAITED OUT: a catalog refresh whose replace is "
+      "refused for 0.2 s lands - the new edition read, not said past its age, nothing marked, no .part left - and so "
+      "does a cell's read, kept; one refused throughout fails the refresh after every wait, the copy kept and said past "
+      "its age. A replace refused once failed the refresh: every tile said the catalog old, and was not kept, for "
+      "CATALOG_RETRY_S",
+      lambda: cat16[0] == 2 and cat16[1] >= 2 and cat16[2] is None and not cat16[3] and cat16[4] == []
+              and isinstance(rd16[0], int) and rd16[0] > 0 and rd16[1] >= 2
+              and kept16 == [os.path.basename(src16._read_path(p16))]
+              and held16[0] == 1 and held16[1] == len(enc_cells.SHARE_WAITS_S) + 1 and held16[2] and held16[3]
+              and held16[4] == [],
+      lambda: "(edition, replaces, catalog_stale, marked, .part): held 0.2 s %s; throughout %s; the cell's read %s, "
+              "kept %s" % (cat16, held16, rd16, kept16))
+
 shutil.rmtree(TMP, ignore_errors=True)
 print("\n" + ("%d CHECK(S) FAILED (%d ran)" % (fails, ran) if fails else "all checks passed (%d)" % ran))
 sys.exit(1 if fails else 0)

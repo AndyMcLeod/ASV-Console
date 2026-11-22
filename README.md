@@ -3607,6 +3607,12 @@ plain. `tests/path_card.js` 15.
    another cell's download, up to a minute against a silent host. A download now holds its own
    cell's lock, and the catalog's refresh its own. `tests/enc_cells.py` 15.
 
+   *After the merge: a replace another process holds is waited out.* On Windows a file cannot
+   be replaced while another process has it open. The catalog's daily refresh, landing as a
+   tile's reader opened the catalog, failed, and every tile said the catalog out of date for
+   two minutes. The replace is now tried again over 0.75 s, as a read already was.
+   `tests/enc_cells.py` 16.
+
    **The Passage tab, and a long Go-To as a passage (2026-10-14).** Andy: "consider another path
    planning behavior called 'passage' that disregards the 9-23 directive and allows for long path
    planning", and "do it in segments starting with beginning and end and then working inward". The

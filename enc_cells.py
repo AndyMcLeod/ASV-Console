@@ -63,7 +63,7 @@ CATALOG_DROP_MAX = 0.05         # a refreshed catalog naming fewer than 19 in 20
 # tests/enc_cells.py 5b failed. A time further ahead than this is a clock set back since: a catalog from then is due, a
 # mark from then holds nothing.
 CLOCK_SLACK_S = 2.0
-SHARE_WAITS_S = (0.05, 0.1, 0.2, 0.4)   # a file another process is replacing is tried again after each (_read_file)
+SHARE_WAITS_S = (0.05, 0.1, 0.2, 0.4)   # held or replaced by another process: tried again after each (_read_file, _write)
 FETCH_TIMEOUT_S = 60.0
 MEMO_CELLS = 12                 # cells' reads held in one process (one is 5-30 MB: a tile reads each band's cells twice)
 USER_AGENT = "ASV-Console/1.0"
@@ -160,19 +160,27 @@ def hits_box(g, box):
 
 
 def _write(path, data):
-    """`data` to `path` through a file of this process's own, then replaced - a reader never sees half a file. On
-    Windows the replace fails while another process holds the old file open: then the old one stays (OSError)."""
+    """`data` to `path` through a file of this process's own, then replaced - a reader never sees half a file.
+    ⚠ A REPLACE REFUSED WHILE ANOTHER PROCESS HOLDS THE FILE IS WAITED OUT (2026-11-22): on Windows os.replace fails
+    (PermissionError, "Access is denied") while any process has the old file open, and lands once it is closed -
+    measured on Windows 11. So a catalog refresh that landed while a tile's child read the catalog failed, and every
+    tile then said the catalog past its age, and was not kept, for CATALOG_RETRY_S. Tried again after each of
+    SHARE_WAITS_S (0.75 s in all), as a read is (_read_file); then OSError, the old file staying."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = "%s.%d.%d.part" % (path, os.getpid(), threading.get_ident())
     with open(tmp, "wb") as f:
         f.write(data)
     try:
-        os.replace(tmp, path)
+        for wait in SHARE_WAITS_S + (None,):
+            try:
+                os.replace(tmp, path)
+                return
+            except PermissionError:
+                if wait is None:
+                    raise
+                time.sleep(wait)
     except OSError:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
+        _discard(tmp)
         raise
 
 
