@@ -3547,6 +3547,13 @@ plain. `tests/path_card.js` 15.
    is refused: the copy kept is read and said as a catalog that could not be refreshed. NOAA's
    catalog of 2026-11-21 names 7,114 cells and every entry reads. `tests/enc_cells.py` 5h.
 
+   *A download that will not read.* The older copy of a cell was removed as soon as a new download
+   was kept. A download whole by its checksums whose records the reader could not read was then
+   the cell's only copy, and every read of the cell failed until NOAA's next edition. Now the older
+   copy stays until the new one has read. A copy that will not read is removed and not asked for
+   again for two minutes; the older copy is read meanwhile and said as an older chart. A read that
+   runs out of memory is not taken as the copy's fault. `tests/enc_cells.py` 5i-5i3.
+
    **The Passage tab, and a long Go-To as a passage (2026-10-14).** Andy: "consider another path
    planning behavior called 'passage' that disregards the 9-23 directive and allows for long path
    planning", and "do it in segments starting with beginning and end and then working inward". The

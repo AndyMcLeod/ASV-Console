@@ -839,6 +839,113 @@ check("5h. A REFRESHED CATALOG IS TAKEN ONLY WHEN IT READS AS NOAA'S: read befor
                              "none kept, an empty catalog": "refused"},
       lambda: "first %d; %s; with none kept %s" % (first8, said8, nokeep))
 
+# ── 5i. a download that will not read (review fix 9) ─────────────────────────────────────────────────────────────────
+net9 = Net(cat=catalog({"US5TSTAA": (2, 0)}))         # the catalog names edition 2
+root9 = os.path.join(TMP, "s57_unread")
+src9 = fresh(net9, root9)
+os.makedirs(src9.cells_dir, exist_ok=True)
+with open(os.path.join(src9.cells_dir, "US5TSTAA_ED001_UP000.zip"), "wb") as f:
+    f.write(ZIPS["US5TSTAA"])                          # edition 1, kept from before
+# NOAA's zip of edition 2: whole by its CRCs, edition 2 by its DSID - and cut short after it, so it will not read
+BAD9 = zipped({"ENC_ROOT/US5TSTAA/US5TSTAA.000": ha2.w.bytes()[:-40]})
+net9.zips["US5TSTAA"] = BAD9
+e9 = next(e for e in src9.catalog() if e["name"] == "US5TSTAA")
+namer9 = A._cell_namer("enc_harbour")
+p9, st9 = src9.cell_path(e9)
+kept9a = files(src9.cells_dir)
+def read9(src, path):
+    """(features read, None) - or ([], the exception's name): whatever the reader raises."""
+    try:
+        return src.features(path, namer9), None
+    except Exception as e:                           # noqa: BLE001
+        return [], type(e).__name__
+
+
+def path9(src, e):
+    """cell_path's (path, stale) - or ("", None) when it raises (no copy to serve)."""
+    try:
+        return src.cell_path(e)
+    except OSError:
+        return "", None
+
+
+_f9, err9 = read9(src9, p9)
+kept9 = files(src9.cells_dir)
+s9b = again(net9, root9)
+p9b, st9b = path9(s9b, e9)                           # the next process: the older copy, stale, NOAA not asked
+f9b, err9b = read9(s9b, p9b)
+asked9 = net9.asked("US5TSTAA")
+net9.zips["US5TSTAA"] = ZIP_ED2                      # NOAA's zip whole again, and the hold-off past
+enc_cells._discard(os.path.join(root9, "refused_US5TSTAA.mark"))
+s9c = again(net9, root9)
+p9c, st9c = path9(s9c, e9)
+kept9c_before = files(s9c.cells_dir)
+f9c, err9c = read9(s9c, p9c)
+kept9c = files(s9c.cells_dir)
+check("5i. A DOWNLOAD THAT WILL NOT READ - whole by its CRCs, the catalog's edition by its DSID, cut short after it - is "
+      "not the chart: the older copy is kept beside it until it reads; its read fails, the copy goes and is not asked "
+      "for again for REFUSED_S, the older copy served stale meanwhile; once NOAA's zip reads, it is the chart, and only "
+      "then the older copy goes. The older copy was removed as the download was kept, and the copy that would not read "
+      "stayed the chart, failing every read, until NOAA's next edition",
+      lambda: kept9a == ["US5TSTAA_ED001_UP000.zip", "US5TSTAA_ED002_UP000.zip"] and err9 is not None
+              and kept9 == ["US5TSTAA_ED001_UP000.zip"] and p9b.endswith("US5TSTAA_ED001_UP000.zip") and st9b
+              and f9b and asked9 == 1 and not st9c and p9c.endswith("US5TSTAA_ED002_UP000.zip")
+              and kept9c_before == ["US5TSTAA_ED001_UP000.zip", "US5TSTAA_ED002_UP000.zip"]
+              and kept9c == ["US5TSTAA_ED002_UP000.zip"] and f9c,
+      lambda: "kept on download %s; read %s; kept after %s; next: %s stale %s (%d features, %s), NOAA asked %d; whole "
+              "again: %s stale %s, kept %s then %s (%d features, %s)" % (
+                  kept9a, err9, kept9, os.path.basename(p9b), st9b, len(f9b), err9b, asked9, os.path.basename(p9c),
+                  st9c, kept9c_before, kept9c, len(f9c), err9c))
+
+
+def src9_kept(net, sub):
+    """A source on a folder of its own, edition 1 of the harbor cell kept there."""
+    s = fresh(net, os.path.join(TMP, sub))
+    os.makedirs(s.cells_dir, exist_ok=True)
+    with open(os.path.join(s.cells_dir, "US5TSTAA_ED001_UP000.zip"), "wb") as f:
+        f.write(ZIPS["US5TSTAA"])
+    return s
+
+
+net9a = Net(cat=catalog({"US5TSTAA": (1, 1)}), zips={"US5TSTAA": BAD9})     # the catalog names update 1 of edition 1
+src9a = src9_kept(net9a, "s57_unread_ahead")
+e9a = next(e for e in src9a.catalog() if e["name"] == "US5TSTAA")
+p9a, _st = src9a.cell_path(e9a)                     # NOAA's zip AHEAD of it: edition 2, kept as itself
+kept9a_a = files(src9a.cells_dir)
+_f, err9a = read9(src9a, p9a)
+s9a2 = again(net9a, src9a.root)
+p9a2, st9a2 = path9(s9a2, e9a)
+f9a2, _e = read9(s9a2, p9a2)
+check("5i2. ... and a download AHEAD of its catalog that will not read keeps the older copy too, served stale",
+      lambda: kept9a_a == ["US5TSTAA_ED001_UP000.zip", "US5TSTAA_ED002_UP000.zip"] and p9a.endswith("_ED002_UP000.zip")
+              and err9a is not None and p9a2.endswith("US5TSTAA_ED001_UP000.zip") and st9a2 and f9a2
+              and net9a.asked("US5TSTAA") == 1,
+      lambda: "kept %s; the ahead copy %s read %s; next %s stale %s (%d features), NOAA asked %d" % (
+          kept9a_a, os.path.basename(p9a), err9a, os.path.basename(p9a2), st9a2, len(f9a2), net9a.asked("US5TSTAA")))
+net9m = Net(cat=catalog({"US5TSTAA": (2, 0)}), zips={"US5TSTAA": ZIP_ED2})
+src9m = src9_kept(net9m, "s57_unread_memory")
+p9m, _st = src9m.cell_path(next(e for e in src9m.catalog() if e["name"] == "US5TSTAA"))
+_read_zip9 = s57.read_zip
+
+
+def _no_memory(*a, **k):
+    raise MemoryError()
+
+
+s57.read_zip = _no_memory
+try:
+    _f, err9m = read9(src9m, p9m)
+finally:
+    s57.read_zip = _read_zip9
+kept9m = files(src9m.cells_dir)
+marked9m = src9m._marked("refused_US5TSTAA.mark", enc_cells.REFUSED_S)
+f9m, err9m2 = read9(src9m, p9m)
+check("5i3. ... but a read that runs out of MEMORY is not the copy's fault: it stays, not held off, and reads next time",
+      lambda: err9m == "MemoryError" and kept9m == ["US5TSTAA_ED001_UP000.zip", "US5TSTAA_ED002_UP000.zip"]
+              and not marked9m and f9m and files(src9m.cells_dir) == ["US5TSTAA_ED002_UP000.zip"],
+      lambda: "raised %s, kept %s, marked %s; then %d features (%s), kept %s" % (
+          err9m, kept9m, marked9m, len(f9m), err9m2, files(src9m.cells_dir)))
+
 # ── 6. a cell parsed once ───────────────────────────────────────────────────────────────────────────────────────────
 parses = []
 _read_zip0 = s57.read_zip

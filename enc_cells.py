@@ -397,7 +397,8 @@ class CellSource:
         newest older copy kept and stale True; OSError when there is none. A download is kept as what it HOLDS
         (_check_cell_zip): one behind the catalog under its own name - an older copy, served stale - and one ahead of
         it (the catalog behind NOAA's zips) under its own name too, served as the chart. A download refused with an
-        answer is not asked for again for REFUSED_S (mark refused_<CELL>.mark)."""
+        answer is not asked for again for REFUSED_S (mark refused_<CELL>.mark). The older copies stay until the
+        download has READ (_records -> _prune_cells)."""
         name, mine = entry["name"], (entry["ed"], entry["up"])
         want = os.path.join(self.cells_dir, entry["key"] + ".zip")
         mark = "refused_%s.mark" % name
@@ -421,7 +422,6 @@ class CellSource:
                     if not kept or held > kept[0][:2]:
                         _write(other, data)        # kept as what it is: a truer copy than any kept
                     if held > mine:
-                        self._prune_cells(name, keep=other)
                         return other, False
                     self._mark(mark)
                     raise ValueError("NOAA's zip of %s holds edition %d update %d, its catalog names edition %d "
@@ -434,14 +434,20 @@ class CellSource:
                 if older:
                     return older[0][2], True
                 raise OSError("cell %s could not be downloaded (%s)" % (name, e))
-            self._prune_cells(name, keep=want)
             _discard(os.path.join(self.root, mark))
             return want, False
 
-    def _prune_cells(self, name, keep):
-        """Every other copy of the cell goes, now superseded (one held open stays till next time)."""
-        for _ed, _up, p in self._kept(name):
-            if p != keep:
+    def _prune_cells(self, path):
+        """Every copy of the cell OLDER than `path` goes, now that `path` has read (one held open stays till next time).
+        ⚠ NOT BEFORE IT READS (the 2026-11-21 review): the older copies went as a download was kept, and a download
+        whole by its CRCs and its DSID that the reader could not read was the only copy - every read of the cell failed
+        until NOAA's next edition. A copy newer than `path` is not touched."""
+        m = _ED_UP.match(os.path.basename(path)[:-4])
+        if not m:
+            return
+        read = (int(m.group(2)), int(m.group(3)))
+        for ed, up, p in self._kept(m.group(1)):
+            if (ed, up) < read:
                 _discard(p)
 
     # -- a cell's read, kept -------------------------------------------------------------------------------------------
@@ -496,8 +502,20 @@ class CellSource:
                 _discard(path)
             raise ValueError("cell %s: the copy kept as %s holds edition %d update %d" % (name, key, held[0], held[1]))
         del data
-        cell = s57.read_zip(path)
-        feats, left = s57.encdirect_features(cell, lambda acronym, prim: (acronym, prim))
+        # ⚠ A COPY THAT DOES NOT READ IS NOT THE CHART (the 2026-11-21 review): whole by its CRCs and its DSID, a zip
+        # whose records the reader cannot read stayed the cell's copy, every read of it failing until NOAA's next
+        # edition. It goes, and is not asked for again for REFUSED_S (NOAA serves the same zip): the older copy, kept
+        # until a newer one reads (_prune_cells), is served stale meanwhile.
+        try:
+            cell = s57.read_zip(path)
+            feats, left = s57.encdirect_features(cell, lambda acronym, prim: (acronym, prim))
+        except MemoryError:
+            raise
+        except Exception as e:                    # S57Error, or a record the reader trips on
+            if m:
+                _discard(path)
+                self._mark("refused_%s.mark" % name)
+            raise ValueError("cell %s: the copy %s does not read (%s: %s)" % (name, key, type(e).__name__, e))
         # ⚠ A FEATURE WHOSE GEOMETRY CANNOT BE BUILT IS A FAILED READ OF ITS CLASS, KEPT AND SAID (the 2026-11-21
         # review). A point, line or area with no geometry is one whose vectors are missing - an update deleted a wreck's
         # node and left the wreck, or an area's ring does not close (s57 records why in cell.problems). It was dropped
@@ -570,6 +588,7 @@ class CellSource:
                 if okey is not None:
                     got = cut(got)
             with self._lock:
+                self._prune_cells(path)             # it reads: the copies older than it go
                 self._memo[(path, okey)] = got
                 while len(self._memo) > MEMO_CELLS:
                     self._memo.pop(next(iter(self._memo)))
