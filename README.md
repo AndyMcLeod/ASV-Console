@@ -1732,7 +1732,11 @@ only between parts - rather than being cut off. `tests/survey_table.js` 30b. **L
 size on the card is one px larger (captions 8.5, labels 10, notes 10.5, values and fields 12), and
 the card is 264 px wide (236 before) so the rows that fitted still fit; the ROC card's default spot
 moved with it (left 292 px, 14 px clear). The head's, the Area row's and the plan foot's buttons size
-to their words. `tests/path_card.js` 14.
+to their words. `tests/path_card.js` 14. **Section titles that stand out** (2026-11-21, Andy: "the
+new drop down section titles should be larger, and more colorful with distinct separator lines"):
+every folding section's title - Route rules, Waypoints and end of plan, the Survey tab's three - is
+12 px, bold and light blue (the track color), over a light blue line; the folded line under it stays
+plain. `tests/path_card.js` 15.
 
 1. **Plan** — on the **Path planning card**: the **Waypoints** tab to drop/remove
    waypoints, or the **Survey** tab for a **CAMP-style 3-click survey pattern** (its switch on

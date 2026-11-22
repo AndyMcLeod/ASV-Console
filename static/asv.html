@@ -149,15 +149,18 @@
   .pparea .ppbtns .ctl{height:18px;padding:0 5px;font-size:9px;}
   #bnd_draw.on{background:rgba(224,165,58,.18);border-color:#e0a53a;color:#e0a53a;}
   #gt_lat,#gt_lon{width:96px;}
-  .pprules{border-top:1px solid var(--line);padding-top:5px;display:flex;flex-direction:column;gap:6px;}
+  /* a folding section's head in the card's accent over a line that shows, so the sections read apart (2026-11-21: "the
+     new drop down section titles should be larger, and more colorful with distinct separator lines"); the folded
+     line under it stays plain */
+  .pprules{border-top:1px solid rgba(57,192,255,.45);padding-top:7px;display:flex;flex-direction:column;gap:6px;}
   .pprules-head{display:flex;justify-content:space-between;align-items:baseline;gap:6px;cursor:pointer;font-family:var(--mono);
-    font-size:9px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;user-select:none;}
+    font-size:9px;color:var(--track);font-weight:600;text-transform:uppercase;letter-spacing:.06em;user-select:none;}
   .pprules-head::before{content:"\25BE";margin-right:-2px;}
   .pprules.fold .pprules-head::before{content:"\25B8";}
   /* the summary on its own line under the title (beside it, it folded ROUTE RULES onto two lines), and only while the
      section is folded: open, its rows say the same (2026-11-21) */
   .pprules-head{flex-wrap:wrap;justify-content:flex-start;}
-  .pprules .pprsum{flex-basis:100%;padding-left:10px;text-transform:none;letter-spacing:0;color:var(--ink-faint);font-size:8.5px;text-align:left;}
+  .pprules .pprsum{flex-basis:100%;padding-left:10px;text-transform:none;letter-spacing:0;color:var(--ink-faint);font-size:8.5px;text-align:left;font-weight:400;}
   .pprules:not(.fold) .pprsum{display:none;}
   .pprules-body{display:flex;flex-direction:column;gap:6px;}
   .pprules.fold .pprules-body{display:none;}
@@ -375,7 +378,7 @@
   #pathPanel .phead .ctl,#pathPanel .pparea .ppbtns .ctl,#pathPanel .ppplan .ctl{width:auto;min-width:40px;}
   #pathPanel .pptab{font-size:9.5px;}
   #pathPanel .ppsub{font-size:10px;}
-  #pathPanel .pprules-head{font-size:10px;}
+  #pathPanel .pprules-head{font-size:12px;}
   #pathPanel .pprules .pprsum{font-size:9.5px;}
   #pathPanel .ppread label{font-size:8.5px;}
   #pathPanel .ppread .phint{font-size:12px;}

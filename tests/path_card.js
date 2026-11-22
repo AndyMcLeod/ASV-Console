@@ -749,7 +749,7 @@ check("8. THE FIRST RENDER RUNS AFTER EVERY NAME IT READS IS DECLARED - S (canCo
   const LEFT = +((H.match(/\n  \.panel\{position:absolute;left:(\d+)px;/) || [])[1]);
   const SIZES = [["#pathPanel label", 10], ["#pathPanel .enf label", 11], ["#pathPanel .phint", 10.5],
     ["#pathPanel input,#pathPanel select", 12], ["#pathPanel .ctl.small", 11], ["#pathPanel .phead", 10], ["#pathPanel .pptab", 9.5],
-    ["#pathPanel .ppsub", 10], ["#pathPanel .pprules-head", 10], ["#pathPanel .pprules .pprsum", 9.5], ["#pathPanel .ppread label", 8.5],
+    ["#pathPanel .ppsub", 10], ["#pathPanel .pprules-head", 12], ["#pathPanel .pprules .pprsum", 9.5], ["#pathPanel .ppread label", 8.5],
     ["#pathPanel .ppread .phint", 12], ["#pathPanel #sv_table .svno,#pathPanel #sv_table .svname", 11], ["#pathPanel #sv_table button", 10],
     ["#pathPanel #sv_table .svacts button", 9.5], ["#pathPanel #sv_table .svcont", 10], ["#pathPanel #sv_table .svinfo", 9.5],
     ["#pathPanel .phead .ctl,#pathPanel .pparea .ppbtns .ctl,#pathPanel .ppplan .ctl", 10]];
@@ -762,6 +762,24 @@ check("8. THE FIRST RENDER RUNS AFTER EVERY NAME IT READS IS DECLARED - S (canCo
               && /\n  #pathPanel \.phead \.ctl,#pathPanel \.pparea \.ppbtns \.ctl,#pathPanel \.ppplan \.ctl\{width:auto;min-width:40px;\}/.test(H)
               && /<div id="sv_head" style="display:none;font-family:var\(--mono\);font-size:10px;/.test(H),
         () => JSON.stringify({ W, ROC, LEFT, missing }));
+}
+
+// 15. THE SECTION HEADS (2026-11-21, Andy: "the new drop down section titles should be larger, and more colorful with
+// distinct separator lines"). Every folding section - Route rules, Waypoints and end of plan, and the Survey tab's
+// three - is one .pprules: its head 12 px, bold, in the track cyan, over a cyan line, two px more air under it; the
+// folded line under the head stays plain (normal weight, faint), so the title reads first. Measured in the lab: all
+// 15 heads on the six tabs on one line at 12 px.
+{
+  const SEC = (H.match(/\n  \.pprules\{[^}]*\}/) || [""])[0];
+  const HEAD = (H.match(/\n  \.pprules-head\{display:flex;[^}]*\}/) || [""])[0];
+  const SUM = (H.match(/\n  \.pprules \.pprsum\{[^}]*\}/) || [""])[0];
+  check("15. SECTION HEADS: every folding section's title 12 px, bold, in the track cyan, over a cyan separator line "
+        + "(padding 7 px under it); the folded summary line under the title stays normal weight and faint",
+        () => /border-top:1px solid rgba\(57,192,255,\.45\);padding-top:7px;/.test(SEC)
+              && /color:var\(--track\);font-weight:600;/.test(HEAD)
+              && /color:var\(--ink-faint\);/.test(SUM) && /font-weight:400;/.test(SUM)
+              && /\n  #pathPanel \.pprules-head\{font-size:12px;\}/.test(H),
+        () => JSON.stringify({ SEC, HEAD, SUM }));
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
