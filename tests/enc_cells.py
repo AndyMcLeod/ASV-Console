@@ -1134,6 +1134,9 @@ check("7c. CELLS THAT CANNOT BE READ AT ALL send the read to ENCDirect - the unf
       "the cells' and asks ENCDirect nothing",
       lambda: fb7.get("failed") and "chart service did not answer" in (fb7.get("note") or "")
               and only7.get("failed") and "cells could not be read" in (only7.get("note") or "")
+              # the cells' failure ALONE: since item 18 a read that fell back says the cells' failure too (_cells_then),
+              # so naming it no longer told the two apart - ENCDirect read in their place must not be named
+              and "in their place" not in (only7.get("note") or "")
               and n_only == 1 and ci7.get("failed") and len(picks) == 2,
       lambda: "unforced %r; forced to the cells %r (ENCDirect asked %d); card %r (asked %d)" % (
           fb7.get("note"), only7.get("note"), n_only, ci7.get("note"), len(picks)))
