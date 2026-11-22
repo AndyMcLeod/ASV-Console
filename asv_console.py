@@ -3360,7 +3360,8 @@ def _cell_namer(band):
 
 def _cells_extract(band, bbox, extras=True):
     """One band's features reaching into the box, from NOAA's cells, in fetch_enc_features' answer: role, cls, the
-    kept properties, geometry and `oid` ("<CELL>:<record>"). Raises when a cell cannot be had or read."""
+    kept properties, geometry and `oid` ("<CELL>_ED<n>_UP<n>:<record>": the update read is in it, so a tile read
+    from an older update never shares an id with the current one). Raises when a cell cannot be had or read."""
     feats, info = _cells().band_features(band, bbox, _cell_namer(band))
     out, counts = [], {}
     for ft in feats:
@@ -4533,6 +4534,24 @@ def fetch_enc_tile(tile):
         return got
 
 
+_CELL_OID_RE = re.compile(r"^(\w+?_ED\d+)_UP(\d+):(.+)$")
+
+
+def _enc_identity(ft):
+    """(key, update): one feature's identity across the tiles that hold it, and the update it was read from. A cell's
+    oid ("<CELL>_ED<n>_UP<n>:<record>", enc_cells) keys on the cell, EDITION and record: an update changes a record in
+    place, so two tiles read from different updates of one edition hold ONE feature, and the newer update's copy is
+    the chart (2026-11-21 review: the layered read kept the first copy, an older tile's, and an update that moved an
+    obstruction across a tile edge was dropped - it stood where the older update charted it). A new edition renumbers
+    its records, so two editions' copies are two features, both kept until the older tile is read again. Any other
+    oid (ENCDirect's number) is its own key, update 0."""
+    oid = ft.get("oid")
+    m = _CELL_OID_RE.match(oid) if isinstance(oid, str) else None
+    if m:
+        return (ft.get("band"), ft.get("cls"), m.group(1), m.group(3)), int(m.group(2))
+    return (ft.get("band"), ft.get("cls"), oid), 0
+
+
 def fetch_enc_layered(bbox, min_depth=0.0):
     """The chart over a bbox, layered (the block header): every feature of its tiles that reaches into the box, the
     min-depth `shallow` tag applied per request, and the squares no chart covers (`unread`) or whose chart could not
@@ -4543,7 +4562,7 @@ def fetch_enc_layered(bbox, min_depth=0.0):
     with ThreadPoolExecutor(max_workers=ENC_TILE_WORKERS) as ex:
         got = list(ex.map(fetch_enc_tile, tiles))
     md = float(min_depth or 0.0)
-    feats, seen, unread, unread_failed, partial, bands, notes = [], set(), [], [], set(), set(), []
+    feats, seen, unread, unread_failed, partial, bands, notes = [], {}, [], [], set(), set(), []
     stale, read_at, aged, cov_failed, cov_stale, cells_stale = set(), [], 0, set(), set(), set()
 
     def into(rs, dst):
@@ -4580,16 +4599,23 @@ def fetch_enc_layered(bbox, min_depth=0.0):
             b = _geom_bbox(ft.get("geometry"))
             if b is None or b[0] > E or b[2] < W or b[1] > N or b[3] < S:
                 continue
+            k = had = None
             if "clip" not in ft and ft.get("oid") is not None:
-                k = (ft.get("band"), ft.get("cls"), ft.get("oid"))
-                if k in seen:
-                    continue
-                seen.add(k)
+                k, upd = _enc_identity(ft)
+                had = seen.get(k)
+                if had is not None and had[0] >= upd:
+                    continue                       # held already, from this update or a newer one
             nf = _enc_retag(ft)
             nf = dict(nf) if nf is ft else nf
             if nf.get("role") == "depth_area":
                 d1 = (nf.get("props") or {}).get("DRVAL1")
                 nf["shallow"] = (d1 is not None and float(d1) < md)
+            if had is not None:
+                feats[had[1]] = nf                 # a newer update's copy replaces an older tile's
+                seen[k] = (upd, had[1])
+                continue
+            if k is not None:
+                seen[k] = (upd, len(feats))
             feats.append(nf)
     counts = {}
     for ft in feats:

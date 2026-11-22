@@ -10,6 +10,7 @@ source", and "the console should show the pontoons and the other features ENCDir
   3  ONE SOURCE A BAND: a band whose cells cannot be read is read from ENCDirect whole - coverage and features - and a
      band the cells answered is never filled from ENCDirect;
   4  a cell read from an older copy is served and never kept, and says so; the current one, once had, replaces it;
+     a cell two tiles read at two updates is one feature, the newer update's; at two editions, two, both held;
   5  the catalog and the downloads: refreshed by age, a failed refresh keeps the copy, a download that is not a whole
      cell refused, a cell the catalog does not name never read, the hold-offs kept on disk for the next process;
   6  a cell is parsed once: its read kept beside it, by this reader, and read back;
@@ -22,6 +23,7 @@ import io
 import json
 import math
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -42,7 +44,7 @@ sys.excepthook = _crash_report
 APP = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path.insert(0, APP)
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
-from s57_writer import W, edge_ptr, node_ptr, zipped    # noqa: E402
+from s57_writer import COMF, W, _field, edge_ptr, node_ptr, zipped    # noqa: E402
 import s57                                              # noqa: E402
 import enc_cells                                        # noqa: E402
 import asv_console as A                                 # noqa: E402
@@ -110,8 +112,12 @@ class Cell:
         self.w.feature(self.fid, acr, prim, attrs, ptrs)
         return self.fid
 
-    def zip(self):
-        return zipped({"ENC_ROOT/%s/%s.000" % (self.name, self.name): self.w.bytes()})
+    def zip(self, updates=()):
+        """The cell's zip as NOAA serves it: the base cell, and each (n, bytes) update after it."""
+        files_ = {"ENC_ROOT/%s/%s.000" % (self.name, self.name): self.w.bytes()}
+        for n, data in updates:
+            files_["ENC_ROOT/%s/%s.%03d" % (self.name, self.name, n)] = data
+        return zipped(files_)
 
 
 TILE = [-70.25, 43.0, -70.0, 43.25]
@@ -170,14 +176,15 @@ def merc(lon, lat):
     return [math.radians(lon) * r, r * math.log(math.tan(math.pi / 4 + math.radians(lat) / 2))]
 
 
-def catalog(eds=None):
-    """NOAA's catalog as it is shaped: EPSG:3857 footprints, enc_ed_up, scale_band, title."""
+def catalog(eds=None, boxes=None):
+    """NOAA's catalog as it is shaped: EPSG:3857 footprints, enc_ed_up, scale_band, title. `boxes`: its cells
+    (BOXES by default)."""
     eds = eds or {}
     feats = []
-    for name, (w_, s_, e_, n_) in BOXES.items():
+    for name, (w_, s_, e_, n_) in (boxes or BOXES).items():
         ed, up = eds.get(name, (1, 0))
         feats.append({"type": "Feature", "properties": {"enc_ed_up": "%s_ED%03d_UP%03d" % (name, ed, up),
-                                                        "scale_band": BAND_NO[name[:3]], "title": TITLES[name]},
+                                                        "scale_band": BAND_NO[name[:3]], "title": TITLES.get(name, name)},
                       "geometry": {"type": "Polygon", "coordinates": [[merc(w_, s_), merc(e_, s_), merc(e_, n_),
                                                                        merc(w_, n_), merc(w_, s_)]]}})
     return json.dumps({"type": "FeatureCollection", "features": feats}).encode("utf-8")
@@ -235,7 +242,9 @@ def keep_all(src, but=()):
 
 
 def by_oid(feats, cell, rcid):
-    return [f for f in feats if f.get("oid") == "%s:%d" % (cell, rcid)]
+    """The features of the cell's record `rcid`, whatever edition and update they were read from."""
+    pat = re.compile(r"^%s_ED\d{3}_UP\d{3}:%d$" % (cell, rcid))
+    return [f for f in feats if pat.match(str(f.get("oid")))]
 
 
 def raises(fn, kind=OSError):
@@ -280,7 +289,7 @@ nw = by_oid(ext["features"], "US5TSTAA", NEWOBJ)
 dep = [f for f in ext["features"] if f["cls"] == "Depth_Area"]
 check("1b. THE PONTOONS ARE DOCKS (kept clear, drawn as structures): Pontoon_line dock_line, Pontoon_area dock - "
       "and what ENCDirect never served besides arrives `extra`, never a keep-out: the virtual AIS mark (New_Object_point, "
-      "a broadcast with nothing in the water), magnetic variation, the pipeline; each with its oid <CELL>:<record>, its "
+      "a broadcast with nothing in the water), magnetic variation, the pipeline; each with its oid <CELL>_ED<n>_UP<n>:<record>, its "
       "numbers numbers (DRVAL1 2.5), the answer whole and named the cells'",
       lambda: [f["role"] for f in pl] == ["dock_line"] and [f["role"] for f in pa] == ["dock"]
               and [(f["cls"], f["role"]) for f in nw] == [("New_Object_point", "extra")]
@@ -418,6 +427,79 @@ check("4b. ... and once it comes down, the current edition is read - the pontoon
               and len(r4) == 1 and r4[0].startswith("US5TSTAA_ED002_UP000."),
       lambda: "complete %s kept %s; cells %s; reads %s" % (t4b.get("complete"), os.path.exists(A._tile_path(TILE)), c4, r4))
 os.remove(A._tile_path(TILE))
+
+# ── 4c/4d. one cell, read at two updates (or two editions) by the two tiles it lies across ──────────────────────────
+HX = [-70.05, 43.05, -69.95, 43.15]                  # a harbor cell across the tiles' edge at 70 W
+APX = [-70.30, 42.95, -69.70, 43.30]
+T2X = [-70.0, 43.0, -69.75, 43.25]                   # the tile east of TILE
+P_OLD, P_NEW = (-70.02, 43.10), (-69.98, 43.10)       # an obstruction in TILE; NOAA's correction puts it in T2X
+BOX_X = {"US5TSTXX": HX, "US4TSTXX": APX}
+LAY_X = [-70.10, 43.05, -69.90, 43.15]               # the layered read across both tiles
+
+
+def harbor_x(edtn="1", renumbered=False):
+    c = Cell("US5TSTXX", edtn=edtn)
+    c.area("M_COVR", HX, {"CATCOV": "1"})
+    c.area("DEPARE", HX, {"DRVAL1": "8", "DRVAL2": "12"})
+    c.w.node(5000, *(P_NEW if renumbered else P_OLD), rcnm=110)
+    c.w.feature(4, "OBSTRN", 1, {"VALSOU": "0.5", "WATLEV": "3"}, [node_ptr(5000)])
+    if renumbered:                                   # the next edition renumbers: record 4 a NEW obstruction at P_NEW,
+        c.w.node(5001, *P_OLD, rcnm=110)             # the old one record 5, still at P_OLD
+        c.w.feature(5, "OBSTRN", 1, {"VALSOU": "0.5", "WATLEV": "3"}, [node_ptr(5001)])
+    return c
+
+
+up_move = W(name="US5TSTXX.001", updn=1, isdt="20261120")         # update 1: the obstruction's node moved, in place
+up_move.raw([("VRID", _field("VRID", [(110, 5000, 2, 3)])), ("SGCC", _field("SGCC", [(3, 1, 1)])),
+             ("SG2D", _field("SG2D", [(round(P_NEW[1] * COMF), round(P_NEW[0] * COMF))]))])
+apx = Cell("US4TSTXX")
+apx.area("M_COVR", APX, {"CATCOV": "1"})
+apx.area("DEPARE", APX, {"DRVAL1": "10", "DRVAL2": "20"})
+
+
+def obstructions(fs):
+    return sorted((f["oid"], tuple(round(v, 3) for v in f["geometry"]["coordinates"][:2]))
+                  for f in fs if f["cls"] == "Obstruction_point")
+
+
+def two_reads(zip0, zip1, eds1):
+    """TILE read and kept from zip0; NOAA then issues zip1 (`eds1` in its catalog) and T2X is read from it; then the
+    layered read across both - TILE still the copy kept from zip0."""
+    net = Net(cat=catalog(boxes=BOX_X), zips={"US5TSTXX": zip0, "US4TSTXX": apx.zip()})
+    fresh(net)
+    A._enc_tile_mem.clear()
+    first = A.fetch_enc_tile(TILE)
+    net.cat, net.zips["US5TSTXX"] = catalog({"US5TSTXX": eds1}, boxes=BOX_X), zip1
+    aged = time.time() - 2 * enc_cells.CATALOG_MAX_AGE_S
+    os.utime(os.path.join(A.S57_DIR, "enc.geojson"), (aged, aged))          # the catalog due: the next read refreshes
+    again(net)
+    second = A.fetch_enc_tile(T2X)
+    lay = A.fetch_enc_layered(LAY_X)
+    for t in (TILE, T2X):
+        if os.path.exists(A._tile_path(t)):
+            os.remove(A._tile_path(t))
+    A._enc_tile_mem.clear()
+    deps = sorted(f["oid"] for f in lay["features"] if f["band"] == "enc_harbour" and f["cls"] == "Depth_Area")
+    return obstructions(first["features"]), obstructions(second["features"]), obstructions(lay["features"]), deps
+
+
+o1, o2, olay, dlay = two_reads(harbor_x().zip(), harbor_x().zip(updates=[(1, up_move.bytes())]), (1, 1))
+check("4c. ONE CELL READ AT TWO UPDATES BY THE TWO TILES IT LIES ACROSS is ONE feature to the layered read - the NEWER "
+      "update's: the tile kept from update 0 holds the obstruction where update 0 charted it, the tile read after "
+      "update 1 holds it where update 1 moved it, and the layered read holds it there alone (the oid names the update "
+      "read: \"<CELL>_ED<n>_UP<n>:<record>\"); it kept the first tile's copy, and the obstruction stood where NOAA "
+      "no longer charts it while NOAA's position was dropped (the 2026-11-21 review); the depth area both tiles hold, "
+      "once, update 1's",
+      lambda: o1 == [("US5TSTXX_ED001_UP000:4", P_OLD)] and o2 == [("US5TSTXX_ED001_UP001:4", P_NEW)]
+              and olay == [("US5TSTXX_ED001_UP001:4", P_NEW)] and dlay == ["US5TSTXX_ED001_UP001:3"],
+      lambda: "first tile %s; second %s; layered %s; harbor depth areas %s" % (o1, o2, olay, dlay))
+o1, o2, olay, dlay = two_reads(harbor_x().zip(), harbor_x(edtn="2", renumbered=True).zip(), (2, 0))
+check("4d. ... but TWO EDITIONS' copies are two features, both held: a new edition renumbers its records, and here its "
+      "record 4 is a new obstruction while the old one, record 5, lies in the tile still read at edition 1 - taking "
+      "edition 2's record 4 for edition 1's would drop an obstruction NOAA still charts",
+      lambda: olay == [("US5TSTXX_ED001_UP000:4", P_OLD), ("US5TSTXX_ED002_UP000:4", P_NEW)]
+              and dlay == ["US5TSTXX_ED001_UP000:3", "US5TSTXX_ED002_UP000:3"],
+      lambda: "first tile %s; second %s; layered %s; harbor depth areas %s" % (o1, o2, olay, dlay))
 
 # ── 5. the catalog and the downloads ────────────────────────────────────────────────────────────────────────────────
 clock = [time.time()]

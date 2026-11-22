@@ -362,13 +362,17 @@ class CellSource:
     def _parse(self, path, rpath):
         """The cell read here (s57.read_zip, then ENCDirect's shape for EVERY class, named later) and kept at `rpath`:
         a header line, then one record a line, its class acronym before a tab."""
-        name = os.path.basename(path).split("_", 1)[0]
+        key = os.path.basename(path)[:-4]           # "US5NH1BC_ED005_UP003": the copy read, edition and update
+        name = key.split("_", 1)[0]
         cell = s57.read_zip(path)
         feats, _left = s57.encdirect_features(cell, lambda acronym, prim: (acronym, prim))
         recs = []
         for ft in feats:
             acronym, prim = ft.pop("cls")
-            ft["oid"] = "%s:%d" % (name, ft["rcid"]) + (":%d" % ft["part"] if "part" in ft else "")
+            # the oid names the EDITION AND UPDATE read, not the cell alone: an update moves a feature in place (same
+            # record), and two tiles read from different updates must not share an id - the layered read keeps the
+            # first of a shared id, and the first may be the older tile's (the 2026-11-21 review)
+            ft["oid"] = "%s:%d" % (key, ft["rcid"]) + (":%d" % ft["part"] if "part" in ft else "")
             ft["a"], ft["p"] = acronym, prim
             recs.append(ft)
         body = [json.dumps({"cell": name, "n": len(recs)}) + "\n"]
@@ -422,8 +426,9 @@ class CellSource:
         return recs
 
     def features(self, path, namer, only=None):
-        """The cell's features in ENCDirect's shape (s57.encdirect_features), each with `oid` "<CELL>:<record>" (a
-        sounding ":<n>" more) - the identity two tiles reading one feature share - named by `namer(acronym, prim)`
+        """The cell's features in ENCDirect's shape (s57.encdirect_features), each with `oid`
+        "<CELL>_ED<n>_UP<n>:<record>" (a sounding ":<n>" more) - the identity two tiles reading one feature from the
+        same update share; read from different updates, two ids, both kept - named by `namer(acronym, prim)`
         (None leaves the class out). `only`: those class acronyms alone. ⚠ The geometry and properties are the kept
         read's own objects, shared by every answer: copy before changing one."""
         out = []

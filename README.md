@@ -3476,6 +3476,15 @@ plain. `tests/path_card.js` 15.
    which is blank while that host is down, and the fallback above. `--enc-source encdirect` puts
    the old source back. `tests/enc_cells.py`.
 
+   **The review before the merge (2026-11-21, phase 3).** An adversarial review of phase 2, its
+   fixes one commit each. *A feature read from two updates.* Each feature now names the edition
+   and update it was read from (`<CELL>_ED<n>_UP<n>:<record>`). Two neighboring tiles can hold one
+   cell read at different updates until the older tile is read again. The chart over both used to
+   keep the first tile's copy of each feature, so an update that moved an obstruction across the
+   tile edge was dropped, and the obstruction stood where the old update had charted it. Now the
+   newer update's copy is kept. A new edition renumbers its features, so two editions' copies are
+   both kept until then. `tests/enc_cells.py` 4c, 4d.
+
    **The Passage tab, and a long Go-To as a passage (2026-10-14).** Andy: "consider another path
    planning behavior called 'passage' that disregards the 9-23 directive and allows for long path
    planning", and "do it in segments starting with beginning and end and then working inward". The
