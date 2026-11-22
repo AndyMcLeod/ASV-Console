@@ -3567,6 +3567,14 @@ plain. `tests/path_card.js` 15.
    taken as a hole. A second test cell now makes each of those corrections, and each check says
    the cell before and after it. `tests/s57_reader.py` 3n-3u.
 
+   *A hole in the wrong ring, and a re-issued cell.* In an area of more than one outer ring, a hole
+   went to the first ring holding its first point. A hole may touch its own ring at that point, and
+   an outer ring also holds the pond on an island in its lake; either way the hole's water was read
+   as the area's. Now each hole goes to the smallest ring that holds it. A cell NOAA re-issues holds
+   its updates so far: its next update was refused as a gap, and an update it held was applied
+   twice. Neither case is in any of the 116 cells kept here, and their reads are unchanged.
+   `tests/s57_reader.py` 2s-2u, 3v-3x.
+
    **The Passage tab, and a long Go-To as a passage (2026-10-14).** Andy: "consider another path
    planning behavior called 'passage' that disregards the 9-23 directive and allows for long path
    planning", and "do it in segments starting with beginning and end and then working inward". The

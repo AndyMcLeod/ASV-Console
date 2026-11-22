@@ -97,9 +97,11 @@ ATTL = CAT["acr_attl"]
 
 class W:
     """A cell being written: records in order; .bytes() is the file."""
-    def __init__(self, name="US5TEST1.000", updn=0, isdt="20260101", edtn="1"):
+    def __init__(self, name="US5TEST1.000", updn=0, isdt="20260101", edtn="1", reissue=0):
+        """`updn`: an update file of that number. `reissue`: a BASE re-issued at that update - its DSID UPDN, every
+        update through it held in the base (S-57 3.1)."""
         head = [("0001", b"\x01\x00" + FT),
-                ("DSID", _field("DSID", [(10, 1, 2 if updn else 1, 5, name, edtn, str(updn),
+                ("DSID", _field("DSID", [(10, 1, 2 if updn else 1, 5, name, edtn, str(updn or reissue),
                                           "" if updn else "20260101", isdt, "03.1", 1, "2.0", "", 1, 550, "")]))]
         if not updn:        # the parameters ride on the base only
             head.append(("DSPM", _field("DSPM", [(20, 1, 2, 17, 23, 12000, 1, 1, 1, 1, COMF, SOMF, "")])))

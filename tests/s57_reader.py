@@ -6,7 +6,8 @@ keep, and nothing else: an edge stored the other way, a ring's edges listed out 
 a sounding cluster's depths, the corrections (a moved buoy, a deleted attribute, an inserted pointer, a new object,
 a deleted one; in a second cell a coordinate and a pointer deleted from the middle, an edge's node moved, a
 national and a vector attribute corrected, an object pointer inserted), a boundary at the data limit, a gap in the
-corrections, an update issued after a day, a ring that does not close. The writer (tests/lib/s57_writer.py)
+corrections, an update issued after a day, a ring that does not close; a pond on an island in a lake, a hole
+touching its own ring with another listed first, a re-issued base. The writer (tests/lib/s57_writer.py)
 encodes ISO 8211 independently of the reader's decoder - its field formats are typed out there, not parsed by s57.py
 - so a decoder fault cannot be mirrored by the writer and pass.
 
@@ -218,6 +219,60 @@ check("2r. two rings touching at a node stay two polygons: an ORNT 2 edge is rea
       == sorted([sorted({(-69.7, 43.3), (-69.8, 43.25), (-69.8, 43.35)}),
                  sorted({(-69.7, 43.3), (-69.6, 43.35), (-69.6, 43.25)})]),
       lambda: f0[117]["geometry"])
+
+
+# Holes in an area of more than one outer ring (review fix 12), a cell of their own
+def ring_of(w, nodes, e0):
+    """Nodes [(rcid, lon, lat)] as a closed ring of edges e0, e0 + 1, ...; the edge ids."""
+    for rid, lo, la in nodes:
+        w.node(rid, lo, la, rcnm=120)
+    for i in range(len(nodes)):
+        w.edge(e0 + i, nodes[i][0], nodes[(i + 1) % len(nodes)][0], [])
+    return list(range(e0, e0 + len(nodes)))
+
+
+def covered(geom, x, y):
+    """Is the point the area's: inside an outer ring and none of that ring's holes (how the console reads one)?"""
+    polys = [geom["coordinates"]] if geom["type"] == "Polygon" else geom["coordinates"]
+    return any(s57._in_ring(p[0], x, y) and not any(s57._in_ring(h, x, y) for h in p[1:]) for p in polys)
+
+
+hw = W(name="US5TEST3.000")
+OA = ring_of(hw, [(1, -70.0, 43.0), (2, -70.0, 43.4), (3, -69.6, 43.4), (4, -69.6, 43.0)], 100)       # an outer ring
+LK = ring_of(hw, [(5, -69.9, 43.1), (6, -69.7, 43.1), (7, -69.7, 43.3), (8, -69.9, 43.3)], 110)       # its lake
+IS = ring_of(hw, [(9, -69.85, 43.15), (10, -69.85, 43.25), (11, -69.75, 43.25), (12, -69.75, 43.15)], 120)  # an island
+PD = ring_of(hw, [(13, -69.82, 43.18), (14, -69.78, 43.18), (15, -69.80, 43.22)], 130)                # its pond
+hw.feature(300, "DEPARE", 3, {"DRVAL1": "10", "DRVAL2": "20"}, [edge_ptr(e) for e in OA + IS] +
+           [edge_ptr(e, 1, 2) for e in LK + PD])
+A2 = ring_of(hw, [(20, -71.0, 43.0), (21, -71.0, 43.2), (22, -70.8, 43.2), (23, -70.8, 43.0)], 200)  # listed first
+for rid, lo, la in ((30, -70.4, 43.1), (31, -70.4, 43.0), (32, -70.6, 43.0), (33, -70.6, 43.2), (34, -70.4, 43.2),
+                    (35, -70.5, 43.14), (36, -70.5, 43.08)):
+    hw.node(rid, lo, la, rcnm=120)
+for eid, a, b in ((210, 30, 31), (211, 31, 32), (212, 32, 33), (213, 33, 34), (214, 34, 30),       # B2, node 30 east
+                  (220, 30, 35), (221, 35, 36), (222, 36, 30)):                                   # its hole, from 30
+    hw.edge(eid, a, b, [])
+hw.feature(301, "DEPARE", 3, {"DRVAL1": "10", "DRVAL2": "20"},
+           [edge_ptr(e) for e in A2 + [210, 211, 212, 213, 214]] + [edge_ptr(e, 1, 2) for e in (220, 221, 222)])
+LONE = ring_of(hw, [(40, -72.0, 43.0), (41, -71.9, 43.1), (42, -71.8, 43.0)], 240)                    # a hole off alone
+hw.feature(302, "DEPARE", 3, {"DRVAL1": "10", "DRVAL2": "20"},
+           [edge_ptr(e) for e in A2 + [210, 211, 212, 213, 214]] + [edge_ptr(e, 1, 2) for e in LONE])
+ch = s57.Cell().read_base(hw.bytes())
+fh = by_rcid(ch)
+POND = ((-69.82 - 69.78 - 69.80) / 3, (43.18 + 43.18 + 43.22) / 3)
+B2_HOLE = ((-70.4 - 70.5 - 70.5) / 3, (43.1 + 43.08 + 43.14) / 3)
+check("2s. a hole goes to the INNERMOST outer ring that holds it: the pond on an island in a lake is the island's, so "
+      "the pond is not the area's water - the outer ring, listed first, holds it too, and took it",
+      lambda: fh[300]["geometry"]["type"] == "MultiPolygon" and not covered(fh[300]["geometry"], *POND)
+              and covered(fh[300]["geometry"], -69.84, 43.16) and not covered(fh[300]["geometry"], -69.88, 43.12),
+      lambda: [len(p) for p in fh[300]["geometry"]["coordinates"]])
+check("2t. a hole TOUCHING its outer ring at its first vertex goes to that ring, not to the first listed: its water is "
+      "not the area's (the touching vertex was the test, and the fallback the first ring)",
+      lambda: not covered(fh[301]["geometry"], *B2_HOLE) and covered(fh[301]["geometry"], -70.55, 43.05)
+              and [len(p) for p in fh[301]["geometry"]["coordinates"]] == [1, 2],
+      lambda: [len(p) for p in fh[301]["geometry"]["coordinates"]])
+check("2u. a hole no outer ring holds is said",
+      lambda: any("302" in p and "no outer ring" in p for p in ch.problems)
+              and not any("300" in p or "301" in p for p in ch.problems), lambda: ch.problems)
 check("2j. a ring that does not close is NO geometry, and said - never a polygon drawn across the gap",
       lambda: f0[106]["geometry"] is None and any("106" in p and "close" in p for p in c0.problems), lambda: c0.problems)
 check("2k. a point whose node is missing is no geometry, and said",
@@ -342,6 +397,51 @@ check("3t. an update inserts an object pointer at an index (FFPC): the collectio
       lambda: ([p[0].hex() for p in ct0.features[205]["ffpt"]], [p[0].hex() for p in ct1.features[205]["ffpt"]]))
 check("3u. ... and the update read whole: nothing in it said as a problem",
       lambda: not ct1.problems and ct1.updates_applied == [1], lambda: (ct1.problems, ct1.updates_applied))
+
+
+# A RE-ISSUED base (review fix 12): a .000 whose DSID UPDN is n holds every update through n; the run goes on at n + 1
+def reissued(n):
+    """The base re-issued at update n: a coastline of three edges, the third inserted by update 1."""
+    w = W(name="US5TEST4.000", reissue=n)
+    for rid, lo, la in ((10, -70.1, 43.1), (11, -70.1, 43.2), (12, -70.0, 43.2), (13, -70.0, 43.1)):
+        w.node(rid, lo, la, rcnm=120)
+    for eid, a, b in ((20, 10, 11), (21, 11, 12), (22, 12, 13)):
+        w.edge(eid, a, b, [])
+    w.feature(103, "COALNE", 2, {"OBJNAM": "Shore"}, [edge_ptr(20), edge_ptr(21), edge_ptr(22)], rver=n + 1)
+    return w.bytes()
+
+
+def up4(n, fields):
+    u = W(name="US5TEST4.%03d" % n, updn=n, isdt="2026%02d01" % (n + 1))
+    u.raw([("FRID", _field("FRID", [(100, 103, 2, 2, OBJL["COALNE"], n + 1, 3)]))] + fields)
+    return u.bytes()
+
+
+U4_1 = up4(1, [("FSPC", _field("FSPC", [(1, 3, 1)])), ("FSPT", _field("FSPT", [(_name(130, 22), 1, 255, 255)]))])
+U4_3 = up4(3, [("ATTF", _field("ATTF", [(ATTL["OBJNAM"], "Shore 3")]))])                  # renamed
+LINE3 = [[-70.1, 43.1], [-70.1, 43.2], [-70.0, 43.2], [-70.0, 43.1]]
+
+
+def read4(files):
+    try:
+        c = s57.read_zip(zipped({"R/US5TEST4/US5TEST4.%03d" % n: b for n, b in files.items()}))
+        return c, {f["rcid"]: f for f in c.features_out()}[103], None
+    except s57.S57Error as e:
+        return None, None, str(e)
+
+
+r4a, f4a, e4a = read4({0: reissued(2), 3: U4_3})
+r4b, f4b, e4b = read4({0: reissued(1), 1: U4_1})
+r4c, f4c, e4c = read4({0: reissued(2), 4: U4_3})
+check("3v. a RE-ISSUED base (its DSID UPDN 2) takes its next update, .003: it was refused as missing .001 and .002",
+      lambda: e4a is None and r4a.updates_applied == [3] and f4a["attrs"].get("OBJNAM") == "Shore 3",
+      lambda: e4a or (r4a.updates_applied, f4a["attrs"]))
+check("3w. ... and an update the re-issued base already holds, still in the set, is NOT applied again: the pointer it "
+      "inserts is there once - it was inserted twice, the line drawn in two parts",
+      lambda: e4b is None and r4b.updates_applied == [] and f4b["geometry"] == {"type": "LineString", "coordinates": LINE3},
+      lambda: e4b or (r4b.updates_applied, f4b["geometry"]))
+check("3x. ... but a gap after a re-issued base is still refused, naming the base's update (.004 after a base at 2)",
+      lambda: e4c is not None and "re-issued at update 002" in e4c, lambda: e4c)
 
 # ── 4. ENCDirect's shape ────────────────────────────────────────────────────────────────────────────────────────────
 print("4. ENCDirect's shape")

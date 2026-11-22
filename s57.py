@@ -595,10 +595,22 @@ class Cell:
         if len(ext) == 1:
             return {"type": "Polygon", "coordinates": [ext[0]] + inn}
         polys = [[e] for e in ext]
-        for h in inn:                     # each hole to the exterior that holds it
-            p0 = h[0]
-            home = next((p for p in polys if _in_ring(p[0], p0[0], p0[1])), polys[0])
-            home.append(h)
+        # ⚠ EACH HOLE TO THE INNERMOST OUTER RING THAT HOLDS IT (the 2026-11-21 review). It went to the first ring that
+        # held its FIRST VERTEX, else to the first ring: S-57 lets that vertex lie on its own outer ring (a hole touching
+        # it at a node), where a point test goes either way - the hole went to another ring and its water was read as the
+        # area's - and an outer ring holds the pond on an island inside its own hole as surely as the island does. Now
+        # the midpoint of the hole's first edge (on the hole, never a node of it) is tested, and of the rings holding it
+        # the smallest takes it. A hole no ring holds is said.
+        box = [(min(p[0] for p in e), min(p[1] for p in e), max(p[0] for p in e), max(p[1] for p in e)) for e in ext]
+        size = [abs(_ring_area2(e)) for e in ext]
+        for h in inn:
+            x, y = (h[0][0] + h[1][0]) / 2.0, (h[0][1] + h[1][1]) / 2.0
+            hold = [i for i, b in enumerate(box)
+                    if b[0] <= x <= b[2] and b[1] <= y <= b[3] and _in_ring(ext[i], x, y)]
+            if not hold:
+                self.problems.append("feature %d: a hole no outer ring holds" % f["rcid"])
+                hold = [0]
+            polys[min(hold, key=lambda i: size[i])].append(h)
         return {"type": "MultiPolygon", "coordinates": polys}
 
     # -- the answer ---------------------------------------------------------------------------------------------------
@@ -648,8 +660,9 @@ def _in_ring(ring, x, y):
 
 def read_files(paths, through=None, issued_by=None):
     """A cell from its files: the base (.000) and its updates (.001, ...), applied in number order whatever order they
-    are given in. An update number missing from the run is an error - a cell with a gap is not the published chart.
-    `through` stops after that update number; `issued_by` (YYYYMMDD) stops before the first update issued after it -
+    are given in. An update number missing from the run is an error - a cell with a gap is not the published chart. A
+    re-issued base (its DSID UPDN n) holds the updates through n: the run goes on at n + 1, and those it holds are not
+    applied again. `through` stops after that update number; `issued_by` (YYYYMMDD) stops before the first update issued after it -
     the cell as it stood on a day (a comparison with a copy read then)."""
     base = [p for p in paths if p.lower().endswith(".000")]
     if len(base) != 1:
@@ -708,11 +721,19 @@ def _assemble(base, ups, read, through=None, issued_by=None):
     c = Cell()
     c.read_base(read(base))
     c.name = c.name or os.path.splitext(os.path.basename(base))[0] + ".000"
+    # ⚠ A RE-ISSUED BASE HOLDS ITS UPDATES (the 2026-11-21 review; S-57 3.1 Part 3, the ENC product specification): a
+    # .000 whose DSID UPDN is n holds every update through n, and the run goes on at n + 1. Its next update was refused
+    # as one missing the updates before it, and an update it holds, still in the set, was applied again (a pointer it
+    # inserts, inserted twice).
+    held = _int(c.dsid.get("UPDN")) or 0
     for n in sorted(ups):
-        last = (c.updates_applied + c.updates_withheld)[-1:] or [0]
+        if n <= held:
+            continue                       # in the base already
+        last = (c.updates_applied + c.updates_withheld)[-1:] or [held]
         if n != last[0] + 1:
             raise S57Error("%s: update %03d follows %s - an update is missing" % (
-                c.name, n, ("%03d" % last[0]) if last[0] else "the base"))
+                c.name, n, ("%03d" % last[0]) if c.updates_applied or c.updates_withheld else
+                "the base" + (" (re-issued at update %03d)" % held if held else "")))
         if c.updates_withheld or through is not None and n > through:
             c.updates_withheld.append(n)
             continue
