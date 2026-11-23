@@ -2296,7 +2296,12 @@ export function markPassRoute(pathLL, frame, ko, buf, opts = {}) {
     if (!laned && offChannel(k, dir, false)) { left('her channel goes on without her here'); continue; }
     if (!laned && offChannel(k, dir, true)) { left('she joins its channel beyond it'); continue; }
     if (laned && onHand) { left('ridden as a pair'); continue; }
-    gov.push({ ...k, dir, uIn, uOut, keepStbd, pull: keepStbd && !k.m.fixed });
+    // ⚠ A RIVER BUOY IS NEVER BROUGHT CLOSE (review 2026-11-23, item 6): the Corps sets its buoys OUTSIDE the channel
+    // they mark - at Pine Bluff every one of them stands 14 to 56 m outside the 9 ft channel, in the one 0 to 2.74 m
+    // depth area the river cells chart outside it - so a close pass (MARK_PASS_M) is a pass in that water: all 20 such
+    // passes on four Go-Tos there were, six of them where she had been in the channel. It is kept on its hand and given a
+    // berth, as a mark kept to port is (below), on its channel side.
+    gov.push({ ...k, dir, uIn, uOut, keepStbd, pull: keepStbd && !k.m.fixed && !k.m.river });
   }
   // ⚠⚠ THE OFFSHORE MARKS (2026-10-12; see OFFSHORE_DANGER_M): a mark whose direction of buoyage could not be read, with
   // NO channel about it along her route - no mark within MARK_NEIGHBOR_M of it whose direction was read, none the pair
@@ -2342,8 +2347,9 @@ export function markPassRoute(pathLL, frame, ko, buf, opts = {}) {
   for (const k of gov) {
     if (k.skip && !k.guard) continue;
     let want = D;
-    // (an offshore mark is given the berth of a mark left to port on either hand: it stands by its danger)
-    if (!k.keepStbd || k.offshore) {
+    // (an offshore mark is given the berth of a mark left to port on either hand: it stands by its danger; and so is a
+    // river buoy, which stands outside its channel - item 6 above)
+    if (!k.keepStbd || k.offshore || k.m.river) {
       want = Math.max(D, MARK_PORT_BERTH * MARK_PASS_M(buf, 0));
       for (const p of pulls) {
         const gap = Math.hypot(p.m.e - k.m.e, p.m.n - k.m.n);
@@ -2363,7 +2369,8 @@ export function markPassRoute(pathLL, frame, ko, buf, opts = {}) {
     // nearer than this is not "kept" - and an OFFSHORE mark is held to its whole berth (Andy, 2026-10-13: "yes, hold
     // offshore marks to the full 30 m berth"): live off Rockport deep water first's route already passed Oak Rock Buoy 2 on
     // its safe side, 15 m off, and at D (10 m at the DriX's 5 m buffer) the stage had nothing to move her for.
-    k.min = k.offshore ? k.want : D;
+    // (and a river buoy to its whole berth too: nearer it is nearer the water outside the channel)
+    k.min = (k.offshore || k.m.river) ? k.want : D;
     if (!k.runs.length) { k.unplaced = 'no clear water to pass her in'; continue; }
     Object.assign(k, k.runs[0]);
   }

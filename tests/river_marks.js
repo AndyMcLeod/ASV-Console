@@ -290,6 +290,15 @@ check("12. DOWN THE RIVER: the same buoys the other way - starboard-hand to PORT
             && downR.how.marks.kept === 15 && downR.how.reach === true && sideDown.every((x) => x.lineSide),
       () => "governed " + gov(downR).length + ", " + JSON.stringify(downR.how.marks) + ", reach " + downR.how.reach
             + "; on the line's side " + sideDown.filter((x) => x.lineSide).length + " of 15");
+// (review 2026-11-23, item 6) the Corps sets its buoys OUTSIDE the channel they mark: a close pass is a pass in the shallows
+const BERTH = R.MARK_PORT_BERTH * R.MARK_PASS_M(5, 0);
+const minOff = (side) => Math.min(...side.map((x) => x.off));
+check("12b. A RIVER BUOY IS NEVER BROUGHT CLOSE: up the river and down it no river buoy is pulled to her - each, either hand, "
+      + "is given a berth (" + BERTH + " m at a 5 m buffer, held to it whole) on its channel side, not passed at MARK_PASS_M",
+      () => [upR, downR].every((res) => gov(res).every((k) => !k.pull && k.want === BERTH && k.min === BERTH))
+            && minOff(sideUp) >= BERTH - 1 && minOff(sideDown) >= BERTH - 1,
+      () => "nearest pass up " + minOff(sideUp).toFixed(1) + " m, down " + minOff(sideDown).toFixed(1) + " m; pulled "
+            + [upR, downR].map((res) => gov(res).filter((k) => k.pull).length).join("/"));
 const asBefore = build([lineFeat(SAIL), ...BANKS, ...BUOYS.map((b) => ({ ...b, band: undefined }))]);
 const beforeR = R.channelLaneRoute(UP, F, asBefore, 5, {});
 check("13. THE CONTROL: the same chart with the buoys' band gone - unnumbered, as every river buoy was before this - and no "

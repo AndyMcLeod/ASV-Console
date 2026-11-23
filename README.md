@@ -3669,7 +3669,11 @@ plain. `tests/path_card.js` 15.
    the buoys of a line too few or split. The river's lights and daybeacons, which the Corps names and
    does not number, are kept off the danger beside them as offshore marks, as before: the numbered
    buoys about them make no channel of them. A river buoy's number is its own line's: it is read
-   only from that line's buoys, never from a charted count beside it. `tests/river_marks.js`.
+   only from that line's buoys, never from a charted count beside it. And a river buoy is never
+   brought close: the Corps sets its buoys outside the channel they mark - at Pine Bluff every one
+   stands 14 to 56 m outside the 9 ft channel, in the 0 to 2.74 m water - so each is kept on its hand
+   at a berth (30 m at a 5 m buffer) on its channel side, where a close pass put her in that water at
+   all 20 of them on the four replayed legs. `tests/river_marks.js`.
 
    **The Passage tab, and a long Go-To as a passage (2026-10-14).** Andy: "consider another path
    planning behavior called 'passage' that disregards the 9-23 directive and allows for long path
