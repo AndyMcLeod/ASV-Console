@@ -3636,7 +3636,13 @@ plain. `tests/path_card.js` 15.
    the Corps reissues its buoys most days as they are moved. A refresh of the Corps' catalog with
    even one entry that does not read is refused, the copy kept read and the entry named in the log:
    NOAA's 1 in 20 is a cell or two of its 7,114, but of the Corps' 109 it is five rivers' reaches.
-   The catalog of 2026-11-23 reads whole. `--enc-source encdirect` reads no river band.
+   The catalog of 2026-11-23 reads whole. That catalog ships with the console
+   (`data/ienc/u37.xml`) for a first run with the Corps' host silent: with no copy kept, the river
+   band was unknown across the whole reach, and the Gulf coast and Great Lakes tiles were unread
+   beyond NOAA's harbor charts though no river is near most of them. The shipped copy is read as a
+   catalog past its age. Where it names no river cell, NOAA's charts are read as before; where it
+   names one, that cell is asked for, and with the host silent its water is unread. A catalog that
+   is read and kept replaces it. `--enc-source encdirect` reads no river band.
    `tests/ienc_cells.py`.
 
    **The Passage tab, and a long Go-To as a passage (2026-10-14).** Andy: "consider another path

@@ -85,6 +85,10 @@ def check(name, cond, detail=""):
 
 
 TMP = tempfile.mkdtemp(prefix="asv_ienc_cells_")
+# the Corps' catalog shipped with the console is read only where a check says so (1e, 5e): every other check's "no copy
+# kept" is no copy at all, as it was before one was shipped
+SHIPPED_REAL = E.RiverCells.SHIPPED_CATALOG
+E.RiverCells.SHIPPED_CATALOG = None
 A.ENC_DIR = os.path.join(TMP, "enc")
 A.S57_DIR = os.path.join(TMP, "s57")
 A.IENC_DIR = os.path.join(TMP, "ienc")
@@ -401,6 +405,16 @@ check("1d. ONE ENTRY OF THE CORPS' CATALOG THAT DOES NOT READ REFUSES ITS REFRES
               and "U38TSTZZ" in r1d["another purpose"][3] and "refused" not in r1d["another purpose"][3],
       lambda: "; ".join("%s: %s stale %s said %r" % (k, v[0], v[1], v[3][-300:]) for k, v in r1d.items()))
 net1.files[E.RIVER_CATALOG_URL] = FILES[E.RIVER_CATALOG_URL]
+
+with open(SHIPPED_REAL[0], "rb") as f:
+    root1e = E.RiverCells._decode_catalog(f.read())
+e1e, n1e = E.RiverCells._catalog_entries(root1e)
+check("1e. THE CORPS' CATALOG SHIPPED WITH THE CONSOLE (data/ienc/u37.xml, read 2026-11-23) READS WHOLE: every one of "
+      "its 109 entries a river cell inside the rivers' reach, none refused - it is what says where a river cell is on a "
+      "first run with the Corps' host silent (5e)",
+      lambda: len(e1e) == 109 and n1e == 109 and {e["band"] for e in e1e} == {E.RIVER_BAND}
+              and SHIPPED_REAL[1] == "2026-11-23" and E.RiverBuoys.SHIPPED_CATALOG is None,
+      lambda: "%d entries of %d, bands %s; shipped %s" % (len(e1e), n1e, sorted({e["band"] for e in e1e}), SHIPPED_REAL))
 
 # ── 2. where they can reach ──────────────────────────────────────────────────────────────────────────────────────────
 net2 = Net()
@@ -739,6 +753,50 @@ check("5d. ANY FAULT OF A READ OF THE RIVER BAND IS THE CORPS' (review, 2026-11-
       lambda: "snap %r; card %r; titles %r; forced %r; picked %r; ENCDirect asked %s; NOAA's at the card %r, ENCDirect %s"
               % tuple([(d.get("note"), d.get("river")) for d in (snap5d, card5d, card5d2, forced5d, picked5d)]
                       + [ed5d, (card5d3.get("note"), card5d3.get("river")), ed5d3]))
+
+# the catalog shipped with the console names the swapped river and the inland river - not the river cell in TILE
+SHIP5 = os.path.join(TMP, "shipped_u37.xml")
+with open(SHIP5, "wb") as f:
+    f.write(xml_catalog(RIVER_CELLS[1:]))
+TILE_RC = [-90.0, 32.0, -89.75, 32.25]     # the inland river's tile, NOAA's second approach cell under it
+E.RiverCells.SHIPPED_CATALOG = (SHIP5, "2026-11-01")
+try:
+    net5e = Net()
+    net5e.down.update([E.RIVER_CATALOG_URL, E.BUOY_CATALOG_URL]
+                      + [E.RIVER_CELL_URL % c[0] for c in RIVER_CELLS])           # the Corps' host silent throughout
+    rc5e = sources(net5e, "c5e")[0]
+    del ED[:]
+    try:
+        cat5e = (sorted(e["name"] for e in rc5e.catalog()), rc5e.catalog_stale)
+    except OSError as e:
+        cat5e = "raised %s" % e
+    may5e = (rc5e.may_chart(TILE), rc5e.may_chart(TILE_RC))
+    A._enc_down_until = 0.0
+    t5e = A._enc_tile_build(TILE)
+    t5e_rc = A._enc_tile_build(TILE_RC)
+    kept5e = os.path.exists(os.path.join(rc5e.root, rc5e.CATALOG_FILE))
+    rc5e2 = sources(Net(), "c5e2")[0]          # the host answering: its catalog is read and kept, the shipped one not
+    cat5e2 = (sorted(e["name"] for e in rc5e2.catalog()), rc5e2.catalog_stale,
+              os.path.exists(os.path.join(rc5e2.root, rc5e2.CATALOG_FILE)))
+finally:
+    E.RiverCells.SHIPPED_CATALOG = None
+check("5e. A FIRST RUN WITH THE CORPS' HOST SILENT READS THE CATALOG SHIPPED WITH THE CONSOLE (review, 2026-11-23): "
+      "with no copy kept, the river band was unknown everywhere in the rivers' reach - the Gulf coast and the Great "
+      "Lakes' tiles unread beyond NOAA's harbor chart, no river cell near most of them. The shipped copy is read as a "
+      "copy past its age; a tile it names no river cell in reads NOAA's charts as it always did, the approach chart "
+      "served and the river band not failed; one where it names a cell asks for it, and with the host silent its "
+      "water is unread, as the Corps'; the older-tile fallback asks it the same; never written as the copy kept, and "
+      "with the host answering, its own catalog read",
+      lambda: cat5e == (["U37TSTAB", "U37TSTAC"], "2026-11-01") and may5e == (False, True)
+              and A.ENC_RIVER not in t5e["coverage_failed"] and at(t5e["features"], AP_OUT)
+              and at(t5e["features"], AP_IN_RV) and not t5e["unread_failed"] and not ED
+              and A.ENC_RIVER in t5e_rc["coverage_failed"] and t5e_rc["unread_failed"] and not kept5e
+              and cat5e2 == (["U37TSTAA", "U37TSTAB", "U37TSTAC"], None, True),
+      lambda: "shipped read %s; may chart (TILE, inland river's) %s; TILE coverage_failed %s approach obs (out, in) %d %d "
+              "unread_failed %d ENCDirect %s; inland river's tile coverage_failed %s unread_failed %d; kept %s; "
+              "host answering %s" % (cat5e, may5e, t5e["coverage_failed"], len(at(t5e["features"], AP_OUT)),
+                                     len(at(t5e["features"], AP_IN_RV)), len(t5e["unread_failed"]), ED,
+                                     t5e_rc["coverage_failed"], len(t5e_rc["unread_failed"]), kept5e, cat5e2))
 
 # ── 6. older copies, and the catalog past its age ────────────────────────────────────────────────────────────────────
 net6 = Net(dict(FILES, **{E.RIVER_CATALOG_URL: xml_catalog([("U37TSTAA", "52.1",) + RIVER_CELLS[0][2:]]

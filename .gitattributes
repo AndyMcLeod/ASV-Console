@@ -13,3 +13,6 @@
 
 # GDAL's S-57 catalog tables are kept byte for byte as GDAL publishes them (CRLF): no line-ending conversion.
 data/s57/*.csv -text
+
+# The Corps' catalog shipped with the console is kept byte for byte as the Corps publishes it (CRLF).
+data/ienc/*.xml -text

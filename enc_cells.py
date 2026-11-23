@@ -253,6 +253,7 @@ class CellSource:
     CATALOG_MARK = "catalog.mark"
     WHO = "NOAA's"
     ENTRY_DROP_MAX = CATALOG_DROP_MAX   # the share of a refresh's own entries that may not read (_catalog_refused)
+    SHIPPED_CATALOG = None   # (path, day): a copy of the catalog shipped with the console, read when none is kept (_shipped)
 
     def _catalog_url(self):
         return CATALOG_URL
@@ -283,6 +284,7 @@ class CellSource:
         self._catalog_lock = threading.Lock()
         self._index = None
         self._index_key = None
+        self._shipped_index = None
         self._catalog_tried = -1e18
         self._down_until = 0.0
         self._memo = {}              # (path, only) -> [records]
@@ -355,9 +357,9 @@ class CellSource:
                     self._catalog_tried = time.monotonic()
                     self._mark(self.CATALOG_MARK)
                     if age is None and not os.path.exists(path):
-                        raise OSError("%s cell catalog could not be read (%s)" % (self.WHO, e))
+                        return self._shipped(OSError("%s cell catalog could not be read (%s)" % (self.WHO, e)))
             elif age is None:
-                raise OSError("%s cell catalog could not be read (asked again shortly)" % self.WHO)
+                return self._shipped(OSError("%s cell catalog could not be read (asked again shortly)" % self.WHO))
             st = os.stat(path)
             # ⚠ A CATALOG PAST ITS AGE IS SAID, IN EVERY PROCESS (the 2026-11-21 review): only the process whose refresh
             # failed knew, and nobody asked it - the next tile's child, held off by the mark, read the old copy as
@@ -370,6 +372,26 @@ class CellSource:
                 self._index = self._parse_catalog(path)
                 self._index_key = key
             return self._index
+
+    def _shipped(self, err):
+        """With no copy kept and none to be had: the copy shipped with the console (SHIPPED_CATALOG), read as a copy
+        past its age (catalog_stale its day) - or `err` raised, as before, when there is none or it does not read.
+        ⚠ A FIRST RUN WITH THE CORPS' HOST SILENT (2026-11-23, review): with no catalog copy kept, the river band could
+        not be read anywhere in RIVER_REACH - the Gulf coast and the Great Lakes among it - so every tile there was
+        unread beyond NOAA's harbor chart, though no river cell is near most of them. The shipped copy says where a river
+        cell is: a box none reaches reads NOAA's charts as it always did; one a cell reaches asks for that cell, and with
+        the host silent its water is unread, as the Corps'. Never written over the copy kept: a refresh that lands
+        replaces it."""
+        if not self.SHIPPED_CATALOG:
+            raise err
+        path, day = self.SHIPPED_CATALOG
+        try:
+            if self._shipped_index is None:
+                self._shipped_index = self._parse_catalog(path)
+        except (OSError, ValueError):
+            raise err
+        self.catalog_stale = day
+        return self._shipped_index
 
     @staticmethod
     def _catalog_entries(d):
@@ -751,6 +773,9 @@ class RiverCells(CellSource):
     # the refusal said (measured: all 109 of the catalog of 2026-11-23 read, every one a river cell). A cell of another
     # purpose is no entry that failed: said, and not read (_catalog_entries).
     ENTRY_DROP_MAX = 0.0
+    # The Corps' catalog as read on 2026-11-23, shipped with the console: read only while no copy is kept and none can
+    # be had (CellSource._shipped). To ship a newer one, copy a console's charts/ienc/u37.xml over it (data/ienc).
+    SHIPPED_CATALOG = (os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "ienc", "u37.xml"), "2026-11-23")
 
     def _catalog_url(self):
         return RIVER_CATALOG_URL
@@ -843,13 +868,18 @@ class RiverCells(CellSource):
 
     def may_chart(self, box):
         """May a river cell chart water in the box - by the catalog copy kept alone, the network never asked? False
-        outside RIVER_REACH, and where the copy names no river cell reaching into the box; True where it names one, and
-        where no copy can be read (not known not to). For the console's older-tile fallback (asv_console._older_tile),
+        outside RIVER_REACH, and where the copy names no river cell reaching into the box - with none kept, the copy
+        shipped with the console (SHIPPED_CATALOG); True where it names one, and where no copy can be read (not known
+        not to). For the console's older-tile fallback (asv_console._older_tile),
         which is reached when a read has just failed."""
         if not river_reaches(box):
             return False
+        kept = os.path.join(self.root, self.CATALOG_FILE)
         try:
-            entries = self._parse_catalog(os.path.join(self.root, self.CATALOG_FILE))
+            if os.path.exists(kept) or not self.SHIPPED_CATALOG:
+                entries = self._parse_catalog(kept)
+            else:                                   # none kept: the copy shipped with the console, as catalog() reads
+                entries = self._parse_catalog(self.SHIPPED_CATALOG[0])
         except (OSError, ValueError):
             return True
         return any(e["band"] == RIVER_BAND and not (e["bbox"][2] < box[0] or e["bbox"][0] > box[2]
@@ -862,6 +892,8 @@ class RiverBuoys(RiverCells):
     CATALOG_FILE = "buoys.xml"
     CATALOG_MARK = "catalog_buoys.mark"
     CATALOG_TAG = "IENCBuoyProductCatalog"
+    SHIPPED_CATALOG = None   # reissued most days: a shipped copy names an edition long gone, and asks only where a river
+                             # cell is, which is read from the Corps' host too
 
     def _catalog_url(self):
         return BUOY_CATALOG_URL
