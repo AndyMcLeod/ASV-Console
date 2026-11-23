@@ -2299,7 +2299,11 @@ export function markPassRoute(pathLL, frame, ko, buf, opts = {}) {
   // never a buoyed reach's (buoyedReachLane). Where the dangers do not say which it marks it is left alone, as before.
   // ⚠ IN A CHANNEL IT IS NOT ONE: an unnumbered red buoy in a buoyed reach, read as offshore, was sent round by the bank
   // 100 m off it - 180 m to the far side, its wrong hand for the reach (enc_channel 95, 96b).
-  const channelled = (q) => (q.dir === 1 || q.dir === -1) || /ridden as a pair|charted channel|its own channel crosses/.test(q.skip || '');
+  // ⚠ ... BUT A RIVER BUOY NUMBERED BY THE MODEL MAKES NO CHANNEL OF ANOTHER MARK (review 2026-11-23, item 4): the Corps'
+  // lights and daybeacons on the bars and revetments ("Hensely Bar Lt. (77.5)") carry no number, and every one of them
+  // near four Go-Tos at Pine Bluff, an offshore mark before the river's buoys were numbered, lost its berth to them.
+  const channelled = (q) => !q.m.river
+    && ((q.dir === 1 || q.dir === -1) || /ridden as a pair|charted channel|its own channel crosses/.test(q.skip || ''));
   for (const k of gov) {
     if (!k.undirected) continue;
     delete k.undirected;

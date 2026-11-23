@@ -3666,7 +3666,9 @@ plain. `tests/path_card.js` 15.
    time (1.7 s to 4.3 s, 2.9 s to 6.4 s). In a lab console a Go-To 4.5 km up the river from Pine
    Bluff left its four starboard-hand buoys to starboard and its two port-hand buoys to port. The chart draws no number for them: the numbers are the
    console's, not the Corps'. Not numbered: beacons, a buoy more than 200 m off a sailing line (the river's own stand within 157 m),
-   the buoys of a line too few or split. `tests/river_marks.js`.
+   the buoys of a line too few or split. The river's lights and daybeacons, which the Corps names and
+   does not number, are kept off the danger beside them as offshore marks, as before: the numbered
+   buoys about them make no channel of them. `tests/river_marks.js`.
 
    **The Passage tab, and a long Go-To as a passage (2026-10-14).** Andy: "consider another path
    planning behavior called 'passage' that disregards the 9-23 directive and allows for long path

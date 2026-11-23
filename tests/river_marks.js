@@ -298,6 +298,18 @@ check("13. THE CONTROL: the same chart with the buoys' band gone - unnumbered, a
             && beforeR.how.marks.kept === 0,
       () => "near " + beforeR.marks.length + "; " + JSON.stringify(beforeR.how.marks) + "; read as "
             + [...new Set(beforeR.marks.map((k) => k.skip || (k.offshore ? "offshore" : "dir " + k.dir)))].join(" / "));
+// (review 2026-11-23, item 4) a named light on a bar near the right bank - no number, a lateral beacon of the river band - is
+// an OFFSHORE mark (kept between her and the bank it stands off, a berth), as it was before the river's buoys were numbered
+const light = { cls: "Beacon_Lateral_point", role: "chan_mark", band: "enc_river",
+  props: { CATLAM: 2, OBJNAM: "Hensely Bar Lt. (77.5)" }, geometry: { type: "Point", coordinates: LL(at(3500, 150)) } };
+const lightOf = (res) => res.marks.find((k) => !k.m.river && k.m.fixed);
+const litR = R.markPassRoute(UP, F, build([lineFeat(SAIL), ...BANKS, ...BUOYS, light]), 5, {});
+const litBefore = R.markPassRoute(UP, F, build([lineFeat(SAIL), ...BANKS, ...BUOYS.map((b) => ({ ...b, band: undefined })), light]), 5, {});
+const litSay = (res) => { const k = lightOf(res); return k ? (k.offshore ? "offshore" : k.skip || "dir " + k.dir) : "not near"; };
+check("13b. A RIVER LIGHT STAYS AN OFFSHORE MARK: a named light on a bar, with the river's numbered buoys about it, is kept "
+      + "between her and the bank it stands off, a berth, as before they were numbered - they make no channel of it",
+      () => litSay(litBefore) === "offshore" && litSay(litR) === "offshore",
+      () => "with the river's buoys numbered: " + litSay(litR) + "; before: " + litSay(litBefore));
 
 // ── 14-15. A LONE BUOY ────────────────────────────────────────────────────────────────────────────────────────────
 // Three buoys 2 km apart along the river (past MARK_NEIGHBOR_M and MARK_SINGLE_NEIGHBOR_M, 1500 m): no numbered mark near
