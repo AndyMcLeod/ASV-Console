@@ -345,6 +345,26 @@ check("15. ... BUT NOT FOR A ROUTE ACROSS THE RIVER: a route from bank to bank p
       () => kAcross && kAcross.dir !== 1 && kAcross.dir !== -1,
       () => (kAcross ? (kAcross.skip || "dir " + kAcross.dir) + (kAcross.offshore ? " (offshore)" : "") : "not near"));
 
+// (review 2026-11-23, item 5) a NOAA count beside the river: a harbor channel's port-hand buoys 3 5 7, numbered AWAY from the
+// sailing line's start, just below it - and the river's first buoy (the model's 2) 700 m above the count's 3, no river buoy
+// within 1500 m of it along the river. Read from the count, it took the count's direction of buoyage, the river's opposite.
+const noaaB = (n, num) => buoy(0, 0, 1, { band: "enc_harbour", props: { CATLAM: 1, OBJNAM: "Test Reach Buoy " + num },
+  geometry: { type: "Point", coordinates: LL({ e: 60, n }) } });
+const NB = [buoy(400, 70, 2), buoy(2600, -70, 1), buoy(5000, 70, 2), buoy(7000, -70, 1)];
+const nKO = build([lineFeat(SAIL), ...BANKS, ...NB, noaaB(-300, 3), noaaB(-650, 5), noaaB(-1000, 7)]);
+const nM = marksOf(nKO, [NB[0]])[0];
+const nUp = [];
+for (let n = -1500; n <= 3000; n += 50) nUp.push(ll({ e: 0, n }));
+const nRead = (route) => R.markPassRoute(route, F, nKO, 5, {}).marks.find((k) => k.m === nM);
+const nU = nRead(nUp), nD = nRead(nUp.slice().reverse());
+const nSay = (k) => (k ? (k.skip || "dir " + k.dir + (k.keepStbd ? " stbd" : " port")) : "not near");
+check("15b. A RIVER BUOY IS READ FROM ITS OWN LINE, NEVER FROM A CHARTED COUNT: the river's starboard-hand buoy 2 beside a NOAA "
+      + "count 3 5 7 numbered away from it is read with the river's direction of buoyage - kept to starboard up the river, to "
+      + "port down it - not the count's",
+      () => nM && nM.num === 2 && nM.river && nU && nU.dir === 1 && nU.keepStbd === true && !nU.skip
+            && nD && nD.dir === -1 && nD.keepStbd === false && !nD.skip,
+      () => "the buoy " + (nM && nM.num) + "; up: " + nSay(nU) + "; down: " + nSay(nD));
+
 // ── 16. THE OPERATOR'S NAME ─────────────────────────────────────────────────────────────────────────────────────
 check("16. THE OPERATOR'S NAME: the marks stage names a numbered river buoy by its hand, never by the model's own channel "
       + "name and number; a charted mark keeps its name and number",

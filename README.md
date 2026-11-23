@@ -3668,7 +3668,8 @@ plain. `tests/path_card.js` 15.
    console's, not the Corps'. Not numbered: beacons, a buoy more than 200 m off a sailing line (the river's own stand within 157 m),
    the buoys of a line too few or split. The river's lights and daybeacons, which the Corps names and
    does not number, are kept off the danger beside them as offshore marks, as before: the numbered
-   buoys about them make no channel of them. `tests/river_marks.js`.
+   buoys about them make no channel of them. A river buoy's number is its own line's: it is read
+   only from that line's buoys, never from a charted count beside it. `tests/river_marks.js`.
 
    **The Passage tab, and a long Go-To as a passage (2026-10-14).** Andy: "consider another path
    planning behavior called 'passage' that disregards the 9-23 directive and allows for long path

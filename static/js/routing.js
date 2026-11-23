@@ -2157,8 +2157,14 @@ export function markPassRoute(pathLL, frame, ko, buf, opts = {}) {
     const d = (x) => Math.hypot(x.e - p.e, x.n - p.n);
     return ms.reduce((a, b) => (d(b) < d(a) ? b : a)).num === (below ? Math.max(...ns) : Math.min(...ns));
   };
+  //   ⚠ A RIVER BUOY'S NUMBER IS ITS OWN LINE'S AND NO OTHER COUNT'S (review 2026-11-23, item 5): the model numbers each
+  // sailing line's buoys from 1 wherever the line or the chart read starts (keepouts.js numberRiverBuoys), so a river
+  // buoy speaks only for, and is spoken for only by, the buoys of its own line. Read from a NOAA count 3 5 7 numbered
+  // away from the line's end, the river's lone starboard-hand buoy 2 took the count's direction of buoyage - the
+  // opposite of the river's - and was passed on its bank side both ways, counted kept.
   const continues = (k, q) => {
     if (q.sys && q.sys === k.m.sys) return true;                         // its own name
+    if (q.river || k.m.river) return false;
     const qs = q.sys ? sysMarks.get(q.sys) || [] : [], ks = k.m.sys ? sysMarks.get(k.m.sys) || [] : [];
     if (qs.length >= 2) return facing(qs, k.m, k.m.num);
     if (ks.length >= 2 && q.num != null) return facing(ks, q, q.num);
