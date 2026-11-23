@@ -4436,6 +4436,13 @@ def _older_tile(tile):
             got = None
         if not (isinstance(got, dict) and got.get("complete") and isinstance(got.get("features"), list)):
             continue
+        # ⚠ NO COPY KEPT BEFORE THE RIVER BAND WHERE A RIVER CELL MAY CHART THE WATER (2026-11-23, review): this is
+        # reached when the read has just failed - the Corps' among it - and such a copy has NOAA's coarser chart in the
+        # river chart's place, served as a chart to act on: what ENC_RIVER's note never allows. The read's own answer
+        # (that water unread) is served instead. Where no river cell reaches, the copy is the fallback it always was.
+        if ENC_SOURCE == "cells" and ENC_RIVER not in (got.get("sources") or {}) \
+                and _river_sources()[0].may_chart(tile):
+            continue
         why = _tile_not_current(got) if p == _tile_path(tile) else None
         if p == _tile_path(tile) and why is None:
             continue                               # this console's own chart: never a fallback for itself

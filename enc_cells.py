@@ -814,6 +814,21 @@ class RiverCells(CellSource):
             info["catalog_stale"] = None
         return out, info
 
+    def may_chart(self, box):
+        """May a river cell chart water in the box - by the catalog copy kept alone, the network never asked? False
+        outside RIVER_REACH, and where the copy names no river cell reaching into the box; True where it names one, and
+        where no copy can be read (not known not to). For the console's older-tile fallback (asv_console._older_tile),
+        which is reached when a read has just failed."""
+        if not river_reaches(box):
+            return False
+        try:
+            entries = self._parse_catalog(os.path.join(self.root, self.CATALOG_FILE))
+        except (OSError, ValueError):
+            return True
+        return any(e["band"] == RIVER_BAND and not (e["bbox"][2] < box[0] or e["bbox"][0] > box[2]
+                                                     or e["bbox"][3] < box[1] or e["bbox"][1] > box[3])
+                   for e in entries)
+
 
 class RiverBuoys(RiverCells):
     """The Corps' buoy overlay (3UABUOYS) under the river cells' root: read as part of the river band (the header)."""

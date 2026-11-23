@@ -3630,7 +3630,8 @@ plain. `tests/path_card.js` 15.
    read AS CHARTED, no tide station's level added, and the chart card says so (Datum: river
    low-water reference; Correction: none). The Corps' cells are not read from ENCDirect, which
    serves NOAA's charts alone: when they cannot be had, the water they would chart is unread
-   and said as the Corps', never filled from NOAA's coarser chart. A tile kept before this change
+   and said as the Corps', never filled from NOAA's coarser chart - nor from a tile kept before
+   this change, wherever a river cell may chart its water. A tile kept before this change
    is read again inside the rivers' reach. `--enc-source encdirect` reads no river band.
    `tests/ienc_cells.py`.
 

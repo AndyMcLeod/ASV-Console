@@ -25,7 +25,8 @@ charts in the Console" - and, asked where the two overlap, "NOAA harbor wins"):
      the Corps', never read from ENCDirect; NOAA's harbor chart still answers where it is finest;
   6  a river cell or the buoy overlay read from an older copy, or either catalog past its age, said as the Corps' (the
      log too) - and the tile not called whole; a buoy that cannot be built leaves it partial;
-  7  a tile kept before the river band: not current inside the rivers' reach, current outside it;
+  7  a tile kept before the river band: not current inside the rivers' reach, current outside it - and never the
+     fallback of a failed read where a river cell may chart the water (7b);
   8  the tile's child is told the console's river folder (--ienc-dir), and reads it;
   9  THE DEPTHS AS CHARTED (keepouts.js, run in node): a river feature's depth area, rock and sounding take no tide
      station's level - risen or fallen - where NOAA's take it, in the floor, the passable rock and the margin layer.
@@ -731,6 +732,82 @@ check("7. A TILE KEPT BEFORE THE RIVER BAND WAS READ (it names no source for it)
       lambda: nc7 == {"inside, no river": RIVER_WHY, "inside, river": None, "outside, no river": None,
                       "no box": RIVER_WHY, "encdirect, inside": None},
       lambda: nc7)
+
+
+def pre_river(t, fmt=None, **over):
+    """A whole tile kept before the river band at `t` - NOAA's charts alone, its one feature a sentinel (oid 4243) on the
+    river cell's water - as this reader's format (tile_v4) or an older reader's (`fmt`, ENCDirect's tile_v3: reader 3,
+    no sources)."""
+    got = dict({"tile": t, "bands": ["enc_approach"], "unread": [], "unread_failed": [], "partial": [], "complete": True,
+                "reader": A._ENC_TILE_READER, "read_at": time.time() - 3600, "sources": dict(NOAA_ALL),
+                "cells_reader": TAG,
+                "features": [{"role": "hazard_point", "cls": "Obstruction_point", "props": {"VALSOU": 1.0}, "oid": 4243,
+                              "band": "enc_approach", "geometry": {"type": "Point", "coordinates": list(AP_IN_RV)}}]},
+               **over)
+    if fmt:
+        got = dict(got, reader=3)
+        got.pop("sources")
+        got.pop("cells_reader")
+    A._write_tile_jsonl(os.path.join(A.ENC_DIR, (fmt or A._ENC_TILE_FMT) % A._bbox_key(t)), got)
+
+
+def clear7(*ts):
+    for t in ts:
+        with A._enc_tile_locks_lock:
+            A._enc_tile_mem.pop(A._bbox_key(t), None)
+        for p in [A._tile_path(t)] + A._older_tile_paths(t):
+            if os.path.exists(p):
+                os.remove(p)
+
+
+def sent7(d):
+    return any(f.get("oid") == 4243 for f in (d or {}).get("features") or [])
+
+
+V3 = "tile_v3_%s.jsonl"
+CTRL = [-89.0, 33.0, -88.75, 33.25]       # inside the reach, no river cell near: NOAA's water alone
+net7 = Net()
+net7.down.add(E.RIVER_CATALOG_URL)
+sources(net7, "c7b")                      # the Corps' host silent, no catalog kept
+clear7(TILE, CTRL, MAINE)
+pre_river(TILE)
+pre_river(TILE, V3)
+b7 = A._tile_build_now(TILE)              # the read fails (the river band unknown); its fallback asked
+pre_river(MAINE, V3)
+o7out = A._older_tile(MAINE)              # outside the reach, no catalog kept: the older copy is the fallback
+net7c = Net()
+sources(net7c, "c7c")
+A._river_sources()[0].catalog()           # the Corps' catalog kept: the river cells' footprints known
+o7in = A._older_tile(TILE)
+pre_river(CTRL)
+o7ctrl = A._older_tile(CTRL)
+pre_river(TILE, sources=dict(NOAA_ALL, enc_river="cells"), cells_reader="an earlier build")
+o7riv = A._older_tile(TILE)               # a copy naming the river band (an earlier reader's): the fallback
+clear7(TILE)
+pre_river(TILE, V3)
+A.ENC_SOURCE = "encdirect"
+try:
+    o7ed = A._older_tile(TILE)            # the ENCDirect console reads no river band: its older copy is the fallback
+finally:
+    A.ENC_SOURCE = "cells"
+clear7(TILE, CTRL, MAINE)
+check("7b. NO COPY KEPT BEFORE THE RIVER BAND IS THE FALLBACK WHERE A RIVER CELL MAY CHART THE WATER (review, 2026-11-23) "
+      "- it has NOAA's coarser chart in the river chart's place, served as a chart to act on: the read that failed is "
+      "served (that water unread), not the copy, of this format or ENCDirect's older one - with the Corps' host silent "
+      "and no catalog kept (not known not to), and with the catalog kept naming a river cell there; where none reaches "
+      "(inside the reach), outside the reach, for a copy naming the river band, and on the ENCDirect console, the copy "
+      "is the fallback it always was",
+      lambda: not sent7(b7) and b7.get("unread_failed") and not b7.get("complete")
+              and "before the Corps' river charts" not in (b7.get("stale") or "")
+              and o7in is None
+              and sent7(o7ctrl) and "before the Corps' river charts were read" in (o7ctrl.get("stale") or "")
+              and sent7(o7out) and sent7(o7riv) and "earlier build of the cell reader" in (o7riv.get("stale") or "")
+              and sent7(o7ed),
+      lambda: "failed read: copy %s, unread_failed %d, stale %r; catalog naming a river cell: %s; no river cell: %s %r; "
+              "outside: %s; naming the river: %s %r; ENCDirect: %s" % (
+                  sent7(b7), len(b7.get("unread_failed") or []), b7.get("stale"),
+                  "none" if o7in is None else "copy %s" % sent7(o7in), sent7(o7ctrl), (o7ctrl or {}).get("stale"),
+                  sent7(o7out), sent7(o7riv), (o7riv or {}).get("stale"), sent7(o7ed)))
 
 # ── 8. the tile's child ──────────────────────────────────────────────────────────────────────────────────────────────
 seen8 = {}
