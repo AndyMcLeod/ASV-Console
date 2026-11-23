@@ -1,0 +1,67 @@
+Code,Attribute,Acronym,Attributetype,Class
+17010,Category of checkpoint,catchp,L,F
+17011,Category of lateral mark,catlam,E,F
+17012,Category of shoreline construction,catslc,E,F
+17078,Category of waterway gauge,catgag,L,F
+17080,Value at relevant high water level,higwat,F,F
+17081,Name of relevant high water level,hignam,T,F
+17082,Value at relevant low water level,lowwat,F,F
+17083,Name of relevant low water level,lownam,T,F
+17084,Value at relevant mean water level,meawat,F,F
+17085,Name of relevant mean water level,meanam,T,F
+17086,Value at other locally relevant water level,othwat,F,F
+17087,Name of other locally relevant water level,othnam,T,F
+17088,Reference gravitational level,reflev,E,F
+17089,Name of Sounding datum reference level,sdrlev,T,F
+17090,Name of vertical river datum reference level,vcrlev,T,F
+17091,Category of vehicle transfer,catvtr,L,F
+17092,Category of time and behaviour,cattab,E,F
+17093,Time Schedule Reference,schref,T,F
+17094,Use of Ship,useshp,E,F
+17095,Current velocity at high water level,curvhw,F,F
+17096,Current velocity at low water level,curvlw,F,F
+17097,Current velocity at mean water level,curvmw,F,F
+17098,Current velocity at other water level,curvow,F,F
+17099,Average Passing Time Reference,aptref,T,F
+17100,Category of exceptional structure,catexs,E,F
+17101,Category of cable,catcbl,E,F
+17102,Category of hulk,cathlk,L,F
+17103,Height/length units,hunits,E,F
+17104,Water level effect,watlev,E,F
+17105,Bank of the waterway,bnkwtw,E,F
+17106,Category of rescue station,catrsc,L,F
+18001,Maximal permitted speed,lg_spd,F,F
+18002,Speed reference,lg_spr,L,F
+18003,Maximal permitted beam,lg_bme,F,F
+18004,Maximal permitted length,lg_lgs,F,F
+18005,Maximal permitted draught,lg_drt,F,F
+18006,Maximal permitted water displacement,lg_wdp,F,F
+18007,Water displacement unit,lg_wdu,E,F
+18008,Related issue,lg_rel,L,F
+18010,Description of legal conditions,lg_des,T,F
+18011,Publication reference,lg_pbr,T,F
+18012,Category of ship (including),lc_csi,L,F
+18013,Category of ship (excluding),lc_cse,L,F
+18014,Assemblies of ship (including),lc_asi,L,F
+18015,Assemblies of ship (excluding),lc_ase,L,F
+18016,Category of cargo (including),lc_cci,L,F
+18017,Category of cargo (excluding),lc_cce,L,F
+18018,Reference Gauge,refgag,T,F
+18019,Category of sensor,catsen,L,F
+18020,Function of sensor,fnctsn,L,F
+18027,Object class definition,CLSDEF,T,F
+18028,Object class name,CLSNAM,T,F
+18029,Symbol instruction,SYMINS,T,F
+18030,Category of frequency,catfrq,L,F
+18031,Category of voltage,catvol,L,F
+18032,Amount of amperage,amoamp,I,F
+18033,Allowed consumption,allcon,I,F
+18034,Category of plug,catplg,T,F
+18035,Number of shore connectors,shrnum,I,F
+18046,MMSI Code,mmsico,I,F
+18047,Type of AtoN,typatn,L,F
+18048,Vertical river datum reference level value,vcrval,F,F
+18049,Sounding datum reference level value,sdrval,F,F
+18050,Elevation of water level,elevwl,F,F
+19000,Category of temporal variation,CATTEV,L,F
+33066,Type of Ship,shptyp,E,F

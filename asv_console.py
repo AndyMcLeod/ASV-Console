@@ -2742,6 +2742,30 @@ ENC_DIR = os.path.join(CHART_DIR, "enc")
 # (`--enc-source encdirect`: an operator's way back, and a harness's that serves its own seeded chart cache).
 ENC_SOURCE = "cells"
 S57_DIR = os.path.join(CHART_DIR, "s57")
+# ⚠ THE CORPS' RIVER CHARTS, A BAND OF THEIR OWN (2026-11-23, Andy: "add US Army Corps of Engineers (US inland rivers)
+# to the available charts in the Console"). The U.S. Army Corps of Engineers' Inland ENCs of the rivers it keeps
+# navigable (enc_cells.RiverCells: 109 cells on 21 rivers) and its buoy overlay (RiverBuoys) are read, with the cells
+# the source, as ONE BAND, ENC_RIVER, kept in IENC_DIR. WHERE IT STANDS IS HIS CALL (asked 2026-11-23: "NOAA harbor
+# wins"): below NOAA's harbor chart - and its berthing chart, a supplement to the harbor chart - and above NOAA's
+# approach chart and every coarser one (_layered_bands). Where the two overlap - the lower Mississippi at Baton Rouge
+# and New Orleans, the Atchafalaya at Morgan City, the Illinois at Chicago, the Tombigbee at Mobile - NOAA's harbor
+# chart is read; up the rivers, where NOAA charts at most at approach scale or not at all, the Corps' is.
+#   NEVER ENCDIRECT'S. ENCDirect serves NOAA's charts alone: a river band whose cells cannot be read is UNKNOWN
+#   (`coverage_failed`), never asked of ENCDirect, and its squares are water that failed to read (_enc_leaves) - never
+#   read from NOAA's coarser chart in its place. With `--enc-source encdirect` it is not read at all: that console reads
+#   ENCDirect's charts and nothing more, as it did before this band.
+#   DEPTHS AS CHARTED. A river cell's depths are below the river's own low-water reference plane, not the tide's datum:
+#   no tide station's level is added to them (static/js/keepouts.js asCharted), whatever station is near.
+ENC_RIVER = enc_cells.RIVER_BAND
+IENC_DIR = os.path.join(CHART_DIR, "ienc")
+
+
+def _layered_bands():
+    """The bands the layered read reads, finest first (the berthing chart is read beside them, ENC_BERTHING): NOAA's,
+    and with the cells the source the Corps' river band after NOAA's harbor chart (ENC_RIVER's note)."""
+    if ENC_SOURCE != "cells":
+        return list(ENC_BANDS)
+    return ENC_BANDS[:1] + [ENC_RIVER] + ENC_BANDS[1:]        # NOAA's harbor chart is ENC_BANDS[0], its finest
 
 # S-57 object classes we fetch, grouped by the punch-out ROLE they play. Layer ids
 # differ per band, so we resolve them by class name at runtime (the ENCDirect
@@ -3335,6 +3359,65 @@ def _cells():
         return _enc_cells_src
 
 
+_enc_river_src = None
+
+
+def _river_sources():
+    """(river cells, buoy overlay): the process's one pair of the Corps' sources (kept in IENC_DIR, ENC_RIVER's note)."""
+    global _enc_river_src
+    with _enc_cells_lock:
+        if _enc_river_src is None or _enc_river_src[0].root != IENC_DIR:
+            _enc_river_src = (enc_cells.RiverCells(IENC_DIR, ssl_context=_enc_ssl),
+                              enc_cells.RiverBuoys(IENC_DIR, ssl_context=_enc_ssl))
+        return _enc_river_src
+
+
+def _band_source(band):
+    """The source a band's cells are read from: the Corps' river cells for ENC_RIVER, NOAA's for every other band."""
+    return _river_sources()[0] if band == ENC_RIVER else _cells()
+
+
+def _inland_only(only):
+    """`only` (class acronyms) with each one's inland form beside it ("depare" for DEPARE): a river cell may chart its
+    depth, its land or its coverage under the inland catalog's class (s57.inland_twin)."""
+    if only is None:
+        return None
+    acr = s57.catalog()["acr_objl"]
+    return set(only) | {a.lower() for a in only
+                        if acr.get(a.lower(), 0) >= s57.INLAND_FIRST_CODE and s57.inland_twin(a.lower()) == a}
+
+
+class RiverCellsFailed(OSError):
+    """The Corps' river cells (or its buoy overlay) could not be had or read: never answered from ENCDirect, which
+    serves NOAA's charts alone (ENC_RIVER's note)."""
+
+
+def _band_features(band, box, namer, only=None):
+    """enc_cells' band_features for any band: NOAA's cells, or for ENC_RIVER the Corps' river cells and - when every
+    class is asked for (`only` None) - its buoy overlay, the one answer (enc_cells' section header: the buoys are in no
+    river cell). Raises as band_features does - the river band's failure, the overlay's among it, as RiverCellsFailed.
+    ⚠ THE OVERLAY ONLY WHERE A RIVER CELL IS. Its one cell's footprint is the whole of RIVER_REACH - the Gulf coast and
+    the Great Lakes' among it - so asked for every box there, every coast tile with no river cell near downloaded and
+    read it, and with the Corps' host silent failed its river band: the tile unread beyond NOAA's harbor chart, and a
+    catalog past its age said as the river chart's where there is none. The buoys reach the chart only where the river
+    cells cover the water (enc_cells' section header), so a box no river cell reaches does not ask for them."""
+    if band != ENC_RIVER:
+        return _cells().band_features(band, box, namer, only)
+    rc, rb = _river_sources()
+    try:
+        feats, info = rc.band_features(band, box, namer, _inland_only(only))
+        if only is not None or not info["cells"]:
+            return feats, info
+        bf, bi = rb.band_features(band, box, namer)
+    except (OSError, ValueError) as e:
+        raise RiverCellsFailed(str(e) or type(e).__name__)
+    out = dict(info, cells=info["cells"] + bi["cells"], stale=info["stale"] + bi["stale"],
+               partial=sorted(set(info["partial"]) | set(bi["partial"])), failed_cells=info["failed_cells"] + bi["failed_cells"])
+    cs = [d for d in (info.get("catalog_stale"), bi.get("catalog_stale")) if d]
+    out["catalog_stale"] = min(cs) if cs else None
+    return feats + bf, out
+
+
 def _cell_namer(band):
     """namer(acronym, prim) for a cell read in `band`: ENCDirect's name for the class in that band, else in any band,
     else the rule's (the block header); None for an object with no geometry of its own (a collection)."""
@@ -3359,10 +3442,11 @@ def _cell_namer(band):
 
 
 def _cells_extract(band, bbox, extras=True):
-    """One band's features reaching into the box, from NOAA's cells, in fetch_enc_features' answer: role, cls, the
+    """One band's features reaching into the box, from its cells (NOAA's; the Corps' for ENC_RIVER, _band_features), in
+    fetch_enc_features' answer: role, cls, the
     kept properties, geometry and `oid` ("<CELL>_ED<n>_UP<n>:<record>": the update read is in it, so a tile read
     from an older update never shares an id with the current one). Raises when a cell cannot be had or read."""
-    feats, info = _cells().band_features(band, bbox, _cell_namer(band))
+    feats, info = _band_features(band, bbox, _cell_namer(band))
     out, counts = [], {}
     for ft in feats:
         cls = ft["cls"]
@@ -3390,9 +3474,10 @@ def _cells_extract(band, bbox, extras=True):
 
 def _cells_pick_band(bbox):
     """_enc_pick_band's answer from the cells: the finest band whose cells chart depth or land in the box, or None when
-    no band's do. A band whose cells cannot be read RAISES - never a coarser band in its place (_enc_pick_band's rule)."""
-    for band in ENC_BANDS:
-        feats, info = _cells().band_features(band, bbox, _cell_namer(band), only={"DEPARE", "LNDARE"})
+    no band's do. A band whose cells cannot be read RAISES - never a coarser band in its place (_enc_pick_band's rule).
+    The Corps' river band is one of them, after NOAA's harbor chart (_layered_bands)."""
+    for band in _layered_bands():
+        feats, info = _band_features(band, bbox, _cell_namer(band), only={"DEPARE", "LNDARE"})
         if info.get("partial"):                  # its depth or land not read whole: not known to chart none here
             raise OSError("%s of %s could not be read whole" % (", ".join(info["partial"]),
                                                                  ", ".join(info["failed_cells"][:4])))
@@ -3411,8 +3496,12 @@ def _cells_answer(bbox, band, extras):
                 return {"band": None, "features": [], "note": "no ENC coverage here", "source": "cells"}
         return _cells_extract(band, bbox, extras)
     except Exception as e:                       # a cell that will not read is a failed read, whatever the fault
-        return {"band": None, "features": [], "failed": True,
-                "note": "NOAA's chart cells could not be read (%s)" % (str(e) or type(e).__name__)}
+        # the Corps' river cells failing is said as theirs, and is never read from ENCDirect (`river`): ENCDirect's
+        # answer here would be NOAA's coarser chart in the river chart's place (fetch_enc_features)
+        river = isinstance(e, RiverCellsFailed)
+        return dict({"band": None, "features": [], "failed": True,
+                     "note": "%s could not be read (%s)" % ("the Corps' river chart cells" if river else "NOAA's chart cells",
+                                                            str(e) or type(e).__name__)}, **({"river": True} if river else {}))
 
 
 def _cells_then(cells_why, encdirect_why):
@@ -3427,7 +3516,7 @@ def _cells_coverage(band, tile, stale=None, catalog=None):
     """_enc_coverage's answer from the cells: the band's M_COVR polygons reaching into the tile that say "coverage
     available" (the same test), as [[ring, ...], ...]. A cell read from an older copy is added to `stale`, a list; the
     catalog copy's date to `catalog`, a list, when it was read past its age."""
-    feats, info = _cells().band_features(band, tile, _cell_namer(band), only={"M_COVR"})
+    feats, info = _band_features(band, tile, _cell_namer(band), only={"M_COVR"})
     if info.get("partial"):                      # a coverage area not built: what the band covers is not known
         raise OSError("the coverage of %s could not be read whole" % ", ".join(info["failed_cells"][:4]))
     if stale is not None:
@@ -3460,9 +3549,11 @@ def fetch_enc_features(bbox, min_depth=0.0, band=None, extras=True, use_cache=Tr
     global _enc_down_until
     key = _bbox_key(bbox)
     forced = band
-    if (source or ENC_SOURCE) == "cells":
+    if (source or ENC_SOURCE) == "cells" or band == ENC_RIVER:
         data = _cells_answer(bbox, band, extras)
-        if not data.get("failed") or source == "cells":
+        # the Corps' river cells failing (`river`) is not read from ENCDirect: it serves NOAA's charts alone, and its
+        # answer would be a coarser NOAA chart in the river chart's place (ENC_RIVER's note)
+        if not data.get("failed") or source == "cells" or data.get("river"):
             return _enc_mark_shallow(data, min_depth)
         print("[enc] %s for %s - reading ENCDirect instead" % (data.get("note"), key), flush=True)
         got = fetch_enc_features(bbox, min_depth, band, extras, use_cache, source="encdirect")
@@ -3857,7 +3948,7 @@ def _seg_crosses_rect(x1, y1, x2, y2, W, S, E, N):
 
 
 def _enc_leaves(tile, idx, depth_max=ENC_LEAF_DEPTH):
-    """The tile cut into squares, each (rect, bands, read[, why]): `bands` the ranks (ENC_BANDS order) whose features
+    """The tile cut into squares, each (rect, bands, read[, why]): `bands` the ranks (_layered_bands order) whose features
     apply there, `read` False where some or all of it no chart covers - `why` "none" then, or "unknown" (2026-10-19)
     where a band whose coverage is UNKNOWN (idx[j] None: its coverage could not be read, no copy) might cover it: such a
     square is never read from a coarser band in that band's place; it is water that failed to read. See the header."""
@@ -4082,18 +4173,33 @@ def _enc_tile_build(tile):
     # ENCDirect's path below is the band's only when they cannot answer it - and then the band's features are ENCDirect's
     # too (`sources`): ONE SOURCE A BAND. ENCDirect's breaker stops ENCDirect alone; the cells are read through it.
     covs, cov_failed, cov_stale, sources, cells_stale, cat_stale = [], {}, [], {}, [], []
+    river_stale, river_cat = [], []                # the Corps' cells read from an older copy, its catalogs past their age
     cells_why = {}                                 # band -> why its cells could not be read (said with ENCDirect's, below)
+
+    def stale_of(b):                               # (older copies, catalog dates) of band b's producer
+        return (river_stale, river_cat) if b == ENC_RIVER else (cells_stale, cat_stale)
 
     def said(b, why):                              # ENCDirect's failure of band b, the cells' before it (_cells_then)
         return _cells_then("its cells could not be read (%s)" % cells_why[b], why) if b in cells_why else why
-    for b in ENC_BANDS + [ENC_BERTHING]:
+    bands = _layered_bands()                       # with the cells the source, the Corps' river band among them
+    for b in bands + [ENC_BERTHING]:
         if cells_on:
             try:
-                covs.append(_cells_coverage(b, tile, cells_stale, cat_stale))
+                covs.append(_cells_coverage(b, tile, *stale_of(b)))
                 sources[b] = "cells"
                 continue
             except Exception as e:                 # a cell that will not read fails the cells' answer, whatever the fault
                 cells_why[b] = str(e) or type(e).__name__
+                if b == ENC_RIVER:
+                    # ⚠ THE RIVER BAND IS THE CORPS' CELLS OR UNKNOWN (ENC_RIVER's note): never ENCDirect's, which
+                    # serves no river chart - its squares are water that failed to read, and ENCDirect's breaker is
+                    # not armed by a host it never asked
+                    print("[enc] tile %s: the Corps' river cells could not be read (%s) - the water they would chart "
+                          "is unread" % (_bbox_key(tile), cells_why[b]), flush=True)
+                    sources[b] = "cells"
+                    covs.append(None)
+                    cov_failed[b] = "the Corps' river cells could not be read (%s)" % cells_why[b]
+                    continue
                 print("[enc] tile %s: the %s cells could not be read (%s) - reading that band from ENCDirect"
                       % (_bbox_key(tile), _band_word(b), cells_why[b]), flush=True)
         sources[b] = "encdirect"
@@ -4138,7 +4244,7 @@ def _enc_tile_build(tile):
             ft["band"] = ENC_BERTHING
             ft.pop("shallow", None)
             feats.append(ft)
-    for r, band in enumerate(ENC_BANDS):
+    for r, band in enumerate(bands):
         rects = _merge_rects([lf[0] for lf in leaves if r in lf[1]])
         if not rects:
             continue
@@ -4150,8 +4256,9 @@ def _enc_tile_build(tile):
             return dict(fail, note="the %s chart could not be read here (%s)" % (_band_word(band),
                                                                                   said(band, d.get("note") or "no answer")))
         failed.update(d.get("partial") or [])
-        cells_stale.extend(d.get("stale_cells") or [])
-        cat_stale.extend([d["catalog_stale"]] if d.get("catalog_stale") else [])
+        st, cat = stale_of(band)
+        st.extend(d.get("stale_cells") or [])
+        cat.extend([d["catalog_stale"]] if d.get("catalog_stale") else [])
         present.append(band)
         for ft in d.get("features") or []:
             ft = dict(ft)
@@ -4167,7 +4274,8 @@ def _enc_tile_build(tile):
            "unread": [list(x) for x in _merge_rects([lf[0] for lf in not_read if len(lf) < 4 or lf[3] == "none"])],
            "leaves": len(leaves), "read_at": time.time(), "reader": _ENC_TILE_READER,
            "coverage_failed": sorted(cov_failed), "coverage_stale": sorted(cov_stale), "sources": sources,
-           "stale_cells": sorted(set(cells_stale)), "cells_reader": enc_cells.reader_tag() if cells_on else None}
+           "stale_cells": sorted(set(cells_stale) | set(river_stale)),
+           "cells_reader": enc_cells.reader_tag() if cells_on else None}
     # ⚠ A BAND READ FROM ENCDIRECT IS NOT THE CELLS' CHART (the 2026-11-21 review). With the cells the source, a band whose
     # cells could not be had - a download that timed out, and DOWN_S then holding the next band's off too - is read from
     # ENCDirect whole (ONE SOURCE A BAND), and the tile was kept as whole: served a week as the cells' chart, without the
@@ -4175,25 +4283,34 @@ def _enc_tile_build(tile):
     # said (`stale`), never kept, so it is read from the cells again after ENC_TILE_RETRY_S.
     # A band whose coverage could not be read either (`coverage_failed`) was read from nowhere: it is not named as read
     # from ENCDirect (fix 10 of that review).
-    fell = [b for b in ENC_BANDS + [ENC_BERTHING]
+    fell = [b for b in bands + [ENC_BERTHING]
             if sources.get(b) == "encdirect" and b not in cov_failed] if cells_on else []
     stale = []
+    if cat_stale or river_cat:
+        out["catalog_stale"] = min(cat_stale + river_cat)
     if cat_stale:
         # NOAA'S CATALOG COULD NOT BE REFRESHED (the 2026-11-21 review): the cells were read as its copy of that day
         # names them, and a correction NOAA issued since is not in them. Served and said - `stale`, which the page shows
         # as an older chart in use - and never kept, so the tile is read again once the catalog is.
-        out["catalog_stale"] = min(cat_stale)
         stale.append("NOAA's cell catalog could not be refreshed: the chart is read as its copy of %s named the "
-                     "cells - a correction NOAA issued since is not in it" % out["catalog_stale"])
-    if cells_stale:
+                     "cells - a correction NOAA issued since is not in it" % min(cat_stale))
+    if river_cat:
+        # ... and the Corps' (ENC_RIVER): the same, said as theirs
+        stale.append("the Corps' river chart catalog could not be refreshed: the river chart is read as its copy of %s "
+                     "named the cells - a correction or a buoy moved since is not in it" % min(river_cat))
+    for cs, who in ((sorted(set(cells_stale)), "NOAA"), (sorted(set(river_stale)), "the Corps")):
+        if not cs:
+            continue
         # ⚠ A CELL READ FROM AN OLDER COPY IS AN OLDER CHART IN USE (the 2026-11-21 review). It was said in the tile's
         # note alone, which the layered read passes on only when no band was read or a coverage is unknown - and the
         # page reads `stale`: the chart was a correction or more behind and nothing on the page said so.
-        cs = sorted(set(cells_stale))
         stale.append("the current edition or update of %s could not be downloaded: %s read from an older copy - a "
-                     "correction NOAA issued since is not in it"
+                     "correction %s issued since is not in it"
                      % (", ".join(cs[:4]) + (" and %d more" % (len(cs) - 4) if len(cs) > 4 else ""),
-                        "it is" if len(cs) == 1 else "they are"))
+                        "it is" if len(cs) == 1 else "they are", who))
+    cells_stale = cells_stale + river_stale        # (one list from here: the note and the log name every one)
+    cat_who = " and ".join(w for w, l in (("NOAA's", cat_stale), ("the Corps'", river_cat)) if l)   # (the log's)
+    cat_stale = cat_stale + river_cat
     if fell:
         out["encdirect_bands"] = fell
         stale.append("NOAA's cells could not be read here for the %s chart%s: %s from NOAA's ENCDirect service, which "
@@ -4230,7 +4347,7 @@ def _enc_tile_build(tile):
                  ("; coverage unknown: " + ", ".join(sorted(cov_failed))) if cov_failed else "",
                  ("; coverage from an older read: " + ", ".join(cov_stale)) if cov_stale else "",
                  ("; cells from an older copy: " + ", ".join(sorted(set(cells_stale)))) if cells_stale else "",
-                 ("; NOAA's catalog not refreshed since " + min(cat_stale)) if cat_stale else "",
+                 ("; %s catalog not refreshed since %s" % (cat_who, min(cat_stale))) if cat_stale else "",
                  ("; bands from ENCDirect: " + ", ".join(fell)) if fell else ""), flush=True)
     else:
         out["complete"] = True
@@ -4281,7 +4398,7 @@ def _tile_not_current(got):
     current whatever wrote it: one a console run with --enc-source encdirect kept, read later with the cells the
     source; and one a build of the cell reader before this one kept (reader_tag hashes the reader so that no one has to
     bump a number - and a tile carried none, so a reader change never reached the tiles kept)."""
-    src, order = got.get("sources") or {}, ENC_BANDS + [ENC_BERTHING]
+    src, order = got.get("sources") or {}, _layered_bands() + [ENC_BERTHING]
     other = sorted((b for b, s in src.items() if s != ENC_SOURCE),            # finest first, as the bands are read
                    key=lambda b: (order.index(b) if b in order else len(order), b))
     if other and ENC_SOURCE == "cells":
@@ -4291,6 +4408,12 @@ def _tile_not_current(got):
                 "among others")
     if other:
         return "from NOAA's cells, where this console reads NOAA's ENCDirect service", ""
+    # a tile kept before the Corps' river band was read (2026-11-23, ENC_RIVER's note) names no source for it: inside
+    # the reach of the Corps' cells (enc_cells.RIVER_REACH) it is not this console's chart wherever a river cell charts
+    # the water, and not known not to be anywhere else, so not current. Outside it no river cell can chart the tile -
+    # it lacks nothing, and a tile served as current there stays so (a tile naming no box is taken as inside).
+    if ENC_SOURCE == "cells" and ENC_RIVER not in src and enc_cells.river_reaches(got.get("tile") or enc_cells.RIVER_REACH):
+        return "before the Corps' river charts were read", "it lacks the river chart wherever one charts the water"
     if ENC_SOURCE == "cells" and got.get("cells_reader") != enc_cells.reader_tag():
         return "by an earlier build of the cell reader", ""
     return None
@@ -4430,7 +4553,8 @@ def _enc_tile_build_child(tile):
     out = "%s.%d.%d.build" % (_tile_path(tile), os.getpid(), threading.get_ident())
     gout = "%s.%d.%d.build" % (_grid_path(tile), os.getpid(), threading.get_ident())   # its grid (THE PASSAGE GRID)
     cmd = [sys.executable, os.path.abspath(__file__), "--enc-tile-worker", "--tile=" + ",".join(repr(float(v)) for v in tile),
-           "--enc-dir", ENC_DIR, "--out", out, "--grid-out", gout, "--s57-dir", S57_DIR, "--enc-source", ENC_SOURCE]
+           "--enc-dir", ENC_DIR, "--out", out, "--grid-out", gout, "--s57-dir", S57_DIR, "--ienc-dir", IENC_DIR,
+           "--enc-source", ENC_SOURCE]
     # ⚠ ENCDIRECT'S BREAKER GOES WITH THE CHILD (the 2026-11-21 review): a child is a new process, its breaker at 0, and
     # one spawned while it was armed here (the cells are read through it) asked ENCDirect again when a cell failed -
     # a listing, up to 20 s against a silent host, a tile. Its time left is passed; the child holds ENCDirect off as long.
@@ -4477,7 +4601,7 @@ def _enc_tile_worker_main(argv):
     and write it to PATH as a tile file, complete or not; the console decides what to keep. ASV_ENC_TILE_FAKE (a JSON file:
     coverage / features / partial per band, `offline`, `crash`, or `exit_after_write`: a tile written, then a failing
     exit) stands in for NOAA, for tests/chart_read_stall.py."""
-    global ENC_DIR, S57_DIR, ENC_SOURCE, _enc_down_until
+    global ENC_DIR, S57_DIR, IENC_DIR, ENC_SOURCE, _enc_down_until
     import argparse as _ap
     ap = _ap.ArgumentParser()
     ap.add_argument("--tile", required=True)   # =W,S,E,N - a western longitude reads as an option otherwise
@@ -4486,6 +4610,7 @@ def _enc_tile_worker_main(argv):
     ap.add_argument("--grid-out")              # the tile's planning grid, when it is read whole (THE PASSAGE GRID)
     ap.add_argument("--s57-dir")               # the console's cells (S57_DIR) and its source (ENC_SOURCE): the child
     ap.add_argument("--enc-source", choices=("cells", "encdirect"))   # reads what the console would
+    ap.add_argument("--ienc-dir")              # ... and the Corps' river cells (IENC_DIR, ENC_RIVER's note)
     ap.add_argument("--enc-down-s", type=float)  # ENCDirect's breaker, armed in the console for this much longer
     a = ap.parse_args(argv)
     tile = [float(v) for v in a.tile.split(",")]
@@ -4498,6 +4623,8 @@ def _enc_tile_worker_main(argv):
     ENC_DIR = a.enc_dir
     if a.s57_dir:
         S57_DIR = a.s57_dir
+    if a.ienc_dir:
+        IENC_DIR = a.ienc_dir
     if a.enc_source:
         ENC_SOURCE = a.enc_source
     fake = os.environ.get("ASV_ENC_TILE_FAKE")
@@ -4749,8 +4876,8 @@ def fetch_enc_layered(bbox, min_depth=0.0):
     counts = {}
     for ft in feats:
         counts[ft["cls"]] = counts.get(ft["cls"], 0) + 1
-    finest = next((b for b in ENC_BANDS if b in bands), None)
-    out = {"band": finest, "bands": [b for b in ENC_BANDS if b in bands], "layered": True, "features": feats,
+    finest = next((b for b in _layered_bands() if b in bands), None)
+    out = {"band": finest, "bands": [b for b in _layered_bands() if b in bands], "layered": True, "features": feats,
            "counts": counts, "partial": sorted(partial), "unread": unread, "unread_failed": unread_failed,
            "min_depth": md, "tiles": len(tiles),
            # THE CHART'S AGE, SAID (2026-10-12): the oldest tile's read, how many are past ENC_TILE_FRESH_S (each being
@@ -4940,7 +5067,7 @@ def _corridor_run(job):
                     continue
                 if d.get("failed") or not d.get("complete"):
                     job["failed"].append({"tile": t, "note": d.get("note") or ("partial: " + ", ".join(d.get("partial") or []))})
-                fin = next((b for b in ENC_BANDS if b in (d.get("bands") or [])), None)
+                fin = next((b for b in _layered_bands() if b in (d.get("bands") or [])), None)
                 key = (fin or "none").replace("enc_", "")
                 job["bands"][key] = job["bands"].get(key, 0) + 1
                 for r in (d.get("unread") or []) + (d.get("unread_failed") or []):
@@ -5415,7 +5542,7 @@ META_KEEP_PROPS = ("DSNM", "TITLE", "CATCOV", "CATZOC", "SURSTA", "SUREND",
                    "SORDAT", "SORIND", "POSACC", "SOUACC", "TECSOU", "VERDAT")
 # ENC usage band from the cell name's 3rd character (S-57 dataset naming).
 ENC_USAGE = {"1": "Overview", "2": "General", "3": "Coastal",
-             "4": "Approach", "5": "Harbor", "6": "Berthing"}
+             "4": "Approach", "5": "Harbor", "6": "Berthing", "7": "River"}   # 7: an Inland ENC's river cell (U37...)
 
 
 def _cells_chart_info(bbox):
@@ -5426,12 +5553,13 @@ def _cells_chart_info(bbox):
         band = _cells_pick_band(bbox)
         if band is None:
             return {"band": None, "cells": [], "quality": [], "note": "no ENC coverage here", "source": "cells"}
-        src = _cells()
-        feats, info = src.band_features(band, bbox, _cell_namer(band), only={"M_COVR", "M_QUAL"})
-        titles = {e["name"]: e.get("title") for e in src.cells_for(band, bbox)}
+        feats, info = _band_features(band, bbox, _cell_namer(band), only={"M_COVR", "M_QUAL"})
+        titles = {e["name"]: e.get("title") for e in _band_source(band).cells_for(band, bbox)}
     except Exception as e:                       # a cell that will not read is a failed read, whatever the fault
-        return {"band": None, "cells": [], "quality": [], "failed": True,
-                "note": "NOAA's chart cells could not be read (%s)" % (str(e) or type(e).__name__)}
+        river = isinstance(e, RiverCellsFailed)   # (the Corps' river cells failing: never ENCDirect's, fetch_chart_info)
+        return dict({"band": None, "cells": [], "quality": [], "failed": True,
+                     "note": "%s could not be read (%s)" % ("the Corps' river chart cells" if river else "NOAA's chart cells",
+                                                            str(e) or type(e).__name__)}, **({"river": True} if river else {}))
     out = {"band": band, "cells": [], "quality": [], "note": "", "source": "cells"}
     slot = {cls: k for k, cls in ENC_META_CLASSES.items()}
     for ft in feats:
@@ -5450,8 +5578,8 @@ def _cells_chart_info(bbox):
     if info.get("catalog_stale"):
         out["catalog_stale"] = info["catalog_stale"]
         out["note"] = ((out["note"] + "; ") if out["note"] else "") + (
-            "NOAA's cell catalog could not be refreshed: the cells are read as its copy of %s named them"
-            % info["catalog_stale"])
+            "%s cell catalog could not be refreshed: the cells are read as its copy of %s named them"
+            % (_band_source(band).WHO, info["catalog_stale"]))      # NOAA's, or the Corps' for the river band
     if info.get("partial"):
         out["partial"] = info["partial"]
         out["note"] = ((out["note"] + "; ") if out["note"] else "") + (
@@ -5469,7 +5597,7 @@ def fetch_chart_info(bbox, source=None):
     key = _bbox_key(bbox)
     if (source or ENC_SOURCE) == "cells":
         got = _cells_chart_info(bbox)
-        if not got.get("failed"):
+        if not got.get("failed") or got.get("river"):   # the Corps' cells failing is theirs to say (_cells_chart_info)
             return got
         print("[enc] %s for %s - reading ENCDirect's chart information instead" % (got.get("note"), key), flush=True)
         alt = fetch_chart_info(bbox, source="encdirect")

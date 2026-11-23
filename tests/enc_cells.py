@@ -72,6 +72,7 @@ def check(name, cond, detail=""):
 TMP = tempfile.mkdtemp(prefix="asv_enc_cells_")
 A.ENC_DIR = os.path.join(TMP, "enc")
 A.S57_DIR = os.path.join(TMP, "s57")
+A.IENC_DIR = os.path.join(TMP, "ienc")       # the Corps' river cells (tests/ienc_cells.py): no tile here reaches them
 A.ENC_SOURCE = "cells"
 A.ENC_TILE_IN_PROCESS = True
 os.makedirs(A.ENC_DIR)
@@ -332,7 +333,8 @@ check("2. A TILE FROM THE CELLS, every band, with ENCDirect's breaker ARMED (it 
       "band's source the cells, the harbor chart where its two cells cover and the approach chart around them, the "
       "coastal chart nowhere (the approach chart covers the whole tile), no water unread; the harbor pontoons in, "
       "as docks; written by reader 4, kept as tile_v4",
-      lambda: t2.get("complete") and set(t2["sources"].values()) == {"cells"} and len(t2["sources"]) == 6
+      lambda: t2.get("complete") and set(t2["sources"].values()) == {"cells"}
+              and sorted(t2["sources"]) == sorted(A.ENC_BANDS + [A.ENC_BERTHING, A.ENC_RIVER])
               and t2["bands"] == ["enc_harbour", "enc_approach"] and not t2["unread"] and not t2["unread_failed"]
               and ("enc_harbour", "Pontoon_line") in fb and ("enc_harbour", "Pontoon_area") in fb
               and t2["reader"] == 4 and A._ENC_TILE_FMT == "tile_v4_%s.jsonl" and not t2.get("stale_cells"),
@@ -1278,7 +1280,7 @@ def sentinel(d):
     return any(f.get("oid") == 4242 for f in (d or {}).get("features") or [])
 
 
-ALL_CELLS = {b: "cells" for b in A.ENC_BANDS + [A.ENC_BERTHING]}
+ALL_CELLS = {b: "cells" for b in A._layered_bands() + [A.ENC_BERTHING]}     # the Corps' river band among them
 ALL_ED = {b: "encdirect" for b in A.ENC_BANDS + [A.ENC_BERTHING]}
 
 net10 = Net()
@@ -1376,9 +1378,12 @@ check("10d. A TILE AN EARLIER BUILD OF THE CELL READER KEPT - its cells_reader a
                   sentinel(t10d3), len(net10d.calls) - calls10, own10 is not None))
 
 TAG = enc_cells.reader_tag()
-nc = {"cells, mixed": A._tile_not_current({"sources": {"enc_harbour": "encdirect", "enc_approach": "cells"}, "cells_reader": TAG}),
-      "cells, this reader": A._tile_not_current({"sources": dict(ALL_CELLS), "cells_reader": TAG}),
-      "cells, none named": A._tile_not_current({})}
+# (each the suite's tile, which no river cell can reach: a tile naming no river source inside their reach is not
+# current for that alone - tests/ienc_cells.py)
+nc = {"cells, mixed": A._tile_not_current({"tile": TILE, "sources": {"enc_harbour": "encdirect", "enc_approach": "cells"},
+                                           "cells_reader": TAG}),
+      "cells, this reader": A._tile_not_current({"tile": TILE, "sources": dict(ALL_CELLS), "cells_reader": TAG}),
+      "cells, none named": A._tile_not_current({"tile": TILE})}
 A.ENC_SOURCE = "encdirect"
 try:
     nc.update({"encdirect, the cells'": A._tile_not_current({"sources": dict(ALL_CELLS), "cells_reader": TAG}),

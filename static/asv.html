@@ -16592,7 +16592,7 @@ function nogoReadout(){
                           : "None of them is a layer the model acts on; nothing is refused for it.") : "");
   const un = nogo.unread || [], unFailed = un.filter(r => r.failed).length;
   const unTxt = un.length ? "\n\nUnread water: " + un.length + " area(s) of this box " + (unFailed === un.length
-      ? "whose chart could not be read (NOAA did not answer) - read again on the next command"
+      ? "whose chart could not be read (its chart host did not answer: NOAA, or the Corps for a river chart) - read again on the next command"
       : "no chart at any scale covers" + (unFailed ? ", " + unFailed + " of them because the chart could not be read" : ""))
       + ". Drawn gray with the zones; a route through, or within " + fmtDist(CHART_EDGE_M) + " of, one is refused." : "";
   return {text: n + " zones · floor " + floor + (skinN ? " · +" + skinN + " seabed" : "")
@@ -17722,7 +17722,7 @@ async function corridorWait(st, until, each, gone){
 function toCorridor(st){
   return st && !st.error ? {...st, unread: (st.unread || []).map(r => ({W: r[0], S: r[1], E: r[2], N: r[3], failed: false}))} : null;
 }
-const CORRIDOR_SCALES = ["harbour", "approach", "coastal", "general"];
+const CORRIDOR_SCALES = ["harbour", "river", "approach", "coastal", "general"];   // river: the Corps' (asv_console.py ENC_RIVER)
 /** A read's status, in words: what it read, at which scales, what it could not, and the water no chart covers. */
 function corridorSummary(st){
   if(!st || st.error) return "Chart NOT read along the line: " + ((st && st.error) || "no answer")
@@ -25205,7 +25205,7 @@ const CATZOC_LBL = {1:["ZOC A1","\u00b15 m + 5% depth"], 2:["ZOC A2","\u00b120 m
   3:["ZOC B","\u00b150 m"], 4:["ZOC C","\u00b1500 m"],
   5:["ZOC D","worse than ZOC C"], 6:["ZOC U","unassessed"]};
 const ENC_USAGE_LBL = {"1":"Overview","2":"General","3":"Coastal","4":"Approach",
-  "5":"Harbor","6":"Berthing"};
+  "5":"Harbor","6":"Berthing","7":"River"};   // 7: the Corps' river cells (U37..., asv_console.py ENC_RIVER, 2026-11-23)
 let chartInfoBox = null, chartBusy = false, chartRetryAt = 0;
 // ⚠ AN ANSWER NOAA DID NOT GIVE WHOLE IS SHOWN, NOT KEPT (Andy, 2026-10-17: "The SRC chip is not updating. Chart source
 // card is not getting data"). The console serves an answer with a failed query ONCE and never keeps it (asv_console.py
@@ -25222,10 +25222,14 @@ function chartPartial(d){
   const m = /^not read whole \(([^)]*)\)/.exec(String((d && d.note) || ""));
   return m ? m[1].split(",").map(s => s.trim()).filter(Boolean) : [];
 }
-function chartPartialSay(parts){
+// (`info`: the answer - the Corps' river chart's, its band enc_river or its failure `river`, is said as theirs, 2026-11-23)
+function chartPartialSay(parts, info){
+  const corps = !!(info && (info.river || info.band === "enc_river"));
   if(parts.length === 1 && /^!/.test(parts[0]))   // a whole FAILURE (the service down), not a layer missing
-    return "NOAA's chart service did not answer (" + parts[0].slice(1) + ") - asked again every " + Math.round(CHART_RETRY_MS / 1000) + " s";
-  return "NOAA did not answer whole for " + parts.map(p => CHART_PART_WORDS[p] || p).join(" and ")
+    return (corps ? "the Corps' river chart did not answer (" : "NOAA's chart service did not answer (") + parts[0].slice(1)
+         + ") - asked again every " + Math.round(CHART_RETRY_MS / 1000) + " s";
+  return (corps ? "the Corps did not answer whole for " : "NOAA did not answer whole for ")
+       + parts.map(p => CHART_PART_WORDS[p] || p).join(" and ")
        + " - asked again every " + Math.round(CHART_RETRY_MS / 1000) + " s";
 }
 function cellName(props){ return String((props&&props.DSNM) || "").replace(/\.\d+$/, ""); }
@@ -25344,12 +25348,12 @@ function updateChartCard(){
   const off = (water && water.ok && water.offset_m != null) ? water.offset_m : null;
   let h = "";
   if(!sea.chartInfo){ h = `<div style="color:var(--ink-faint);">${chartBusy
-      ? "reading the chart source…<div style=\"margin-top:3px;font-size:10px;\">first read of a new area fetches from NOAA — this can take up to a minute</div>"
+      ? "reading the chart source…<div style=\"margin-top:3px;font-size:10px;\">first read of a new area fetches from NOAA (the Corps on the rivers) — this can take up to a minute</div>"
       : "no chart source yet"}</div>`; }
   // an answer NOAA did not give whole names what is missing and that it is asked again (CHART_RETRY_MS), not the
   // console's bare note, and never "no ENC coverage" or "no quality polygon" for data that simply did not arrive
   else if(!names.length){ h = `<div style="color:var(--ink-faint);">${(sea.chartInfo.retrying && sea.chartInfo.retrying.length)
-      ? chartPartialSay(sea.chartInfo.retrying) : (sea.chartInfo.note || "no ENC coverage here")}</div>`; }
+      ? chartPartialSay(sea.chartInfo.retrying, sea.chartInfo) : (sea.chartInfo.note || "no ENC coverage here")}</div>`; }
   else {
     h += hdr(names.length === 1 ? "Chart in view" : names.length + " charts in view", true);
     for(const c of chartList) h += cellLine(c);
@@ -25374,6 +25378,18 @@ function updateChartCard(){
              "The ENC data, the " + V.NOGO_MIN_DEPTH_M.toFixed(1) + " m nogo floor for this "+
              "vessel and every depth the console computes or logs are METERS. "+
              "They do not match - convert before comparing.");
+    // ⚠ A RIVER CELL IS NOT ON THE TIDE'S DATUM (2026-11-23): the Corps' river cells chart depths below the river's own
+    // low-water reference plane, and the console adds no station's level to them (keepouts.js asCharted) - the card
+    // said the station's datum and its live correction for a chart neither applies to.
+    const riverCell = !!(mine && mine.charAt(2) === "7");
+    if(riverCell){
+      h += row("Datum", "river low-water reference",
+               "The Corps' river cells chart depths below the river's own low-water reference plane, which the river "
+               + "stands above nearly all the time - not below the tide's datum. The console reads them as charted.");
+      h += row("Correction", `<span style="color:var(--ink-faint);">none: river depths as charted</span>`,
+               "No tide station's level is added to a river cell's depths, whatever station is near: it is not "
+               + "measured from the same datum.");
+    } else {
     h += row("Datum", dat || "--",
              "Chart datum of the depth data. The console corrects to it live.");
     // The correction can be an IDW BLEND of up to three stations, and naming only the
@@ -25395,6 +25411,7 @@ function updateChartCard(){
                           : `<span style="color:var(--ink-faint);">none (uncorrected)</span>`)
              + (wsta.length > 1 ? ` <span style="color:var(--ink-faint);">idw ${wsta.length}</span>` : ``),
              corrTip);
+    }
     h += row("Horizontal", "WGS 84 · Mercator");
     const q = qualityAt(here.lat, here.lon);
     h += hdr("At the vessel");
@@ -25411,7 +25428,7 @@ function updateChartCard(){
                  (q.SORDAT ? ` <span style="color:var(--ink-faint);">${fmtEncDate(q.SORDAT)}</span>` : ""));
       if(poor) h += `<div style="margin-top:4px;color:#e0a33f;font-size:10px;">Low-confidence data here — treat charted depths and positions with caution.</div>`;
     } else if(sea.chartInfo.retrying && sea.chartInfo.retrying.length){
-      h += `<div style="color:#e0a33f;font-size:10px;">${chartPartialSay(sea.chartInfo.retrying)}</div>`;
+      h += `<div style="color:#e0a33f;font-size:10px;">${chartPartialSay(sea.chartInfo.retrying, sea.chartInfo)}</div>`;
     } else {
       h += `<div style="color:var(--ink-faint);">no quality polygon at this position</div>`;
     }

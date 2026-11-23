@@ -40,6 +40,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import xml.etree.ElementTree as ET
 import zipfile
 
 import s57
@@ -244,7 +245,24 @@ def _check_cell_zip(data, name):
 class CellSource:
     """NOAA's cells under `root` (charts/s57). `ssl_context` - a context, or a function giving one - is the console's
     shared TLS context (one per process: asv_console._enc_ssl). `fetch(url) -> bytes` replaces the network (the suites);
-    `now()` the clock the catalog's age is read by."""
+    `now()` the clock the catalog's age is read by.
+    ANOTHER PRODUCER'S CELLS (2026-11-23, RiverCells below) are this class with its catalog said differently: where the
+    catalog is kept (CATALOG_FILE) and held off (CATALOG_MARK), whose it is in what is said (WHO), where it and a cell
+    come from (_catalog_url, _cell_url), and how it reads (_decode_catalog, _catalog_entries)."""
+    CATALOG_FILE = "enc.geojson"
+    CATALOG_MARK = "catalog.mark"
+    WHO = "NOAA's"
+
+    def _catalog_url(self):
+        return CATALOG_URL
+
+    def _cell_url(self, entry):
+        return CELL_URL % entry["name"]
+
+    @classmethod
+    def _decode_catalog(cls, data):
+        """The catalog's bytes as what _catalog_entries reads (NOAA's: GeoJSON), or ValueError."""
+        return json.loads(data.decode("utf-8"))
 
     def __init__(self, root, ssl_context=None, fetch=None, now=None):
         self.root = root
@@ -295,7 +313,7 @@ class CellSource:
 
     def _get(self, url):
         if time.monotonic() < self._down_until or self._marked("down.mark", DOWN_S):
-            raise OSError("NOAA's chart cells did not answer a moment ago")
+            raise OSError("%s chart cells did not answer a moment ago" % self.WHO)
         try:
             return self._fetch(url)
         except urllib.error.HTTPError as e:          # an answer: the host is up, this file is not there
@@ -309,7 +327,7 @@ class CellSource:
     def catalog(self):
         """Every current cell as {"name", "ed", "up", "key", "band", "bbox" (lon/lat), "title"}. Refreshed after
         CATALOG_MAX_AGE_S; the copy kept when the refresh fails, and `catalog_stale` its date; OSError with no copy."""
-        path = os.path.join(self.root, "enc.geojson")
+        path = os.path.join(self.root, self.CATALOG_FILE)
         with self._catalog_lock:                    # one refresh at a time: every read needs the catalog it gives
             try:
                 age = self._now() - os.path.getmtime(path)
@@ -320,22 +338,22 @@ class CellSource:
             due = age is None or age > CATALOG_MAX_AGE_S or age < -CLOCK_SLACK_S
             refreshed = False
             if due and time.monotonic() - self._catalog_tried > CATALOG_RETRY_S \
-                    and not self._marked("catalog.mark", CATALOG_RETRY_S):
+                    and not self._marked(self.CATALOG_MARK, CATALOG_RETRY_S):
                 try:
-                    data = self._get(CATALOG_URL)
-                    why = self._catalog_refused(json.loads(data.decode("utf-8")), path)
+                    data = self._get(self._catalog_url())
+                    why = self._catalog_refused(self._decode_catalog(data), path)
                     if why:
-                        raise ValueError("NOAA's cell catalog was refused: %s" % why)
+                        raise ValueError("%s cell catalog was refused: %s" % (self.WHO, why))
                     _write(path, data)
                     refreshed = True
                 except (OSError, ValueError) as e:
                     # A FAILED refresh is not tried again for CATALOG_RETRY_S - in this process or the next (the mark).
                     self._catalog_tried = time.monotonic()
-                    self._mark("catalog.mark")
+                    self._mark(self.CATALOG_MARK)
                     if age is None and not os.path.exists(path):
-                        raise OSError("NOAA's cell catalog could not be read (%s)" % e)
+                        raise OSError("%s cell catalog could not be read (%s)" % (self.WHO, e))
             elif age is None:
-                raise OSError("NOAA's cell catalog could not be read (asked again shortly)")
+                raise OSError("%s cell catalog could not be read (asked again shortly)" % self.WHO)
             st = os.stat(path)
             # ⚠ A CATALOG PAST ITS AGE IS SAID, IN EVERY PROCESS (the 2026-11-21 review): only the process whose refresh
             # failed knew, and nobody asked it - the next tile's child, held off by the mark, read the old copy as
@@ -374,11 +392,11 @@ class CellSource:
                                  max(q[0] for q in pts), max(q[1] for q in pts))})
         return out, len(feats)
 
-    @staticmethod
-    def _parse_catalog(path):
-        out, _n = CellSource._catalog_entries(json.loads(_read_file(path).decode("utf-8")))
+    @classmethod
+    def _parse_catalog(cls, path):
+        out, _n = cls._catalog_entries(cls._decode_catalog(_read_file(path)))
         if not out:
-            raise ValueError("NOAA's cell catalog names no cells")
+            raise ValueError("%s cell catalog names no cells" % cls.WHO)
         return out
 
     @classmethod
@@ -446,7 +464,7 @@ class CellSource:
             try:
                 if self._marked(mark, REFUSED_S):
                     raise OSError("its last download was refused - asked again shortly")
-                data = self._get(CELL_URL % name)
+                data = self._get(self._cell_url(entry))
                 try:
                     held = _check_cell_zip(data, name)
                 except ValueError:
@@ -459,8 +477,8 @@ class CellSource:
                     if held > mine:
                         return other, False
                     self._mark(mark)
-                    raise ValueError("NOAA's zip of %s holds edition %d update %d, its catalog names edition %d "
-                                     "update %d" % (name, held[0], held[1], mine[0], mine[1]))
+                    raise ValueError("%s zip of %s holds edition %d update %d, its catalog names edition %d "
+                                     "update %d" % (self.WHO, name, held[0], held[1], mine[0], mine[1]))
                 _write(want, data)
             except (OSError, ValueError) as e:
                 if os.path.exists(want):           # another process wrote it first
@@ -675,3 +693,140 @@ class CellSource:
                 failed_cells.append(e["name"])
         info["partial"], info["failed_cells"] = sorted(partial), failed_cells
         return out, info
+
+
+# ── THE CORPS' RIVER CELLS (2026-11-23) ──────────────────────────────────────────────────────────────────────────────
+# Andy, 2026-11-23: "add US Army Corps of Engineers (US inland rivers) to the available charts in the Console". The
+# U.S. Army Corps of Engineers publishes Inland ENCs of the rivers it keeps navigable - 109 cells on 21 rivers, the Ohio,
+# the Upper and Lower Mississippi, the Tennessee, the Illinois, the Arkansas, the Missouri and more (measured 2026-11-23)
+# - as S-57 cells in zips laid out as NOAA's are (a base and its updates), each named U37<5> (producer U3, navigational
+# purpose 7: "river", a skin cell tiling the river as a harbor cell tiles a harbor). Its catalog (RIVER_CATALOG_URL) is
+# XML: per cell its name, river, footprint and "edition" "52.9" - edition 52, update 9. Its cells read here as NOAA's do
+# (s57.py, with the Inland ENC catalog's classes - data/s57/README.md) and are answered as one band, RIVER_BAND.
+#   THE BUOYS ARE NOT IN THE RIVER CELLS. The Corps publishes the rivers' lateral buoys - 11,810 of them on
+#   2026-11-23 - as one overlay cell, 3UABUOYS, in a catalog of its own (BUOY_CATALOG_URL), reissued as a new edition
+#   most days as the Coast Guard moves them with the river. It is read as part of the river band (RiverBuoys): it holds
+#   no coverage of its own (no M_COVR), so it reaches the chart only where the river cells cover the water.
+#   ONE HOST, ONE HOLD-OFF. Both are kept under one root (charts/ienc), their catalogs as u37.xml and buoys.xml, so a
+#   host that did not answer holds both off (down.mark), each catalog's refresh held off by its own mark.
+#   WHERE THEY CAN REACH (RIVER_REACH). A box outside it is answered "no river cell here" with nothing asked of the
+#   Corps' host: the coast's charts do not wait on, or fail with, a host they never read. Inside it a box no cell's
+#   footprint reaches is answered the same from the catalog; and the catalog read past its age is said
+#   (`catalog_stale`) only where a cell reaches - where a cell could be a correction behind.
+#   NOT NOAA'S DATUM. The river cells chart depths below a local low-water reference plane (DSPM VDAT/SDAT 31, "local
+#   low water reference level"), which the river stands above nearly always - not below mean lower low water, which a
+#   tide station's level is measured from. The console reads them as charted (asv_console.py, static/js/keepouts.js).
+RIVER_BAND = "enc_river"
+RIVER_CATALOG_URL = "https://ienccloud.us/ienc/products/catalog/IENCU37ProductsCatalog.xml"
+RIVER_CELL_URL = "https://ienccloud.us/ienc/products/files/u37/ienc_s57/%s.zip"
+BUOY_CATALOG_URL = "https://ienccloud.us/ienc/products/catalog/IENCBuoyProductsCatalog.xml"
+BUOY_CELL_URL = "https://ienccloud.us/ienc/products/files/buoys/%s.zip"
+# Every cell of both catalogs lies inside W -96.738 S 29.653 E -79.514 N 45.142 (measured 2026-11-23, all 109 river
+# cells and the buoy overlay); a degree more each way. A cell the Corps publishes outside it is not read, and said
+# (RiverCells._catalog_entries).
+RIVER_REACH = (-97.75, 28.65, -78.5, 46.15)
+_EDITION = re.compile(r"^(\d+)\.(\d+)$")
+_CELL_NAME = re.compile(r"^[A-Z0-9]{8}$")
+
+
+def river_reaches(box):
+    """Does the box reach into RIVER_REACH?"""
+    W, S, E, N = RIVER_REACH
+    return not (box[2] < W or box[0] > E or box[3] < S or box[1] > N)
+
+
+class RiverCells(CellSource):
+    """The Corps' river cells under `root` (charts/ienc): the river band (the section header). As CellSource."""
+    CATALOG_FILE = "u37.xml"
+    CATALOG_MARK = "catalog_u37.mark"
+    WHO = "the Corps'"
+    CATALOG_TAG = "IENCU37ProductCatalog"
+
+    def _catalog_url(self):
+        return RIVER_CATALOG_URL
+
+    def _cell_url(self, entry):
+        return RIVER_CELL_URL % entry["name"]
+
+    @staticmethod
+    def _entry_band(name):
+        """The band a cell of this catalog is read in, or None for one not read: a river cell (purpose 7) alone."""
+        return RIVER_BAND if s57.usage_band(name) == 7 else None
+
+    @classmethod
+    def _decode_catalog(cls, data):
+        """The catalog's root element, or ValueError. ⚠ A DOCUMENT TYPE IS REFUSED: an entity declared in one can expand
+        without limit as it is parsed, and the Corps' catalog declares none."""
+        if b"<!DOCTYPE" in data or b"<!ENTITY" in data:
+            raise ValueError("it declares a document type")
+        try:
+            root = ET.fromstring(data)
+        except ET.ParseError as e:
+            raise ValueError("it is not XML (%s)" % e)
+        if root.tag != cls.CATALOG_TAG:
+            raise ValueError("it is a %s, not a %s" % (root.tag[:40], cls.CATALOG_TAG))
+        return root
+
+    @classmethod
+    def _catalog_entries(cls, root):
+        """(entries, n) as CellSource's: each <Cell>'s name, edition and update ("52.9"), footprint and title (its river and
+        reach). An entry whose name is not a cell's, whose edition does not read, or whose footprint is not a box, names
+        none; a cell outside RIVER_REACH is said, not read, and not counted in `n` (it is no entry that failed to read)."""
+        cells = root.findall("Cell") if root is not None else []
+        out, far = [], []
+        for c in cells:
+            try:
+                name = (c.findtext("name") or "").strip()
+                m = _EDITION.match((c.findtext("edition") or "").strip())
+                a = c.find("area")
+                w, s, e, n = (float(a.findtext(k)) for k in ("west", "south", "east", "north"))
+            except (AttributeError, TypeError, ValueError):
+                continue
+            band = cls._entry_band(name) if _CELL_NAME.match(name) else None
+            # ⚠ A FOOTPRINT'S EDGES ARE TAKEN AS A BOX, WHICHEVER WAY ROUND (measured 2026-11-23): U37AR126, the
+            # Arkansas at Little Rock, gives its west as -92.354 and its east as -92.890 - swapped. Read as given it was
+            # no box, and the cell was dropped from the catalog: the river there read from NOAA's coarser charts or not
+            # at all. No cell here can cross the antimeridian (RIVER_REACH), so the lesser longitude is the west.
+            w, e, s, n = min(w, e), max(w, e), min(s, n), max(s, n)
+            if not m or not band or not all(math.isfinite(v) for v in (w, s, e, n)) \
+                    or not (-180.0 <= w <= e <= 180.0 and -90.0 <= s <= n <= 90.0):
+                continue
+            if not river_reaches((w, s, e, n)):
+                far.append(name)
+                continue
+            ed, up = int(m.group(1)), int(m.group(2))
+            river, frm, to = (" ".join((c.findtext(k) or "").split()) for k in ("river_name", "location/from", "location/to"))
+            title = (river + (": %s to %s" % (frm, to) if frm and to else "")) if river else None
+            out.append({"name": name, "ed": ed, "up": up, "key": "%s_ED%03d_UP%03d" % (name, ed, up), "band": band,
+                        "title": title, "bbox": (w, s, e, n)})
+        if far:
+            print("[cells] %s catalog names %s outside the river reach (RIVER_REACH): not read"
+                  % (cls.WHO, ", ".join(far[:6])), flush=True)
+        return out, len(cells) - len(far)
+
+    def band_features(self, band, box, namer, only=None):
+        """CellSource's answer - but outside RIVER_REACH nothing is asked of the network or the disk, and the catalog
+        read past its age is said only where a cell reaches into the box (the section header)."""
+        if not river_reaches(box):
+            return [], {"cells": [], "stale": [], "catalog_stale": None, "partial": [], "failed_cells": []}
+        out, info = CellSource.band_features(self, band, box, namer, only)
+        if not info["cells"]:
+            info["catalog_stale"] = None
+        return out, info
+
+
+class RiverBuoys(RiverCells):
+    """The Corps' buoy overlay (3UABUOYS) under the river cells' root: read as part of the river band (the header)."""
+    CATALOG_FILE = "buoys.xml"
+    CATALOG_MARK = "catalog_buoys.mark"
+    CATALOG_TAG = "IENCBuoyProductCatalog"
+
+    def _catalog_url(self):
+        return BUOY_CATALOG_URL
+
+    def _cell_url(self, entry):
+        return BUOY_CELL_URL % entry["name"]
+
+    @staticmethod
+    def _entry_band(name):
+        return RIVER_BAND

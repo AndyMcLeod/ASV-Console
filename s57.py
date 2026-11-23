@@ -75,14 +75,27 @@ def _int(v):
         return None
 
 
+# ⚠ THE INLAND CATALOG'S ROWS GDAL LACKS (2026-11-23, Andy: "add US Army Corps of Engineers (US inland rivers) to the
+# available charts in the Console"). The Corps' river cells are Inland ENCs: S-57 with the Inland ENC Feature Catalogue's
+# classes and attributes beside IHO's, coded 17000 and above. GDAL's tables hold some of them and not others, so a river
+# cell's lateral beacons (17028 bcnlat), its dikes, bendway weirs and lock walls (17032 slcons) and its pontoons
+# (17021 ponton) read as classes with no name - and the console drops a class it cannot name. INLAND_TABLES are the
+# Feature Catalogue 2.5.0's rows for every code GDAL's tables lack, inland codes only (data/s57/README.md): a code GDAL
+# holds is GDAL's, and no IHO class or attribute is given a value or meaning here - so a NOAA cell reads as it did.
+INLAND_TABLES = ("ienc_objectclasses.csv", "ienc_attributes.csv", "ienc_expectedinput.csv")
+INLAND_FIRST_CODE = 17000
+
+
 def catalog():
     """{"objl": {code: (acronym, name, prims)}, "attl": {code: (acronym, name, type)}, "expected": {(attl, id): meaning},
     "class_attrs": {class acronym: frozenset(attribute acronyms it may carry)}, "acr_objl": {acronym: code},
-    "acr_attl": {acronym: code}} - read once."""
+    "acr_attl": {acronym: code}} - read once: GDAL's tables, then the inland catalog's rows for codes they lack
+    (INLAND_TABLES). An acronym both name is GDAL's code (the inland catalog's CLSDEF, CLSNAM and SYMINS)."""
     global _cat
     if _cat is not None:
         return _cat
     objl, attl, exp, cls_attrs = {}, {}, {}, {}
+    # GDAL's tables, read as they always were - a later row wins (they name brgare twice, 17053 and 20536)
     for r in _table("s57objectclasses.csv"):
         code = _int(r["Code"])
         if code is not None:
@@ -97,8 +110,30 @@ def catalog():
         code, vid = _int(r["Code"]), _int(r["ID"])
         if code is not None and vid is not None:
             exp[(code, vid)] = r["Meaning"]
+    acr_objl, acr_attl = {v[0]: k for k, v in objl.items()}, {v[0]: k for k, v in attl.items()}
+    # ... then the inland catalog's rows: an inland code GDAL's lack, never a code or an acronym GDAL's hold
+    objs, atts, exps = INLAND_TABLES
+    for r in _table(objs):
+        code = _int(r["Code"])
+        if code is None or code < INLAND_FIRST_CODE or code in objl:
+            continue
+        objl[code] = (r["Acronym"], r["ObjectClass"], tuple(p for p in (r.get("Primitives") or "").split(";") if p))
+        cls_attrs.setdefault(r["Acronym"], frozenset(a for k in ("Attribute_A", "Attribute_B", "Attribute_C")
+                                                     for a in (r.get(k) or "").split(";") if a))
+        acr_objl.setdefault(r["Acronym"], code)
+    for r in _table(atts):
+        code = _int(r["Code"])
+        if code is None or code < INLAND_FIRST_CODE or code in attl:
+            continue
+        attl[code] = (r["Acronym"], r["Attribute"], r["Attributetype"])
+        acr_attl.setdefault(r["Acronym"], code)
+    for r in _table(exps):
+        code, vid = _int(r["Code"]), _int(r["ID"])
+        if code is None or vid is None or code < INLAND_FIRST_CODE or (code, vid) in exp:
+            continue
+        exp[(code, vid)] = r["Meaning"]
     _cat = {"objl": objl, "attl": attl, "expected": exp, "class_attrs": cls_attrs,
-            "acr_objl": {v[0]: k for k, v in objl.items()}, "acr_attl": {v[0]: k for k, v in attl.items()}}
+            "acr_objl": acr_objl, "acr_attl": acr_attl}
     return _cat
 
 
@@ -824,6 +859,34 @@ ENCDIRECT_WORDING = {
     "CATSLC": {"2": "groin", "4": "pier", "5": "promenade", "6": "wharf", "10": "seawall"},
     "CATWRK": {"1": "non-dangerous wreck (test)", "5": "wreck showing any portion of h"},
 }
+# AN INLAND ATTRIBUTE IS READ AS ITS IHO TWIN WHERE THEIR VALUES MEAN THE SAME (2026-11-23, the Corps' river cells): the
+# inland catalog gives a lateral mark "catlam" and a rock or shoreline construction "watlev" in place of CATLAM and
+# WATLEV, with the IHO values 1-4 meaning what they mean there (port-hand, starboard-hand, preferred channel to starboard,
+# to port; partly submerged at high water, always dry, always under water, covers and uncovers - Inland ENC Feature
+# Catalogue 2.5.0) and more of their own after (catlam 5-27, "right-hand side of the waterway"...; watlev 8 and 9, above
+# and below mean water). A value 1-4 is served under the IHO acronym, where the object carries none of its own - so a
+# river beacon has the side the console's channel lane reads (keepouts.js chan_mark) and a rock always dry is never
+# passed on a sounding (hazPassable). Any other value is not: it has no IHO meaning, and absent is unknown.
+INLAND_ATTR_TWINS = {"catlam": ("CATLAM", frozenset((1, 2, 3, 4))), "watlev": ("WATLEV", frozenset((1, 2, 3, 4)))}
+
+
+def _inland_attrs(attrs):
+    """The object's attributes with each inland twin (INLAND_ATTR_TWINS) added under its IHO acronym where it may be."""
+    out = None
+    for k, (ihk, ok) in INLAND_ATTR_TWINS.items():
+        v = attrs.get(k)
+        if v is None or ihk in attrs:
+            continue
+        try:
+            n = int(str(v).strip())
+        except ValueError:
+            continue
+        if n in ok:
+            out = dict(attrs) if out is None else out
+            out[ihk] = str(n)
+    return attrs if out is None else out
+
+
 ENCDIRECT_BLANK = " "
 ENCDIRECT_BLANK_OF = {"CATWRK": '" "'}
 ENCDIRECT_TEXT_WIDTH = {"INFORM": 254}
@@ -834,10 +897,28 @@ def _squash(s):
     return re.sub(r"[^a-z0-9]", "", s.lower())
 
 
+def inland_twin(acronym):
+    """The IHO class an inland class is the inland form of, or the acronym itself. ⚠ AN INLAND CLASS IS NAMED AS ITS
+    IHO TWIN (2026-11-23, the Corps' river cells): the Inland ENC catalog redefines a buoy, a beacon, a rock, a gate, a
+    shoreline construction... under the same acronym in lower case, with inland attributes beside the IHO ones
+    ("bcnlat" is BCNLAT, a lateral beacon). Named by its own catalog words it came out Underwater_Rock_Awash_Rock_point
+    for "uwtroc" - a name no role holds, so a charted rock reached no keep-out. Named as its twin it is the class the
+    console already knows: Underwater_Awash_Rock_point, Beacon_Lateral_point, Shoreline_Construction_line. A class
+    with no IHO twin (wtwgag, a waterway gauge) keeps its own name."""
+    cat = catalog()
+    code = cat["acr_objl"].get(acronym)
+    if code is None or code < INLAND_FIRST_CODE:
+        return acronym
+    twin = cat["acr_objl"].get(acronym.upper())
+    return acronym.upper() if twin is not None and twin < INLAND_FIRST_CODE else acronym
+
+
 def encdirect_class(acronym, prim, layers):
     """The ENCDirect layer name an object of class `acronym` and primitive `prim` is served under in a band whose
-    published layer names are `layers`, or None when that band publishes no such layer."""
+    published layer names are `layers`, or None when that band publishes no such layer. An inland class is named as
+    its IHO twin (inland_twin)."""
     layers = layers if isinstance(layers, (set, frozenset, dict)) else set(layers)
+    acronym = inland_twin(acronym)
     exc = ENCDIRECT_NAME_EXCEPTIONS.get((acronym, prim))
     if exc and exc in layers:
         return exc
@@ -866,7 +947,9 @@ def layer_name(acronym, prim):
     ENCDirect's spelling where it has its own (ENCDIRECT_NAME_EXCEPTIONS), else the catalog name joined by "_" with the
     primitive after it, not doubled where the name already ends in it (Depth_Area, Coverage_area). The bands' one
     irregular pair, Restricted_Area_area / Restricted_Area, comes out "Restricted_Area" - the console's roles name both.
-    None for an object with no geometry of its own (a collection, primitive 255) or a class the catalog lacks."""
+    None for an object with no geometry of its own (a collection, primitive 255) or a class the catalog lacks. An
+    inland class is named as its IHO twin (inland_twin)."""
+    acronym = inland_twin(acronym)
     exc = ENCDIRECT_NAME_EXCEPTIONS.get((acronym, prim))
     if exc:
         return exc
@@ -938,7 +1021,7 @@ def encdirect_features(cell, layers, wording=ENCDIRECT_WORDING, raw=False, only=
         if f["acronym"] == "SOUNDG":
             props = {}                   # ENCDirect's soundings carry no attribute (the section header)
         else:
-            props = {k: encdirect_value(k, v, wording) for k, v in f["attrs"].items()}
+            props = {k: encdirect_value(k, v, wording) for k, v in _inland_attrs(f["attrs"]).items()}
             props = {k: v for k, v in props.items() if v is not None}
             for k in ENCDIRECT_MEANING & carries.get(f["acronym"], frozenset()):
                 if k not in props:

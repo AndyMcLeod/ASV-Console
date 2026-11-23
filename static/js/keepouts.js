@@ -273,6 +273,21 @@ export const DEFAULTS = {
 };
 
 /**
+ * ⚠ A CHART NOT ON THE TIDE'S DATUM IS READ AS CHARTED (2026-11-23, the Corps' river charts - asv_console.py
+ * ENC_RIVER). The water level the console adds to a charted depth is a tide station's, measured from the station's
+ * datum, and NOAA's charts sound to that datum. The Corps' river cells do not: they chart depths below the river's own
+ * low-water reference plane (DSPM VDAT/SDAT 31), which the river stands above nearly always. A station's level added
+ * to them is a number from another datum - and on the lower rivers a station within reach (the page applies one up to
+ * WATER_REMOTE_KM off) would credit her with water nobody measured there. So a feature of these bands takes no
+ * offset, in every test that adds one: the depth window (depthExcluded), a sounding over a hazard (hazPassable), the
+ * margin layer (deepKeepouts). As charted is the conservative reading: the river is above its reference plane.
+ */
+export const AS_CHARTED_BANDS = new Set(['enc_river']);
+export function asCharted(f, waterOffset) {
+  return f && AS_CHARTED_BANDS.has(f.band) ? 0 : waterOffset;
+}
+
+/**
  * Which keep-out classes are armed, and the default state of each.
  *
  * A CHARTED AREA IS ADVISORY BY DEFAULT. The shoreline, the structures, the
@@ -357,6 +372,7 @@ export function depthExcluded(f, dr, waterOffset = 0) {
   //   AN UNSURVEYED AREA has no depth anybody measured: under every floor, and outside any survey window.
   if (f.role === 'unsurveyed') return true;
   if (f.role !== 'depth_area' && f.role !== 'dredged') return false;
+  waterOffset = asCharted(f, waterOffset);       // a river chart's depths take no tide (AS_CHARTED_BANDS)
   const d1 = f.props?.DRVAL1, d2 = f.props?.DRVAL2;
   const deepest = (d2 != null) ? d2 + waterOffset : (d1 != null ? d1 + waterOffset : null);
   const shallowest = (d1 != null) ? d1 + waterOffset : (d2 != null ? d2 + waterOffset : null);
@@ -484,7 +500,7 @@ export function hazPassable(f, opts = {}) {
   if (soundingUntrusted(f.props)) return false;
   const vs = f.props?.VALSOU;
   return typeof vs === 'number'
-      && (vs + o.waterOffsetM) >= o.minDepthM + WRECK_CLEAR_MARGIN_M;
+      && (vs + asCharted(f, o.waterOffsetM)) >= o.minDepthM + WRECK_CLEAR_MARGIN_M;
 }
 
 // ── Channel structure ───────────────────────────────────────────────────────
@@ -1132,7 +1148,7 @@ export function deepKeepouts(frame, feats, opts = {}) {
     if (r === 'depth_area' || r === 'dredged') {
       if (!enf.depth || depthExcluded(f, { min: floor, max: 0 }, o.waterOffsetM)) continue;   // a keep-out already
       const d1 = f.props?.DRVAL1, d2 = f.props?.DRVAL2, d = d1 ?? d2;
-      if (d == null || d + o.waterOffsetM >= deepTo) continue;
+      if (d == null || d + asCharted(f, o.waterOffsetM) >= deepTo) continue;
       if (d1 != null && d2 != null && d2 - d1 > bandMax) continue;   // a coarse band: its soundings say (above)
       const kind = 'water less than ' + marginM + ' m over her floor';
       eachRing(g, (rg) => {
@@ -1153,7 +1169,7 @@ export function deepKeepouts(frame, feats, opts = {}) {
       if (!enf.depth) continue;
       eachPoint(g, (c) => {
         const d = c.length > 2 && c[2] != null ? c[2] : (f.props?.VALSOU ?? f.props?.DEPTH);
-        if (typeof d !== 'number' || d + o.waterOffsetM >= deepTo) return;
+        if (typeof d !== 'number' || d + asCharted(f, o.waterOffsetM) >= deepTo) return;
         const q = frame.toEN({ lon: c[0], lat: c[1] });
         snd.push({ e: q.e, n: q.n, r: 0, berth, kind: berth + ' m off a sounding of ' + d.toFixed(1) + ' m', cls: f.cls });
       });

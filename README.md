@@ -3613,6 +3613,27 @@ plain. `tests/path_card.js` 15.
    two minutes. The replace is now tried again over 0.75 s, as a read already was.
    `tests/enc_cells.py` 16.
 
+   **The Corps' river charts (2026-11-23).** Andy: "add US Army Corps of Engineers (US inland
+   rivers) to the available charts in the Console". The console now also reads the Corps' Inland
+   ENC river cells (ienccloud.us): 109 cells on 21 rivers, from the Gulf to the Great Lakes, and
+   the Corps' buoy overlay, one cell of the river buoys reissued daily. They are one chart band,
+   `enc_river`, kept in `charts/ienc` the way NOAA's cells are kept in `charts/s57`. Where the two
+   overlap it is his call: NOAA's harbor and berthing charts win, and the river chart ranks above
+   NOAA's approach chart and every coarser one. So the layers are harbor, river, approach,
+   coastal, general, overview, in the tile and the band pick (snap-to-water, the chart card), and
+   a chart read along a passage names the river scale it read. The buoys are read only where a river cell is, since the
+   overlay's one footprint is the whole reach. A river cell's classes are the Inland ENC Feature
+   Catalogue's; one whose acronym is an IHO class in lower case (`uwtroc`, `bcnlat`) is named as
+   that class, so the inland rock is a hazard and the inland beacon a channel mark, read as
+   NOAA's are (`data/s57/README.md`). A river cell's depths are below the river's own low-water
+   reference, which the river stands above nearly all the time, not the tide's datum: they are
+   read AS CHARTED, no tide station's level added, and the chart card says so (Datum: river
+   low-water reference; Correction: none). The Corps' cells are not read from ENCDirect, which
+   serves NOAA's charts alone: when they cannot be had, the water they would chart is unread
+   and said as the Corps', never filled from NOAA's coarser chart. A tile kept before this change
+   is read again inside the rivers' reach. `--enc-source encdirect` reads no river band.
+   `tests/ienc_cells.py`.
+
    **The Passage tab, and a long Go-To as a passage (2026-10-14).** Andy: "consider another path
    planning behavior called 'passage' that disregards the 9-23 directive and allows for long path
    planning", and "do it in segments starting with beginning and end and then working inward". The

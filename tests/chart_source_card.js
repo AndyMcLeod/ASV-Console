@@ -143,9 +143,12 @@ for (const d of ["CHART_DISPLAY_UNITS", "CHART_DATA_UNITS", "CATZOC_LBL", "ENC_U
 // the real ones through its parameter list rather than a second copy eval'd beside them.
 for (const d of ["CHART_RETRY_MS", "CHART_PART_WORDS"]) code += grabDecl(d) + "\n";
 for (const f of ["bandWord", "cellName", "fmtEncDate", "chartPartialSay", "updateChartCard"]) code += grab(f) + "\n";
-code += "(function(cells, quality, at, retrying){\n"
-      + "  asv = at; sea.chartInfo = cells === null ? null\n"
-      + "        : {band:'enc_harbour', cells:cells, quality:quality||[], note:'no ENC coverage here', retrying: retrying};\n"
+// (`wat`, checks 13: {water: the water reading the card shows, info: what the answer carries besides - its band, its
+//  `river`}; none, the empty reading and the harbor band every other check paints)
+code += "(function(cells, quality, at, retrying, wat){\n"
+      + "  asv = at; water = (wat && wat.water) || {}; sea.chartInfo = cells === null ? null\n"
+      + "        : Object.assign({band:'enc_harbour', cells:cells, quality:quality||[], note:'no ENC coverage here', retrying: retrying},\n"
+      + "                        (wat && wat.info) || {});\n"
       + "  chartLastHtml = null; __body = '';\n"     // the card skips an unchanged write
       + "  updateChartCard(); return __body;\n"
       + "})";
@@ -160,7 +163,7 @@ const cell = (dsnm, lat, lon, d, extra) =>
 
 // The vessel sits at the DriX base off Lewes.
 const AT = { lat: 38.78965, lon: -75.16094 };
-const paint = (cells, quality, at, retrying) => painter(cells, quality, at || { lat: AT.lat, lon: AT.lon }, retrying);
+const paint = (cells, quality, at, retrying, wat) => painter(cells, quality, at || { lat: AT.lat, lon: AT.lon }, retrying, wat);
 // Rows are read by their data-cell key, NOT by scanning for cell names: the name
 // also appears in each row's tooltip and in the legend sentence, so a bare name
 // scan counts one row three times (it did, and reported a fold bug that wasn't).
@@ -356,6 +359,37 @@ check("11. no ENC coverage still reads as a note, not an empty list",
               && /NOAA did not answer whole for the zones of confidence/.test(noZoc) && !/no quality polygon at this position/.test(noZoc)
               && rowsOf(noZoc).length > 0,
         () => JSON.stringify({ noCells: noCells.replace(/<[^>]+>/g, "").slice(0, 120), zoc: /zones of confidence/.test(noZoc) }));
+
+  // 13. A RIVER CELL'S DATUM (2026-11-23, the Corps' river charts): its depths are below the river's own low-water
+  //     reference plane and the console adds no station's level to them (keepouts.js asCharted) - so the card must not
+  //     say the station's datum and its live correction for it. The same reading beside NOAA's cell says both.
+  const WAT = { water: { ok: true, datum: "MLLW", offset_m: 0.42, name: "Test Station", station: "8760000" } };
+  const plain = h => h.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+  const riv = plain(paint([cell("U37TSTAA", AT.lat, AT.lon, 0.02)], [], null, undefined, Object.assign({ info: { band: "enc_river" } }, WAT)));
+  const sea13 = plain(paint(LEWES, [], null, undefined, WAT));
+  check("13. A RIVER CELL'S DEPTHS ARE AS CHARTED, AND THE CARD SAYS SO: the vessel in one of the Corps' river cells "
+        + "(U37..., usage 7) reads its usage River, its datum the river low-water reference and its correction none - "
+        + "not the station's MLLW and +0.42 m live, which no river depth takes; in NOAA's cell, the same reading's "
+        + "datum and live correction as before",
+        () => /Usage River/.test(riv) && /Datum river low-water reference/.test(riv)
+              && /Correction none: river depths as charted/.test(riv) && !/MLLW/.test(riv) && !/\+0\.42 m live/.test(riv)
+              && /Datum MLLW/.test(sea13) && /Correction \+0\.42 m live/.test(sea13) && !/river low-water/.test(sea13),
+        () => JSON.stringify({ river: (riv.match(/Usage.{0,40}|Datum.{0,40}|Correction.{0,40}/g) || []),
+                               noaa: (sea13.match(/Datum.{0,30}|Correction.{0,30}/g) || []) }));
+  // 13b. ... and a river chart that did not answer, or answered in part, is said as the Corps' (asv_console.py's
+  //      `river` on a failure, the band on a partial answer) - not as NOAA's service, which was never asked
+  const rivDown = plain(paint([], [], null, ["!the Corps' river chart cells could not be read (timed out)"],
+                              { info: { band: null, river: true, failed: true } }));
+  const rivPart = plain(paint([], [], null, ["Coverage_area"], { info: { band: "enc_river" } }));
+  const noaaDown = plain(paint([], [], null, ["!timed out"], { info: { band: null, failed: true } }));
+  check("13b. A RIVER CHART THAT DID NOT ANSWER, OR ANSWERED IN PART, IS SAID AS THE CORPS': \"the Corps' river chart did "
+        + "not answer (...)\" and \"the Corps did not answer whole for the chart cells\" - never \"NOAA's chart "
+        + "service\", which was not asked; NOAA's failure still NOAA's",
+        () => /the Corps' river chart did not answer \(the Corps' river chart cells could not be read/.test(rivDown)
+              && !/NOAA/.test(rivDown) && /the Corps did not answer whole for the chart cells/.test(rivPart)
+              && !/NOAA/.test(rivPart) && /NOAA's chart service did not answer \(timed out\)/.test(noaaDown),
+        () => JSON.stringify({ down: rivDown.trim().slice(0, 110), part: rivPart.trim().slice(0, 80),
+                               noaa: noaaDown.trim().slice(0, 60) }));
 
   console.log(ran + " checks, " + fails + " failed");
   process.exit(fails ? 1 : 0);

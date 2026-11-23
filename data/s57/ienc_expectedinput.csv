@@ -1,0 +1,512 @@
+Code,ID,Meaning
+17000,1,unrestricted anchorage
+17000,2,deep water anchorage
+17000,3,tanker anchorage
+17000,4,explosives anchorage
+17000,5,quarantine anchorage
+17000,6,sea-plane anchorage
+17000,7,small craft anchorage
+17000,9,anchorage for periods up to 24 hours
+17000,10,anchorage for pushing-navigation vessels
+17000,11,anchorage for other vessels than pushing-navigation vessels
+17000,12,anchorage for dry cargo vessels
+17000,13,anchorage for rafts
+17002,2,port entry and departure
+17002,6,lock
+17002,8,bridge passage
+17002,10,oncoming traffic indication
+17003,15,high water mark
+17003,16,vertical clearance indication
+17003,18,depth indication
+17004,1,anchoring prohibited
+17004,2,anchoring restricted
+17004,7,entry prohibited
+17004,8,entry restricted
+17004,13,no wake
+17004,14,area to be avoided
+17004,27,speed restricted
+17004,28,overtaking prohibited
+17004,29,overtaking of convoys by convoys prohibited
+17004,30,passing or overtaking prohibited
+17004,31,berthing prohibited
+17004,32,berthing restricted
+17004,33,making fast prohibited
+17004,34,making fast restricted
+17004,35,turning prohibited
+17004,36,restricted fairway depth
+17004,37,restricted fairway width
+17004,38,use of spuds prohibited
+17004,40,SOx emission restricted
+17004,41,NOx emission restricted
+17005,12,Mean lower low water
+17005,31,Local low water reference level
+17005,32,Local high water reference level
+17005,33,Local mean water reference level
+17005,34,Equivalent height of water (German GlW)
+17005,35,Highest Shipping Height of Water (German HSW)
+17005,36,Reference low water level according to Danube Commission
+17005,37,Highest shipping height of water according to Danube Commission
+17005,38,Dutch river low water reference level (OLR)
+17005,39,Russian project water level
+17005,40,Russian normal backwater level
+17005,41,Ohio River Datum
+17005,42,Approximate LAT
+17005,43,Dutch High Water Reference Level (MHW)
+17005,45,Dutch estuary low water reference level (OLW)
+17007,4,swinging wire ferry
+17008,1,RoRo-terminal
+17008,3,ferry terminal
+17008,4,fishing harbour
+17008,6,naval base
+17008,7,tanker terminal
+17008,8,passenger terminal
+17008,9,shipyard
+17008,10,container terminal
+17008,11,bulk terminal
+17008,12,syncrolift
+17008,13,straddle carrier
+17008,16,service and repair
+17008,17,quarantine station
+17009,1,IALA A
+17009,2,IALA B
+17009,9,no system
+17009,10,other system
+17009,11,CEVNI
+17009,12,Russian inland waterway regulations
+17009,13,Brazilian national inland waterway regulations - two sides
+17009,14,Brazilian national inland waterway regulations - side independent
+17009,15,Paraguay-Parana waterway - Brazilian complementary aids
+17010,1,custom
+17010,2,border
+17011,1,port-hand lateral mark
+17011,2,starboard-hand lateral mark
+17011,3,preferred channel to starboard lateral mark
+17011,4,preferred channel to port lateral mark
+17011,5,right-hand side of the waterway
+17011,6,left-hand side of the waterway
+17011,7,right-hand side of the channel
+17011,8,left-hand side of the channel
+17011,9,bifurcation of the waterway
+17011,10,bifurcation of the channel
+17011,11,channel near the right bank
+17011,12,channel near the left bank
+17011,13,channel cross-over to the right bank
+17011,14,channel cross-over to the left bank
+17011,15,danger point or obstacles at the right-hand side
+17011,16,danger point or obstacles at the left-hand side
+17011,17,turn off at the right-hand side
+17011,18,turn off at the left-hand side
+17011,19,junction at the right-hand side
+17011,20,junction at the left-hand side
+17011,21,harbour entry at the right-hand side
+17011,22,harbour entry at the left-hand side
+17011,23,bridge pier mark
+17011,24,"entry from a lake to a narrower waterway, right bank"
+17011,25,"entry from a lake to a narrower waterway, left bank"
+17011,26,change bank
+17011,27,continue along bank
+17012,7,training wall
+17012,18,lock/guide wall
+17012,19,ice breaker
+17012,2,groyne (groin)
+17012,8,rip rap
+17012,9,revetment
+17012,20,water intake structure
+17050,1,top (board)
+17050,2,bottom (board)
+17050,3,right (triangle to the right)
+17050,4,left (triangle to the left)
+17050,5,bottom (triangle to the bottom)
+17052,1,(A.1) no entry (general sign)
+17052,2,"(A.1.1) sections closed to use, no entry except for non-motorized small craft"
+17052,3,(A.2) no overtaking
+17052,4,(A.3) no overtaking of convoys by convoys
+17052,5,(A.4) no passing or overtaking
+17052,6,(A.5) no berthing on the side of the waterway on which the sign is placed
+17052,7,"(A.5.1) no berthing on the stretch of water whose breadth, measured from the sign, is shown in metres on the sign"
+17052,8,"(A.6) no anchoring or trailing of anchors, cables or chains"
+17052,9,(A.7) no making fast to the bank
+17052,10,(A.8) no turning
+17052,11,(A.9) Do not create wash
+17052,12,(A.10) no passing on left side (in openings of bridges or weirs)
+17052,13,(A.10) no passing on right side (in openings of bridges or weirs)
+17052,14,(A.12) motorized craft prohibited
+17052,15,(A.13) sports and pleasure craft prohibited
+17052,16,(A.14) water skiing prohibited
+17052,17,(A.15) sailing vessels prohibited
+17052,18,(A.16) all craft other than motorized vessels or sailing craft prohibited
+17052,19,(A.17) use of sailboards prohibited
+17052,20,(A.20) water bikes prohibited
+17052,21,(A.18) end of zone authorized for high speed navigation of small sport and pleasure craft prohibited
+17052,22,(A.19) no launching or beaching of vessels
+17052,23,(B.1) proceed in left direction
+17052,24,(B.1) proceed in right direction
+17052,25,(B.2a) move to the side of the fairway on your port side
+17052,26,(B.2b) move to the side of the fairway on your starboard side
+17052,27,(B.3a) keep on the side of the fairway on your port side
+17052,28,(B.3b) keep on the side of the fairway on your starboard side
+17052,29,(B.4a) cross fairway to port
+17052,30,(B.4b) cross fairway to starboard
+17052,31,(B.5) stop as prescribed in the regulations
+17052,32,(B.6) do not exceed the speed indicated (in km/h)
+17052,33,(B.7) give a sound signal
+17052,34,(B.8) keep a particularly sharp lookout
+17052,35,(B.9a) do not enter the main waterway until certain that this will not oblige vessels proceeding on it to change their course or speed
+17052,36,(B.9b) do not cross the main waterway until certain that this will not oblige vessels proceeding on it to change their course or speed
+17052,37,(B.11) obligation to enter into a radiotelephone link on the channel as indicated on the board
+17052,38,(C.1) depth of water limited
+17052,39,(C.2) headroom limited
+17052,40,(C.3) width of passage or channel limited
+17052,41,(C.4) there are restrictions on navigation
+17052,42,(C.5) the channel lies at a distance from the left bank
+17052,43,(C.5) the channel lies at a distance from the right bank
+17052,44,(D.1a) recommended channel in both directions
+17052,45,"(D.1b) recommended channel only in the direction indicated, passage in the opposite direction prohibited (at bridges)"
+17052,46,(D.2) you are recommended to keep on right side (in openings of bridges and weirs)
+17052,47,(D.2) you are recommended to keep on left side (in openings of bridges and weirs)
+17052,48,(D.3) you are recommended to proceed in the left direction
+17052,49,(D.3) you are recommended to proceed in the right direction
+17052,50,(E.1) entry permitted (general sign)
+17052,51,(E.2) overhead cable crossing
+17052,52,(E.3) weir
+17052,53,(E.4a) ferry-boat not moving independently
+17052,54,(E.4b) ferry-boat moving independently
+17052,55,(E.5) berthing (i.e. no anchoring or making fast to the bank) permitted
+17052,56,"(E.5.1) berthing permitted on the stretch of water of the breadth measured from, and shown on the board in meters"
+17052,57,"(E.5.2) berthing permitted on the stretch of water bounded by the distances measured from, and shown on the board in meters"
+17052,58,(E.5.3) maximum number of vessels permitted to berth abreast
+17052,59,(E.5.4) berthing area reserved for pushing-navigation vessels that are not required to carry blue lights or blue cones
+17052,60,(E.5.5) berthing area reserved for pushing-navigation vessels that are required to carry one blue light or one blue cone
+17052,61,(E.5.6) berthing area reserved for pushing-navigation vessels that are required to carry two blue lights or two blue cones
+17052,62,(E.5.7) berthing area reserved for pushing-navigation vessels that are required to carry three blue lights or three blue cones
+17052,63,(E.5.8) berthing area reserved for vessels other than pushing-navigation vessels that are not required to carry blue lights or blue cones
+17052,64,(E.5.9) berthing area reserved for vessels other than for pushing-navigation vessels that are required to carry one blue light or one blue cone
+17052,65,(E.5.10) berthing area reserved for vessels other than for pushing-navigation vessels that are required to carry two blue lights or two blue cones
+17052,66,(E.5.11) berthing area reserved for vessels other than for pushing-navigation vessels that are required to carry three blue lights or three blue cones
+17052,67,(E.5.12) berthing area reserved for all vessels that are not required to carry blue lights or blue cones
+17052,68,(E.5.13) berthing area reserved for all vessels that are required to carry one blue light or one blue cone
+17052,69,(E.5.14) berthing area reserved for all vessels that are required to carry two blue lights or two blue cones
+17052,70,(E.5.15) berthing area reserved for all vessels that are required to carry three blue lights or three blue cones
+17052,71,"(E.6) anchoring or trailing of anchors, cables or chains permitted"
+17052,72,(E.7) making fast to the bank permitted
+17052,73,(E.7.1) berthing area reserved for loading and unloading of vehicles
+17052,74,(E.8) turning area
+17052,75,(E.9a) crossing with secondary waterway ahead
+17052,76,(E.9b) secondary waterway ahead on the right
+17052,77,(E.9c) secondary waterway ahead on the left
+17052,78,"(E.9d) secondary waterway ahead, main waterway on the right"
+17052,79,"(E.9e) secondary waterway ahead, main waterway on the left"
+17052,80,"(E.9f) secondary waterway on the left, main waterway on the right"
+17052,81,"(E.9g) secondary waterway on the right, main waterway on the left"
+17052,82,"(E.9h) secondary waterway ahead and on the left, main waterway on the right"
+17052,83,"(E.9i) secondary waterway ahead and on the right, main waterway on the left"
+17052,84,(E.10a) crossing with main waterway ahead
+17052,85,(E.10b) main waterway ahead
+17052,86,(E.10c) junction with main waterway ahead and right
+17052,87,(E.10d) junction with main waterway ahead and left
+17052,88,"(E.10e) junction with main waterway ahead and right, secondary waterway on the left"
+17052,89,"(E.10f) junction with main waterway ahead and left, secondary waterway on the right"
+17052,90,"(E.11) end of prohibition or obligation applying to traffic in one direction only, or end of a restriction"
+17052,91,(E.13) drinking water supply
+17052,92,(E.14) telephone
+17052,93,(E.15) motorized vessels permitted
+17052,94,(E.16) sport and pleasure craft permitted
+17052,95,(E.17) water skiing permitted
+17052,96,(E.18) sailing vessels permitted
+17052,97,(E.19) craft other than motorized vessels or sailing craft permitted
+17052,98,(E.20) use of sailboards permitted
+17052,99,(E.23) possibility of obtaining nautical information by radiotelephone on the channel indicated
+17052,100,(E.24) water bikes permitted
+17052,101,(E.21) zone authorized for high speed navigation of small sport and pleasure craft
+17052,102,(E.22) launching or beaching of small craft permitted
+17052,103,(BR) proceed close to the margin on your port side
+17052,104,(BR) proceed close to the margin on your starboard side
+17052,105,(BR) proceed in the middle of the river
+17052,106,(BR) cross river to port
+17052,107,(BR) cross river to starboard
+17052,108,(BR) traffic between margins
+17052,109,(BR) reduce speed
+17052,110,"wreck pontoon, passage allowed on side showing red-white sign"
+17052,111,"wreck pontoon, passage allowed on both sides"
+17052,112,no passing or overtaking of convoys
+17052,113,small crafts prohibited
+17052,114,Attention! (Keep caution)
+17052,115,fairway crossing
+17052,116,shipping inspection point
+17052,117,(E.25) electrical power supply point
+17052,118,(E.26) winter harbour
+17052,119,(E.26.1) maximum number of vessels permitted to berth in winter harbour
+17052,120,(E.27) winter shelter
+17052,121,(E.27.1) maximum number of vessels permitted to berth in winter shelter; maximum number of vessels permitted to berth abreast; maximum number of rows of vessels which are berthed abreast
+17052,122,(E.6.1) use of spuds permitted
+17052,123,(B.12) obligation to use onshore power supply point
+17055,1,one blue light / cone
+17055,2,two blue lights / cones
+17055,3,three blue lights / cones
+17055,4,no blue light / cone
+17055,5,one red light / red cone top down
+17056,1,upstream
+17056,2,downstream
+17056,3,to the left bank
+17056,4,to the right bank
+17056,5,to harbor
+17063,1,prohibition mark
+17063,2,regulation mark
+17063,3,restriction mark
+17063,4,recommendation mark
+17063,5,information mark
+17065,1,bunker vessel available
+17065,2,no bunker vessel available
+17066,1,loading
+17066,2,unloading
+17066,3,overnight accommodation
+17066,4,berth for pushing-navigation vessels
+17066,5,berth for other vessels than pushing-navigation vessels
+17066,6,fleeting area
+17066,7,first class landing
+17066,8,second class landing
+17066,9,berth for passenger vessels
+17067,1,diesel oil
+17067,2,water
+17067,3,ballast
+17067,4,power
+17068,1,0 small vessels and pleasure craft
+17068,2,I peniche
+17068,3,II campine barge
+17068,4,III Dortmund-Ems barge
+17068,5,IV Rhine-Herne barge
+17068,6,Va Large Rhine barge; 1-barge push-tow unit
+17068,7,Vb 2-barge push-tow unit; long formation
+17068,8,VIa 2-barge push-tow unit; wide formation
+17068,9,VIb 4-barge push-tow unit
+17068,10,VIc 6-barge push-tow unit
+17068,11,No CEMT class
+17068,12,VII 9-barge push-town unit
+17069,1,VTS centre
+17069,2,VTS sector
+17069,3,IVS point
+17069,4,MIB
+17069,5,lock
+17069,6,bridge
+17069,7,custom
+17069,8,harbour
+17069,9,WLAN area
+17070,1,custom harbour
+17070,2,port of refuge
+17070,3,yacht harbour/marina
+17070,4,fishing harbour
+17070,5,private harbour
+17071,1,cargo residue/slop
+17071,2,waste oil
+17071,3,grey/black water
+17071,4,domestic refuse
+17076,1,containers
+17076,2,bulk goods
+17076,3,oil
+17076,4,fuel
+17076,5,chemicals
+17076,6,liquid goods
+17076,7,explosive goods
+17076,8,fish
+17076,9,cars
+17076,10,general cargo
+17078,1,water level staff / pole
+17078,2,recording water level gauge
+17078,3,recording water level gauge with remote access
+17078,4,recording water level gauge with external indicator
+17078,5,recording water level gauge with remote access and remote indicator
+17088,1,Baltic datum
+17088,2,Adriatic level
+17088,3,Amsterdam Ordnance Datum (NAP)
+17088,4,Mean Sea Level
+17088,5,Other datum
+17088,6,National Geodetic Vertical Datum - NGVD29
+17088,7,North American Vertical Datum - NAVD88
+17088,8,Mean sea level 1912
+17088,9,Mean sea level 1929
+17088,10,Tweede Algemene Waterpassing (TAW)
+17091,1,official
+17091,2,private
+17091,3,suitable for car cranes
+17091,4,suitable for car planks
+17091,5,permission required
+17091,6,locked gate
+17092,1,operational period
+17092,2,non-operational period
+17094,1,liner trade
+17094,2,occasional professional shipping
+17094,3,leisure
+17100,1,Lift-Lock
+17100,2,Aqueduct
+17100,3,Sloping plane lock
+17100,4,Water slope lock (Pente d'Eau)
+17100,5,Other
+17101,1,power line
+17101,3,transmission line
+17101,4,telephone
+17101,5,telegraph
+17101,6,mooring cable/chain
+17101,7,ferry cable
+17102,1,floating restaurant
+17102,2,historic ship
+17102,3,museum
+17102,4,accommodation
+17102,5,floating breakwater
+17102,6,casino boat
+17103,1,metres
+17103,2,feet
+17103,3,kilometres
+17103,4,hectometres
+17103,5,statute miles
+17103,6,nautical miles
+17104,1,partly submerged at high water
+17104,2,always dry
+17104,3,always under water/submerged
+17104,4,covers and uncovers
+17104,8,above mean water level
+17104,9,below mean water level
+17105,1,left
+17105,2,right
+17106,1,rescue station with life boat
+17106,2,rescue station with rocket
+17106,3,not in use
+17106,4,refuge for ship-wrecked mariners
+17106,5,refuge for intertidal area walkers
+17106,6,lifeboat lying at a mooring
+17106,7,aid radio station
+17106,8,first aid equipment
+17106,9,"lifebuoy, ring buoy, life ring, life saver"
+18002,1,other
+18002,2,speed over ground
+18002,3,speed through water
+18007,1,other
+18007,2,cubic meters
+18007,3,tonnes
+18008,1,other
+18008,2,usage of waterway
+18008,3,carriage of equipment
+18008,4,"task,operation"
+18012,1,all types
+18012,2,other
+18012,3,non-motorized vessel
+18012,5,craft
+18012,6,vessel
+18012,7,inland waterway vessel
+18012,8,sea going ship
+18012,9,motor vessel
+18012,10,motor tanker
+18012,11,motor cargo vessel
+18012,12,canal barge
+18012,13,tug
+18012,14,pusher
+18012,15,barge
+18012,16,tank barge
+18012,17,dumb barge
+18012,18,lighter
+18012,19,tank lighter
+18012,20,cargo lighter
+18012,21,ship borne lighter
+18012,22,passenger vessel
+18012,23,passenger sailing vessel
+18012,24,day trip vessel
+18012,25,cabin vessel
+18012,26,High-speed vessel
+18012,27,floating equipment
+18012,28,worksite craft
+18012,29,recreational craft
+18012,30,Dinghy
+18012,31,floating establishment
+18012,32,floating object
+18013,1,all types
+18013,2,other
+18013,3,non-motorized vessel
+18013,5,craft
+18013,6,vessel
+18013,7,inland waterway vessel
+18013,8,sea going ship
+18013,9,motor vessel
+18013,10,motor tanker
+18013,11,motor cargo vessel
+18013,12,canal barge
+18013,13,tug
+18013,14,pusher
+18013,15,barge
+18013,16,tank barge
+18013,17,dumb barge
+18013,18,lighter
+18013,19,tank lighter
+18013,20,cargo lighter
+18013,21,ship borne lighter
+18013,22,passenger vessel
+18013,23,passenger sailing vessel
+18013,24,day trip vessel
+18013,25,cabin vessel
+18013,26,High-speed vessel
+18013,27,floating equipment
+18013,28,worksite craft
+18013,29,recreational craft
+18013,30,Dinghy
+18013,31,floating establishment
+18013,32,floating object
+18014,1,all types
+18014,2,other
+18014,3,single vessel
+18014,5,convoy
+18014,6,formation
+18014,7,rigid convoy
+18014,8,pushed convoy
+18014,9,breasted up formation
+18014,10,towed convoy
+18015,1,all types
+18015,2,other
+18015,3,single vessel
+18015,5,convoy
+18015,6,formation
+18015,7,rigid convoy
+18015,8,pushed convoy
+18015,9,breasted up formation
+18015,10,towed convoy
+18016,1,all types
+18016,2,other
+18016,4,bulk
+18016,5,dry cargo
+18016,6,liquid cargo
+18016,7,liquid cargo (type N)
+18016,8,liquid cargo (type C)
+18016,9,gas
+18017,1,all types
+18017,2,other
+18017,4,bulk
+18017,5,dry cargo
+18017,6,liquid cargo
+18017,7,liquid cargo (type N)
+18017,8,liquid cargo (type C)
+18017,9,gas
+18019,1,light activated
+18019,2,telephone activated
+18020,1,reduce bridge lighting
+18030,1,50Hz
+18030,2,60Hz
+18031,1,230V
+18031,2,400V
+18047,1,AtoN
+18047,2,Real AIS AtoN
+18047,3,Virtual AIS AtoN
+19000,4,likely to change
+19000,5,unlikely to change
+19000,6,unassessed
+33066,1,general cargo vessel
+33066,2,container vessel
+33066,3,tanker
+33066,4,sailing vessel
+33066,5,fishing vessel
+33066,6,special purpose vessel.
+33066,7,man of War
+33066,8,submarine
+33066,9,high speed craft
+33066,10,bulk carrier
+33066,11,seaplane
+33066,12,tugboat
+33066,13,passenger vessel
+33066,14,ferry
+33066,15,boat
