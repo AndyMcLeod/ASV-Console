@@ -332,12 +332,12 @@ root1b = E.RiverCells._decode_catalog(xml_catalog(
 e1b, n1b = E.RiverCells._catalog_entries(root1b)
 refused1b = E.RiverCells._catalog_refused(E.RiverCells._decode_catalog(xml_catalog(RIVER_CELLS)),
                                          os.path.join(TMP, "no_such_catalog.xml"))
-check("1b. AN ENTRY THAT DOES NOT READ NAMES NO CELL - a cell of another purpose (U35: a harbor's), an edition with no "
-      "update, a name that is not a cell's, a footprint edge that is not a number (an east or a north of NaN: min and "
-      "max kept the west's or the south's own value, a footprint no wider than a line - review, 2026-11-23) - and counts "
-      "as one that failed to read; a cell outside the rivers' reach is no entry that failed (it is said, not read), so a "
-      "catalog naming one is not refused for it",
-      lambda: [e["name"] for e in e1b] == ["U37TSTAA"] and n1b == 6 and refused1b is None,
+check("1b. AN ENTRY THAT DOES NOT READ NAMES NO CELL - an edition with no update, a name that is not a cell's, a "
+      "footprint edge that is not a number (an east or a north of NaN: min and max kept the west's or the south's own "
+      "value, a footprint no wider than a line - review, 2026-11-23) - and counts as one that failed to read; a cell "
+      "outside the rivers' reach, and a cell of another purpose (U35: a harbor's), is no entry that failed (it is said, "
+      "not read), so a catalog naming one is not refused for it",
+      lambda: [e["name"] for e in e1b] == ["U37TSTAA"] and n1b == 5 and refused1b is None,
       lambda: "entries %s of n %d; the four-cell catalog refused: %r" % ([e["name"] for e in e1b], n1b, refused1b))
 
 
@@ -374,6 +374,32 @@ check("1c. A REFRESH THAT IS NOT THE CORPS' CATALOG IS REFUSED, the copy kept an
                   for k in ("doctype", "other catalog", "not xml"))
               and r1c["good"][0] == three + ["U37TSTAD"] and r1c["good"][1] is None,
       lambda: "; ".join("%s: %s stale %s" % (k, v[0], v[1]) for k, v in r1c.items()))
+
+
+def refresh1_said(body):
+    """refresh1, and what it said in the log."""
+    said = io.StringIO()
+    with contextlib.redirect_stdout(said):
+        got = refresh1(body)
+    return got + (said.getvalue(),)
+
+
+# twenty-four river cells and one that does not read: inside NOAA's 1 in 20, so only the Corps' own rule refuses it
+MANY = MORE + [("U37TSG%02d" % i, "1.0", (-91.9 + 0.02 * i, 31.8, -91.89 + 0.02 * i, 31.81), "Gen River", "", "")
+               for i in range(20)]
+r1d = {"one unread": refresh1_said(xml_catalog(MANY + [("U37TSTQE", "53", RV, "No update", "", "")])),
+       "another purpose": refresh1_said(xml_catalog(MANY + [("U38TSTZZ", "1.0", RV, "A river harbor", "", "")]))}
+check("1d. ONE ENTRY OF THE CORPS' CATALOG THAT DOES NOT READ REFUSES ITS REFRESH (review, 2026-11-23): NOAA's 1 in 20 "
+      "of 109 is five rivers' reaches read as no chart, the tile kept whole - so a refresh of 24 river cells and one "
+      "with an edition and no update is refused, the copy kept read past its age and the entry named in the log; a cell "
+      "of another purpose (U38) is no entry that failed: that refresh is taken, the cell said and not read",
+      lambda: r1d["one unread"][0] == three and r1d["one unread"][1]
+              and r1d["one unread"][2] == FILES[E.RIVER_CATALOG_URL]
+              and "refresh refused" in r1d["one unread"][3] and "U37TSTQE" in r1d["one unread"][3]
+              and r1d["another purpose"][0] == sorted(m[0] for m in MANY if m[0] != "U37TSFAR")
+              and r1d["another purpose"][1] is None
+              and "U38TSTZZ" in r1d["another purpose"][3] and "refused" not in r1d["another purpose"][3],
+      lambda: "; ".join("%s: %s stale %s said %r" % (k, v[0], v[1], v[3][-300:]) for k, v in r1d.items()))
 net1.files[E.RIVER_CATALOG_URL] = FILES[E.RIVER_CATALOG_URL]
 
 # ── 2. where they can reach ──────────────────────────────────────────────────────────────────────────────────────────

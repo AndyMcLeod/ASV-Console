@@ -252,6 +252,7 @@ class CellSource:
     CATALOG_FILE = "enc.geojson"
     CATALOG_MARK = "catalog.mark"
     WHO = "NOAA's"
+    ENTRY_DROP_MAX = CATALOG_DROP_MAX   # the share of a refresh's own entries that may not read (_catalog_refused)
 
     def _catalog_url(self):
         return CATALOG_URL
@@ -343,6 +344,9 @@ class CellSource:
                     data = self._get(self._catalog_url())
                     why = self._catalog_refused(self._decode_catalog(data), path)
                     if why:
+                        # said in the log (2026-11-23, review): a refused refresh was said only as the copy's age
+                        print("[cells] %s cell catalog refresh refused, the copy kept is read: %s" % (self.WHO, why),
+                              flush=True)
                         raise ValueError("%s cell catalog was refused: %s" % (self.WHO, why))
                     _write(path, data)
                     refreshed = True
@@ -410,7 +414,7 @@ class CellSource:
         entries, n = cls._catalog_entries(d)
         if not entries:
             return "it names no cells (%d entries)" % n
-        if len(entries) < (1.0 - CATALOG_DROP_MAX) * n:
+        if len(entries) < (1.0 - cls.ENTRY_DROP_MAX) * n:
             return "%d of its %d entries do not read" % (n - len(entries), n)
         try:
             kept = len(cls._parse_catalog(path)) if os.path.exists(path) else 0
@@ -741,6 +745,12 @@ class RiverCells(CellSource):
     CATALOG_MARK = "catalog_u37.mark"
     WHO = "the Corps'"
     CATALOG_TAG = "IENCU37ProductCatalog"
+    # ⚠ NO ENTRY OF THE CORPS' CATALOG MAY FAIL TO READ (2026-11-23, review): NOAA's 1 in 20 is a cell or two of 7114,
+    # where 1 in 20 of the Corps' 109 is five rivers' reaches - read as no chart there, NOAA's coarser one in its place
+    # or none, and the tile kept whole. A refresh with one entry that does not read is refused, the copy kept read and
+    # the refusal said (measured: all 109 of the catalog of 2026-11-23 read, every one a river cell). A cell of another
+    # purpose is no entry that failed: said, and not read (_catalog_entries).
+    ENTRY_DROP_MAX = 0.0
 
     def _catalog_url(self):
         return RIVER_CATALOG_URL
@@ -771,18 +781,23 @@ class RiverCells(CellSource):
     def _catalog_entries(cls, root):
         """(entries, n) as CellSource's: each <Cell>'s name, edition and update ("52.9"), footprint and title (its river and
         reach). An entry whose name is not a cell's, whose edition does not read, or whose footprint is not a box, names
-        none; a cell outside RIVER_REACH is said, not read, and not counted in `n` (it is no entry that failed to read)."""
+        none, and is said; a cell outside RIVER_REACH, and a cell of another purpose than this catalog's (a river
+        harbor's), is said, not read, and not counted in `n` (it is no entry that failed to read)."""
         cells = root.findall("Cell") if root is not None else []
-        out, far = [], []
+        out, far, other, bad = [], [], [], []
         for c in cells:
+            name = (c.findtext("name") or "").strip()
+            band = cls._entry_band(name) if _CELL_NAME.match(name) else None
+            if _CELL_NAME.match(name) and band is None:
+                other.append(name)          # a cell, of another purpose: whatever its edition or footprint
+                continue
             try:
-                name = (c.findtext("name") or "").strip()
                 m = _EDITION.match((c.findtext("edition") or "").strip())
                 a = c.find("area")
                 w, s, e, n = (float(a.findtext(k)) for k in ("west", "south", "east", "north"))
             except (AttributeError, TypeError, ValueError):
+                bad.append(name or "(no name)")
                 continue
-            band = cls._entry_band(name) if _CELL_NAME.match(name) else None
             # ⚠ A FOOTPRINT'S EDGES ARE TAKEN AS A BOX, WHICHEVER WAY ROUND (measured 2026-11-23): U37AR126, the
             # Arkansas at Little Rock, gives its west as -92.354 and its east as -92.890 - swapped. Read as given it was
             # no box, and the cell was dropped from the catalog: the river there read from NOAA's coarser charts or not
@@ -790,9 +805,11 @@ class RiverCells(CellSource):
             # ⚠ FINITE FIRST (2026-11-23, review): min and max of a NaN keep whichever comes first, so an east given as
             # NaN came out as the west's own value - a footprint no wider than a line, and the cell read nowhere else.
             if not all(math.isfinite(v) for v in (w, s, e, n)):
+                bad.append(name or "(no name)")
                 continue
             w, e, s, n = min(w, e), max(w, e), min(s, n), max(s, n)
             if not m or not band or not (-180.0 <= w <= e <= 180.0 and -90.0 <= s <= n <= 90.0):
+                bad.append(name or "(no name)")
                 continue
             if not river_reaches((w, s, e, n)):
                 far.append(name)
@@ -805,7 +822,14 @@ class RiverCells(CellSource):
         if far:
             print("[cells] %s catalog names %s outside the river reach (RIVER_REACH): not read"
                   % (cls.WHO, ", ".join(far[:6])), flush=True)
-        return out, len(cells) - len(far)
+        if other:
+            print("[cells] %s catalog names %s, of another purpose than a river cell's: not read"
+                  % (cls.WHO, ", ".join(other[:6])), flush=True)
+        if bad:
+            print("[cells] %s catalog: %d entr%s that do%s not read: %s"
+                  % (cls.WHO, len(bad), "y" if len(bad) == 1 else "ies", "es" if len(bad) == 1 else "",
+                     ", ".join(bad[:6])), flush=True)
+        return out, len(cells) - len(far) - len(other)
 
     def band_features(self, band, box, namer, only=None):
         """CellSource's answer - but outside RIVER_REACH nothing is asked of the network or the disk, and the catalog

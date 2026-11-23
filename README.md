@@ -3633,7 +3633,10 @@ plain. `tests/path_card.js` 15.
    and said as the Corps', never filled from NOAA's coarser chart - nor from a tile kept before
    this change, wherever a river cell may chart its water. A tile kept before this change
    is read again inside the rivers' reach. A river tile is read again after a day, not a week:
-   the Corps reissues its buoys most days as they are moved. `--enc-source encdirect` reads no river band.
+   the Corps reissues its buoys most days as they are moved. A refresh of the Corps' catalog with
+   even one entry that does not read is refused, the copy kept read and the entry named in the log:
+   NOAA's 1 in 20 is a cell or two of its 7,114, but of the Corps' 109 it is five rivers' reaches.
+   The catalog of 2026-11-23 reads whole. `--enc-source encdirect` reads no river band.
    `tests/ienc_cells.py`.
 
    **The Passage tab, and a long Go-To as a passage (2026-10-14).** Andy: "consider another path
