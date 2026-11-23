@@ -4430,6 +4430,8 @@ def _tile_not_current(got):
     # the reach of the Corps' cells (enc_cells.RIVER_REACH) it is not this console's chart wherever a river cell charts
     # the water, and not known not to be anywhere else, so not current. Outside it no river cell can chart the tile -
     # it lacks nothing, and a tile served as current there stays so (a tile naming no box is taken as inside).
+    # (The change that brought the river band changed the cell reader too - s57.py and enc_cells.py - so every
+    # tile kept before it, inside the reach or out, is read again once all the same, by the reader's tag below.)
     if ENC_SOURCE == "cells" and ENC_RIVER not in src and enc_cells.river_reaches(got.get("tile") or enc_cells.RIVER_REACH):
         return "before the Corps' river charts were read", "it lacks the river chart wherever one charts the water"
     if ENC_SOURCE == "cells" and got.get("cells_reader") != enc_cells.reader_tag():

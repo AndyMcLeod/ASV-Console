@@ -3631,9 +3631,11 @@ plain. `tests/path_card.js` 15.
    low-water reference; Correction: none). The Corps' cells are not read from ENCDirect, which
    serves NOAA's charts alone: when they cannot be had, the water they would chart is unread
    and said as the Corps', never filled from NOAA's coarser chart - nor from a tile kept before
-   this change, wherever a river cell may chart its water. A tile kept before this change
-   is read again inside the rivers' reach. A river tile is read again after a day, not a week:
-   the Corps reissues its buoys most days as they are moved. A refresh of the Corps' catalog with
+   this change, wherever a river cell may chart its water. Every tile kept before this change
+   is read again once, everywhere, because the cell reader changed with it (its tag). After
+   that, inside the rivers' reach, a tile that names no river chart is never current. A river
+   tile is read again after a day, not a week: the Corps reissues its buoys most days as they
+   are moved. A refresh of the Corps' catalog with
    even one entry that does not read is refused, the copy kept read and the entry named in the log:
    NOAA's 1 in 20 is a cell or two of its 7,114, but of the Corps' 109 it is five rivers' reaches.
    The catalog of 2026-11-23 reads whole. That catalog ships with the console
