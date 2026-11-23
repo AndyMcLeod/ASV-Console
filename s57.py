@@ -848,6 +848,12 @@ ENCDIRECT_NAME_EXCEPTIONS = {
     ("BUAARE", PRIM_AREA): "Build_Up_Area",
     ("CURENT", PRIM_POINT): "CURENT_Non_Gravitational_point",
 }
+# AN INLAND ROCK CHARTED AS AN AREA (2026-11-23, review): the Inland ENC catalog lets "uwtroc" be an area, where the IHO
+# UWTROC is a point alone - so no band publishes such a layer, and the rule named it by the catalog's own words,
+# Underwater_Rock_Awash_Rock_area: a name no role holds, a charted rock reaching no keep-out. Named as the point is
+# (NOAA's spelling above) with the area after it, a hazard area (asv_console ENC_ROLES). By the rule alone (layer_name):
+# ENCDirect is never asked for it.
+RULE_NAME_EXCEPTIONS = {("UWTROC", PRIM_AREA): "Underwater_Awash_Rock_area"}
 ENCDIRECT_FLOAT = frozenset(("DRVAL1", "DRVAL2", "VALSOU", "VALDCO", "WATLEV", "VERCLR", "VERCCL", "VERCOP", "HORCLR"))
 ENCDIRECT_INT = frozenset(("CATLAM", "CATCAM", "CONDTN", "EXPSOU", "TRAFIC", "CATZOC"))
 ENCDIRECT_MEANING = frozenset(("CATREA", "CATWRK", "CATOBS", "CATBRG", "CATSLC", "CATSCF", "CATHAF", "CATMOR",
@@ -950,7 +956,7 @@ def layer_name(acronym, prim):
     None for an object with no geometry of its own (a collection, primitive 255) or a class the catalog lacks. An
     inland class is named as its IHO twin (inland_twin)."""
     acronym = inland_twin(acronym)
-    exc = ENCDIRECT_NAME_EXCEPTIONS.get((acronym, prim))
+    exc = ENCDIRECT_NAME_EXCEPTIONS.get((acronym, prim)) or RULE_NAME_EXCEPTIONS.get((acronym, prim))
     if exc:
         return exc
     words = _class_words(acronym)

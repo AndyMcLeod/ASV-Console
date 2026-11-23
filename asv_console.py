@@ -2848,9 +2848,11 @@ ENC_ROLES = {
                       "Offshore_Platform_point", "Marine_Farm_Culture_point", "Fishing_Facility_point"],
     # Aquaculture sites and offshore platforms as AREAS: half the sampled marine farms in his cached areas read as open
     # water to the model (2026-10-12), e.g. off Rye at 42.958 N 70.713 W. A fishing facility charted as an area is a
-    # trap or weir field.
+    # trap or weir field. A RIVER ROCK CHARTED AS AN AREA (2026-11-23): the Corps' catalog lets a rock be one, the IHO's
+    # does not (s57.RULE_NAME_EXCEPTIONS) - named by its own words it reached no keep-out.
     "hazard_area":   ["Obstruction_area", "Wreck_area",
-                      "Offshore_Platform_area", "Marine_Farm_Culture_area", "Fishing_Facility_area"],
+                      "Offshore_Platform_area", "Marine_Farm_Culture_area", "Fishing_Facility_area",
+                      "Underwater_Awash_Rock_area"],
     # OBSTRUCTIONS AS LINES. The point and area forms were fetched and the line was not,
     # so a linear obstruction - a submerged barrier, a ruined training wall, a line of
     # piles charted as one object - was invisible to the keep-out model. The same for a fish weir, an aquaculture

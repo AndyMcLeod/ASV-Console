@@ -169,6 +169,7 @@ BCN_ODD = ra.point("bcnlat", (-91.09, 30.67), {"catlam": "22"})        # an inla
 BCN_BOTH = ra.point("bcnlat", (-91.095, 30.665), {"catlam": "2", "CATLAM": "1"})   # both sides given: the IHO one is its own
 ROCK_IN = ra.point("uwtroc", (-91.08, 30.62), {"watlev": "2"})         # an inland rock, always dry ...
 ROCK_IHO = ra.point("UWTROC", (-91.07, 30.62), {"WATLEV": "2"})        # ... and the IHO one
+ROCK_AREA = ra.area("uwtroc", [-91.078, 30.612, -91.075, 30.615], {"watlev": "3"})   # an inland rock charted as an area
 SLC = ra.line("slcons", (-91.12, 30.60), (-91.12, 30.61))              # a dike, the inland class
 PON = ra.area("ponton", [-91.14, 30.62, -91.135, 30.625])
 GAG = ra.point("wtwgag", (-91.06, 30.68), {"OBJNAM": "Test gauge"})    # an inland class with no IHO twin
@@ -412,13 +413,17 @@ f3 = x3["features"]
 bi, bh, bo = one(f3, "U37TSTAA", BCN_IN), one(f3, "U37TSTAA", BCN_IHO), one(f3, "U37TSTAA", BCN_ODD)
 bb = one(f3, "U37TSTAA", BCN_BOTH)
 ri, rh = one(f3, "U37TSTAA", ROCK_IN), one(f3, "U37TSTAA", ROCK_IHO)
+ra3 = one(f3, "U37TSTAA", ROCK_AREA)
 buoy3 = one(f3, "3UABUOYS", BUOY_IN)
 check("3. AN INLAND CLASS IS NAMED AS ITS IHO TWIN, AS NOAA'S CELL WOULD NAME IT - the page keys on the names: the "
       "inland rock (uwtroc) Underwater_Awash_Rock_point, a hazard - named by its own catalog's words it was "
-      "Underwater_Rock_Awash_Rock_point, a name no role holds, and reached no keep-out; the inland lateral beacon a "
+      "Underwater_Rock_Awash_Rock_point, a name no role holds, and reached no keep-out - and charted as an AREA, which "
+      "the Corps' catalog allows and the IHO's does not, Underwater_Awash_Rock_area, a hazard area (it was "
+      "Underwater_Rock_Awash_Rock_area, held by no role); the inland lateral beacon a "
       "channel mark as the IHO one beside it; a dike (slcons) a dock line; a pontoon a dock; a waterway gauge (no "
       "IHO twin) its own name, extra; the buoy overlay's lateral buoy a channel mark, of the river band",
       lambda: (ri["cls"], ri["role"]) == (rh["cls"], rh["role"]) == ("Underwater_Awash_Rock_point", "hazard_point")
+              and (ra3["cls"], ra3["role"]) == ("Underwater_Awash_Rock_area", "hazard_area")
               and (bi["cls"], bi["role"]) == (bh["cls"], bh["role"]) == ("Beacon_Lateral_point", "chan_mark")
               and (one(f3, "U37TSTAA", SLC)["cls"], one(f3, "U37TSTAA", SLC)["role"])
               == ("Shoreline_Construction_line", "dock_line")
@@ -426,8 +431,8 @@ check("3. AN INLAND CLASS IS NAMED AS ITS IHO TWIN, AS NOAA'S CELL WOULD NAME IT
               and (one(f3, "U37TSTAA", GAG)["cls"], one(f3, "U37TSTAA", GAG)["role"]) == ("Waterway_Gauge_point", "extra")
               and (buoy3["cls"], buoy3["role"]) == ("Buoy_Lateral_point", "chan_mark")
               and x3.get("complete") and x3["cells"] == ["U37TSTAA", "3UABUOYS"],
-      lambda: "rock %s/%s (IHO %s); beacon %s/%s; slcons %s; ponton %s; gauge %s; buoy %s/%s; cells %s" % (
-          ri["cls"], ri["role"], rh["cls"], bi["cls"], bi["role"], one(f3, "U37TSTAA", SLC)["cls"],
+      lambda: "rock %s/%s (IHO %s), as an area %s/%s; beacon %s/%s; slcons %s; ponton %s; gauge %s; buoy %s/%s; cells %s" % (
+          ri["cls"], ri["role"], rh["cls"], ra3["cls"], ra3["role"], bi["cls"], bi["role"], one(f3, "U37TSTAA", SLC)["cls"],
           one(f3, "U37TSTAA", PON)["cls"], one(f3, "U37TSTAA", GAG)["cls"], buoy3["cls"], buoy3["role"], x3.get("cells")))
 check("3b. AN INLAND SIDE AND WATER LEVEL ARE SERVED AS THE IHO ATTRIBUTES WHERE THEIR VALUES MEAN THE SAME: the inland "
       "beacon's catlam 1 is CATLAM as the IHO beacon's (the side the channel lane reads), the buoy's catlam 2 too; the "

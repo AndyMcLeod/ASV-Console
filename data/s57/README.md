@@ -37,7 +37,9 @@ code or an acronym GDAL's tables hold stays GDAL's and a NOAA cell reads exactly
 (CLSDEF, CLSNAM, SYMINS) have acronyms GDAL already uses under other codes; those acronyms keep GDAL's codes.
 
 An inland class whose acronym is an IHO class in lower case (`uwtroc` for UWTROC, `bcnlat` for BCNLAT) is named as
-its IHO twin (`s57.inland_twin`), so the page's roles read it as they read NOAA's. The inland side of the waterway
+its IHO twin (`s57.inland_twin`), so the page's roles read it as they read NOAA's. The inland catalog lets a rock be
+an area, which the IHO's does not; that is named `Underwater_Awash_Rock_area` (`s57.RULE_NAME_EXCEPTIONS`), a hazard
+area. The inland side of the waterway
 (`catlam`) and water level (`watlev`) are served as CATLAM and WATLEV where the value means the same (1 to 4).
 
 ## ENCDirect's layer names
