@@ -16,8 +16,8 @@
 //   3-5    the line: its sense does not matter, its pieces are joined (one reversed, one served twice), and only where it
 //          runs on - not across a 40 m gap, not round a right-angle joint
 //   6-8    the vote and the limits: hands that disagree number nothing, a buoy on its wrong side is left out, too few
-//          say nothing; too far off, too near, off the end: not numbered; only the river band's unnamed buoys, only the
-//          river band's line
+//          say nothing (at a confluence, the line a buoy stands on its hand's side of, 6b); too far off, too near, off
+//          the end: not numbered; only the river band's unnamed buoys, only the river band's line
 //   9-10   no pair lane (`ko.sys`), and a buoy served twice is one number
 //   11-13  a route up the river along the bank side of the port-hand buoys, and the same route down it: every buoy kept
 //          on its hand, on the sailing line's side of her; the buoyed reach ridden; and the control, the same chart
@@ -196,6 +196,34 @@ check("6. THE VOTE: four of the fifteen given the other hand where they stand (1
             && nums(w1) === "2,3,4,5,7,8,-,9,10,11,12,13,15,17,18"
             && marksOf(two, [BUOYS[0], BUOYS[1]]).every((m) => m.num == null),
       () => "swapped: " + nums(marksOf(swapKO, swapped)) + "; one wrong: " + nums(w1) + "; two: " + nums(marksOf(two, [BUOYS[0], BUOYS[1]])));
+// (review 2026-11-23, M2a) a confluence: a tributary leaves the main river 30 degrees to the right at one node, its own
+// buoys 50 m either side of its line. The main river's starboard-hand buoy 200 m above the node stands 70 m off the main
+// line and 39 m off the tributary's - on the tributary's wrong side. Placed on its nearest line it was left unnumbered,
+// and outvoted the tributary's own buoys (6 of 7, under 0.9); a route up the main river passed it on the bank side.
+const CF = { e: 0, n: 4000 }, cu = [Math.sin(Math.PI / 6), Math.cos(Math.PI / 6)], cr = [cu[1], -cu[0]];
+const onTrib = (t, x) => ({ e: CF.e + cu[0] * t + cr[0] * x, n: CF.n + cu[1] * t + cr[1] * x });
+const ptBuoy = (q, cat) => ({ cls: "Buoy_Lateral_point", role: "chan_mark", band: "enc_river",
+  props: { CATLAM: cat, COLOUR: cat === 2 ? "3" : "4" }, geometry: { type: "Point", coordinates: LL(q) } });
+const seqPts = (f, a, b, st) => { const o = []; for (let s = a; s <= b + 1e-6; s += st) o.push(f(s)); return o; };
+const cfLines = [lineFeat(seqPts((n) => ({ e: 0, n }), 0, 4000, 50)), lineFeat(seqPts((n) => ({ e: 0, n }), 4000, 8000, 50)),
+  lineFeat(seqPts((t) => onTrib(t, 0), 0, 6000, 50))];
+const cfMain = [];
+for (let n = 600, i = 0; n < 8000; n += 400, i++) cfMain.push(ptBuoy({ e: i % 2 ? 70 : -70, n }, i % 2 ? 2 : 1));
+const cfTrib = [1000, 1400, 1800, 2200, 2600].map((t, i) => ptBuoy(onTrib(t, i % 2 ? 50 : -50), i % 2 ? 2 : 1));
+const cfBoth = ptBuoy(onTrib(200, 40), 2);          // on its hand's side of both lines, 40 m off the tributary's, 135 m off the main
+const cfKO = build([...cfLines, ...cfMain, ...cfTrib, cfBoth]);
+const cfM = marksOf(cfKO, cfMain), cfT = marksOf(cfKO, cfTrib), [cfRed, cfB] = marksOf(cfKO, [cfMain[9], cfBoth]);
+const cfSay = (m) => (m && m.river ? m.num + " on " + m.sys : "unnumbered");
+check("6b. AT A CONFLUENCE, THE LINE IT STANDS ON ITS HAND'S SIDE OF: the main river's starboard-hand buoy nearer the "
+      + "tributary's line, on that line's wrong side, is numbered on the main river's with the rest of its buoys; the "
+      + "tributary's own buoys are numbered on theirs; and a buoy on its hand's side of both goes to the nearer, the "
+      + "tributary's",
+      () => cfRed && cfRed.river && cfM.every((m) => m && m.river && m.sys === cfM[0].sys)
+            && cfT.every((m) => m && m.river && m.sys === cfT[0].sys) && cfT[0].sys !== cfM[0].sys
+            && cfB && cfB.river && cfB.sys === cfT[0].sys,
+      () => "the main river's red " + cfSay(cfRed) + "; main " + cfM.filter((m) => m && m.river).length + " of " + cfM.length
+            + " on " + [...new Set(cfM.map((m) => m && m.sys))].join("/") + "; tributary " + cfT.map(cfSay).join(", ")
+            + "; the buoy by both " + cfSay(cfB));
 // (review 2026-11-23, item 3: a harbor's entrance green 250 m off the line, on its hand's side, was numbered into the river's
 // count at the old 300 m - and a route down the river was taken 200 m across to it)
 const odd = [buoy(1000, 350, 2), buoy(2000, -3, 1), { ...buoy(0, 0, 2), geometry: { type: "Point", coordinates: LL({ e: 0, n: -200 }) } },

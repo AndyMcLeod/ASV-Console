@@ -868,8 +868,9 @@ export function gateSweep(P, gx, gy, ax, ay, w, Le, rings) {
  * from which side of it each hand lies on, the DIRECTION OF BUOYAGE.
  *
  * For each sailing line (its pieces joined end to end, `riverSailingLines`):
- *   - each unnamed river buoy within RIVER_MARK_LINE_M of it and abeam of it (not off either end) is placed on it -
- *     its station along it and the side it lies on (one within RIVER_MARK_MIN_OFF_M of it is on neither);
+ *   - each unnamed river buoy within RIVER_MARK_LINE_M of it and abeam of it (not off either end) may be placed on it -
+ *     its station along it and the side it lies on (one within RIVER_MARK_MIN_OFF_M of a line is on neither). A buoy
+ *     abeam of two lines (a confluence) is placed on the nearer one whose vote it agrees with, else on the nearer;
  *   - the buoys VOTE the direction of buoyage: the line's own sense where RIVER_VOTE_AGREE of them (and
  *     RIVER_VOTE_MIN at least) lie on their hand's side for it, the other sense where that many lie on it for that,
  *     and none where they do not agree - nothing on that line is numbered then;
@@ -910,6 +911,8 @@ export const RIVER_MARK_MIN_OFF_M = 5;
 export const RIVER_VOTE_MIN = 3;
 /** ... and the share of them that must agree on it. */
 export const RIVER_VOTE_AGREE = 0.9;
+/** How many times the buoys are placed again on the lines whose votes they agree with, the lines voting again each time. */
+export const RIVER_PLACE_PASSES = 4;
 
 /**
  * The river band's sailing lines in the frame's meters, each a list of {e, n} with its pieces joined: where a piece's
@@ -1031,20 +1034,44 @@ export function numberRiverBuoys(frame, feats, marks) {
     for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i].e - pts[i - 1].e, pts[i].n - pts[i - 1].n));
     return { pts, cum, bb: bbOf(pts), on: [] };
   });
+  // Each buoy's places: every line it stands abeam of within RIVER_MARK_LINE_M, nearest first (none for a buoy ON a line).
+  const near = [];
   for (const m of cands) {
-    let best = null;
+    const ps = [];
+    let onOne = false;
     for (const L of lines) {
       if (!inBB(m, L.bb, RIVER_MARK_LINE_M)) continue;
       const pr = placeOnLine(L.pts, L.cum, m);
-      if (pr.d <= RIVER_MARK_LINE_M && (!best || pr.d < best.d)) best = { L, ...pr };
+      if (pr.d < RIVER_MARK_MIN_OFF_M) onOne = true;
+      else if (pr.d <= RIVER_MARK_LINE_M && !pr.beyond) ps.push({ L, m, s: pr.s, x: pr.x, u: pr.u, d: pr.d });
     }
-    if (best && !best.beyond && best.d >= RIVER_MARK_MIN_OFF_M) best.L.on.push({ m, s: best.s, x: best.x, u: best.u });
+    if (!onOne && ps.length) near.push(ps.sort((a, b) => a.d - b.d));
   }
+  const vote = (on) => {
+    if (on.length < RIVER_VOTE_MIN) return 0;
+    const agree = on.filter((q) => q.m.side * q.x > 0).length / on.length;
+    return agree >= RIVER_VOTE_AGREE ? 1 : agree <= 1 - RIVER_VOTE_AGREE ? -1 : 0;
+  };
+  const seat = (pick) => {
+    for (const L of lines) L.on = [];
+    for (const q of pick) q.L.on.push(q);
+    for (const L of lines) L.dir = vote(L.on);
+  };
+  // ⚠ AT A CONFLUENCE, THE LINE IT STANDS ON ITS HAND'S SIDE OF (review 2026-11-23, M2a): a main river's red 70 m off
+  // its own line stood 39 m off a tributary's, on that line's wrong side - placed on its nearest line it was left
+  // unnumbered, and passed on the bank side. Each buoy takes the nearest of its lines whose vote it agrees with, else its
+  // nearest; and as a buoy moves the lines vote again (one on its wrong side had outvoted a tributary's own buoys).
+  let pick = near.map((ps) => ps[0]);
+  for (let pass = 0; pass < RIVER_PLACE_PASSES; pass++) {
+    seat(pick);
+    const next = near.map((ps) => ps.find((q) => q.L.dir && q.m.side * q.x * q.L.dir > 0) || ps[0]);
+    if (next.every((q, i) => q === pick[i])) break;
+    pick = next;
+  }
+  seat(pick);
   let count = 0;
   lines.forEach((L, k) => {
-    if (L.on.length < RIVER_VOTE_MIN) return;
-    const agree = L.on.filter((q) => q.m.side * q.x > 0).length / L.on.length;
-    const dir = agree >= RIVER_VOTE_AGREE ? 1 : agree <= 1 - RIVER_VOTE_AGREE ? -1 : 0;
+    const dir = L.dir;
     if (!dir) return;
     const sys = `~river-line-${k + 1}`;
     const own = L.on.filter((q) => q.m.side * q.x * dir > 0).sort((a, b) => dir * (a.s - b.s));
