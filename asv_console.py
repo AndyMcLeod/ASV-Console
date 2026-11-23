@@ -3411,7 +3411,8 @@ def _band_features(band, box, namer, only=None):
         if only is not None or not info["cells"]:
             return feats, info
         bf, bi = rb.band_features(band, box, namer)
-    except (OSError, ValueError) as e:
+    except Exception as e:                       # ⚠ ANY FAULT, NOT AN OSError ALONE (2026-11-23, review): a KeyError or a
+        # MemoryError in the river path went out as itself - said as NOAA's, and read from ENCDirect in its place
         raise RiverCellsFailed(str(e) or type(e).__name__)
     out = dict(info, cells=info["cells"] + bi["cells"], stale=info["stale"] + bi["stale"],
                partial=sorted(set(info["partial"]) | set(bi["partial"])), failed_cells=info["failed_cells"] + bi["failed_cells"])
@@ -3501,8 +3502,11 @@ def _cells_answer(bbox, band, extras):
         return _cells_extract(band, bbox, extras)
     except Exception as e:                       # a cell that will not read is a failed read, whatever the fault
         # the Corps' river cells failing is said as theirs, and is never read from ENCDirect (`river`): ENCDirect's
-        # answer here would be NOAA's coarser chart in the river chart's place (fetch_enc_features)
-        river = isinstance(e, RiverCellsFailed)
+        # answer here would be NOAA's coarser chart in the river chart's place (fetch_enc_features). So is any fault in
+        # a read of the river band, forced or picked (2026-11-23, review): a forced river read failing outside the cells'
+        # read was said as NOAA's - and with no source given, sent to ENCDirect for the river band, which came back here
+        # (band == ENC_RIVER), without end.
+        river = isinstance(e, RiverCellsFailed) or band == ENC_RIVER
         return dict({"band": None, "features": [], "failed": True,
                      "note": "%s could not be read (%s)" % ("the Corps' river chart cells" if river else "NOAA's chart cells",
                                                             str(e) or type(e).__name__)}, **({"river": True} if river else {}))
@@ -5573,6 +5577,7 @@ def _cells_chart_info(bbox):
     """fetch_chart_info's answer from NOAA's cells (ENC_SOURCE): the picked band's M_COVR and M_QUAL in ENCDirect's
     shape, each cell's TITLE from NOAA's catalog (ENCDirect served none; the card shows it), or a `failed` answer
     saying why the cells could not be read. Not kept: each cell's read is (enc_cells)."""
+    band = None
     try:
         band = _cells_pick_band(bbox)
         if band is None:
@@ -5580,7 +5585,9 @@ def _cells_chart_info(bbox):
         feats, info = _band_features(band, bbox, _cell_namer(band), only={"M_COVR", "M_QUAL"})
         titles = {e["name"]: e.get("title") for e in _band_source(band).cells_for(band, bbox)}
     except Exception as e:                       # a cell that will not read is a failed read, whatever the fault
-        river = isinstance(e, RiverCellsFailed)   # (the Corps' river cells failing: never ENCDirect's, fetch_chart_info)
+        # (the Corps' river cells failing: never ENCDirect's, fetch_chart_info) - and any fault once the river band is
+        # picked: its catalog's titles asked after its features (2026-11-23, review)
+        river = isinstance(e, RiverCellsFailed) or band == ENC_RIVER
         return dict({"band": None, "cells": [], "quality": [], "failed": True,
                      "note": "%s could not be read (%s)" % ("the Corps' river chart cells" if river else "NOAA's chart cells",
                                                             str(e) or type(e).__name__)}, **({"river": True} if river else {}))

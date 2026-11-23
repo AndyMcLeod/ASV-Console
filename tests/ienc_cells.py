@@ -656,6 +656,60 @@ check("5c. A RIVER CELL'S DEPTH NOT READ WHOLE IN THE BAND PICK (snap-to-water, 
           harb5c.get("note"), harb5c.get("river"), ED))
 del ED[:]
 
+net5e = Net()
+sources(net5e, "c5e")
+A._enc_down_until = 0.0
+BOX5 = [-91.12, 30.62, -91.08, 30.66]
+_bf0, _src0, _ext0 = E.RiverCells.band_features, A._band_source, A._cells_extract
+
+
+def fault(*a, **k):
+    raise KeyError("a fault no reader names")
+
+
+class NoCatalog:
+    WHO = "the Corps'"
+
+    def cells_for(self, band, box):
+        raise OSError("the catalog could not be read again")
+
+
+ed5d = {}
+try:
+    E.RiverCells.band_features = fault              # the river cells' read raising what is not an OSError
+    snap5d, card5d = A.fetch_enc_features(BOX5), A.fetch_chart_info(BOX5)
+    E.RiverCells.band_features = _bf0
+    ed5d["a fault"], ED[:] = list(ED), []
+    A._band_source = lambda band: NoCatalog() if band == A.ENC_RIVER else _src0(band)
+    card5d2 = A.fetch_chart_info(BOX5)               # the card's titles, asked after the band's features came
+    A._band_source = _src0
+    ed5d["the titles"], ED[:] = list(ED), []
+    A._cells_extract = lambda band, bbox, extras=True: fault() if band == A.ENC_RIVER else _ext0(band, bbox, extras)
+    forced5d = A.fetch_enc_features(BOX5, band=A.ENC_RIVER)    # no source given: with the cells, ENCDirect in their place
+    picked5d = A.fetch_enc_features(BOX5)
+    ed5d["the extract"], ED[:] = list(ED), []
+finally:
+    E.RiverCells.band_features, A._band_source, A._cells_extract = _bf0, _src0, _ext0
+sources(net5d, "c5f")                                # NOAA's harbor cell not read whole, at the card: NOAA's
+card5d3 = A.fetch_chart_info([-91.19, 30.56, -91.16, 30.59])
+ed5d3, ED[:] = list(ED), []
+CORPS5 = "the Corps' river chart cells could not be read ("
+check("5d. ANY FAULT OF A READ OF THE RIVER BAND IS THE CORPS' (review, 2026-11-23) - said as theirs, never read from "
+      "ENCDirect: one the river cells' read raises that is not an OSError (a KeyError, a MemoryError) went out as itself, "
+      "said as NOAA's and read from ENCDirect; the card's titles, asked of the Corps' catalog after the river band's "
+      "features came, the same; and the band's extract failing after its cells were read, picked or forced - a forced "
+      "river read with no source given was sent to ENCDirect for the river band, which came back to the cells without end; "
+      "NOAA's harbor cell not read whole, at the card, still NOAA's and read from ENCDirect",
+      lambda: all(d.get("failed") and d.get("river") and (d.get("note") or "").startswith(CORPS5)
+                  for d in (snap5d, card5d, card5d2, forced5d, picked5d))
+              and "a fault no reader names" in snap5d["note"] and "the catalog could not be read again" in card5d2["note"]
+              and not any(ed5d.values()) and len(ed5d) == 3
+              and card5d3.get("failed") and not card5d3.get("river") and ed5d3 == [("chartinfo", None)]
+              and (card5d3.get("note") or "").startswith("NOAA's chart cells could not be read (Depth_Area of US5TSTRH"),
+      lambda: "snap %r; card %r; titles %r; forced %r; picked %r; ENCDirect asked %s; NOAA's at the card %r, ENCDirect %s"
+              % tuple([(d.get("note"), d.get("river")) for d in (snap5d, card5d, card5d2, forced5d, picked5d)]
+                      + [ed5d, (card5d3.get("note"), card5d3.get("river")), ed5d3]))
+
 # ── 6. older copies, and the catalog past its age ────────────────────────────────────────────────────────────────────
 net6 = Net(dict(FILES, **{E.RIVER_CATALOG_URL: xml_catalog([("U37TSTAA", "52.1",) + RIVER_CELLS[0][2:]]
                                                              + RIVER_CELLS[1:])}))
