@@ -165,6 +165,17 @@ check("5c. AT A FORK THE NEAREST END JOINS, ONCE: a line ending where two run on
             && [joinedFork[0], joinedFork[2]].some((q) => Math.hypot(q.e - nearEnd.e, q.n - nearEnd.n) < 0.5)
             && forkLines.some((l) => l.length === 2),
       () => forkLines.map((l) => l.length + " points, ends " + [l[0], l[l.length - 1]].map((q) => Math.round(q.e) + "," + Math.round(q.n)).join(" / ")).join("; "));
+// (review 2026-11-23, item 2) three ends at ONE node - the main river's two pieces and a tributary's 30 degrees off, all at
+// 0 m: the main river runs on through it, whichever order the features come in
+const Q0 = { e: 40000, n: 2000 };
+const mainDown = lineFeat([{ e: 40000, n: 0 }, Q0]), mainUp = lineFeat([Q0, { e: 40000, n: 4000 }]);
+const trib = lineFeat([Q0, { e: 40000 + 2000 * Math.sin(Math.PI / 6), n: 2000 + 2000 * Math.cos(Math.PI / 6) }]);
+const nodeOrders = [[mainDown, mainUp, trib], [mainDown, trib, mainUp], [trib, mainDown, mainUp]].map((fs) => K.riverSailingLines(F, fs));
+const mainWhole = (ls) => ls.length === 2 && ls.some((l) => l.length === 3 && l.every((q) => Math.abs(q.e - 40000) < 0.5));
+check("5d. AT A NODE THE STRAIGHTEST JOINS: where the main river's two pieces and a tributary's meet at one point, the main "
+      + "river is one line through it and the tributary a line of its own - in every order the pieces come",
+      () => nodeOrders.every(mainWhole),
+      () => nodeOrders.map((ls) => ls.map((l) => l.length + " pts to " + Math.round(l[l.length - 1].e) + "," + Math.round(l[l.length - 1].n)).join(" + ")).join("; "));
 
 // ── 6-8. THE VOTE AND THE LIMITS ────────────────────────────────────────────────────────────────────────────────
 const swapped = BUOYS.map((b, i) => ([1, 4, 8, 12].includes(i) ? buoy(STA[i], b.props.CATLAM === 2 ? 70 : -70, b.props.CATLAM === 2 ? 1 : 2) : b));

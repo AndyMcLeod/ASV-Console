@@ -911,7 +911,7 @@ export const RIVER_VOTE_AGREE = 0.9;
 /**
  * The river band's sailing lines in the frame's meters, each a list of {e, n} with its pieces joined: where a piece's
  * end lies within RIVER_LINE_JOIN_M of another's and the line runs on through the joint (RIVER_LINE_JOIN_COS), the
- * nearest such ends first, each end joined once and never back into its own line. The server cuts a line at every
+ * nearest and straightest such ends first, each end joined once and never back into its own line. The server cuts a line at every
  * tile's edge and a cell's line stops at the cell's, so one river comes as many pieces, in either sense; a piece
  * served twice is read once.
  */
@@ -954,14 +954,18 @@ export function riverSailingLines(frame, feats) {
         for (const ej of [0, 1]) {
           const a = tip(pieces[i], ei), b = tip(pieces[j], ej), d = Math.hypot(a.e - b.e, a.n - b.n);
           if (!(d <= RIVER_LINE_JOIN_M)) continue;
-          const ua = away(pieces[i], ei), ub = away(pieces[j], ej);
-          if (-(ua[0] * ub[0] + ua[1] * ub[1]) < RIVER_LINE_JOIN_COS) continue;
-          joins.push({ i, ei, j, ej, d });
+          const ua = away(pieces[i], ei), ub = away(pieces[j], ej), c = -(ua[0] * ub[0] + ua[1] * ub[1]);
+          if (c < RIVER_LINE_JOIN_COS) continue;
+          // ⚠ NEAREST AND STRAIGHTEST, NOT FIRST (review 2026-11-23, item 2): where three ends meet at one node - the main
+          // river's two pieces and a tributary's, all at 0 m - distance alone left the tie to the features' order, and the
+          // tributary was joined to the main river below the node and carried on its count. A turn costs up to
+          // RIVER_LINE_JOIN_M of distance, all of it at RIVER_LINE_JOIN_COS.
+          joins.push({ i, ei, j, ej, d, cost: d + RIVER_LINE_JOIN_M * (1 - c) / (1 - RIVER_LINE_JOIN_COS) });
         }
       }
     }
   }
-  joins.sort((x, y) => x.d - y.d);
+  joins.sort((x, y) => x.cost - y.cost);
   const link = pieces.map(() => [null, null]), up = pieces.map((_, i) => i);
   const root = (i) => { while (up[i] !== i) i = up[i] = up[up[i]]; return i; };
   for (const c of joins) {
