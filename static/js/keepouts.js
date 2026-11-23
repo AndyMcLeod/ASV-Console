@@ -1069,6 +1069,9 @@ export function numberRiverBuoys(frame, feats, marks) {
     pick = next;
   }
   seat(pick);
+  // (each numbered buoy carries its own line, and every line of the read, for routing.js markPassRoute to ask which river
+  // she is running at it - not enumerable, so no copy, post or string of the marks carries the lines' points)
+  const slim = lines.map((L) => ({ pts: L.pts, cum: L.cum, bb: L.bb }));
   let count = 0;
   lines.forEach((L, k) => {
     const dir = L.dir;
@@ -1087,6 +1090,8 @@ export function numberRiverBuoys(frame, feats, marks) {
       }
       Object.assign(q.m, { num, sys, river: true, along: [dir * q.u[0], dir * q.u[1]],
                            label: q.m.side > 0 ? 'a starboard-hand river buoy' : 'a port-hand river buoy' });
+      Object.defineProperty(q.m, 'riverLine', { value: slim[k], enumerable: false, configurable: true, writable: true });
+      Object.defineProperty(q.m, 'riverLines', { value: slim, enumerable: false, configurable: true, writable: true });
       done.push(q.m);
       count++;
     }

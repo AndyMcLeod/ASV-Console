@@ -2170,6 +2170,14 @@ export function markPassRoute(pathLL, frame, ko, buf, opts = {}) {
     if (ks.length >= 2 && q.num != null) return facing(ks, q, q.num);
     return true;                                                         // a single and a single
   };
+  // (a river buoy's own sailing line is not the one nearest her at its station: she runs another river there - see the
+  // loop below. Every line of the read is asked, numbered buoys or none.)
+  const offItsRiver = (k) => {
+    const own = k.m.riverLine, all = k.m.riverLines;
+    if (!own || !all || all.length < 2) return false;
+    const here = atS(k.s), dOf = (L) => Math.abs(projectEN(L.pts, L.cum, here).x), d = dOf(own);
+    return all.some((L) => L !== own && inBB(here, L.bb, d) && dOf(L) < d);
+  };
   const neighbors = (k) => {
     let behind = null, ahead = null;
     const own = kin(k);
@@ -2264,6 +2272,13 @@ export function markPassRoute(pathLL, frame, ko, buf, opts = {}) {
     // offshore mark, however it is named or numbered.
     const unknown = () => { if (laned) why('ridden as a pair'); else gov.push({ ...k, skip: 'direction of buoyage not known', undirected: true }); };
     if (k.m.num == null) { unknown(); continue; }
+    // ⚠ A RIVER BUOY IS READ ONLY WHERE SHE RUNS ITS OWN RIVER (review 2026-11-23, M2b): the sailing line nearest her at
+    // the buoy's station is its own. Up a main river past a tributary leaving it 30 degrees off, the tributary's port-hand
+    // buoy 300 m up it, between the two rivers and 138 m off her route, took the direction of the tributary's buoys along
+    // her course and was kept to port: she was taken 178 m across toward the tributary's mouth to pass it so. Not read,
+    // it is a mark of no known direction, as every river buoy was before they were numbered (an offshore mark, below,
+    // where the dangers say which it marks).
+    if (k.m.river && offItsRiver(k)) { gov.push({ ...k, skip: 'a buoy of a river she is not running', undirected: true }); continue; }
     const nb = neighbors(k);
     if (nb.crosses) { why('its own channel crosses her route'); continue; }
     const dirs = [nb.behind, nb.ahead].filter(Boolean).map((r) => r.dir);

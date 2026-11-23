@@ -23,7 +23,8 @@
 //          on its hand, on the sailing line's side of her; the buoyed reach ridden; and the control, the same chart
 //          with the buoys' band gone (as before this change) - no direction of buoyage read for any of them; no river
 //          buoy brought close (12b), and the reach no further out than her starboard-hand buoys, the bank no edge of a
-//          river's channel - though it still is for the same marks not the river's (12c-12d)
+//          river's channel - though it still is for the same marks not the river's (12c-12d); and a buoy read only on
+//          its own river: up the main past a confluence no tributary buoy, up the tributary every one (12e)
 //   14-15  lone buoys 2 km apart, read from the line both ways - and not for a route across the river
 //   16     the operator's name in the marks stage's words (markName)
 //
@@ -360,6 +361,36 @@ check("12d. ... ONLY ON A RIVER: the reach lane on the same path through the sam
       () => rRiver.used && rCharted.used && rightMost(rRiver.path) < 70 && rightMost(rCharted.path) > 70,
       () => "furthest right of the sailing line: the river's " + rightMost(rRiver.path).toFixed(1) + " m (laid " + rRiver.used
             + "), the same marks not the river's " + rightMost(rCharted.path).toFixed(1) + " m (laid " + rCharted.used + ")");
+// (review 2026-11-23, M2b) 6b's confluence with its banks - the main river 440 m wide, the tributary 300 m, the main's
+// right bank opened between them - and the tributary's buoys 60 m either side of its line from 300 m up it: its
+// port-hand buoy there stands between the two rivers, 138 m off a route up the main river. Read from the tributary's
+// buoys along her course, 30 degrees off it, it was kept to port, and she was taken 178 m across toward the tributary.
+const cfShore = (pts) => ({ cls: "Coastline_line", role: "shore_line", band: "enc_river",
+  geometry: { type: "LineString", coordinates: pts.map(LL) } });
+const tRt = (220 - cr[0] * 150) / cu[0], tLt = (220 + cr[0] * 150) / cu[0];
+const cfBanks = [cfShore(seqPts((n) => ({ e: -220, n }), 0, 8000, 50)),
+  cfShore([...seqPts((n) => ({ e: 220, n }), 0, onTrib(tRt, 150).n, 25), ...seqPts((t) => onTrib(t, 150), tRt, 6000, 50)]),
+  cfShore([...seqPts((t) => onTrib(t, -150), tLt, 6000, 50).reverse(), ...seqPts((n) => ({ e: 220, n }), onTrib(tLt, -150).n, 8000, 25)])];
+const cfTribR = [];
+for (let t = 300, i = 0; t < 6000; t += 400, i++) cfTribR.push(ptBuoy(onTrib(t, i % 2 ? 60 : -60), i % 2 ? 2 : 1));
+const cfRKO = build([...cfLines, ...cfBanks, ...cfMain, ...cfTribR]);
+const cfTribM = marksOf(cfRKO, cfTribR);
+const upMain = seqPts((n) => ({ e: -40, n }), 300, 7700, 50).map(ll);
+const upTrib = [...seqPts((n) => ({ e: 0, n }), 300, 3900, 50), ...seqPts((t) => onTrib(t, 0), 100, 5600, 50)].map(ll);
+const mainR = R.channelLaneRoute(upMain, F, cfRKO, 5, {}), tribR = R.channelLaneRoute(upTrib, F, cfRKO, 5, {});
+const eastMost = Math.max(...mainR.route.map((p) => F.toEN(p).e));
+const tribGov = (res) => res.marks.filter((k) => cfTribM.includes(k.m));
+const read = (k) => k.dir === 1 || k.dir === -1;
+check("12e. A RIVER BUOY IS READ ONLY ON ITS OWN RIVER: up the main river past the confluence no tributary buoy is read with "
+      + "a direction of buoyage and she is taken no further east than the main river's own starboard-hand buoys - while "
+      + "up the tributary its buoys are kept on their hands",
+      () => tribGov(mainR).length > 0 && !tribGov(mainR).some(read) && eastMost < 70 && mainR.how.marks.wrong === 0
+            && tribGov(tribR).length >= 10 && tribGov(tribR).every((k) => k.dir === 1 && k.keepStbd === (k.m.side > 0) && !k.skip)
+            && tribR.how.marks.wrong === 0,
+      () => "up the main: tributary buoys " + tribGov(mainR).map((k) => k.skip || (k.offshore ? "offshore" : "dir " + k.dir)).join(" / ")
+            + ", furthest east " + eastMost.toFixed(1) + " m, " + JSON.stringify(mainR.how.marks) + "; up the tributary: "
+            + tribGov(tribR).filter((k) => k.dir === 1 && !k.skip).length + " of " + tribGov(tribR).length + " read with it, "
+            + JSON.stringify(tribR.how.marks));
 const asBefore = build([lineFeat(SAIL), ...BANKS, ...BUOYS.map((b) => ({ ...b, band: undefined }))]);
 const beforeR = R.channelLaneRoute(UP, F, asBefore, 5, {});
 check("13. THE CONTROL: the same chart with the buoys' band gone - unnumbered, as every river buoy was before this - and no "
