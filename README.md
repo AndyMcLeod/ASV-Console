@@ -3673,7 +3673,12 @@ plain. `tests/path_card.js` 15.
    brought close: the Corps sets its buoys outside the channel they mark - at Pine Bluff every one
    stands 14 to 56 m outside the 9 ft channel, in the 0 to 2.74 m water - so each is kept on its hand
    at a berth (30 m at a 5 m buffer) on its channel side, where a close pass put her in that water at
-   all 20 of them on the four replayed legs. `tests/river_marks.js`.
+   all 20 of them on the four replayed legs. Nor is a river reach ridden out to the bank: the buoys
+   stand staggered, so where no starboard-hand buoy's line bounded her the far bank was her edge, and
+   three quarters of the way across to it was the shallows (55 to 133 m outside the channel at Pine
+   Bluff). A river reach is laid only where her starboard-hand buoys bound it. Less of a leg runs in
+   the channel too, where that lane had crossed it by chance: the river's channel is charted only as
+   its deepest depth area, which the buoys' lane cannot see. `tests/river_marks.js`.
 
    **The Passage tab, and a long Go-To as a passage (2026-10-14).** Andy: "consider another path
    planning behavior called 'passage' that disregards the 9-23 directive and allows for long path

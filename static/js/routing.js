@@ -2814,6 +2814,7 @@ export const RESTRICTED_LOCAL_M2 = 1e6;
  *   - that hand's MARKS: the line from one to the next where the water runs straight between
  *     them, and in the stretch either side of a mark the line through it along the water's
  *     course (MARK_PASS_M inside a buoy kept to starboard; a beacon's berth inside a beacon).
+ * In a reach a Corps river buoy delimits, only the last: the bank is no edge of a river's channel (review 2026-11-23).
  * She rides three quarters of the way across (LANE_FRAC), eased no steeper than LANE_SLEW,
  * over a stretch of cross-sections at least REACH_MIN_M long - a channel has length, and an
  * obstruction in water that is no channel is something to stay off, not its edge.
@@ -2886,10 +2887,11 @@ export function buoyedReachLane(pathLL, frame, ko, buf, opts = {}) {
   const spans = [];
   for (let i = 1; i < delim.length; i++) {
     const a = delim[i - 1], c = delim[i];
-    if ((known(a) || known(c)) && c.s - a.s <= MARK_NEIGHBOR_M && c.s - a.s > 1) spans.push([a.s, c.s]);
+    if ((known(a) || known(c)) && c.s - a.s <= MARK_NEIGHBOR_M && c.s - a.s > 1) spans.push([a.s, c.s, !!(a.k.m.river || c.k.m.river)]);
   }
   if (!spans.length) return nil;
   const inReach = (i) => spans.some(([a, c]) => cum[i] >= a && cum[i] <= c);
+  const riverAt = (i) => spans.some(([a, c, r]) => r && cum[i] >= a && cum[i] <= c);   // (a reach a river buoy delimits)
   const iAt = (s) => { let i = 0; while (i < N - 1 && cum[i + 1] <= s) i++; return i; };
 
   // ── THE BANKS either side of each sample of a reach the chart's lane does not ride.
@@ -3244,6 +3246,12 @@ export function buoyedReachLane(pathLL, frame, ko, buf, opts = {}) {
     // steered AT it: a green buoy 40 m to starboard of a route that began too near it to be
     // moved for was shipped 5.6 m off, close to starboard, with a turn to starboard round it.
     if (Pm && Pm.by.some((q) => q.x > 0)) continue;
+    // ⚠ AND ON A RIVER, NO EDGE BUT HER STARBOARD-HAND BUOYS (review 2026-11-23, item 7). The Corps sets its buoys
+    // outside the channel they mark, staggered, and charts the channel itself only as its deepest depth area: where no
+    // buoy's line bounds her starboard hand her edge was the far bank, and three quarters of the way across to it is
+    // the shallows. Replayed at Pine Bluff, the reach took her 55 to 133 m outside the 9 ft channel there. In a reach
+    // a river buoy delimits, a sample with no starboard-hand line is no cross-section.
+    if (riverAt(i) && !S) continue;
     const xR = Math.min(eS[i] - STANDOFF, S ? S.x - (S.fixed ? BEACON : D) : Infinity);
     // (the port-hand marks' line to STARBOARD of her, the marks themselves to port: she is outside
     // the channel as their line runs on, to port of it)

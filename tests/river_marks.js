@@ -21,7 +21,9 @@
 //   9-10   no pair lane (`ko.sys`), and a buoy served twice is one number
 //   11-13  a route up the river along the bank side of the port-hand buoys, and the same route down it: every buoy kept
 //          on its hand, on the sailing line's side of her; the buoyed reach ridden; and the control, the same chart
-//          with the buoys' band gone (as before this change) - no direction of buoyage read for any of them
+//          with the buoys' band gone (as before this change) - no direction of buoyage read for any of them; no river
+//          buoy brought close (12b), and the reach no further out than her starboard-hand buoys, the bank no edge of a
+//          river's channel - though it still is for the same marks not the river's (12c-12d)
 //   14-15  lone buoys 2 km apart, read from the line both ways - and not for a route across the river
 //   16     the operator's name in the marks stage's words (markName)
 //
@@ -299,6 +301,37 @@ check("12b. A RIVER BUOY IS NEVER BROUGHT CLOSE: up the river and down it no riv
             && minOff(sideUp) >= BERTH - 1 && minOff(sideDown) >= BERTH - 1,
       () => "nearest pass up " + minOff(sideUp).toFixed(1) + " m, down " + minOff(sideDown).toFixed(1) + " m; pulled "
             + [upR, downR].map((res) => gov(res).filter((k) => k.pull).length).join("/"));
+// (review 2026-11-23, item 7) the river's buoys stand staggered, so between two starboard-hand buoys far apart, or round a
+// bend, no buoy's line bounds her starboard hand: read to the far bank, three quarters of the way across was the shallows
+// the buoys stand off (at Pine Bluff, 55 to 133 m outside the 9 ft channel)
+const xOff = (p) => {                                            // her offset from the sailing line, + to the right of upstream
+  const q = F.toEN(p);
+  let bd = Infinity, bx = 0;
+  for (let i = 1; i < AXIS.length; i++) {
+    const a = AXIS[i - 1], b = AXIS[i], dx = b.e - a.e, dy = b.n - a.n, L = Math.hypot(dx, dy);
+    const t = Math.max(0, Math.min(1, ((q.e - a.e) * dx + (q.n - a.n) * dy) / (L * L))), px = a.e + t * dx, py = a.n + t * dy;
+    const d = Math.hypot(q.e - px, q.n - py);
+    if (d < bd) { bd = d; bx = ((q.e - px) * dy - (q.n - py) * dx) / L; }
+  }
+  return bx;
+};
+const rightMost = (route) => Math.max(...route.map(xOff));
+check("12c. NO FURTHER OUT THAN HER STARBOARD-HAND BUOYS: up the river the buoyed reach is ridden, and nowhere does it take "
+      + "her to starboard of the line those buoys stand on (70 m right of the sailing line) - the bank is no edge of a "
+      + "river's channel",
+      () => upR.how.reach === true && rightMost(upR.route) < 70,
+      () => "reach " + upR.how.reach + "; furthest right of the sailing line " + rightMost(upR.route).toFixed(1) + " m");
+// (and only on a river: the reach lane laid on the same path through the same marks, read the same way but not the river's,
+// still reads the bank as its starboard edge where no buoy's line bounds it - a charted channel's buoys stand on its edge)
+const upPassed = R.markPassRoute(UP, F, KO, 5, {});
+const reachOf = (river) => R.buoyedReachLane(upPassed.path, F, KO, 5,
+  { marks: upPassed.marks.map((k) => (river ? k : { ...k, m: { ...k.m, river: false } })) });
+const rRiver = reachOf(true), rCharted = reachOf(false);
+check("12d. ... ONLY ON A RIVER: the reach lane on the same path through the same marks, read the same way but not the river's, "
+      + "still takes the bank as her starboard edge where no buoy's line bounds it - and the river's do not",
+      () => rRiver.used && rCharted.used && rightMost(rRiver.path) < 70 && rightMost(rCharted.path) > 70,
+      () => "furthest right of the sailing line: the river's " + rightMost(rRiver.path).toFixed(1) + " m (laid " + rRiver.used
+            + "), the same marks not the river's " + rightMost(rCharted.path).toFixed(1) + " m (laid " + rCharted.used + ")");
 const asBefore = build([lineFeat(SAIL), ...BANKS, ...BUOYS.map((b) => ({ ...b, band: undefined }))]);
 const beforeR = R.channelLaneRoute(UP, F, asBefore, 5, {});
 check("13. THE CONTROL: the same chart with the buoys' band gone - unnumbered, as every river buoy was before this - and no "
