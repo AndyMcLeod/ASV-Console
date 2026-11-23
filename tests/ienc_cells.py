@@ -326,14 +326,18 @@ check("1. THE CORPS' CATALOG READ: each river cell's name, edition and update (5
 root1b = E.RiverCells._decode_catalog(xml_catalog(
     [("U35TSTZZ", "1.0", RV, "A harbor cell", "", ""), ("U37TSTQQ", "52", RV, "No update", "", ""),
      ("u37tstqr", "1.0", RV, "A lower-case name", "", ""), ("U37TSTAA", "52.0", RV, "Test River", "Mile 0", "Mile 10"),
-     ("U37TSFAR", "3.0", FAR, "Far River", "", "")]))
+     ("U37TSFAR", "3.0", FAR, "Far River", "", ""),
+     ("U37TSTQN", "1.0", (RV[0], RV[1], float("nan"), RV[3]), "No east", "", ""),
+     ("U37TSTQS", "1.0", (RV[0], RV[1], RV[2], float("nan")), "No north", "", "")]))
 e1b, n1b = E.RiverCells._catalog_entries(root1b)
 refused1b = E.RiverCells._catalog_refused(E.RiverCells._decode_catalog(xml_catalog(RIVER_CELLS)),
                                          os.path.join(TMP, "no_such_catalog.xml"))
 check("1b. AN ENTRY THAT DOES NOT READ NAMES NO CELL - a cell of another purpose (U35: a harbor's), an edition with no "
-      "update, a name that is not a cell's - and counts as one that failed to read; a cell outside the rivers' reach is "
-      "no entry that failed (it is said, not read), so a catalog naming one is not refused for it",
-      lambda: [e["name"] for e in e1b] == ["U37TSTAA"] and n1b == 4 and refused1b is None,
+      "update, a name that is not a cell's, a footprint edge that is not a number (an east or a north of NaN: min and "
+      "max kept the west's or the south's own value, a footprint no wider than a line - review, 2026-11-23) - and counts "
+      "as one that failed to read; a cell outside the rivers' reach is no entry that failed (it is said, not read), so a "
+      "catalog naming one is not refused for it",
+      lambda: [e["name"] for e in e1b] == ["U37TSTAA"] and n1b == 6 and refused1b is None,
       lambda: "entries %s of n %d; the four-cell catalog refused: %r" % ([e["name"] for e in e1b], n1b, refused1b))
 
 

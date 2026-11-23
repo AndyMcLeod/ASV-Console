@@ -787,9 +787,12 @@ class RiverCells(CellSource):
             # Arkansas at Little Rock, gives its west as -92.354 and its east as -92.890 - swapped. Read as given it was
             # no box, and the cell was dropped from the catalog: the river there read from NOAA's coarser charts or not
             # at all. No cell here can cross the antimeridian (RIVER_REACH), so the lesser longitude is the west.
+            # ⚠ FINITE FIRST (2026-11-23, review): min and max of a NaN keep whichever comes first, so an east given as
+            # NaN came out as the west's own value - a footprint no wider than a line, and the cell read nowhere else.
+            if not all(math.isfinite(v) for v in (w, s, e, n)):
+                continue
             w, e, s, n = min(w, e), max(w, e), min(s, n), max(s, n)
-            if not m or not band or not all(math.isfinite(v) for v in (w, s, e, n)) \
-                    or not (-180.0 <= w <= e <= 180.0 and -90.0 <= s <= n <= 90.0):
+            if not m or not band or not (-180.0 <= w <= e <= 180.0 and -90.0 <= s <= n <= 90.0):
                 continue
             if not river_reaches((w, s, e, n)):
                 far.append(name)
