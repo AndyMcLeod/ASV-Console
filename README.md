@@ -3647,6 +3647,27 @@ plain. `tests/path_card.js` 15.
    is read and kept replaces it. `--enc-source encdirect` reads no river band.
    `tests/ienc_cells.py`.
 
+   **The river buoys' lanes (2026-11-23).** Andy: "do the river buoy lanes". The Corps' buoy
+   overlay charts each buoy's hand and no name, so no river buoy had a number or a channel and the
+   marks stage read every one as "direction of buoyage not known": no route up a river kept a buoy
+   on its hand. `keepouts.js` `numberRiverBuoys` now reads each unnamed lateral buoy of
+   `enc_river` against the river cells' sailing line (`Recommended_Track_line`, "Primary Sailing
+   Line"), whose pieces - cut at each tile's edge - `riverSailingLines` joins end to end where they
+   run on. Measured on the Arkansas and the White, every buoy lies on its own hand's side of it:
+   218 of 218 in two cells. The buoys along a line vote the direction of buoyage (three at least,
+   nine in ten agreeing) and are numbered along it as a chart numbers a channel, port-hand odd and
+   starboard-hand even, in a channel of the line's own that no charted name can begin; each also
+   carries the direction of buoyage at it (`along`), which `markPassRoute` reads for a buoy with no
+   numbered mark near it along her route - the next buoy of a hand is a median 850-950 m on and one
+   in ten more than 4 km. They stand staggered, one in four within 500 m of a buoy of the other
+   hand, so they make no pair lane (`ko.sys`): she rides the buoyed reach between them. Replayed at
+   Pine Bluff on the console's own river extract, two legs each way passed 9, 10, 6 and 6 buoys
+   on the wrong hand before and none after; the marks stage roughly doubles a river leg's planning
+   time (1.7 s to 4.3 s, 2.9 s to 6.4 s). In a lab console a Go-To 4.5 km up the river from Pine
+   Bluff left its four starboard-hand buoys to starboard and its two port-hand buoys to port. The chart draws no number for them: the numbers are the
+   console's, not the Corps'. Not numbered: beacons, a buoy more than 300 m off a sailing line,
+   the buoys of a line too few or split. `tests/river_marks.js`.
+
    **The Passage tab, and a long Go-To as a passage (2026-10-14).** Andy: "consider another path
    planning behavior called 'passage' that disregards the 9-23 directive and allows for long path
    planning", and "do it in segments starting with beginning and end and then working inward". The

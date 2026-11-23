@@ -61,6 +61,12 @@
  *          (nearIn), the same answers from the features that could give
  *          them. asv_core walks every feature. Covered by
  *          tests/keepout_index.js.
+ *      11. THE CORPS' RIVER BUOYS ARE NUMBERED (2026-11-23): numberRiverBuoys
+ *          gives each unnamed lateral buoy of the river band (enc_river) a
+ *          number, a channel and a direction of buoyage (`along`) read off
+ *          the river's sailing line, and buildKeepouts keeps those marks out
+ *          of `sys` - no pair lane. asv_core has no river band. Covered by
+ *          tests/river_marks.js.
  *
  * The fix is covered by tests/clearance_guard.js, which runs in this repo's own
  * pre-commit hook. If it is ever wanted upstream, carry it there as its own
@@ -847,6 +853,212 @@ export function gateSweep(P, gx, gy, ax, ay, w, Le, rings) {
   return { fwd, back };
 }
 
+// ── The Corps' river buoys (2026-11-23) ─────────────────────────────────────
+
+/**
+ * THE CORPS' RIVER BUOYS, NUMBERED FROM THE SAILING LINE (2026-11-23, "do the river buoy lanes").
+ *
+ * The Corps' buoy overlay (band enc_river) charts each buoy's hand (CATLAM) and no name, so `markId` gives none of
+ * them a number or a channel, and `markPassRoute` read every one as "direction of buoyage not known": no route on a
+ * river was asked to keep a buoy on its hand. What the river cells DO chart is the sailing line
+ * (Recommended_Track_line, "Primary Sailing Line") down the channel, and measured against it every buoy lies on its
+ * own hand's side - port-hand to the left of the way the river's miles increase, starboard-hand to the right: 86 of
+ * 86 on the Arkansas in U37AR001, 105 of 105 in U37AR063, 27 of 27 on the White in U37AR001, a median 58 to 72 m off
+ * it and nine in ten within 122 m. So the line says what a name would: the ORDER of the buoys along the channel, and,
+ * from which side of it each hand lies on, the DIRECTION OF BUOYAGE.
+ *
+ * For each sailing line (its pieces joined end to end, `riverSailingLines`):
+ *   - each unnamed river buoy within RIVER_MARK_LINE_M of it and abeam of it (not off either end) is placed on it -
+ *     its station along it and the side it lies on (one within RIVER_MARK_MIN_OFF_M of it is on neither);
+ *   - the buoys VOTE the direction of buoyage: the line's own sense where RIVER_VOTE_AGREE of them (and
+ *     RIVER_VOTE_MIN at least) lie on their hand's side for it, the other sense where that many lie on it for that,
+ *     and none where they do not agree - nothing on that line is numbered then;
+ *   - each buoy on its hand's side is numbered in the direction of buoyage as a chart numbers a channel, port-hand
+ *     odd and starboard-hand even, each the next of its parity past the one before; a buoy on the other side is
+ *     left unnumbered (the line does not say where its channel is);
+ *   - one line's buoys share a channel name (`sys`) no charted name can be, nor begin (markRoots' prefix merge), and
+ *     each carries an operator's name (`label`, routing.js markName). `river` marks it numbered here, and `along` is
+ *     the direction of buoyage at it (the line's heading there, a unit [e, n]): a buoy with no numbered mark near it
+ *     along her route - the next buoy of its hand is a median 850 to 950 m on, and one in ten more than 4 km - takes
+ *     the way she runs past it from that (routing.js markPassRoute).
+ *
+ * ⚠ WHAT THE NUMBERS SAY, AND ALL THEY SAY: `markPassRoute` keeps a numbered buoy on its hand for the way she runs,
+ * and that hand leaves it on the far side of her from the sailing line - upstream or down, she passes each one on
+ * the sailing line's side. tests/river_marks.js holds it both ways.
+ *
+ * ⚠ NO PAIR LANE. The river's buoys stand staggered, not in pairs: in U37AR001 16 of 61 port-hand buoys have a
+ * starboard-hand buoy within 500 m, and the nearest is a median 864 m off (1513 m in U37AR063), so `systemCenterline`
+ * would pair them across the river on the diagonal and overstate the channel's width. Their systems are left out of
+ * `ko.sys` (buildKeepouts): the lane between them is `buoyedReachLane`'s, the lane single marks buoy.
+ *
+ * The sailing line is no Rule 9 object (a recommended track: good practice - see channelPolys), only the frame the
+ * buoys are read on. The numbers are this model's own: the chart names no buoy, and the page draws none of them.
+ */
+export const RIVER_BAND = 'enc_river';
+/** Two pieces of a sailing line join where their ends lie this near (meters)... */
+export const RIVER_LINE_JOIN_M = 25;
+/** ... and the line runs on through the joint, turning no more than 45 degrees there. */
+export const RIVER_LINE_JOIN_COS = Math.cos(45 * Math.PI / 180);
+/** A buoy further than this from every sailing line is not numbered from one (meters). */
+export const RIVER_MARK_LINE_M = 300;
+/** ... nor one this near it: it lies on neither side (meters). */
+export const RIVER_MARK_MIN_OFF_M = 5;
+/** The fewest buoys whose sides say a line's direction of buoyage ... */
+export const RIVER_VOTE_MIN = 3;
+/** ... and the share of them that must agree on it. */
+export const RIVER_VOTE_AGREE = 0.9;
+
+/**
+ * The river band's sailing lines in the frame's meters, each a list of {e, n} with its pieces joined: where a piece's
+ * end lies within RIVER_LINE_JOIN_M of another's and the line runs on through the joint (RIVER_LINE_JOIN_COS), the
+ * nearest such ends first, each end joined once and never back into its own line. The server cuts a line at every
+ * tile's edge and a cell's line stops at the cell's, so one river comes as many pieces, in either sense; a piece
+ * served twice is read once.
+ */
+export function riverSailingLines(frame, feats) {
+  const pieces = [], seen = new Set();
+  for (const f of feats || []) {
+    if (f.band !== RIVER_BAND || f.cls !== 'Recommended_Track_line') continue;
+    eachPath(f.geometry, (p) => {
+      const pts = [];
+      for (const c of p || []) {
+        const q = frame.toEN({ lon: c[0], lat: c[1] });
+        if (!Number.isFinite(q.e) || !Number.isFinite(q.n)) continue;
+        const z = pts[pts.length - 1];
+        if (!z || Math.hypot(q.e - z.e, q.n - z.n) > 0.01) pts.push({ e: q.e, n: q.n });
+      }
+      if (pts.length < 2) return;
+      // (by its ends, its middle and its count, whichever way it runs: the two halves of a line round an island share
+      // their ends and may share a count)
+      const a = pts[0], b = pts[pts.length - 1];
+      const m0 = pts[(pts.length - 1) >> 1], m1 = pts[pts.length >> 1];
+      const ka = `${Math.round(a.e)},${Math.round(a.n)}`, kb = `${Math.round(b.e)},${Math.round(b.n)}`;
+      const key = `${ka < kb ? ka + '|' + kb : kb + '|' + ka}|${pts.length}`
+        + `|${Math.round((m0.e + m1.e) / 2)},${Math.round((m0.n + m1.n) / 2)}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      pieces.push(pts);
+    });
+  }
+  const tip = (P, end) => (end ? P[P.length - 1] : P[0]);
+  const away = (P, end) => {                     // the line's heading as it leaves the piece at that end
+    const q = end ? P[P.length - 1] : P[0], p = end ? P[P.length - 2] : P[1];
+    const L = Math.hypot(q.e - p.e, q.n - p.n) || 1;
+    return [(q.e - p.e) / L, (q.n - p.n) / L];
+  };
+  const joins = [];
+  for (let i = 0; i < pieces.length; i++) {
+    for (let j = i + 1; j < pieces.length; j++) {
+      for (const ei of [0, 1]) {
+        for (const ej of [0, 1]) {
+          const a = tip(pieces[i], ei), b = tip(pieces[j], ej), d = Math.hypot(a.e - b.e, a.n - b.n);
+          if (!(d <= RIVER_LINE_JOIN_M)) continue;
+          const ua = away(pieces[i], ei), ub = away(pieces[j], ej);
+          if (-(ua[0] * ub[0] + ua[1] * ub[1]) < RIVER_LINE_JOIN_COS) continue;
+          joins.push({ i, ei, j, ej, d });
+        }
+      }
+    }
+  }
+  joins.sort((x, y) => x.d - y.d);
+  const link = pieces.map(() => [null, null]), up = pieces.map((_, i) => i);
+  const root = (i) => { while (up[i] !== i) i = up[i] = up[up[i]]; return i; };
+  for (const c of joins) {
+    if (link[c.i][c.ei] || link[c.j][c.ej] || root(c.i) === root(c.j)) continue;
+    up[root(c.i)] = root(c.j);
+    link[c.i][c.ei] = { p: c.j, end: c.ej };
+    link[c.j][c.ej] = { p: c.i, end: c.ei };
+  }
+  // Each line walked from a free end (every line has two: a join never closes a ring).
+  const used = pieces.map(() => false), lines = [];
+  for (let s = 0; s < pieces.length; s++) {
+    if (used[s] || (link[s][0] && link[s][1])) continue;
+    const line = [];
+    let p = s, from = link[s][0] ? 1 : 0;
+    while (p != null && !used[p]) {
+      used[p] = true;
+      const P = from === 0 ? pieces[p] : pieces[p].slice().reverse();
+      for (const q of P) {
+        const z = line[line.length - 1];
+        if (!z || Math.hypot(q.e - z.e, q.n - z.n) > 0.01) line.push(q);
+      }
+      const nx = link[p][1 - from];
+      p = nx ? nx.p : null;
+      from = nx ? nx.end : 0;
+    }
+    if (line.length >= 2) lines.push(line);
+  }
+  return lines;
+}
+
+/** Where `q` lies against the polyline `pts` (cumulative stations `cum`): its distance `d`, station `s`, signed offset
+ *  `x` (positive to the RIGHT of the line's sense) and whether it lies off either end (`beyond`). */
+function placeOnLine(pts, cum, q) {
+  let bd = Infinity, x = 0, s = 0, seg = 1, tt = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i], dx = b.e - a.e, dy = b.n - a.n, l2 = dx * dx + dy * dy;
+    if (!(l2 > 0)) continue;
+    const t0 = ((q.e - a.e) * dx + (q.n - a.n) * dy) / l2, t = Math.max(0, Math.min(1, t0));
+    const d = Math.hypot(q.e - a.e - t * dx, q.n - a.n - t * dy);
+    if (d < bd) {
+      bd = d; seg = i; tt = t0;
+      x = dx * (q.n - a.n) - dy * (q.e - a.e) > 0 ? -d : d;
+      s = cum[i - 1] + t * Math.sqrt(l2);
+    }
+  }
+  const a = pts[seg - 1], b = pts[seg], L = Math.hypot(b.e - a.e, b.n - a.n) || 1;
+  return { d: bd, s, x, u: [(b.e - a.e) / L, (b.n - a.n) / L],
+           beyond: (seg === 1 && tt < 0) || (seg === pts.length - 1 && tt > 1) };
+}
+
+/**
+ * Number the unnamed river buoys among `marks` (those `buildKeepouts` flags `riverBuoy`) from the sailing lines of
+ * `feats`, IN PLACE - see the section's note above. Returns how many were numbered.
+ */
+export function numberRiverBuoys(frame, feats, marks) {
+  const cands = (marks || []).filter((m) => m.riverBuoy);
+  if (!cands.length) return 0;
+  const lines = riverSailingLines(frame, feats).map((pts) => {
+    const cum = [0];
+    for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i].e - pts[i - 1].e, pts[i].n - pts[i - 1].n));
+    return { pts, cum, bb: bbOf(pts), on: [] };
+  });
+  for (const m of cands) {
+    let best = null;
+    for (const L of lines) {
+      if (!inBB(m, L.bb, RIVER_MARK_LINE_M)) continue;
+      const pr = placeOnLine(L.pts, L.cum, m);
+      if (pr.d <= RIVER_MARK_LINE_M && (!best || pr.d < best.d)) best = { L, ...pr };
+    }
+    if (best && !best.beyond && best.d >= RIVER_MARK_MIN_OFF_M) best.L.on.push({ m, s: best.s, x: best.x, u: best.u });
+  }
+  let count = 0;
+  lines.forEach((L, k) => {
+    if (L.on.length < RIVER_VOTE_MIN) return;
+    const agree = L.on.filter((q) => q.m.side * q.x > 0).length / L.on.length;
+    const dir = agree >= RIVER_VOTE_AGREE ? 1 : agree <= 1 - RIVER_VOTE_AGREE ? -1 : 0;
+    if (!dir) return;
+    const sys = `~river-line-${k + 1}`;
+    const own = L.on.filter((q) => q.m.side * q.x * dir > 0).sort((a, b) => dir * (a.s - b.s));
+    let last = 0;
+    const done = [];
+    for (const q of own) {
+      // (a buoy served twice - a point on a tile's edge - is one buoy, one number)
+      const twin = done.find((t) => t.side === q.m.side && Math.hypot(t.e - q.m.e, t.n - q.m.n) < 3);
+      let num = twin ? twin.num : last + 1;
+      if (!twin) {
+        if ((num % 2 === 0) !== (q.m.side > 0)) num++;
+        last = num;
+      }
+      Object.assign(q.m, { num, sys, river: true, along: [dir * q.u[0], dir * q.u[1]],
+                           label: q.m.side > 0 ? 'a starboard-hand river buoy' : 'a port-hand river buoy' });
+      done.push(q.m);
+      count++;
+    }
+  });
+  return count;
+}
+
 /**
  * A human-readable category, so a refusal can say WHAT blocks it.
  *
@@ -969,11 +1181,16 @@ export function buildKeepouts(frame, feats, opts = {}) {
       // stage leaves it alone (2026-10-04: a route taking the side creek was sent round the
       // wrong side of one). It still pairs into a gate as the side it is given.
       const junction = cat === 3 || cat === 4;
+      // AN UNNAMED RIVER BUOY of a known hand is numbered from the river's sailing line once every mark is read
+      // (numberRiverBuoys, below the loop).
+      const riverBuoy = f.band === RIVER_BAND && f.cls === 'Buoy_Lateral_point' && !(f.props && f.props.OBJNAM)
+        && side !== 0 && !junction;
       eachPoint(g, (c) => {
         const q = frame.toEN({ lon: c[0], lat: c[1] });
         const m = { e: q.e, n: q.n, side, num: id.num, sys: id.sys };
         if (fixed) m.fixed = true;
         if (junction) m.junction = true;
+        if (riverBuoy) m.riverBuoy = true;
         marks.push(m);
         if (enf.haz) points.push({ e: q.e, n: q.n, r: 0, kind: 'a channel buoy' });
       });
@@ -1083,9 +1300,12 @@ export function buildKeepouts(frame, feats, opts = {}) {
   const total = new Map();
   restricted.forEach((c, i) => total.set(root(i), (total.get(root(i)) || 0) + c.area));
   restricted.forEach((c, i) => { c.ringArea = c.area; c.area = total.get(root(i)); delete c.key; });
+  // The Corps' river buoys, numbered from the sailing line - and left out of the pair lane's systems: they stand
+  // staggered, not in pairs (numberRiverBuoys).
+  numberRiverBuoys(frame, feats, marks);
   return {
     polys, lines, points, marks, passed, wrecksOff,
-    sys: markSystems(marks),
+    sys: markSystems(marks.filter((m) => !m.river)),
     chans: channelPolys(frame, feats, marks),
     restricted,
   };

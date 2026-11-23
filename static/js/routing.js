@@ -1990,7 +1990,9 @@ function projectEN(poly, cum, q) {
 
 /** One entry per charted lateral mark: a buoy is often charted twice (see markSystems). */
 // A mark as a reason names it: its channel's name and number, as the chart has them.
-const markName = (m) => ((m.sys || '') + (m.num != null ? ' ' + m.num : '')).trim() || 'another mark';
+// (a river buoy the model numbered from the sailing line has no charted name or number: it names itself, `label` -
+//  keepouts.js numberRiverBuoys)
+export const markName = (m) => m.label || ((m.sys || '') + (m.num != null ? ' ' + m.num : '')).trim() || 'another mark';
 
 function uniqueMarks(marks) {
   const seen = new Set(), out = [];
@@ -2259,6 +2261,15 @@ export function markPassRoute(pathLL, frame, ko, buf, opts = {}) {
     const nb = neighbors(k);
     if (nb.crosses) { why('its own channel crosses her route'); continue; }
     const dirs = [nb.behind, nb.ahead].filter(Boolean).map((r) => r.dir);
+    // ⚠ A RIVER BUOY NO NUMBERED MARK NEAR IT SPEAKS FOR IS READ FROM THE SAILING LINE (2026-11-23): the model gave it
+    // the direction of buoyage there (`along`, keepouts.js numberRiverBuoys), and her course past it says which way she
+    // runs it - where she runs along the river, not across it. The Corps' buoys stand kilometers apart on a long reach:
+    // replayed at Pine Bluff, a port-hand buoy 94 m off the sailing line with no buoy within 2 km of it along the river
+    // was passed on its wrong hand both ways.
+    if (!dirs.length && k.m.along) {
+      const c = dot(tanAt(k.s), k.m.along);
+      if (Math.abs(c) >= MARK_ALONG_COS) dirs.push(Math.sign(c));
+    }
     if (!dirs.length) { unknown(); continue; }
     if (dirs.length === 2 && dirs[0] !== dirs[1]) { why('the numbers either side of it disagree'); continue; }
     const dir = dirs[0];
