@@ -216,6 +216,17 @@ check("18. ... and a scan that has NOT been made says so, rather than reading as
         () => /Chart read: \d{4}-\d{2}-\d{2} \(9 days ago/.test(r30.title) && /2 tile\(s\) past a week old/.test(r30.title)
               && !/old chart/.test(r30.text),
         r30.title.split("\n").filter((l) => /Chart read/.test(l)).join(" ").slice(0, 160));
+  // 30b (2026-11-23): a tile of the Corps' river chart is read again after a DAY (its buoys reissued most days) - said as
+  // that, not as a week; NOAA's tiles beside it as they were.
+  const r30b = withEnc({ readAt: nine, aged: 3, agedRiver: 1 });
+  const r30c = withEnc({ readAt: nine, aged: 1, agedRiver: 1 });
+  const ln = (r) => r.title.split("\n").filter((l) => /Chart read/.test(l)).join(" ");
+  checkF("30b. ... A RIVER TILE PAST A DAY is said as one, beside NOAA's past a week - the Corps' buoys reissued most days; "
+        + "river tiles alone say no week and no NOAA",
+        () => /2 tile\(s\) past a week old and 1 river tile\(s\) past a day old, each being read again behind the copy in use; NOAA corrects its charts week by week, the Corps reissues its river buoys most days/.test(ln(r30b))
+              && /1 river tile\(s\) past a day old, each being read again behind the copy in use; the Corps reissues its river buoys most days/.test(ln(r30c))
+              && !/week/.test(ln(r30c)),
+        ln(r30b).slice(0, 260) + " || " + ln(r30c).slice(0, 200));
   const r31 = withEnc({ readAt: nine, stale: ["the chart could not be read again here; a copy read 2026-10-11 by an older reader is used"] });
   checkF("31. AN OLDER READER'S COPY IN USE is on the row (old chart), warns, and its reason is in the tip",
         () => /· old chart/.test(r31.text) && r31.cls === "warn" && /OLDER CHART IN USE: the chart could not be read again/.test(r31.title),

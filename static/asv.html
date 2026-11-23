@@ -15996,6 +15996,7 @@ async function fetchENCBbox(b, minDepth, note, gone){
   sea.enc={features:d.features||[], band:d.band, bands:(d && d.bands) || [], minDepth, partial:(d && d.partial) || [], layered: !!(d && d.layered),
            unread: [...sq(d && d.unread, false), ...sq(d && d.unread_failed, true)],
            readAt: (d && typeof d.read_at === "number") ? d.read_at : null, aged: (d && d.aged) || 0,
+           agedRiver: (d && d.aged_river) || 0,     // ... of them the river chart's, past a day (2026-11-23)
            stale: (d && d.stale) || [], supplement: (d && d.supplement) || [], partialNamed: (d && d.partial_named) || [],
            coverageFailed: (d && d.coverage_failed) || [], note: (d && d.note) || null,   // a band's coverage not read (2026-10-19)
            skinJob,                                 // the worker's walk of this extract's seabed, or null (skinOffThread)
@@ -16579,11 +16580,18 @@ function nogoReadout(){
   // when a read fails, and lacks what this reader holds. A tile missing a layer the model acts on is unread water
   // (refused below); the layers are named here, because "the chart arrived without its depth areas" is the fact.
   const ageD = encNow.readAt ? Math.max(0, Math.floor((Date.now() / 1000 - encNow.readAt) / 86400)) : null;
+  // A RIVER TILE IS READ AGAIN AFTER A DAY (2026-11-23): the Corps reissues its buoys most days (asv_console.py
+  // ENC_RIVER_FRESH_S) - said as what it is, not as a week.
+  const agedR = Math.min(encNow.agedRiver || 0, encNow.aged || 0), agedW = (encNow.aged || 0) - agedR;
+  const agedSay = [agedW ? agedW + " tile(s) past a week old" : "",
+                   agedR ? agedR + " river tile(s) past a day old" : ""].filter(Boolean).join(" and ")
+                  + ", each being read again behind the copy in use; "
+                  + [agedW ? "NOAA corrects its charts week by week" : "",
+                     agedR ? "the Corps reissues its river buoys most days" : ""].filter(Boolean).join(", ");
   const staleL = encNow.stale || [], partL = encNow.partial || [];
   const ageTxt = (ageD === null ? "" : "\n\nChart read: " + new Date(encNow.readAt * 1000).toISOString().slice(0, 10)
                    + " (" + (ageD === 0 ? "today" : ageD + " day" + (ageD === 1 ? "" : "s") + " ago") + ", the oldest tile)"
-                   + (encNow.aged ? " - " + encNow.aged + " tile(s) past a week old, each being read again behind the copy "
-                                    + "in use; NOAA corrects its charts week by week" : ""))
+                   + (encNow.aged ? " - " + agedSay : ""))
     + (staleL.length ? "\n\nOLDER CHART IN USE: " + staleL.join(" | ") + "." : "")
     + (partL.length ? "\n\nNOT READ WHOLE: " + partL.join(", ") + " did not arrive. "
                       + ((encNow.partialNamed || []).length

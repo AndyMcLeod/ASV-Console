@@ -809,6 +809,57 @@ check("7b. NO COPY KEPT BEFORE THE RIVER BAND IS THE FALLBACK WHERE A RIVER CELL
                   "none" if o7in is None else "copy %s" % sent7(o7in), sent7(o7ctrl), (o7ctrl or {}).get("stale"),
                   sent7(o7out), sent7(o7riv), (o7riv or {}).get("stale"), sent7(o7ed)))
 
+# 7c. a river tile is read again after a day (review fix 3): the buoy overlay is reissued most days
+_refresh0, _grid_make0, _fetch_tile0 = A._tile_refresh_later, A._grid_make, A.fetch_enc_tile
+asked7c = []
+A._tile_refresh_later = lambda t: asked7c.append(A._bbox_key(t))
+NOW7 = time.time()
+RIVER_SRC = dict(NOAA_ALL, enc_river="cells")
+
+
+def kept7(t, bands, age, src):
+    clear7(t)
+    A._write_tile_jsonl(A._tile_path(t), {"tile": t, "bands": bands, "unread": [], "unread_failed": [], "partial": [],
+                                          "complete": True, "reader": A._ENC_TILE_READER, "read_at": NOW7 - age,
+                                          "sources": src, "cells_reader": TAG, "features": []})
+
+
+try:
+    tile7 = {}
+    for name, t, bands, age, src in (("river, 2 days", TILE, ["enc_harbour", "enc_river"], 2 * DAY, RIVER_SRC),
+                                     ("river, 2 hours", CTRL, ["enc_river"], 7200.0, RIVER_SRC),
+                                     ("NOAA's, 2 days", MAINE, ["enc_harbour"], 2 * DAY, dict(NOAA_ALL)),
+                                     ("NOAA's, 8 days", [-70.0, 43.0, -69.75, 43.25], ["enc_harbour"], 8 * DAY,
+                                      dict(NOAA_ALL))):
+        kept7(t, bands, age, src)
+        del asked7c[:]
+        got7 = A.fetch_enc_tile(t)
+        tile7[name] = (got7.get("read_at") == NOW7 - age, bool(asked7c))
+    grid7 = {}
+    for name, bands, age in (("river, 2 days", ["enc_river"], 2 * DAY), ("NOAA's, 2 days", ["enc_harbour"], 2 * DAY)):
+        A._grid_make = lambda t, k, b=bands, a=age: ({"bands": b, "read_at": NOW7 - a, "complete": True}, b"")
+        del asked7c[:]
+        A.fetch_enc_grid(MAINE)
+        grid7[name] = bool(asked7c)
+    T7 = A._enc_tiles([-91.2, 30.6, -90.9, 30.65])
+    A.fetch_enc_tile = lambda t: {"tile": t, "features": [], "unread": [], "unread_failed": [], "partial": [],
+                                  "complete": True, "read_at": NOW7 - 2 * DAY,
+                                  "bands": ["enc_river"] if t == T7[0] else ["enc_harbour"]}
+    lay7 = A.fetch_enc_layered([-91.2, 30.6, -90.9, 30.65])
+finally:
+    A._tile_refresh_later, A._grid_make, A.fetch_enc_tile = _refresh0, _grid_make0, _fetch_tile0
+    clear7(TILE, CTRL, MAINE, [-70.0, 43.0, -69.75, 43.25])
+check("7c. A TILE OF THE CORPS' RIVER CHART IS READ AGAIN AFTER A DAY (review, 2026-11-23: its buoys are reissued most "
+      "days as the Coast Guard moves them, and a river tile was served as current a week): a kept river tile two days "
+      "old served and read again behind it, two hours old not; NOAA's tiles at their week, as before; the grid by its "
+      "header the same; and the layered read's age counts the river tile past its day, apart (aged_river)",
+      lambda: tile7 == {"river, 2 days": (True, True), "river, 2 hours": (True, False),
+                        "NOAA's, 2 days": (True, False), "NOAA's, 8 days": (True, True)}
+              and grid7 == {"river, 2 days": True, "NOAA's, 2 days": False}
+              and len(T7) == 2 and (lay7.get("aged"), lay7.get("aged_river")) == (1, 1),
+      lambda: "tiles (served, read again) %s; grids %s; layered over %d tiles: aged %r, of the river %r" % (
+          tile7, grid7, len(T7), lay7.get("aged"), lay7.get("aged_river")))
+
 # ── 8. the tile's child ──────────────────────────────────────────────────────────────────────────────────────────────
 seen8 = {}
 _run0 = subprocess.run

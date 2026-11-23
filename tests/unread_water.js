@@ -278,7 +278,8 @@ function rest() {
   {
     const sea = { enc: null };
     const fe = encReader(sea, async () => ({
-      json: async () => ({ band: "enc_harbour", layered: true, features: [], unread: [[1, 2, 3, 4]], unread_failed: [[5, 6, 7, 8]] }) }));
+      json: async () => ({ band: "enc_harbour", layered: true, features: [], unread: [[1, 2, 3, 4]], unread_failed: [[5, 6, 7, 8]],
+                           aged: 3, aged_river: 1 }) }));
     fe({ W: 0, S: 0, E: 1, N: 1 }, 2).then(async () => {
       const rn = grab("refreshNogo");
       check("7. THE EXTRACT'S SQUARES ride into the model with its box: fetchENCBbox carries unread (failed ones marked), "
@@ -291,6 +292,10 @@ function rest() {
                   && /drawLayerOff\(nogoLayer, "nogo", nogoLayerKeyNow\(\), \[nogo\.features, chartInk\.lines, chartInk\.areas, nogo\.unread[,\]]/.test(H)
                   && /unreadAll: \[\.\.\.\(nogo\.unread \|\| \[\]\)/.test(grab("nogoDrawData")),
             () => JSON.stringify(sea.enc && sea.enc.unread));
+      check("7d. ... AND THE CHART'S AGE WITH IT (2026-11-23): the tiles past their age, and apart the river chart's past "
+            + "a day (aged_river - the Corps reissues its buoys most days), for the readout to say each as what it is",
+            () => sea.enc.aged === 3 && sea.enc.agedRiver === 1,
+            () => "aged " + sea.enc.aged + ", of the river " + sea.enc.agedRiver);
       await readBound();
       await commandReadsChecks();
       console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");

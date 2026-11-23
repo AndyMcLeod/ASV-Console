@@ -3791,6 +3791,16 @@ ENC_TILE_WORKERS = 3           # tiles read at once - from disk, or waiting thei
 ENC_TILE_BUILDS = 1
 _enc_build_sem = threading.BoundedSemaphore(ENC_TILE_BUILDS)
 ENC_TILE_FRESH_S = 7 * 86400   # a tile older than this is read again (behind the copy served): NOAA's weekly corrections
+# ⚠ A TILE OF THE CORPS' RIVER CHART IS READ AGAIN AFTER A DAY (2026-11-23, review): its buoy overlay is reissued most
+# days as the Coast Guard moves the buoys with the river (enc_cells' section header), and a river tile was served as
+# current a week - a buoy moved onto a new shoal edge kept out where it was, nothing where it is, and nothing said.
+ENC_RIVER_FRESH_S = 86400
+
+
+def _tile_fresh_s(got):
+    """How long a kept tile (or its grid, by its header) is served before it is read again behind it: a day where the
+    river band charts any of it (`bands`, ENC_RIVER_FRESH_S), else ENC_TILE_FRESH_S."""
+    return ENC_RIVER_FRESH_S if ENC_RIVER in ((got or {}).get("bands") or ()) else ENC_TILE_FRESH_S
 ENC_TILE_RETRY_S = 120         # a tile served from an older copy is not read again for this long (offline: no hammering)
 # 4 (2026-11-21): NOAA's cells - a tile of 3 lacks what ENCDirect never served (the harbor band's pontoons above all).
 _ENC_TILE_READER = 4           # the reader a tile was written by; an older one is read again before it is served
@@ -4783,7 +4793,7 @@ def fetch_enc_tile(tile):
             if got is not None:
                 _tile_keep(key, got)
         if got is not None:
-            if now - got.get("read_at", now) > ENC_TILE_FRESH_S:
+            if now - got.get("read_at", now) > _tile_fresh_s(got):
                 _tile_refresh_later(tile)
             return got
         got = _tile_build_now(tile)
@@ -4829,6 +4839,7 @@ def fetch_enc_layered(bbox, min_depth=0.0):
     md = float(min_depth or 0.0)
     feats, seen, unread, unread_failed, partial, bands, notes = [], {}, [], [], set(), set(), []
     stale, read_at, aged, cov_failed, cov_stale, cells_stale = set(), [], 0, set(), set(), set()
+    aged_river = 0
 
     def into(rs, dst):
         for r in rs:
@@ -4858,8 +4869,9 @@ def fetch_enc_layered(bbox, min_depth=0.0):
         cells_stale.update(d.get("stale_cells") or [])
         if isinstance(d.get("read_at"), (int, float)):
             read_at.append(d["read_at"])
-            if now - d["read_at"] > ENC_TILE_FRESH_S:
+            if now - d["read_at"] > _tile_fresh_s(d):
                 aged += 1
+                aged_river += ENC_RIVER in (d.get("bands") or ())
         for ft in d.get("features") or []:
             b = _geom_bbox(ft.get("geometry"))
             if b is None or b[0] > E or b[2] < W or b[1] > N or b[3] < S:
@@ -4889,9 +4901,10 @@ def fetch_enc_layered(bbox, min_depth=0.0):
     out = {"band": finest, "bands": [b for b in _layered_bands() if b in bands], "layered": True, "features": feats,
            "counts": counts, "partial": sorted(partial), "unread": unread, "unread_failed": unread_failed,
            "min_depth": md, "tiles": len(tiles),
-           # THE CHART'S AGE, SAID (2026-10-12): the oldest tile's read, how many are past ENC_TILE_FRESH_S (each being
-           # read again behind it), and the tiles served from an older reader's copy because a read failed.
-           "read_at": min(read_at) if read_at else None, "aged": aged, "stale": sorted(stale),
+           # THE CHART'S AGE, SAID (2026-10-12): the oldest tile's read, how many are past their age (_tile_fresh_s, each
+           # being read again behind it) - `aged_river` those of the river chart, past a day - and the tiles served from
+           # an older reader's copy because a read failed.
+           "read_at": min(read_at) if read_at else None, "aged": aged, "aged_river": aged_river, "stale": sorted(stale),
            "supplement": [ENC_BERTHING] if ENC_BERTHING in bands else [],
            # the failed layers the model ACTS ON - the ones that made their tiles unread water
            "partial_named": sorted(c for c in partial if c in _ENC_ACTED_ON),
@@ -5478,15 +5491,15 @@ def _grid_of_tile(tile, got):
 def fetch_enc_grid(tile):
     """A tile's grid: (header, bytes) - or (None, note) when the tile cannot be read whole. From disk when made from the
     tile kept now (_grid_of_tile); else made from the cached tile in a child; else the tile read (fetch_enc_tile, whose
-    child makes the grid too). A grid whose tile is older than ENC_TILE_FRESH_S is served and the tile read again
-    behind it, as fetch_enc_tile serves a tile."""
+    child makes the grid too). A grid whose tile is past its age (_tile_fresh_s, by the grid's header) is served and the
+    tile read again behind it, as fetch_enc_tile serves a tile."""
     key = _bbox_key(tile)
     with _enc_tile_locks_lock:
         lk = _enc_grid_locks.setdefault(key, threading.Lock())
     with lk:
         got = _grid_make(tile, key)
     when = got[0].get("read_at") if got[0] is not None else None
-    if isinstance(when, (int, float)) and time.time() - when > ENC_TILE_FRESH_S:
+    if isinstance(when, (int, float)) and time.time() - when > _tile_fresh_s(got[0]):
         _tile_refresh_later(tile)
     return got
 

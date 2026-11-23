@@ -3632,7 +3632,8 @@ plain. `tests/path_card.js` 15.
    serves NOAA's charts alone: when they cannot be had, the water they would chart is unread
    and said as the Corps', never filled from NOAA's coarser chart - nor from a tile kept before
    this change, wherever a river cell may chart its water. A tile kept before this change
-   is read again inside the rivers' reach. `--enc-source encdirect` reads no river band.
+   is read again inside the rivers' reach. A river tile is read again after a day, not a week:
+   the Corps reissues its buoys most days as they are moved. `--enc-source encdirect` reads no river band.
    `tests/ienc_cells.py`.
 
    **The Passage tab, and a long Go-To as a passage (2026-10-14).** Andy: "consider another path
