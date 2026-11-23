@@ -3481,8 +3481,10 @@ def _cells_pick_band(bbox):
     for band in _layered_bands():
         feats, info = _band_features(band, bbox, _cell_namer(band), only={"DEPARE", "LNDARE"})
         if info.get("partial"):                  # its depth or land not read whole: not known to chart none here
-            raise OSError("%s of %s could not be read whole" % (", ".join(info["partial"]),
-                                                                 ", ".join(info["failed_cells"][:4])))
+            why = "%s of %s could not be read whole" % (", ".join(info["partial"]), ", ".join(info["failed_cells"][:4]))
+            # the river band's is the Corps' failure (2026-11-23, review): said as NOAA's it was read from ENCDirect,
+            # whose answer is NOAA's coarser chart in the river chart's place, or "no chart here" on a charted river
+            raise RiverCellsFailed(why) if band == ENC_RIVER else OSError(why)
         if feats:
             return band
     return None

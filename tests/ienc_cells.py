@@ -622,6 +622,39 @@ check("5b. ... AND SNAP-TO-WATER'S READ AND THE CHART CARD there are FAILED, sai
               and not ED and harb5.get("band") == "enc_harbour" and not harb5.get("failed"),
       lambda: "snap %r (river %s); card %r (river %s); harbor box %s; ENCDirect %s" % (
           snap5.get("note"), snap5.get("river"), card5.get("note"), card5.get("river"), harb5.get("band"), ED))
+ra5c = Cell("U37TSTAA", edtn="52")
+ra5c.area("M_COVR", RV, {"CATCOV": "1"})
+ra5c.area("DEPARE", RV, {"DRVAL1": "0", "DRVAL2": "2.74"})
+ra5c.feature("DEPARE", 3, {"DRVAL1": "0", "DRVAL2": "1"}, [edge_ptr(99999)])   # a depth area whose edge is not there
+net5c = Net(dict(FILES, **{E.RIVER_CELL_URL % "U37TSTAA": ra5c.zip()}))
+sources(net5c, "c5c")
+A._enc_down_until = 0.0
+del ED[:]
+snap5c = A.fetch_enc_features([-91.12, 30.62, -91.08, 30.66])
+card5c = A.fetch_chart_info([-91.12, 30.62, -91.08, 30.66])
+ed5c = list(ED)
+hb5c = Cell("US5TSTRH")                   # ... and NOAA's harbor cell so, where it alone charts: NOAA's, ENCDirect read
+hb5c.area("M_COVR", HB, {"CATCOV": "1"})
+hb5c.area("DEPARE", HB, {"DRVAL1": "5", "DRVAL2": "10"})
+hb5c.feature("DEPARE", 3, {"DRVAL1": "0", "DRVAL2": "1"}, [edge_ptr(99999)])
+net5d = Net(dict(FILES, **{E.CELL_URL % "US5TSTRH": hb5c.zip()}))
+sources(net5d, "c5d")
+del ED[:]
+harb5c = A.fetch_enc_features([-91.19, 30.56, -91.16, 30.59])
+check("5c. A RIVER CELL'S DEPTH NOT READ WHOLE IN THE BAND PICK (snap-to-water, the chart card) is the Corps' failure - "
+      "said as theirs, never read from ENCDirect: said as NOAA's it was, and ENCDirect's pick, NOAA's bands alone, "
+      "answered the approach chart in the river chart's place, or no chart on a charted river (review, 2026-11-23); "
+      "NOAA's harbor cell so, where it alone charts, is NOAA's - said as theirs, and ENCDirect read in its place",
+      lambda: snap5c.get("failed") and snap5c.get("river") and card5c.get("failed") and card5c.get("river")
+              and "the Corps' river chart cells could not be read (Depth_Area of U37TSTAA could not be read whole)"
+              == snap5c.get("note") == card5c.get("note") and not ed5c
+              and harb5c.get("failed") and not harb5c.get("river") and ED == [("features", None)]
+              and (harb5c.get("note") or "").startswith(
+                  "NOAA's chart cells could not be read (Depth_Area of US5TSTRH could not be read whole), and ENCDirect"),
+      lambda: "snap %r (river %s); card %r (river %s); ENCDirect %s; NOAA's harbor %r (river %s), ENCDirect %s" % (
+          snap5c.get("note"), snap5c.get("river"), card5c.get("note"), card5c.get("river"), ed5c,
+          harb5c.get("note"), harb5c.get("river"), ED))
+del ED[:]
 
 # ── 6. older copies, and the catalog past its age ────────────────────────────────────────────────────────────────────
 net6 = Net(dict(FILES, **{E.RIVER_CATALOG_URL: xml_catalog([("U37TSTAA", "52.1",) + RIVER_CELLS[0][2:]]
