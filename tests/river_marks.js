@@ -190,6 +190,15 @@ check("7. THE LIMITS: a buoy 350 m off the line (past RIVER_MARK_LINE_M 300), on
       () => K.RIVER_MARK_LINE_M === 300 && K.RIVER_MARK_MIN_OFF_M === 5
             && marksOf(oddKO, odd).every((m) => m && m.num == null && !m.river) && nums(marksOf(oddKO, BUOYS)) === EXPECT.join(","),
       () => "the three: " + nums(marksOf(oddKO, odd)) + "; the line's: " + nums(marksOf(oddKO, BUOYS)));
+// (review 2026-11-23, item 1: a vertex of null threw out of buildKeepouts, and the model was not built at all)
+const holed = lineFeat(SAIL);
+holed.geometry.coordinates.splice(60, 0, null);
+let holedNums = "threw";
+try { holedNums = nums(marksOf(build([holed, ...BANKS, ...BUOYS]), BUOYS)); } catch (e) { holedNums = "threw: " + e.message; }
+check("7b. A VERTEX THAT IS NOT ONE: a sailing line with a null among its coordinates builds the model, without it - the line's "
+      + "buoys numbered as before",
+      () => holedNums === EXPECT.join(","),
+      () => holedNums);
 const nameRiver = buoy(1000, 90, 2, { props: { CATLAM: 2, OBJNAM: "Mile Buoy 8" } });
 const harbour = buoy(1500, -70, 1, { band: "enc_harbour" });
 const junction = buoy(1700, 70, 4);

@@ -922,6 +922,7 @@ export function riverSailingLines(frame, feats) {
     eachPath(f.geometry, (p) => {
       const pts = [];
       for (const c of p || []) {
+        if (!Array.isArray(c)) continue;             // (a vertex that is not one: the model is built without it)
         const q = frame.toEN({ lon: c[0], lat: c[1] });
         if (!Number.isFinite(q.e) || !Number.isFinite(q.n)) continue;
         const z = pts[pts.length - 1];
