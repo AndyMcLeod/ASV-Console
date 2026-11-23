@@ -194,13 +194,17 @@ check("6. THE VOTE: four of the fifteen given the other hand where they stand (1
             && nums(w1) === "2,3,4,5,7,8,-,9,10,11,12,13,15,17,18"
             && marksOf(two, [BUOYS[0], BUOYS[1]]).every((m) => m.num == null),
       () => "swapped: " + nums(marksOf(swapKO, swapped)) + "; one wrong: " + nums(w1) + "; two: " + nums(marksOf(two, [BUOYS[0], BUOYS[1]])));
-const odd = [buoy(1000, 350, 2), buoy(2000, -3, 1), { ...buoy(0, 0, 2), geometry: { type: "Point", coordinates: LL({ e: 0, n: -200 }) } }];
+// (review 2026-11-23, item 3: a harbor's entrance green 250 m off the line, on its hand's side, was numbered into the river's
+// count at the old 300 m - and a route down the river was taken 200 m across to it)
+const odd = [buoy(1000, 350, 2), buoy(2000, -3, 1), { ...buoy(0, 0, 2), geometry: { type: "Point", coordinates: LL({ e: 0, n: -200 }) } },
+             buoy(4000, -250, 1)];
 const oddKO = build([lineFeat(SAIL), ...BANKS, ...BUOYS, ...odd]);
-check("7. THE LIMITS: a buoy 350 m off the line (past RIVER_MARK_LINE_M 300), one 3 m off it (inside RIVER_MARK_MIN_OFF_M 5: on "
-      + "neither side) and one 200 m off its end are not numbered - and the line's own buoys still are, as before",
-      () => K.RIVER_MARK_LINE_M === 300 && K.RIVER_MARK_MIN_OFF_M === 5
+check("7. THE LIMITS: a buoy 350 m off the line, a harbor's green 250 m off it on its hand's side (both past RIVER_MARK_LINE_M "
+      + "200: the river's own stand within 157 m), one 3 m off it (inside RIVER_MARK_MIN_OFF_M 5: on neither side) and one 200 "
+      + "m off its end are not numbered - and the line's own buoys still are, as before",
+      () => K.RIVER_MARK_LINE_M === 200 && K.RIVER_MARK_MIN_OFF_M === 5
             && marksOf(oddKO, odd).every((m) => m && m.num == null && !m.river) && nums(marksOf(oddKO, BUOYS)) === EXPECT.join(","),
-      () => "the three: " + nums(marksOf(oddKO, odd)) + "; the line's: " + nums(marksOf(oddKO, BUOYS)));
+      () => "the four: " + nums(marksOf(oddKO, odd)) + "; the line's: " + nums(marksOf(oddKO, BUOYS)));
 // (review 2026-11-23, item 1: a vertex of null threw out of buildKeepouts, and the model was not built at all)
 const holed = lineFeat(SAIL);
 holed.geometry.coordinates.splice(60, 0, null);

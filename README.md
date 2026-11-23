@@ -3665,7 +3665,7 @@ plain. `tests/path_card.js` 15.
    on the wrong hand before and none after; the marks stage roughly doubles a river leg's planning
    time (1.7 s to 4.3 s, 2.9 s to 6.4 s). In a lab console a Go-To 4.5 km up the river from Pine
    Bluff left its four starboard-hand buoys to starboard and its two port-hand buoys to port. The chart draws no number for them: the numbers are the
-   console's, not the Corps'. Not numbered: beacons, a buoy more than 300 m off a sailing line,
+   console's, not the Corps'. Not numbered: beacons, a buoy more than 200 m off a sailing line (the river's own stand within 157 m),
    the buoys of a line too few or split. `tests/river_marks.js`.
 
    **The Passage tab, and a long Go-To as a passage (2026-10-14).** Andy: "consider another path

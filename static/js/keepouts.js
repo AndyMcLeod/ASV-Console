@@ -899,8 +899,11 @@ export const RIVER_BAND = 'enc_river';
 export const RIVER_LINE_JOIN_M = 25;
 /** ... and the line runs on through the joint, turning no more than 45 degrees there. */
 export const RIVER_LINE_JOIN_COS = Math.cos(45 * Math.PI / 180);
-/** A buoy further than this from every sailing line is not numbered from one (meters). */
-export const RIVER_MARK_LINE_M = 300;
+/** A buoy further than this from every sailing line is not numbered from one (meters). ⚠ NOT A WIDER NET THAN THE
+ *  RIVER'S OWN BUOYS NEED (review 2026-11-23, item 3): at 300 m a harbor's entrance green 250 m off the line was
+ *  numbered into the river's count, and a route down the river was taken 200 m across to pass it close. Measured, the
+ *  farthest of the 222 buoys within 300 m of a line on the Arkansas and the White is 157 m off it, and the next 532 m. */
+export const RIVER_MARK_LINE_M = 200;
 /** ... nor one this near it: it lies on neither side (meters). */
 export const RIVER_MARK_MIN_OFF_M = 5;
 /** The fewest buoys whose sides say a line's direction of buoyage ... */
