@@ -334,6 +334,10 @@ console.log("A survey's start time and duration:");
   env.ais = false; const noAis = await w.waitPlan(hold, RD); env.ais = true;
   env.point = null;
   const none = await w.waitPlan(hold, RD);
+  // (a refusal a river's channel decided carries its flag to the banner, which then drops the advice to wait less)
+  env.point = { error: "the only water within 500 m of it that would hold her is a river's navigation channel", need: 20, chans: 1, level: 0.2, riverOnly: true };
+  const riv = await w.waitPlan(hold, RD);
+  env.point = null;
   // the water now under the predicted low: the level is the water now, said so
   env.point = PT; env.readLow = 0.5; w.sea.waterOffset = 0.1; order.length = 0;
   const lowNow = await w.waitPlan(hold, RD), lvNow = (order.find((o) => o[0] === "point") || [])[1];
@@ -383,6 +387,7 @@ console.log("A survey's start time and duration:");
               && manual && manual.read === false && pm[1] === -0.4 && pm[2] === true
               && ord === "cover,ais,point" && cov[1] === 650 && cov[2] === true && cov[3] === RD
               && none && /nowhere within 500 m/.test(none.refuse) && none.level === 0.2 && none.chans === 2 && !none.to
+              && none.riverOnly === undefined && riv && riv.riverOnly === true && !riv.to && /river's navigation channel/.test(riv.refuse)
               && lowNow && lvNow === 0.1 && /^\+0\.10 m, the water now$/.test(lowNow.say)
               && unread && pu[1] === 0 && pu[2] === true && unread.read === false
               && pieces.length === 2 && pieces[0] === 24 && pieces[1] > 0 && Math.abs(span - (30 + TIDE / 3600)) < 0.2

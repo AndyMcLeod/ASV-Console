@@ -1391,6 +1391,23 @@ export function riverChannelArea(f) {
     && f.props?.DRVAL1 != null && f.props?.DRVAL2 == null;
 }
 
+/** Each RIVER'S CHANNEL among `feats` (riverChannelArea) as rings in `frame`'s plane, [{ring, bb}] - whatever her floor and
+ *  the water, and whatever the Depth toggle: the navigation channel the Corps' cells chart only as their deepest band. For
+ *  a survey's wait (asv.html waitRiverChannels), which keeps out of a navigation channel while Shipping channels is
+ *  checked: at a 2.0 m floor the channel is the only water in the river the floor tier lets her lie in, and she held there,
+ *  the barge lane, said to be "out of navigation channels" (2026-11-23). */
+export function riverChannelRings(frame, feats) {
+  const out = [];
+  for (const f of feats || []) {
+    if (!riverChannelArea(f) || !f.geometry) continue;
+    eachRing(f.geometry, (rg) => {
+      const ring = rg.map((c) => frame.toEN({ lon: c[0], lat: c[1] }));
+      if (ring.length > 2) out.push({ ring, bb: bbOf(ring) });
+    });
+  }
+  return out;
+}
+
 /**
  * The margin layer for a hull whose floor is `opts.depthRange.min` (else `opts.minDepthM`), at `opts.waterOffsetM`:
  *   polys   each depth or dredged area legal at the floor whose SHALLOWEST depth is under floor + DEEP_MARGIN_M (the

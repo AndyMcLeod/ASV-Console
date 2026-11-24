@@ -46,14 +46,14 @@ import { V, nogo, sea } from "./state.js";
 // by legReason; the rest pass straight through to this console's importers.
 import { HAZ_UNKNOWN_EXTENT, WRECK_CLEAR_MARGIN_M, MARK_TAIL, CL_EXTEND_CAP_M,
          blocked, blockedInfo, clearanceM, legClear, legCrossesEN, firstBlockAlong,
-         markId, markSystems, systemCenterline, extendCenterline, pairGates, channelPolys,
+         markId, markSystems, systemCenterline, extendCenterline, pairGates, channelPolys, riverChannelRings,
          buildKeepouts as coreBuildKeepouts, hazExtent as coreHazExtent,
          hazPassable as coreHazPassable, overheadBlocks, overheadClearance,
          depthExcluded as coreDepthExcluded, nogoKind as coreNogoKind,
          deepKeepouts as coreDeepKeepouts } from "./keepouts.js";
 export { HAZ_UNKNOWN_EXTENT, WRECK_CLEAR_MARGIN_M, MARK_TAIL, CL_EXTEND_CAP_M,
          blocked, blockedInfo, clearanceM, legClear, legCrossesEN, firstBlockAlong,
-         markId, markSystems, systemCenterline, extendCenterline, pairGates, channelPolys };
+         markId, markSystems, systemCenterline, extendCenterline, pairGates, channelPolys, riverChannelRings };
 
 // THE ONE SEAM WHERE THIS CONSOLE'S STATE BECOMES THE CORE'S OPTIONS. Built per call
 // rather than cached because every field is live: V.* is rewritten when the operator

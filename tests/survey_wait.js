@@ -26,6 +26,7 @@
 //          channel between its gates kept out; a caller's keep-outs (the guard's contacts) kept off; the disc inside
 //          read water; a refusal for unread water said as that; what the search kept said back.
 //   25b    a river's channel is margin water to a wait (the review of the river's channel first, 2026-11-23).
+//   25c    a river's channel is a NAVIGATION CHANNEL to a wait, at any floor (2026-11-23, the night's first item).
 //   28     the re-approach's re-find, on the page's own reapproachIfSetOff.
 //   29     the record's `unread`, Upload's disc, and a banner that says what the search did.
 //   30     THE REVIEW, the alert: never over an advisory or a refusal, no nag while Continue is closed, said again when
@@ -130,14 +131,14 @@ function waitWorld(env) {
   // eslint-disable-next-line no-new-func
   return new Function("K", "P", "HOLD", "S", "env", "modelAt", "CH", '"use strict";\n'
     + "const {nogo} = S; const {holdTarget, passageKo, armDeep, beyondChart, CHART_EDGE_M} = P; const {holdMarginM} = HOLD;\n"
-    + "const {systemCenterline} = K;\n" + decl(/^const WAIT_LAYERS = [^;]*;/m) + "\n"
+    + "const {systemCenterline, riverChannelRings} = K;\n" + decl(/^const WAIT_LAYERS = [^;]*;/m) + "\n"
     + decl(/^const WAIT_REACH_M = [^;]*;/m) + "\n" + decl(/^const WAIT_SET_FLOOR_MS = [^;]*;/m) + "\n"
     + "const koAtLevel = (m) => modelAt(env.feats, m); const setMsNow = () => env.setMs || 0; const holdRadiusM = () => 2;\n"
     + "const nogoDR = () => ({min: " + FLOOR + ", max: 0}); const modelFeatures = () => env.feats;\n"
     // (chart.js's REAL buildMargin - a margin it did not hand through is the deep tier again - recording what was asked)
     + "const buildMargin = (ref, enf, dr, feats, level, ko, marginM, bandMaxM) => { env.margins.push(marginM);"
     + "  return CH.buildMargin(ref, enf, dr, feats, level, ko, marginM, bandMaxM); };\n"
-    + grabs("waitLayer", "waitBuoyedChannels", "waitPointAt") + "\nreturn {waitPointAt};")(K, PS, HOLD, S, env, modelAt, CH);
+    + grabs("waitLayer", "waitBuoyedChannels", "waitRiverChannels", "waitPointAt") + "\nreturn {waitPointAt};")(K, PS, HOLD, S, env, modelAt, CH);
 }
 const START = at(0, 0);
 const ask = (env, level, o, center) => { env.margins = []; const w = waitWorld(env); const r = w.waitPointAt(center || START, level, o);
@@ -1032,14 +1033,59 @@ const ask = (env, level, o, center) => { env.margins = []; const w = waitWorld(e
     const rv = (x0, x1, d1, d2) => ({ ...area(x0, x1, -900, 900, d1, d2), band: "enc_river" });
     const RIVER = () => [rv(-900, -40, 0, 2.74), rv(-40, 40, 2.74, undefined), rv(40, 900, 0, 2.74)];
     const lay = K.deepKeepouts(FRAME, RIVER(), OPTS(0));
-    const r = ask({ feats: RIVER() }, 0), rOnly = ask({ feats: RIVER() }, 0, { deepOnly: true });
+    // (Shipping channels unchecked: the channel is no navigation channel to the wait - 25c - and only the margin rule judges it)
+    const OFF = { chan: false };
+    const r = ask({ feats: RIVER(), enf: OFF }, 0), rOnly = ask({ feats: RIVER(), enf: OFF }, 0, { deepOnly: true });
     check("25b. A RIVER'S CHANNEL IS MARGIN WATER TO A WAIT (the review of the river's channel first, 2026-11-23): a "
           + "route's layer leaves the channel to say (sayOnly), never to avoid - and the deep tier, arming the layer's "
           + "polys alone, stood her in it as 'deep water first's margin over her floor'; now the deep tier finds no water "
-          + "in the river and the floor tier holds her in the channel where she is; the level unread, a refusal",
+          + "in the river - with Shipping channels unchecked the floor tier holds her in the channel where she is, and "
+          + "says the channels were not kept out; the level unread, a refusal",
           () => lay.sayOnly.length === 1 && lay.polys.length === 2
-                && r.to && r.tier === "floor" && r.movedM === 0 && !rOnly.to,
-          () => JSON.stringify({ say: lay.sayOnly.length, polys: lay.polys.length, r: r.error || [r.tier, r.movedM], only: rOnly.error || rOnly.tier }));
+                && r.to && r.tier === "floor" && r.movedM === 0 && r.chanKept === false && !rOnly.to,
+          () => JSON.stringify({ say: lay.sayOnly.length, polys: lay.polys.length, r: r.error || [r.tier, r.movedM, r.chanKept], only: rOnly.error || rOnly.tier }));
+    // ── 25c. AND A NAVIGATION CHANNEL, AT ANY FLOOR (2026-11-23, Andy: "continue through the night using your best
+    // recommendations"): Shipping channels checked, the floor tier held her in the 9 ft channel above - the barge lane -
+    // and the banner said "out of navigation channels". A channel 5 m and deeper is no margin water at the 1.0 m floor
+    // (3 m), so the DEEP tier stood her in it; the 1.5-5 m band beside it holds her on the floor tier.
+    const RIVER5 = () => [rv(-900, -40, 1.5, 5), rv(-40, 40, 5, undefined), rv(40, 900, 1.5, 5)];
+    const k = ask({ feats: RIVER() }, 0);                                           // the 2.74 m river: nowhere, and why
+    const kSide = ask({ feats: RIVER() }, 0, null, at(100, 0));                     // ... from the band beside it too
+    // (a channel shallower than her floor: nothing would hold her with it or without it - not the channel's refusal)
+    const kShoal = ask({ feats: [rv(-900, -40, 0, 0.5), rv(-40, 40, 0.5, undefined), rv(40, 900, 0, 0.5)] }, 0);
+    // a channel charted in two parts (a MultiPolygon): a start in the second is moved out of it as from the first
+    const two = { ...rv(-40, 40, 5, undefined), geometry: { type: "MultiPolygon", coordinates: [[ringLL(-40, 40, -900, -10)], [ringLL(-40, 40, 10, 900)]] } };
+    const m2 = ask({ feats: [rv(-900, -40, 1.5, 5), { ...area(-40, 40, -10, 10, 1.5, 5), band: "enc_river" }, two, rv(40, 900, 1.5, 5)] },
+                   0, null, at(0, 300));
+    const m5 = ask({ feats: RIVER5() }, 0), off5 = ask({ feats: RIVER5(), enf: OFF }, 0);
+    const out5 = ask({ feats: RIVER5() }, 0, null, at(300, 0));                     // a start beside the channel stands
+    const nd5 = ask({ feats: RIVER5(), enf: { depth: false } }, 0);                 // Depth unchecked: still a channel
+    // a coastal chart's open-ended deepest band is not a river's channel (riverChannelArea: the Corps' bands alone)
+    const sea5 = ask({ feats: [area(-900, -40, -900, 900, 1.5, 5), area(-40, 40, -900, 900, 5, undefined), area(40, 900, -900, 900, 1.5, 5)] }, 0);
+    const outOf = (w) => w.to && Math.abs(w.e) >= 40 + BUF + w.need - 1e-6;
+    const RIVER_ONLY = /the only water within 500 m of it that would hold her is a river's navigation channel/;
+    check("25c. A RIVER'S CHANNEL IS A NAVIGATION CHANNEL TO A WAIT, AT ANY FLOOR: with Shipping channels checked a start "
+          + "in it is moved out past its edge (the buffer and the set's margin) - from the 5 m channel to the band beside "
+          + "it, from the deep tier's own water - and in the 2.74 m river, where the band beside it is charted from 0 m, "
+          + "nowhere holds her and the refusal names the channel; unchecked, she waits in it (deep tier) and says so; a "
+          + "start beside it is not moved; Depth unchecked, it is still kept out; a coastal chart's open-ended band is not. "
+          + "And the review's: a refusal the channel decided says so from the band beside it too (it said 'water charted "
+          + "under her floor in part'), and only then (a channel under her floor is no such refusal); the disc stops "
+          + "short of the channel; a channel in two parts is kept out in each",
+          () => !k.to && RIVER_ONLY.test(k.error || "") && k.riverOnly === true && k.chanKept === true && k.chans === 1
+                && !kSide.to && RIVER_ONLY.test(kSide.error || "") && kSide.riverOnly === true
+                && !kShoal.to && !RIVER_ONLY.test(kShoal.error || "") && !kShoal.riverOnly
+                && outOf(m5) && m5.tier === "floor" && m5.movedM >= 40 + BUF + m5.need - 1e-6 && m5.chanKept === true
+                && m5.holdClear <= Math.abs(m5.e) - 40 - BUF + 1e-6 && m5.kind === "a river's navigation channel" && outOf(m2)
+                && off5.to && off5.tier === "deep" && off5.movedM === 0 && off5.chanKept === false
+                && out5.to && out5.movedM === 0 && out5.tier === "floor"
+                && outOf(nd5) && nd5.depthJudged === false
+                && sea5.to && sea5.movedM === 0 && sea5.tier === "deep",
+          () => JSON.stringify({ k: k.error || [k.tier, k.movedM], chans: k.chans, side: kSide.error || [kSide.tier, kSide.movedM],
+                                 shoal: kShoal.error || [kShoal.tier, kShoal.movedM], two: m2.error || [m2.tier, m2.e && +m2.e.toFixed(1)],
+                                 m5: m5.error || [m5.tier, m5.e && +m5.e.toFixed(1), m5.movedM, m5.need, m5.holdClear],
+                                 off5: off5.error || [off5.tier, off5.movedM, off5.chanKept], out5: out5.error || [out5.tier, out5.movedM],
+                                 nd5: nd5.error || [nd5.tier, nd5.e && +nd5.e.toFixed(1), nd5.depthJudged], sea5: sea5.error || [sea5.tier, sea5.movedM] }));
   }
   {
     // a channel marked by buoy pairs alone (no charted fairway): 120 m across, a pair every 800 m, deep water all round

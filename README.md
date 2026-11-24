@@ -2135,8 +2135,8 @@ plain. `tests/path_card.js` 15.
      **lowest** water predicted there from now until a full tide (12 h 25 min) after the start,
      or the water now if that is lower: deep water first's margin over her floor where there is
      room, else clear of every depth area shoaler than her floor (a coarse band counted by its
-     shallowest depth); out of navigation channels, charted and buoyed, while Shipping channels
-     is checked; clear of vessels the AIS feed shows there; only in water the chart was read
+     shallowest depth); out of navigation channels - charted, buoyed, and a river's channel at
+     any floor - while Shipping channels is checked; clear of vessels the AIS feed shows there; only in water the chart was read
      over; and with room for her hold against a set of at least 1 m/s. A level that could not be
      read searches the deep tier only. Its hold disc is the one it was found with, never wider
      than the water now allows. The chart rings it in amber, "S2 waits here". If no water holds
@@ -3699,7 +3699,15 @@ plain. `tests/path_card.js` 15.
    is - inside the channel it is the channel's, unless a rock, a shoal sounding or another chart's
    margin water is within her clearance - and each kind is joined across the other, so a route that
    dips in and out of the band is two stretches, not one at each crossing. A survey's wait point
-   counts the channel as the margin water it is: deep water first's tier never stands her in it. And
+   keeps out of the channel as out of any navigation channel, at any floor, while Shipping channels
+   is checked: at a 2.0 m floor the channel was the only water in the river the wait's floor tier
+   let her lie in, and she held there, in the barge lane, "out of navigation channels". Where the
+   channel is all that would hold her - at Pine Bluff, where the band beside it is charted from 0
+   m, from a start in the channel or beside it - Upload is refused and says so: the only water
+   that would hold her is a river's navigation channel, kept out of a wait; Wait: HOME is the way
+   on, and no shorter wait is offered (reviewed before the merge). With Shipping channels unchecked it is the margin water it is - deep water
+   first's tier never stands her in it - and where the floor's tier does, the banner says the
+   channels were not kept out (`tests/survey_wait.js` 25b-25c). And
    keeping right is still her priority: from inside the channel, `buoyedReachLane` reads the
    channel's own edges either side of her - where its water ends, or the river's margin water
    begins, released or not - so a cross-section is three quarters of the way across the channel, not

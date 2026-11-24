@@ -1068,6 +1068,19 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
                 && calls[0].b.route[calls[0].b.route.length - 1].lat === 43.09
                 && /UPLOADED UP TO S2 Ledge'S START/.test(banners.join(" ")),
           () => "sent " + calls.length + ", asked " + (waitAsked - waitedBefore) + " (no start: " + askedNoStart + ")");
+    // (1t2r, 2026-11-23, the review of the river's channel at a wait: where a river's channel is all that would hold her,
+    //  the refusal says so once and gives no advice to wait less - beside the Corps' channel the band is charted from 0 m)
+    waitRisk = { ...WAIT0, chans: 1, riverOnly: true, refuse: "the only water within 500 m of it that would hold her is a river's "
+                 + "navigation channel (the Corps' deepest depth area), kept out of a wait while Shipping channels is checked" };
+    calls.length = 0;
+    await up(() => { nogo = { ready: true, busy: false, band: "enc_harbour" }; answer = false; });
+    const rb = banners.join(" ");
+    check("1t2r. ... and where a RIVER'S CHANNEL is all that would hold her, the banner names it once and sends her HOME "
+          + "only: no 'navigation channels are kept out' said again, no 'Upload nearer its start, so she waits less'",
+          () => calls.length === 0 && /a river's navigation channel \(the Corps' deepest depth area\), kept out of a wait/.test(rb)
+                && !/navigation channels are kept out of a wait/.test(rb) && !/so she waits less/.test(rb)
+                && /Set its row's Wait to HOME, so she waits there\./.test(rb),
+          () => "sent " + calls.length + "; " + rb.slice(0, 400));
     // 1t4. A WAIT POINT: the part ends THERE, not at the survey's start; the disc sent is the one it was found with; the
     // record holds where the part ended and the level; the banner says where and how it was found
     const W = { lat: 43.0893, lon: -70.7003 };

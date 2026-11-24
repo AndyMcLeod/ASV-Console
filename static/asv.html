@@ -1395,7 +1395,7 @@ import { HAZ_UNKNOWN_EXTENT, MARK_TAIL, WATER_FAR_KM, WATER_REMOTE_KM, WATER_STA
          WRECK_CLEAR_MARGIN_M, airNeedM, blocked, blockedInfo, bufferFloor, buildKeepouts, buildMargin, clearanceM,
          channelPolys, depthExcluded, effectiveWaterOffset, firstBlockAlong, hazExtent, overheadBlocks,
          legClear, legCrossesEN, legReason, legReasons, markId, markSystems, nogoDR, nogoKind,
-         nogoKindCounts, pairGates, qualityAt, snapClearLL, systemCenterline, waterTrust } from "/static/js/chart.js";
+         nogoKindCounts, pairGates, qualityAt, riverChannelRings, snapClearLL, systemCenterline, waterTrust } from "/static/js/chart.js";
 // THE SURVEYS IN THE PLAN (sequenced surveys, phase 1, 2026-10-02): which survey each line and waypoint belongs to,
 // the surveys in run order, and the survey's number staying with it. See the module header.
 import { normalizeSurveys, surveyPoints, pathThroughSurveys,
@@ -12086,12 +12086,13 @@ function waitPointAt(center, level, o){
   const base = koAtLevel(level, true), buf = nogo.buffer || 0;
   const setMs = Math.max(WAIT_SET_FLOOR_MS, setMsNow() || 0), need = holdMarginM(setMs);
   const chanKept = !(nogo.enf && nogo.enf.chan === false), depthJudged = !(nogo.enf && nogo.enf.depth === false);
+  const rivers = chanKept ? waitRiverChannels() : [];
   const chans = chanKept ? [...(base.chans || []).filter(c => c && c.ring).map(c => ({ring: c.ring, bb: c.bb, kind: "a navigation channel"})),
-                            ...waitBuoyedChannels(base)] : [];
+                            ...waitBuoyedChannels(base), ...rivers] : [];
   const moored = passageKo(base);
   // (`o.polys`: keep-outs of the caller's own, kept buf + need off like every other - the guard's contacts at a
   //  re-find, hours after the Upload's AIS read went stale)
-  const extra = [...chans, ...(Array.isArray(o.polys) ? o.polys : [])];
+  const own = Array.isArray(o.polys) ? o.polys : [];
   const inRead = q => { const ll = nogo.frame.fromEN(q.e, q.n);
     return !beyondChart([{lat: ll.lat, lon: ll.lon}], nogo.bbox, undefined, nogo.unread, {points: true, all: true}); };
   // (`accept` is asked only of a point the keep-outs pass: counted both ways, so a failure can name its cause)
@@ -12099,32 +12100,48 @@ function waitPointAt(center, level, o){
   const accept = q => { const ok = inRead(q); if(ok) accepted++; else unreadOnly++; return ok; };
   const tiers = ["deep"];
   if(!o.deepOnly) tiers.push("floor");
-  let last = null;
-  for(const tier of tiers){
-    const lay = waitLayer(base, level, tier);
-    const armed = lay ? armDeep({...moored, margin: lay}, buf + need) : null;
-    if(!armed) continue;
-    const ko = extra.length ? {...armed, polys: [...armed.polys, ...extra]} : armed;
-    const ht = holdTarget({lat: center.lat, lon: center.lon},
-                          {holdR: holdRadiusM(), setMs, setDeg: null, ko, capM: WAIT_REACH_M, accept});
-    if(ht && !ht.error && !ht.degraded && Number.isFinite(ht.holdClear) && ht.holdClear >= holdRadiusM())
-      // (the disc never past CHART_EDGE_M: the point stands that far inside the water the chart was read over, by
-      //  `accept` - so the disc, and a boat driving a straight chord through it, do too. The box alone capped it, and a
-      //  point 100 m from an unread square shipped a 495 m disc: the review, run on the real modules. AND LESS THE
-      //  BUFFER: at CHART_EDGE_M itself its edge lay ON the unread square, with none of the standoff a disc keeps off
-      //  everything else - and a disc inside the box keeps it (discInChart): the second review.)
-      return {to: {lat: ht.to.lat, lon: ht.to.lon}, movedM: ht.heldOff ? ht.heldOff.m : 0, kind: ht.heldOff ? ht.heldOff.kind : null,
-              tier, holdClear: Math.min(ht.holdClear, Math.max(0, CHART_EDGE_M - buf)), need, level, chans: chans.length, chanKept, depthJudged,
-              moored: (moored.moored || []).length};
-    last = ht;
+  // (each tier in turn, `extra` kept out with the rest: {ht, tier} where one holds her, else {last} - the last answer)
+  const search = (extra, acc) => {
+    let last = null;
+    for(const tier of tiers){
+      const lay = waitLayer(base, level, tier);
+      const armed = lay ? armDeep({...moored, margin: lay}, buf + need) : null;
+      if(!armed) continue;
+      const ko = extra.length ? {...armed, polys: [...armed.polys, ...extra]} : armed;
+      const ht = holdTarget({lat: center.lat, lon: center.lon},
+                            {holdR: holdRadiusM(), setMs, setDeg: null, ko, capM: WAIT_REACH_M, accept: acc});
+      if(ht && !ht.error && !ht.degraded && Number.isFinite(ht.holdClear) && ht.holdClear >= holdRadiusM()) return {ht, tier};
+      last = ht;
+    }
+    return {last};
+  };
+  const found = search([...chans, ...own], accept);
+  if(found.ht){
+    const ht = found.ht;
+    // (the disc never past CHART_EDGE_M: the point stands that far inside the water the chart was read over, by
+    //  `accept` - so the disc, and a boat driving a straight chord through it, do too. The box alone capped it, and a
+    //  point 100 m from an unread square shipped a 495 m disc: the review, run on the real modules. AND LESS THE
+    //  BUFFER: at CHART_EDGE_M itself its edge lay ON the unread square, with none of the standoff a disc keeps off
+    //  everything else - and a disc inside the box keeps it (discInChart): the second review.)
+    return {to: {lat: ht.to.lat, lon: ht.to.lon}, movedM: ht.heldOff ? ht.heldOff.m : 0, kind: ht.heldOff ? ht.heldOff.kind : null,
+            tier: found.tier, holdClear: Math.min(ht.holdClear, Math.max(0, CHART_EDGE_M - buf)), need, level, chans: chans.length,
+            chanKept, depthJudged, moored: (moored.moored || []).length};
   }
   // (NAME THE CAUSE THE CODE MEASURED: holdTarget picks its words from the keep-outs, and where every point in reach
   //  failed only for lying in water the chart was not read over it said "room for the boat but not for the 2 m it may
   //  wander" - of open deep water)
   const unreadAll = accepted === 0 && unreadOnly > 0;
+  // ⚠ AND WHERE A RIVER'S CHANNEL IS ALL THAT WOULD HOLD HER, SAY SO (the review of the river's channel at a wait): a
+  // start in the band beside the Pine Bluff channel was refused as "water charted under her floor in part" - the
+  // channel's keep-out decided it (before it, all 12 such starts were moved into the channel), and the banner's
+  // "Upload nearer its start, so she waits less" cannot help where the band is charted from 0 m. Asked again without
+  // the river's channels, only when the search failed for its keep-outs (never for unread water).
+  const riverOnly = !unreadAll && rivers.length > 0 && !!search([...chans.filter(c => !rivers.includes(c)), ...own], inRead).ht;
   return {error: unreadAll ? "the only water within " + WAIT_REACH_M + " m of it that would hold her is water the chart was not read over"
-                           : (last && last.error) || "no water there holds her",
-          need, level, chans: chans.length, chanKept, depthJudged, unread: unreadAll};
+                 : riverOnly ? "the only water within " + WAIT_REACH_M + " m of it that would hold her is a river's navigation channel"
+                   + " (the Corps' deepest depth area), kept out of a wait while Shipping channels is checked"
+                 : (found.last && found.last.error) || "no water there holds her",
+          need, level, chans: chans.length, chanKept, depthJudged, unread: unreadAll, ...(riverOnly ? {riverOnly: true} : {})};
 }
 /** The wait point's two layers for the model `base` (built at `level`): deep water first's margin and the same at margin
  *  0 (each built when asked for and kept), each with EVERY depth band counted by its shallowest depth - keepouts.js leaves a band wider than 10 m to its
@@ -12170,6 +12187,15 @@ function waitBuoyedChannels(base){
     }
   }
   return out;
+}
+/** A RIVER'S CHANNEL, as keep-outs for a wait (2026-11-23, Andy: "continue through the night using your best
+ *  recommendations"): the Corps' cells chart the 9 ft channel only as their deepest depth area (keepouts.js
+ *  riverChannelRings), so neither the model's channel rings nor a buoy pair names it - and at a 2.0 m floor the floor
+ *  tier's only water in the river is the channel, so she lay there for hours, in the barge lane, said to be "out of
+ *  navigation channels". Kept out like any navigation channel, at any floor: where nothing else within reach holds her,
+ *  Upload is refused and says the channel was the cause. */
+function waitRiverChannels(){
+  return riverChannelRings(nogo.frame, modelFeatures()).map(c => ({...c, kind: "a river's navigation channel"}));
 }
 /**
  * Upload's plan for the wait at a hold whose survey has a start (asked after the chart read, before anything is routed
@@ -12217,7 +12243,8 @@ async function waitPlan(hold, rd){
     const level = Math.min(live, lv ? lv.m : 0);
     const say = lv && lv.m <= live ? lv.say : fmtLevel(live) + ", the water now" + (read ? "" : " (the water over the wait could not be read)");
     const w = waitPointAt(p, level, {deepOnly: !read});
-    if(!w.to) return {...base, level, say, read, refuse: w.error, need: w.need, chans: w.chans, unread: !!w.unread};
+    if(!w.to) return {...base, level, say, read, refuse: w.error, need: w.need, chans: w.chans, unread: !!w.unread,
+                      ...(w.riverOnly ? {riverOnly: true} : {})};
     return {...base, level, say, read, to: w.to, movedM: w.movedM, kind: w.kind, tier: w.tier, holdClear: w.holdClear, need: w.need,
             chanKept: w.chanKept !== false, depthJudged: w.depthJudged !== false, ais};
   }catch(e){
@@ -12254,8 +12281,9 @@ function waitRefused(wait){
   showBanner("Upload refused - NOTHING WAS SENT: no water within " + WAIT_REACH_M + " m of " + L + "'s start holds her while she "
     + "waits for it, from about " + surgeWhen(wait.arrive) + " until its start " + surgeWhen(wait.start)
     + (wait.say ? " (judged at " + wait.say + ")" : "") + ": " + wait.refuse
-    + (wait.chans ? "; navigation channels are kept out of a wait" : "")
-    + ". Set its row's Wait to HOME, so she waits there" + (wait.unread ? "." : "; or Upload nearer its start, so she waits less."));
+    + (wait.chans && !wait.riverOnly ? "; navigation channels are kept out of a wait" : "")
+    // (a river's channel the only water: no shorter wait is held anywhere beside it, so no advice to wait less)
+    + ". Set its row's Wait to HOME, so she waits there" + (wait.unread || wait.riverOnly ? "." : "; or Upload nearer its start, so she waits less."));
   flashNote("Upload refused: no water near " + L + "'s start holds her through the wait.");
   }
   logClient("upload_wait", {sv: wait.s.id, start_t: wait.start, arrive_t: Math.round(wait.arrive),
