@@ -32,7 +32,7 @@ export function koCount(ko){
   if(!ko) return -1;
   const m = ko.margin;
   return (ko.polys || []).length + (ko.lines || []).length + (ko.points || []).length
-       + (m ? (m.polys || []).length + (m.lines || []).length + (m.points || []).length : 0);
+       + (m ? (m.polys || []).length + (m.lines || []).length + (m.points || []).length + (m.sayOnly || []).length : 0);
 }
 /** The ids this side holds now (tests/route_worker.js). */
 export function heldModels(){ return [...models.keys()]; }
@@ -47,15 +47,18 @@ export function heldModels(){ return [...models.keys()]; }
 /** The model `ko` packed: {xy: Float64Array of every polys[].ring and lines[].pts point, e then n, polys/lines: their
  *  records without the points but with where they lie in `xy` (s..e, in numbers), rest: every other field of `ko`,
  *  margin: its margin layer's the same way, in the same `xy` (deep water first: 599 areas and 65,554 ring points on his
- *  61 km Go-To's chart, which a clone would have copied point by point)}. */
+ *  61 km Go-To's chart, which a clone would have copied point by point) - its polys, lines and `sayOnly` (a river's
+ *  channel, keepouts.js riverChannelArea)}. */
 export function packKo(ko){
   const polys = ko.polys || [], lines = ko.lines || [];
   const mg = ko.margin || null, mpolys = (mg && mg.polys) || [], mlines = (mg && mg.lines) || [];
+  const msay = (mg && mg.sayOnly) || [];
   let n = 0;
   for(const q of polys) n += q.ring.length;
   for(const q of lines) n += q.pts.length;
   for(const q of mpolys) n += q.ring.length;
   for(const q of mlines) n += q.pts.length;
+  for(const q of msay) n += q.ring.length;
   const xy = new Float64Array(n * 2);
   let k = 0;
   const put = (pts) => { const s = k; for(const p of pts){ xy[k++] = p.e; xy[k++] = p.n; } return [s, k]; };
@@ -65,8 +68,9 @@ export function packKo(ko){
   const rest = {...ko}; delete rest.polys; delete rest.lines; delete rest.margin;
   let margin = null;
   if(mg){
-    const mr = {...mg}; delete mr.polys; delete mr.lines;
-    margin = {polys: mpolys.map(packP), lines: mlines.map(packL), rest: mr, hasPolys: "polys" in mg, hasLines: "lines" in mg};
+    const mr = {...mg}; delete mr.polys; delete mr.lines; delete mr.sayOnly;
+    margin = {polys: mpolys.map(packP), lines: mlines.map(packL), sayOnly: msay.map(packP), rest: mr,
+              hasPolys: "polys" in mg, hasLines: "lines" in mg, hasSay: "sayOnly" in mg};
   }
   return {xy, polys: pr, lines: lr, rest, hasPolys: "polys" in ko, hasLines: "lines" in ko, margin};
 }
@@ -78,6 +82,7 @@ export function unpackKo(pk){
     const o = {...rest};
     if(p.hasPolys) o.polys = p.polys.map(({r, s, e}) => ({...r, ring: pts(s, e)}));
     if(p.hasLines) o.lines = p.lines.map(({r, s, e}) => ({...r, pts: pts(s, e)}));
+    if(p.hasSay) o.sayOnly = p.sayOnly.map(({r, s, e}) => ({...r, ring: pts(s, e)}));
     return o;
   };
   const ko = unpack(pk, pk.rest);

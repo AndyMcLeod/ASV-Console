@@ -1373,6 +1373,23 @@ export const DEEP_BERTH_M = 50;
 // and from 12.8 m (5.4-18.2, 0-18.2 m) - and a band wider than DEEP_BAND_MAX_M is not margin water itself. Inside one,
 // each shoal sounding and every rock still gets its DEEP_BERTH_M, so a charted shallow spot is still kept off.
 export const DEEP_BAND_MAX_M = 10;
+// ⚠ A RIVER'S CHANNEL IS ITS DEEP WATER (Andy, 2026-11-23: "make the planner prefer the deep area, but keeping right is
+// still a valid action that should be considered as a priority"). The Corps' river cells chart the navigation channel
+// only as their deepest depth area - DRVAL1 2.74 m (the 9 ft project depth) and no DRVAL2 - and the water from it to the
+// banks as one 0-2.74 m band, which her floor's test (depthExcluded, by the band's deepest value) passes. At Pine Bluff the
+// channel is one strip 76 m wide about the sailing line, unbroken for the 101.9 km read (32 m at its three narrowest),
+// and the Go-To's four replayed legs ran only 4.0-6.4 km of their 9.5-10.4 km in it, the rest up to 112 m outside it,
+// among the buoys the Corps sets 14-56 m outside it. At her 2.0 m floor the margin rule made BOTH margin water - the channel is
+// 0.74 m over it, the band 0 m - so deep water first found no deeper way anywhere on the river, and the search's route
+// stood. A river's channel is therefore never margin water to AVOID: there is no deeper water in the river to take her
+// to. It is margin water to SAY (`sayOnly`): she has less than the margin over her floor there, and the plan says so as
+// it always did; and the band beside it is margin water as before, which deep water first now finds a deeper way round.
+/** Is the depth area `f` a RIVER'S CHANNEL: a band read as charted (AS_CHARTED_BANDS, the Corps' river cells) with a
+ *  shallowest depth and no deepest - the open-ended deepest band, as those cells chart the navigation channel? */
+export function riverChannelArea(f) {
+  return !!f && f.role === 'depth_area' && AS_CHARTED_BANDS.has(f.band)
+    && f.props?.DRVAL1 != null && f.props?.DRVAL2 == null;
+}
 
 /**
  * The margin layer for a hull whose floor is `opts.depthRange.min` (else `opts.minDepthM`), at `opts.waterOffsetM`:
@@ -1385,10 +1402,13 @@ export const DEEP_BAND_MAX_M = 10;
  *           layer is armed, as the berth less the margin the plan keeps, so the berth is the distance kept whatever the
  *           buffer or standoff. A sounding whose berth lies wholly inside a keep-out or a margin area adds nothing and is
  *           not kept.
+ *   sayOnly a RIVER'S CHANNEL that is margin water by the same test (riverChannelArea): never avoided - it is the
+ *           deepest water the river has - and said wherever her route runs in it (passage.js marginRuns), as every
+ *           area above is.
  * Follows the toggles: depth (the areas and soundings), haz (the rocks and obstructions), wreck (the wrecks).
  * `opts.floorPolys`: the areas of the model built at the floor (buildKeepouts' polys), which the soundings are read
  * against - built here when not given.
- * {polys, lines: [], points, counts: {areas, rocks, soundings}}.
+ * {polys, lines: [], points, sayOnly, counts: {areas, rocks, soundings, channel}}.
  */
 export function deepKeepouts(frame, feats, opts = {}) {
   const o = { ...DEFAULTS, ...opts };
@@ -1400,8 +1420,8 @@ export function deepKeepouts(frame, feats, opts = {}) {
   //  with no sounding near is water charted from 0 m. Infinity counts every band by its shallowest depth.)
   const bandMax = opts.bandMaxM ?? DEEP_BAND_MAX_M;
   const deepTo = floor + marginM;
-  const polys = [], points = [], snd = [];
-  const counts = { areas: 0, rocks: 0, soundings: 0 };
+  const polys = [], points = [], snd = [], sayOnly = [];
+  const counts = { areas: 0, rocks: 0, soundings: 0, channel: 0 };
   for (const f of feats || []) {
     const g = f.geometry, r = f.role;
     if (!g) continue;
@@ -1411,9 +1431,12 @@ export function deepKeepouts(frame, feats, opts = {}) {
       if (d == null || d + asCharted(f, o.waterOffsetM) >= deepTo) continue;
       if (d1 != null && d2 != null && d2 - d1 > bandMax) continue;   // a coarse band: its soundings say (above)
       const kind = 'water less than ' + marginM + ' m over her floor';
+      // (a river's channel: said, never avoided - riverChannelArea, above)
+      const chan = riverChannelArea(f), river = AS_CHARTED_BANDS.has(f.band);   // (`river`: routing.js buoyedReachLane's edges)
       eachRing(g, (rg) => {
         const ring = rg.map((c) => frame.toEN({ lon: c[0], lat: c[1] }));
-        if (ring.length > 2) { polys.push({ ring, bb: bbOf(ring), kind, cls: f.cls }); counts.areas++; }
+        if (ring.length > 2 && chan) { sayOnly.push({ ring, bb: bbOf(ring), kind, cls: f.cls, channel: true }); counts.channel++; }
+        else if (ring.length > 2) { polys.push({ ring, bb: bbOf(ring), kind, cls: f.cls, ...(river ? { river } : {}) }); counts.areas++; }
       });
     } else if (r === 'hazard_point' && HAZ_UNKNOWN_EXTENT.has(f.cls)) {
       const wreck = f.cls === 'Wreck_point' || f.cls === 'Hulk_point';
@@ -1449,7 +1472,7 @@ export function deepKeepouts(frame, feats, opts = {}) {
       if (!inside) { points.push(q); counts.soundings++; }
     }
   }
-  return { polys, lines: [], points, counts };
+  return { polys, lines: [], points, sayOnly, counts };
 }
 
 // ---- A GRID OVER EVERY FEATURE LIST (2026-10-13, Andy: "build the spatial index for the floor model") ----------------

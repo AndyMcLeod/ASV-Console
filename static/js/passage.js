@@ -660,16 +660,36 @@ function lenLL(ref, pts){
  *  `margin`, sampled as legClear samples, DEEP_JOIN_M apart one run: [{m (meters in it), at (LL, its middle),
  *  end: 'start' | 'end' | null (from her position, to the end), pts (LL: its own line along the route - where it begins,
  *  her route's vertices within it, where it ends - which the chart draws), v1 (the index in `routeLL` of the vertex its
- *  last sample runs to)}]. [] where the model has no layer. */
+ *  last sample runs to), channel (true: a river's channel, below)}]. [] where the model has no layer. A river's channel
+ *  under the margin (the layer's `sayOnly`, keepouts.js riverChannelArea) is margin water here as any other - deep water
+ *  first never takes her out of it, and the plan still says she has less than the margin over her floor in it - but a
+ *  run of its own, `channel`, never joined to the margin water beside it: joined, a Go-To from a berth in the river's
+ *  0-2.74 m water up 8 km of its channel was one stretch, said "where she starts", as if she left it the short way.
+ *  ⚠ BY WHERE SHE IS, AND EACH KIND JOINED ACROSS THE OTHER (the review of the river's channel first): a sample INSIDE
+ *  the channel is the channel's, unless a margin item that is not the river's own water (a rock, a shoal sounding, an
+ *  area of another chart) is within `margin` of it - judged by clearance alone, the channel's edges at a 19.5 m standoff
+ *  left it 37 m of its 76, and a route on its starboard side flickered between the two. And a run of either kind joins
+ *  its own kind's samples DEEP_JOIN_M apart across the other's, as deep water first joins its stretches (it does not see
+ *  the channel at all): split at each crossing, a route dipping into the band beside the channel every 150 m was 22
+ *  stretches, and the dips far from the middle of the one stretch deep water first released lost its reason. Each
+ *  sample's meters are counted once, in its own kind; where the layer has no channel this is the single list it was. */
 export function marginRuns(routeLL, ref, ko, margin){
   const k = armDeep(ko, margin);
   if(!k || !routeLL || routeLL.length < 2) return [];
   const L = k.deep, S = sampleEN(routeLL.map((q) => ref.toEN(q)), Math.max(2, margin / 2));
-  const runs = [];
+  const say = ko.margin.sayOnly && ko.margin.sayOnly.length ? {polys: ko.margin.sayOnly, lines: [], points: []} : null;
+  // (not the river's own water; the list kept with the layer's, so keepouts.js files it in its grid once)
+  let op = say ? NOT_RIVER.get(L.polys) : null;
+  if(say && !op) NOT_RIVER.set(L.polys, op = L.polys.filter((q) => !q.river));
+  const other = say ? {polys: op, lines: L.lines, points: L.points} : null;
+  const runs = [], open = {};   // open[kind]: the last run of that kind
   for(let i = 0; i < S.length; i++){
-    if(!blocked(S[i], L, margin)) continue;
-    const r = runs[runs.length - 1], ds = i ? S[i].s - S[i - 1].s : 0;
-    if(r && S[i].s - S[r.i1].s <= DEEP_JOIN_M){ r.i1 = i; r.m += ds; } else runs.push({i0: i, i1: i, m: ds});
+    let ch = false, inL;
+    if(say && blocked(S[i], say, 0)){ ch = !blocked(S[i], other, margin); inL = !ch; }   // (`other` is L's: near it is in L)
+    else { inL = blocked(S[i], L, margin); ch = !inL && !!say && blocked(S[i], say, margin); }
+    if(!ch && !inL) continue;
+    const r = open[ch], ds = i ? S[i].s - S[i - 1].s : 0;
+    if(r && S[i].s - S[r.i1].s <= DEEP_JOIN_M){ r.i1 = i; r.m += ds; } else runs.push(open[ch] = {i0: i, i1: i, m: ds, ch});
   }
   return runs.map((r) => {
     const mid = S[(r.i0 + r.i1) >> 1], a = S[r.i0], b = S[r.i1];
@@ -677,9 +697,10 @@ export function marginRuns(routeLL, ref, ko, margin){
     for(let v = a.seg; v < b.seg; v++) pts.push({lat: routeLL[v].lat, lon: routeLL[v].lon});
     pts.push(ref.fromEN(b.e, b.n));
     return {m: r.m, at: ref.fromEN(mid.e, mid.n), end: r.i0 === 0 ? "start" : r.i1 === S.length - 1 ? "end" : null,
-            pts, v1: b.seg};
+            pts, v1: b.seg, ...(r.ch ? {channel: true} : {})};
   });
 }
+const NOT_RIVER = new WeakMap();
 /** How far from `c` (frame meters) the nearest water clear of both `ko` and the margin layer `layer` at `margin` lies,
  *  looked for on rings out to DEEP_REACH_M - every 10 m to 200 m, then 15 % further each ring; null where none is. */
 function deeperWithin(c, ko, layer, margin){
@@ -1009,12 +1030,14 @@ export function planNogoRoute(from, to, opts){
 }
 /** What a plan says of deep water first: {marginM, berthM (the layer's), repaired, released (each stretch kept at the
  *  floor, as deepFirst found it), runs (marginRuns: the margin water the route that SHIPS is in - what is said - each
- *  with `why`: "start" / "end" / "waypoint" where she starts, ends or turns in it, else the released stretch's own
- *  reason nearest it - "none", "mark", "time" - or "none")}. */
+ *  with `why`: "channel" in a river's channel, the deepest water its chart draws (marginRuns), else "start" / "end" /
+ *  "waypoint" where she starts, ends or turns in it, else the released stretch's own reason nearest it - "none", "mark",
+ *  "time" - or "none")}. */
 export function deepSaid(dfs, runs){
   const released = dfs.flatMap((d) => d.released), heldAt = dfs.flatMap((d) => d.heldAt || []);
   const llM = (a, b) => Math.hypot((a.lat - b.lat) * 111320, (a.lon - b.lon) * 111320 * Math.cos(a.lat * Math.PI / 180));
   for(const r of runs){
+    if(r.channel){ r.why = "channel"; continue; }
     if(r.end){ r.why = r.end; continue; }
     // the reason of the stretch kept at her floor that lies on it, first; then margin water the layer was lifted from for
     // a mark (its berth, or its proper hand) - a held mark within DEEP_MARK_M of the stretch's own line. (⚠ Asked the other
@@ -1037,7 +1060,8 @@ export function marginRunsAfter(was, cut, runs, prefixLen){
 }
 const DEEP_WHY = {start: "where she starts", end: "where she ends", waypoint: "at a waypoint",
                   none: "no deeper way within the detour allowed", mark: "a buoy's proper hand or its berth",
-                  time: "not searched in the time allowed", reach: "no deeper water near her"};
+                  time: "not searched in the time allowed", reach: "no deeper water near her",
+                  channel: "in a river's channel, the deepest water its chart draws"};
 const latLonSay = (q) => Math.abs(q.lat).toFixed(4) + (q.lat < 0 ? " S " : " N ") + Math.abs(q.lon).toFixed(4) + (q.lon < 0 ? " W" : " E");
 /** The banner's words for deep water first (deepSaid): nothing where the route keeps the margin the whole way, else the
  *  margin water it is in at her floor, and why. `fmt` formats meters (the page's fmtDist). */
@@ -1050,6 +1074,7 @@ export function deepNote(deep, fmt){
   if(n("start")) parts.push("where she starts");
   if(n("end")) parts.push("where she ends");
   if(n("waypoint")) parts.push(n("waypoint") + " at a waypoint");
+  if(n("channel")) parts.push(n("channel") + " in a river's channel");
   if(n("none")) parts.push(n("none") + " with no deeper way");
   if(n("mark")) parts.push(n("mark") + " for a buoy");
   if(n("time")) parts.push(n("time") + " not searched in time");
@@ -1065,7 +1090,10 @@ export function deepWhy(deep, fmt){
              + " m off charted rocks and shoal soundings";
   if(!deep.runs || !deep.runs.length) return [{t: "lane", s: kept + " the whole way"}];
   const list = deep.runs.map((r) => f(r.m) + " " + (r.end ? DEEP_WHY[r.why] : "near " + latLonSay(r.at) + " - " + (DEEP_WHY[r.why] || r.why)));
-  const inside = deep.runs.some((r) => !r.end);
+  // (a stretch in a river's channel warns wherever it lies: margin water she has no deeper way out of, the length of
+  //  the river - judged by where it ends, the same 9 km up the channel warned from a harbor berth and not from one in
+  //  the river: the review of the river's channel first, 2026-11-23)
+  const inside = deep.runs.some((r) => !r.end || r.channel || r.why === "channel");
   return [{t: inside ? "warn" : "lane", s: kept + " except " + deep.runs.length + " stretch" + (deep.runs.length === 1 ? "" : "es")
            + " with the margin not kept (her floor and buffer only), marked in orange on the chart: " + list.join("; ")}];
 }

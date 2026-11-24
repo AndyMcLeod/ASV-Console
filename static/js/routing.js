@@ -2830,6 +2830,8 @@ export const RESTRICTED_LOCAL_M2 = 1e6;
  *     them, and in the stretch either side of a mark the line through it along the water's
  *     course (MARK_PASS_M inside a buoy kept to starboard; a beacon's berth inside a beacon).
  * In a reach a Corps river buoy delimits, only the last: the bank is no edge of a river's channel (review 2026-11-23).
+ * And where deep water first has armed the river's margin (`ko.deep`: its water outside the channel - keepouts.js
+ * riverChannelArea), the CHANNEL'S OWN EDGE as well, either side of her, with or without a buoy's line (2026-11-23).
  * She rides three quarters of the way across (LANE_FRAC), eased no steeper than LANE_SLEW,
  * over a stretch of cross-sections at least REACH_MIN_M long - a channel has length, and an
  * obstruction in water that is no channel is something to stay off, not its edge.
@@ -2860,7 +2862,10 @@ export const RESTRICTED_LOCAL_M2 = 1e6;
 export function buoyedReachLane(pathLL, frame, ko, buf, opts = {}) {
   const nil = { path: pathLL, used: false };
   const gov = opts.marks || [];
-  if (!pathLL || pathLL.length < 2 || !ko || !gov.length) return nil;
+  // (a river's margin where deep water first armed it - its water outside the channel: A RIVER'S CHANNEL HAS EDGES, below)
+  const chanOut = ko && ko.deep ? { polys: (ko.deep.polys || []).filter((q) => q.river), lines: [], points: [] } : null;
+  const chanOn = !!chanOut && chanOut.polys.length > 0;
+  if (!pathLL || pathLL.length < 2 || !ko || !(gov.length || chanOn)) return nil;
   const en = pathLL.map((p) => frame.toEN(p));
   const STEP = Math.max(25, buf * 7), MS = Math.max(2, buf / 2), STANDOFF = Math.max(buf + 2, 6);
   // ⚠ THE SAMPLES ARE ANCHORED AT THE REACH'S OWN MARKS (2026-10-10, resampleAnchoredEN): where each mark stands
@@ -2904,7 +2909,7 @@ export function buoyedReachLane(pathLL, frame, ko, buf, opts = {}) {
     const a = delim[i - 1], c = delim[i];
     if ((known(a) || known(c)) && c.s - a.s <= MARK_NEIGHBOR_M && c.s - a.s > 1) spans.push([a.s, c.s, !!(a.k.m.river || c.k.m.river)]);
   }
-  if (!spans.length) return nil;
+  if (!spans.length && !chanOn) return nil;
   const inReach = (i) => spans.some(([a, c]) => cum[i] >= a && cum[i] <= c);
   const riverAt = (i) => spans.some(([a, c, r]) => r && cum[i] >= a && cum[i] <= c);   // (a reach a river buoy delimits)
   const iAt = (s) => { let i = 0; while (i < N - 1 && cum[i + 1] <= s) i++; return i; };
@@ -3057,11 +3062,51 @@ export function buoyedReachLane(pathLL, frame, ko, buf, opts = {}) {
     };
     for (let i = 0; i < N; i++) if (within[k][i] && out(i, 1) > out(i, -1) + MS) deeper[i] = 1;
   });
+  // ⚠ A RIVER'S CHANNEL HAS EDGES (2026-11-23, Andy: "make the planner prefer the deep area, but keeping right is still a
+  // valid action that should be considered as a priority"). Deep water first keeps her in a river's channel - the Corps
+  // chart it only as their deepest depth area, and the water beside it is the margin layer's (keepouts.js
+  // riverChannelArea) - but where in it was the search's: at Pine Bluff, armed, up to 7.5 km of a 10 km leg in its port
+  // half, the buoys' line no edge of it (they stand 14-56 m outside the channel). From a sample in the channel
+  // (`chanIn`, ... AND BOTH EDGES THE CHANNEL'S OWN, below; the RIVER's margin areas are `chanOut` - keepouts.js tags them
+  // `river`: a coastal margin patch, a margin rock or sounding is avoided, never an edge), her bank either side is the
+  // channel's edge, released or not - so a cross-section is three quarters of the way across the CHANNEL, not the river;
+  // where both edges are its own (`chanEdge`) it bounds one with no buoy's line on her starboard hand, and the water is a
+  // reach of its own, buoys or none - at Pine Bluff 7.5 km of one 10.2 km leg lay in no buoyed reach (its buoys up to
+  // 3.3 km apart); a channel the Corps chart against one bank, deep to it, is a channel too.
+  //   ⚠ ONLY FROM INSIDE IT. A sample in the margin water itself - where she starts or ends in it, or deep water first
+  // released it - reads no channel edge, as before. Read there, a Go-To from a berth 120 m to starboard of the sailing
+  // line, in the 0-2.74 m water, was laned out in it, turned hard into the channel, and the lane, vetoed for that turn
+  // (`newLaneTurn`), was dropped for the whole 8 km.
+  //   ⚠ AND BOTH EDGES THE CHANNEL'S OWN (the review before the merge, 2026-11-23). Read as the first river margin area
+  // a ray meets, an edge was whatever lay beyond the channel: where the water to starboard of it was no margin area of
+  // the river's - charted on no depth area, a NOAA band in an overlap square, a 9 ft area charted wider than the buoys -
+  // the ray ran on to the bank, three quarters of the way across to it was the lane, and between two starboard-hand buoys
+  // 1,520 m apart she was laned 76 m outside their line; with no buoys, out of the channel for 7.7 km. So:
+  //   - where the layer holds the channel itself (`sayOnly`, `chanSay`), she is in it only INSIDE it, and leaving it is
+  //     an edge: the ray stops where the water ahead is no longer the channel's (the bank across its own water, or a
+  //     river margin area, an edge too);
+  //   - where it does not (her floor 0.74 m or less, the channel no margin water), an edge is a river margin area only,
+  //     never the bank;
+  //   - a sample is the channel's cross-section (`chanEdge`) only where BOTH rays stopped at such an edge (`chanSide`);
+  //   - and a mark that stands INSIDE the channel within MARK_NEIGHBOR_M of her outranks it: the chart's channel there
+  //     is wider than the buoyed one, and the marks' own lines bound her, as before the channel had edges.
+  const chanSay = chanOn && ko.margin && ko.margin.sayOnly && ko.margin.sayOnly.length
+    ? { polys: ko.margin.sayOnly, lines: [], points: [] } : null;
+  const inChan = (p) => (chanSay ? blocked(p, chanSay, 0) : !blocked(p, chanOut, 0));
+  const markIn = chanOn ? gov.filter((k) => k.m && Number.isFinite(k.m.e) && k.keepStbd !== undefined && !k.offshore && inChan(k.m)).map((k) => k.m) : [];
+  const chanIn = chanOn ? samp.map((p) => inChan(p) && !markIn.some((m) => Math.hypot(p.e - m.e, p.n - m.n) <= MARK_NEIGHBOR_M)) : null;
+  const chanEdge = new Uint8Array(N), chanSide = [new Uint8Array(N), new Uint8Array(N)];   // [starboard, port]
   const bank = (i, sg) => {
     const P = samp[i], u = [sg * SB[i][0], sg * SB[i][1]], lim = limits.filter((_, k) => !within[k][i]);
+    const inC = !!(chanIn && chanIn[i]), side = chanSide[sg > 0 ? 0 : 1];
     for (let d = MS; d <= REACH_EDGE_M; d += MS) {
       const p = { e: P.e + u[0] * d, n: P.n + u[1] * d };
-      if (blocked(p, koWall, clr) || lim.some((c) => inRing(p, c))) return d - MS / 2;
+      if (blocked(p, koWall, clr) || lim.some((c) => inRing(p, c))) { if (inC && chanSay) side[i] = 1; return d - MS / 2; }
+      // (the channel left `clr` ahead of her, and clear of every ring of it by half a meter: where another chart overlaps
+      //  the river's, the console serves the river's areas cut to squares - asv_console.py, SQUARES - and a hairline gap
+      //  at a cut reads as no edge; a guard, never met on a chart replayed)
+      if (inC && (blocked(p, chanOut, clr)
+                  || (chanSay && !blocked({ e: p.e + u[0] * clr, n: p.n + u[1] * clr }, chanSay, 0.5)))) { side[i] = 1; return d - MS / 2; }
     }
     return Infinity;
   };
@@ -3109,9 +3154,12 @@ export function buoyedReachLane(pathLL, frame, ko, buf, opts = {}) {
   const isCand = new Uint8Array(N);
   const bS = new Float64Array(N).fill(Infinity), bP = new Float64Array(N).fill(Infinity);
   for (let i = 1; i < N - 1; i++) {
-    if (!inReach(i) || owned(i) || blocked(samp[i], ko, buf)) continue;
+    if (owned(i) || blocked(samp[i], ko, buf) || !(inReach(i) || chanOn)) continue;
+    const s = bankS(i), p = bank(i, -1);
+    if (chanIn && chanIn[i] && chanSide[0][i] && chanSide[1][i]) chanEdge[i] = 1;   // (both edges: A RIVER'S CHANNEL HAS EDGES)
+    if (!inReach(i) && !chanEdge[i]) continue;   // (a river's channel is a reach: A RIVER'S CHANNEL HAS EDGES)
     isCand[i] = 1;
-    bS[i] = bankS(i); bP[i] = bank(i, -1);
+    bS[i] = s; bP[i] = p;
   }
   // ⚠ AN OPENING IS NOT THE CHANNEL'S EDGE, as in the chart's lane: where the WATER is wider
   // than it is along the window round it (CHART_EDGE_WINDOW_M either way) by more than the
@@ -3266,7 +3314,8 @@ export function buoyedReachLane(pathLL, frame, ko, buf, opts = {}) {
     // buoy's line bounds her starboard hand her edge was the far bank, and three quarters of the way across to it is
     // the shallows. Replayed at Pine Bluff, the reach took her 55 to 133 m outside the 9 ft channel there. In a reach
     // a river buoy delimits, a sample with no starboard-hand line is no cross-section.
-    if (riverAt(i) && !S) continue;
+    // (... unless she is in the river's channel, which bounds it: A RIVER'S CHANNEL HAS EDGES, above)
+    if (riverAt(i) && !S && !chanEdge[i]) continue;
     const xR = Math.min(eS[i] - STANDOFF, S ? S.x - (S.fixed ? BEACON : D) : Infinity);
     // (the port-hand marks' line to STARBOARD of her, the marks themselves to port: she is outside
     // the channel as their line runs on, to port of it)

@@ -180,6 +180,22 @@ function world(grid, opts = {}) {
       const c = at(), pts = [{ e: c.x, n: c.y }, { e: c.x + (rnd() - 0.5) * span * 0.5, n: c.y + (rnd() - 0.5) * span * 0.5 }];
       dk.release.push({ pts, bb: bbOf(pts), r: grid.cell * (1 + rnd() * 12) });
     }
+    // (opts.long, 2026-11-23: deep first's own shapes - a stretch released along her route, a point every few cells, as
+    //  a polyline of many segments that doubles back and runs off the grid; a disk, one point twice; a mark held)
+    if (opts.long) {
+      for (let i = 0, m = 1 + Math.floor(rnd() * 3); i < m; i++) {
+        const c = at(), pts = [{ e: c.x, n: c.y }];
+        let h = rnd() * 2 * Math.PI;
+        for (let k = 0, nk = 3 + Math.floor(rnd() * 60); k < nk; k++) {
+          h += (rnd() - 0.5) * (rnd() < 0.1 ? 3 : 0.6);
+          const q = pts[pts.length - 1], d = grid.cell * (0.5 + rnd() * 6);
+          pts.push({ e: q.e + d * Math.cos(h), n: q.n + d * Math.sin(h) });
+        }
+        dk.release.push({ pts, bb: bbOf(pts), r: grid.cell * (1 + rnd() * 15) });
+      }
+      const c = at(), p0 = { e: c.x, n: c.y };
+      dk.release.push({ pts: [p0, p0], bb: bbOf([p0]), r: grid.cell * (1 + rnd() * 10) });
+    }
     ko.deep = dk;
   }
   return ko;
@@ -243,6 +259,25 @@ console.log("The routing grid, built faster, is the same grid:");
   }
   check("3. ... and with the margin layer armed (ko.deep, deep water first) and its released stretches cleared: 150 worlds",
         () => bad === 0, () => bad ? JSON.stringify(worst) : "0 of 150 differ");
+}
+// 3b. released stretches as deep first makes them (2026-11-23: cleared segment by segment now, each to the cells within
+// its reach, where the reference asks every segment of every cell in the release's whole box)
+{
+  let bad = 0, worst = null, cleared = 0;
+  for (let t = 0; t < 150; t++) {
+    const cell = pick([1, 3, 7.3]);
+    const grid = { W: 20 + Math.floor(rnd() * 120), H: 20 + Math.floor(rnd() * 120), cell, x0: (rnd() - 0.5) * 3000, y0: (rnd() - 0.5) * 3000 };
+    const ko = world(grid, { deep: true, long: true }), buffer = pick([3, 5, 9]);
+    const r = same(grid, ko, buffer);
+    if (r.diff) { bad++; worst = worst || { t, ...grid, diff: r.diff }; }
+    const shut = { ...ko, deep: { ...ko.deep, release: [] } }, a = new Uint8Array(grid.W * grid.H), b = new Uint8Array(grid.W * grid.H);
+    R.rasterKeepouts(a, grid.W, grid.H, grid.x0, grid.y0, grid.cell, shut, buffer);
+    R.rasterKeepouts(b, grid.W, grid.H, grid.x0, grid.y0, grid.cell, ko, buffer);
+    for (let i = 0; i < a.length; i++) if (a[i] && !b[i]) cleared++;
+  }
+  check("3b. ... and with deep first's own releases - a stretch of many segments doubling back and running off the grid, a "
+        + "disk, a held mark - cleared segment by segment: the same cells, in 150 worlds (and cells the releases did clear)",
+        () => bad === 0 && cleared > 1000, () => (bad ? JSON.stringify(worst) + "; " : "") + bad + " of 150 differ; " + cleared + " cells cleared");
 }
 
 // 4. the cases the arithmetic turns on, by hand

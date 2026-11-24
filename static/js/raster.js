@@ -292,21 +292,27 @@ export function rasterKeepouts(blk, W, H, x0, y0, cell, ko, buffer) {
   if (ko.deep) {
     const d = new Uint8Array(W * H);
     rasterKeepouts(d, W, H, x0, y0, cell, ko.deep, buffer);
+    // ⚠ SEGMENT BY SEGMENT, EACH TO THE CELLS WITHIN `r` OF IT (2026-11-23, the river's channel first): asked cell by cell
+    // of every segment, a released stretch kilometers long - deep first's floor piece along a river, a point every 20 m -
+    // tested every margin cell in its whole box against every one of its hundreds of segments, in every grid the marks
+    // stage's searches built, and was 112 s of a 353 s plan of one Pine Bluff leg (profiled). A cell is cleared where ANY
+    // segment of a release lies within `r` of it, whichever asks first, so the cells cleared are the same, bit for bit
+    // (tests/raster_exact.js holds the cell-by-cell walk as its reference).
     for (const c of ko.deep.release || []) {
       const r = c.r - 1.5 * cell;
       if (!(r > 0)) continue;
-      const gx0 = Math.max(0, Math.floor((c.bb.x0 - r - x0) / cell)), gx1 = Math.min(W - 1, Math.ceil((c.bb.x1 + r - x0) / cell));
-      const gy0 = Math.max(0, Math.floor((c.bb.y0 - r - y0) / cell)), gy1 = Math.min(H - 1, Math.ceil((c.bb.y1 + r - y0) / cell));
-      for (let gy = gy0; gy <= gy1; gy++) {
-        for (let gx = gx0; gx <= gx1; gx++) {
-          const i = gy * W + gx;
-          if (!d[i]) continue;
-          const e = x0 + gx * cell, n = y0 + gy * cell;
-          for (let k = 1; k < c.pts.length; k++) {
-            const a = c.pts[k - 1], b = c.pts[k], dx = b.e - a.e, dy = b.n - a.n, l2 = dx * dx + dy * dy || 1;
+      for (let k = 1; k < c.pts.length; k++) {
+        const a = c.pts[k - 1], b = c.pts[k], dx = b.e - a.e, dy = b.n - a.n, l2 = dx * dx + dy * dy || 1;
+        const gx0 = Math.max(0, Math.floor((Math.min(a.e, b.e) - r - x0) / cell)), gx1 = Math.min(W - 1, Math.ceil((Math.max(a.e, b.e) + r - x0) / cell));
+        const gy0 = Math.max(0, Math.floor((Math.min(a.n, b.n) - r - y0) / cell)), gy1 = Math.min(H - 1, Math.ceil((Math.max(a.n, b.n) + r - y0) / cell));
+        for (let gy = gy0; gy <= gy1; gy++) {
+          for (let gx = gx0; gx <= gx1; gx++) {
+            const i = gy * W + gx;
+            if (!d[i]) continue;
+            const e = x0 + gx * cell, n = y0 + gy * cell;
             let t = ((e - a.e) * dx + (n - a.n) * dy) / l2;
             t = t < 0 ? 0 : t > 1 ? 1 : t;
-            if (Math.hypot(e - (a.e + t * dx), n - (a.n + t * dy)) < r) { d[i] = 0; break; }
+            if (Math.hypot(e - (a.e + t * dx), n - (a.n + t * dy)) < r) d[i] = 0;
           }
         }
       }

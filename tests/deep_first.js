@@ -644,5 +644,289 @@ check("29. ... AND HIS LEG THERE, waypoint 756 to 845: planned with deep water f
       () => bLeg.error ? "refused: " + bLeg.error : "line " + f0(bL) + " m, route " + f0(bLen) + " m, " + f0(bOff) + " m off it at most; "
             + (bLeg.deep ? bLeg.deep.runs.length + " stretch(es) at her floor" : "no deep record"));
 
+// ── A RIVER'S CHANNEL IS ITS DEEP WATER (2026-11-23, Andy: "make the planner prefer the deep area, but keeping right is
+// still a valid action that should be considered as a priority") ────────────────────────────────────────────────────────
+// The Corps' river cells (band enc_river) chart the navigation channel only as their deepest depth area - DRVAL1 2.74 m
+// and no DRVAL2 - and the water from it to the banks as one 0-2.74 m band her floor passes. A river 440 m between its
+// banks as those cells chart one: the channel 38 m either side of the sailing line (76 m, as at Pine Bluff), the band out
+// to each bank, the Corps' buoys staggered 70 m off the line - 32 m outside the channel - and land closing both ends (a
+// way round through water no chart reads is the cheapest there is: the trap would be this world's, not the planner's).
+// 4 km north, a 90 degree bend to the right on a 600 m radius (the search cuts its inside, across the band), 4 km east.
+// At her 2.0 m floor the channel is 0.74 m over it: before this, margin water like the band, and no deeper way anywhere.
+const RF = planeFrame({ lat: 34.3, lon: -92.0 });
+const rvLL = (q) => { const p = RF.fromEN(q.e, q.n); return [p.lon, p.lat]; };
+const rvll = (q) => { const p = RF.fromEN(q.e, q.n); return { lat: p.lat, lon: p.lon }; };
+const RVAX = [];
+for (let n = -1000; n < 3000; n += 25) RVAX.push({ e: 0, n });
+for (let k = 0; k <= 48; k++) { const th = Math.PI - (Math.PI / 2) * (k / 48); RVAX.push({ e: 600 + 600 * Math.cos(th), n: 3000 + 600 * Math.sin(th) }); }
+for (let d = 25; d <= 4000; d += 25) RVAX.push({ e: 600 + d, n: 3600 });
+const RVCUM = [0];
+for (let i = 1; i < RVAX.length; i++) RVCUM.push(RVCUM[i - 1] + Math.hypot(RVAX[i].e - RVAX[i - 1].e, RVAX[i].n - RVAX[i - 1].n));
+const RVLEN = RVCUM[RVCUM.length - 1];
+const rvAt = (s, x = 0) => {                                    // station s along the line, x meters to the RIGHT of upstream
+  let i = 1;
+  while (i < RVAX.length - 1 && RVCUM[i] < s) i++;
+  const a = RVAX[i - 1], b = RVAX[i], L = Math.hypot(b.e - a.e, b.n - a.n), t = (s - RVCUM[i - 1]) / L, ux = (b.e - a.e) / L, uy = (b.n - a.n) / L;
+  return { e: a.e + (b.e - a.e) * t + uy * x, n: a.n + (b.n - a.n) * t - ux * x };
+};
+const rvOff = (x, s0 = 0, s1 = RVLEN, step = 50) => { const o = []; for (let s = s0; s <= s1 + 1e-6; s += step) o.push(rvAt(Math.min(s, RVLEN), x)); return o; };
+const rvRing = (x0, x1, s0, s1, step) => { const r = [...rvOff(x0, s0, s1, step), ...rvOff(x1, s0, s1, step).reverse()]; r.push(r[0]); return [r.map(rvLL)]; };
+const rvBand = (x0, x1, d1, d2, river = true) => ({ cls: "Depth_Area", role: "depth_area", ...(river ? { band: "enc_river" } : {}),
+  props: d2 == null ? { DRVAL1: d1 } : { DRVAL1: d1, DRVAL2: d2 }, geometry: { type: "Polygon", coordinates: rvRing(x0, x1) } });
+const rvLand = (x0, x1, s0 = 0, s1 = RVLEN, step = 50) => ({ cls: "Land_Area", role: "land", band: "enc_river", props: {},
+  geometry: { type: "Polygon", coordinates: rvRing(x0, x1, s0, s1, step) } });
+const rvShore = (x) => ({ cls: "Coastline_line", role: "shore_line", band: "enc_river", geometry: { type: "LineString", coordinates: rvOff(x).map(rvLL) } });
+const RVHANDS = "SPSPPSSPSPSPPPSPSSPSPSPPS";
+const RVBUOYS = [...RVHANDS].map((h, i) => ({ cls: "Buoy_Lateral_point", role: "chan_mark", band: "enc_river",
+  props: { CATLAM: h === "S" ? 2 : 1, COLOUR: h === "S" ? "3" : "4" }, geometry: { type: "Point", coordinates: rvLL(rvAt(1000 + 380 * i, h === "S" ? 70 : -70)) } }));
+const RVSAIL = { cls: "Recommended_Track_line", role: "extra", band: "enc_river", oid: "U37XX001:1",
+  props: { INFORM: "Primary Sailing Line", TRAFIC: 4 }, geometry: { type: "LineString", coordinates: rvOff(0).map(rvLL) } };
+const rvFeats = (channelRiver = true, buoys = true) => [RVSAIL, rvShore(-220), rvShore(220), rvLand(-1300, -220), rvLand(220, 550),
+  rvLand(-1300, 1300, 0, 150, 25), rvLand(-1300, 1300, RVLEN - 150, RVLEN, 25),
+  rvBand(-220, -38, 0, 2.74), rvBand(-38, 38, 2.74, null, channelRiver), rvBand(38, 220, 0, 2.74), ...(buoys ? RVBUOYS : [])];
+const rvBuildF = (floor, feats) => {
+  const was = sea.waterOffset; sea.waterOffset = 0;
+  try { const ko = buildKeepouts(RF, ENF, { min: floor, max: 0 }, feats);
+        ko.margin = buildMargin(RF, ENF, { min: floor, max: 0 }, feats, undefined, ko);
+        return ko; } finally { sea.waterOffset = was; }
+};
+const rvBuild = (floor, channelRiver = true, buoys = true) => rvBuildF(floor, rvFeats(channelRiver, buoys));
+const RVBOX = (() => { let W = Infinity, S = Infinity, E = -Infinity, N = -Infinity;
+  for (const q of RVAX) { const p = rvll(q); W = Math.min(W, p.lon); E = Math.max(E, p.lon); S = Math.min(S, p.lat); N = Math.max(N, p.lat); }
+  return { W: W - 0.02, S: S - 0.02, E: E + 0.02, N: N + 0.02 }; })();
+const onRiver = (ko) => Object.assign(nogo, { ready: true, frame: RF, ko, buffer: 5, bbox: RVBOX, unread: null, ais: null });
+// her route against the sailing line: the meters of it outside the channel, on her starboard and port sides of the line,
+// and (`half`) on her starboard side of the line `mid` meters to the right of it (upstream)
+const rvJudge = (route, way, mid = 0) => {
+  const en = route.map((p) => RF.toEN(p)), o = { out: 0, stbd: 0, port: 0, len: 0, half: 0 };
+  for (let i = 1; i < en.length; i++) {
+    const a = en[i - 1], b = en[i], n = Math.max(1, Math.ceil(Math.hypot(b.e - a.e, b.n - a.n) / 5));
+    for (let k = 0; k < n; k++) {
+      const q = { e: a.e + (b.e - a.e) * k / n, n: a.n + (b.n - a.n) * k / n }, step = Math.hypot(b.e - a.e, b.n - a.n) / n;
+      let bd = Infinity, bx = 0;
+      for (let j = 1; j < RVAX.length; j++) {
+        const A = RVAX[j - 1], B = RVAX[j], dx = B.e - A.e, dy = B.n - A.n, L = Math.hypot(dx, dy);
+        const t = Math.max(0, Math.min(1, ((q.e - A.e) * dx + (q.n - A.n) * dy) / (L * L))), px = A.e + t * dx, py = A.n + t * dy, d = Math.hypot(q.e - px, q.n - py);
+        if (d < bd) { bd = d; bx = ((q.e - px) * dy - (q.n - py) * dx) / L; }
+      }
+      o.len += step;
+      if (Math.abs(bx) > 38) o.out += step;
+      if (bx * way > 0) o.stbd += step; else o.port += step;
+      if ((bx - mid) * way > 0) o.half += step;
+    }
+  }
+  return o;
+};
+const RV2 = rvBuild(2.0), RV2N = rvBuild(2.0, false), RV05 = rvBuild(0.5);
+const rvKinds = (ko) => ({ polys: ko.margin.polys.length, sayOnly: (ko.margin.sayOnly || []).length, counts: ko.margin.counts });
+check("30. A RIVER'S CHANNEL IS SAID, NEVER AVOIDED: at her 2.0 m floor the margin layer avoids the river's two 0-2.74 m bands "
+      + "and keeps its channel (2.74 m, no deepest value) apart, to say (`sayOnly`); the same channel on a band not read as "
+      + "charted (a NOAA cell's) is margin water to avoid, as before; at a 0.5 m floor the channel is no margin water at all",
+      () => RV2.margin.polys.length === 2 && RV2.margin.sayOnly.length === 1 && RV2.margin.counts.channel === 1
+            && RV2.margin.sayOnly[0].channel === true && RV2.margin.polys.every((q) => !q.channel)
+            && RV2N.margin.polys.length === 3 && RV2N.margin.sayOnly.length === 0
+            && RV05.margin.polys.length === 2 && RV05.margin.sayOnly.length === 0
+            && K.riverChannelArea(rvFeats()[8]) && !K.riverChannelArea(rvFeats()[7]) && !K.riverChannelArea(rvFeats(false)[8]),
+      () => "river " + JSON.stringify(rvKinds(RV2)) + "; not the river's " + JSON.stringify(rvKinds(RV2N)) + "; at 0.5 m " + JSON.stringify(rvKinds(RV05)));
+const RVUP = [rvll(rvAt(400, -20)), rvll(rvAt(RVLEN - 400, -20))], RVDOWN = [rvll(rvAt(RVLEN - 400, 20)), rvll(rvAt(400, 20))];
+onRiver(RV2);
+const rvUp = P.planNogoRoute(RVUP[0], RVUP[1], {}), rvDown = P.planNogoRoute(RVDOWN[0], RVDOWN[1], {});
+onRiver(RV2N);
+const rvUpN = P.planNogoRoute(RVUP[0], RVUP[1], {});
+const jUp = rvUp.route ? rvJudge([RVUP[0], ...rvUp.route], 1) : null, jDown = rvDown.route ? rvJudge([RVDOWN[0], ...rvDown.route], -1) : null;
+const jUpN = rvUpN.route ? rvJudge([RVUP[0], ...rvUpN.route], 1) : null;
+check("31. ... SO DEEP WATER FIRST KEEPS HER IN IT: up the river and down it, round the bend, not a meter of her route outside "
+      + "the channel - a deeper way taken round the band the search cut across, none released; and the control, the same "
+      + "chart with the channel not the river's, where the channel is margin water like the band, no deeper way is found "
+      + "and the bend is cut across the band",
+      () => jUp && jDown && jUpN && jUp.out === 0 && jDown.out === 0 && rvUp.deep.repaired >= 1 && rvUp.deep.released.length === 0
+            && rvDown.deep.released.length === 0 && jUpN.out > 300 && rvUpN.deep.repaired === 0,
+      () => (jUp ? "up: outside " + f0(jUp.out) + " m of " + f0(jUp.len) + ", repaired " + rvUp.deep.repaired + ", released " + rvUp.deep.released.length : "up refused: " + rvUp.error)
+            + (jDown ? "; down: outside " + f0(jDown.out) + " m, released " + rvDown.deep.released.length : "; down refused: " + rvDown.error)
+            + (jUpN ? "; control: outside " + f0(jUpN.out) + " m, repaired " + rvUpN.deep.repaired : "; control refused: " + rvUpN.error));
+check("32. KEEPING RIGHT IS STILL HER PRIORITY, IN THE CHANNEL: the buoyed reach is ridden on the channel's own edges (the "
+      + "buoys stand 32 m outside it), so up the river and down it at least 88% of her route lies on her starboard side of "
+      + "the sailing line - the starboard half of the channel - and every buoy is kept on its hand",
+      () => jUp && jDown && jUp.stbd >= 0.88 * jUp.len && jDown.stbd >= 0.88 * jDown.len && rvUp.how.reach === true && rvDown.how.reach === true
+            && rvUp.how.marks.wrong === 0 && rvDown.how.marks.wrong === 0 && rvUp.how.marks.kept >= 18 && rvDown.how.marks.kept >= 18,
+      () => (jUp ? "up: starboard " + f0(jUp.stbd) + " / port " + f0(jUp.port) + " m" : "up refused") + (jDown ? "; down: starboard " + f0(jDown.stbd) + " / port " + f0(jDown.port) + " m" : "; down refused")
+            + "; marks up " + JSON.stringify(rvUp.how && rvUp.how.marks) + ", down " + JSON.stringify(rvDown.how && rvDown.how.marks));
+// (the river with no buoy at all: at Pine Bluff 7.5 km of one 10.2 km leg lay in no buoyed reach, its buoys up to 3.3 km apart)
+const RV2B = rvBuild(2.0, true, false);
+onRiver(RV2B);
+const rvUpB = P.planNogoRoute(RVUP[0], RVUP[1], {}), rvDownB = P.planNogoRoute(RVDOWN[0], RVDOWN[1], {});
+const jUpB = rvUpB.route ? rvJudge([RVUP[0], ...rvUpB.route], 1) : null, jDownB = rvDownB.route ? rvJudge([RVDOWN[0], ...rvDownB.route], -1) : null;
+check("32b. ... BUOYS OR NONE: the same river with no buoy in it - the channel's own edges are a reach, so up it and down it "
+      + "at least 88% of her route is on her starboard side of the sailing line, none of it outside the channel",
+      () => jUpB && jDownB && jUpB.out === 0 && jDownB.out === 0 && jUpB.stbd >= 0.88 * jUpB.len && jDownB.stbd >= 0.88 * jDownB.len
+            && rvUpB.how.reach === true && rvDownB.how.reach === true && RV2B.marks.length === 0,
+      () => (jUpB ? "up: starboard " + f0(jUpB.stbd) + " / port " + f0(jUpB.port) + " m, outside " + f0(jUpB.out) : "up refused: " + rvUpB.error)
+            + (jDownB ? "; down: starboard " + f0(jDownB.stbd) + " / port " + f0(jDownB.port) + " m, outside " + f0(jDownB.out) : "; down refused: " + rvDownB.error)
+            + "; reach " + (rvUpB.how && rvUpB.how.reach) + "/" + (rvDownB.how && rvDownB.how.reach));
+// (a Go-To from a berth in the river's 0-2.74 m water - margin water she starts and ends in, and leaves the short way - on
+// each side of the channel; the channel's edge is read only from inside it: routing.js ONLY FROM INSIDE IT)
+const RVBERTH = [[rvll(rvAt(400, 120)), rvll(rvAt(RVLEN - 400, 120))], [rvll(rvAt(400, -120)), rvll(rvAt(RVLEN - 400, -120))]];
+onRiver(RV2);
+const rvBerth = RVBERTH.map(([a, b]) => P.planNogoRoute(a, b, {}));
+const jBerth = rvBerth.map((pl, k) => (pl.route ? rvJudge([RVBERTH[k][0], ...pl.route], 1) : null));
+check("32c. ... FROM A BERTH OUTSIDE IT: a Go-To from the river's 0-2.74 m water 120 m to starboard of the sailing line up "
+      + "the channel to the same water at its far end, and the same 120 m to port - margin water she starts and ends in - "
+      + "keeps right as well: at least 88% of it on her starboard side, the reach ridden, no more than 400 m of it outside "
+      + "the channel (her way in and her way out)",
+      () => jBerth.every((j, k) => j && j.stbd >= 0.88 * j.len && j.out <= 400 && rvBerth[k].how.reach === true),
+      () => jBerth.map((j, k) => (k ? "port" : "starboard") + " berth: " + (j ? "starboard " + f0(j.stbd) + " / port " + f0(j.port)
+            + " m, outside " + f0(j.out) + ", reach " + rvBerth[k].how.reach + ", released " + rvBerth[k].deep.released.length : "refused: " + rvBerth[k].error)).join("; "));
+// (port-hand buoys alone, 110 m off the line - 72 m outside the channel, so their berth does not move her: no buoy's line
+// bounds her starboard hand up the river, the channel's edge does)
+const RVPFAR = [...RVHANDS].map((h, i) => (h === "P" ? { ...RVBUOYS[i], geometry: { type: "Point", coordinates: rvLL(rvAt(1000 + 380 * i, -110)) } } : null)).filter(Boolean);
+const RV2P = rvBuildF(2.0, [...rvFeats(true, false), ...RVPFAR]);
+onRiver(RV2P);
+const rvUpP = P.planNogoRoute(RVUP[0], RVUP[1], {});
+const jUpP = rvUpP.route ? rvJudge([RVUP[0], ...rvUpP.route], 1) : null;
+check("32d. ... AND WHERE NO STARBOARD-HAND BUOY BOUNDS HER: the river with its port-hand buoys alone, 110 m off the line - "
+      + "her starboard hand up it bounded by no buoy's line - is still ridden on the channel's starboard side, at least 88% "
+      + "of it, every buoy on its hand",
+      () => jUpP && jUpP.stbd >= 0.88 * jUpP.len && jUpP.out === 0 && rvUpP.how.marks.wrong === 0 && rvUpP.how.marks.kept >= 10,
+      () => (jUpP ? "starboard " + f0(jUpP.stbd) + " / port " + f0(jUpP.port) + " m, outside " + f0(jUpP.out) + "; marks " + JSON.stringify(rvUpP.how.marks) : "refused: " + rvUpP.error));
+// (a channel the Corps chart against one bank: 2.74 m and over from 38 m to port of the line to the starboard bank, the
+// 0-2.74 m water only to port - the channel's edge on one hand, the bank across its own water on the other)
+const rvBankFeats = (river = true) => [RVSAIL, rvShore(-220), rvShore(220), rvLand(-1300, -220), rvLand(220, 550),
+  rvLand(-1300, 1300, 0, 150, 25), rvLand(-1300, 1300, RVLEN - 150, RVLEN, 25),
+  rvBand(-220, -38, 0, 2.74, river), rvBand(-38, 220, 2.74, null, river)];
+const RV2K = rvBuildF(2.0, rvBankFeats());
+onRiver(RV2K);
+const rvUpK = P.planNogoRoute(RVUP[0], RVUP[1], {}), rvDownK = P.planNogoRoute(RVDOWN[0], RVDOWN[1], {});
+const jUpK = rvUpK.route ? rvJudge([RVUP[0], ...rvUpK.route], 1, 91) : null, jDownK = rvDownK.route ? rvJudge([RVDOWN[0], ...rvDownK.route], -1, 91) : null;
+check("32e. ... AND A CHANNEL AGAINST ITS BANK: where the channel runs to the starboard bank, no buoy in it, up the river at "
+      + "least 80% of her route is in its starboard half (91 m and more to starboard of the line, the middle of the channel's "
+      + "258 m) and down it at least 80% in its starboard half going down - the edge on one hand, the bank on the other",
+      () => jUpK && jDownK && jUpK.half >= 0.8 * jUpK.len && jDownK.half >= 0.8 * jDownK.len && rvUpK.how.reach === true && rvDownK.how.reach === true,
+      () => (jUpK ? "up: in its starboard half " + f0(jUpK.half) + " of " + f0(jUpK.len) + " m" : "up refused: " + rvUpK.error)
+            + (jDownK ? "; down: " + f0(jDownK.half) + " of " + f0(jDownK.len) + " m" : "; down refused: " + rvDownK.error));
+// (NOAA's bands - the same river charted on a band not read as charted: their margin water is avoided, never an edge)
+const RV05B = rvBuild(0.5, true, false), RV05N = rvBuildF(0.5, [RVSAIL, rvShore(-220), rvShore(220), rvLand(-1300, -220), rvLand(220, 550),
+  rvLand(-1300, 1300, 0, 150, 25), rvLand(-1300, 1300, RVLEN - 150, RVLEN, 25),
+  rvBand(-220, -38, 0, 2.74, false), rvBand(-38, 38, 2.74, null, false), rvBand(38, 220, 0, 2.74, false)]);
+onRiver(RV05B);
+const rvUp05B = P.planNogoRoute(RVUP[0], RVUP[1], {});
+onRiver(RV05N);
+const rvUp05N = P.planNogoRoute(RVUP[0], RVUP[1], {});
+const jUp05B = rvUp05B.route ? rvJudge([RVUP[0], ...rvUp05B.route], 1) : null, jUp05N = rvUp05N.route ? rvJudge([RVUP[0], ...rvUp05N.route], 1) : null;
+check("32f. ... THE RIVER'S EDGES, NOT A COASTAL CHART'S: at a 0.5 m floor, no buoy in it, the river's channel is ridden on its "
+      + "starboard side (the 0-2.74 m water either side its edges), while the same water on a band not the river's - margin "
+      + "water to avoid, as a coastal shoal is - makes no reach: deep water first keeps her in the channel, the lane does not "
+      + "move her",
+      () => jUp05B && jUp05N && rvUp05B.how.reach === true && jUp05B.stbd >= 0.88 * jUp05B.len && rvUp05N.how.reach !== true
+            && jUp05N.out === 0 && RV05N.margin.polys.length === 2 && RV05N.margin.polys.every((q) => !q.river),
+      () => (jUp05B ? "river: starboard " + f0(jUp05B.stbd) + " of " + f0(jUp05B.len) + " m, reach " + rvUp05B.how.reach : "river refused: " + rvUp05B.error)
+            + (jUp05N ? "; NOAA's: starboard " + f0(jUp05N.stbd) + " m, outside " + f0(jUp05N.out) + ", reach " + rvUp05N.how.reach : "; NOAA's refused: " + rvUp05N.error));
+// the review's worlds (2026-11-23): beyond the channel's starboard edge no margin area of the river's - no depth area at
+// all (`rvGap`), or the 9 ft area charted 190 m either side, wider than the buoys, with every second buoy (`rvWide`); and
+// the mirror, no depth area to PORT of the channel (`rvGapP`): one edge its own is no cross-section either side
+const rvBase = () => [RVSAIL, rvShore(-220), rvShore(220), rvLand(-1300, -220), rvLand(220, 550),
+  rvLand(-1300, 1300, 0, 150, 25), rvLand(-1300, 1300, RVLEN - 150, RVLEN, 25)];
+const rvGap = (buoys) => [...rvBase(), rvBand(-220, -38, 0, 2.74), rvBand(-38, 38, 2.74, null), ...(buoys ? RVBUOYS : [])];
+const rvGapP = () => [...rvBase(), rvBand(-38, 38, 2.74, null), rvBand(38, 220, 0, 2.74)];
+const rvWide = () => [...rvBase(), rvBand(-220, -190, 0, 2.74), rvBand(-190, 190, 2.74, null), rvBand(190, 220, 0, 2.74), ...RVBUOYS.filter((_, i) => i % 2 === 0)];
+// (the furthest to starboard of the sailing line she goes, off the bend - stations 1000-3900 and 5000-8400 - going up)
+const rvMaxX = (route) => {
+  const en = route.map((p) => RF.toEN(p));
+  let mx = -Infinity;
+  for (let i = 1; i < en.length; i++) {
+    const a = en[i - 1], b = en[i], n = Math.max(1, Math.ceil(Math.hypot(b.e - a.e, b.n - a.n) / 5));
+    for (let k = 0; k < n; k++) {
+      const q = { e: a.e + (b.e - a.e) * k / n, n: a.n + (b.n - a.n) * k / n };
+      let bd = Infinity, bx = 0, bs = 0;
+      for (let j = 1; j < RVAX.length; j++) {
+        const A = RVAX[j - 1], B = RVAX[j], dx = B.e - A.e, dy = B.n - A.n, L = Math.hypot(dx, dy);
+        const t = Math.max(0, Math.min(1, ((q.e - A.e) * dx + (q.n - A.n) * dy) / (L * L))), px = A.e + t * dx, py = A.n + t * dy, d = Math.hypot(q.e - px, q.n - py);
+        if (d < bd) { bd = d; bx = ((q.e - px) * dy - (q.n - py) * dx) / L; bs = RVCUM[j - 1] + t * L; }
+      }
+      if ((bs >= 1000 && bs <= 3900) || (bs >= 5000 && bs <= 8400)) mx = Math.max(mx, bx);
+    }
+  }
+  return mx;
+};
+const rvPlanUp = (ko) => { onRiver(ko); return P.planNogoRoute(RVUP[0], RVUP[1], {}); };
+const rvEdges = [["2.0 m, buoys", rvBuildF(2.0, rvGap(true))], ["2.0 m, no buoys", rvBuildF(2.0, rvGap(false))],
+                 ["0.5 m, buoys", rvBuildF(0.5, rvGap(true))], ["0.5 m, no buoys", rvBuildF(0.5, rvGap(false))],
+                 ["wide, sparse buoys", rvBuildF(2.0, rvWide())],
+                 ["0.5 m, no buoys, none to port", rvBuildF(0.5, rvGapP())]].map(([nm, ko]) => {
+  const p = rvPlanUp(ko);
+  return { nm, p, x: p.route ? rvMaxX([RVUP[0], ...p.route]) : null, wrong: p.how && p.how.marks ? p.how.marks.wrong : null };
+});
+check("32g. ... AND BOTH ITS EDGES ITS OWN (the review): with no depth area to starboard of the channel the ray ran on to the "
+      + "bank, and between two starboard-hand buoys 1,520 m apart she was laned 76 m outside their line (with no buoys out of the "
+      + "channel for 7.7 km); with the 9 ft area wider than the buoys she was laned past the last starboard-hand one. Now, off the "
+      + "bend, she stays within 38 m to starboard of the sailing line in every world, no mark wrong: at 2.0 m leaving the "
+      + "channel is its edge; at 0.5 m (the channel no margin water) the bank is no edge, and with no buoys there is no reach "
+      + "- nor with no depth area to PORT of it instead (one edge its own, the starboard one, is no cross-section); "
+      + "with a buoy inside the charted channel the buoys bound her",
+      () => rvEdges.every((r) => r.p.route && r.x != null && r.x <= 38 && r.wrong === 0) && rvEdges[3].p.how.reach !== true
+            && rvEdges[5].p.how.reach !== true,
+      () => rvEdges.map((r) => r.nm + ": " + (r.p.route ? "max " + f0(r.x) + " m, wrong " + r.wrong + ", reach " + r.p.how.reach : "refused " + r.p.error)).join("; "));
+const rvSaid = (plan) => (plan.deep ? plan.deep.runs.reduce((s, r) => s + r.m, 0) : 0);
+onRiver(RV05);
+const rvUp05 = P.planNogoRoute(RVUP[0], RVUP[1], {});
+const jUp05 = rvUp05.route ? rvJudge([RVUP[0], ...rvUp05.route], 1) : null;
+const rvWhys = (plan) => (plan.deep ? plan.deep.runs.map((r) => r.why).join(",") : "-");
+check("33. ... AND THE PLAN STILL SAYS SO: at her 2.0 m floor the channel is 0.74 m over it, and the route up it is said to be "
+      + "in margin water the whole way, as a river's channel (\"with the margin not kept (1 in a river's channel)\"), not where "
+      + "she starts; from a berth in the 0-2.74 m water, that water where she starts and where she ends said as such and the "
+      + "channel between them as the channel, three stretches; and the Intent card WARNS of the channel, though her stretch "
+      + "in it begins where she starts (the review: by where it ended, the same channel warned from a harbor berth and not "
+      + "from one in the river); at a 0.5 m floor, where the channel keeps the margin, the same Go-To is in the channel and "
+      + "says nothing",
+      () => jUp && jUp05 && rvSaid(rvUp) >= 0.95 * jUp.len && /margin not kept \(1 in a river's channel\)$/.test(P.deepNote(rvUp.deep))
+            && rvWhys(rvUp) === "channel" && /in a river's channel, the deepest water its chart draws/.test(P.deepWhy(rvUp.deep)[0].s)
+            && rvUp.deep.runs[0].end === "start" && P.deepWhy(rvUp.deep)[0].t === "warn"
+            && rvWhys(rvBerth[1]) === "start,channel,end" && /where she starts, where she ends, 1 in a river's channel\)$/.test(P.deepNote(rvBerth[1].deep))
+            && jUp05.out === 0 && rvUp05.deep && rvUp05.deep.runs.length === 0 && P.deepNote(rvUp05.deep) === "",
+      () => (jUp ? "2.0 m: said " + f0(rvSaid(rvUp)) + " of " + f0(jUp.len) + " m (\"" + P.deepNote(rvUp.deep) + "\")" : "2.0 m refused")
+            + "; from the berth to port: " + rvWhys(rvBerth[1]) + " (\"" + (rvBerth[1].deep ? P.deepNote(rvBerth[1].deep) : "-") + "\")"
+            + (jUp05 ? "; 0.5 m: outside " + f0(jUp05.out) + " m, said " + (rvUp05.deep ? rvUp05.deep.runs.length : "-") + " stretch(es)" : "; 0.5 m refused: " + rvUp05.error)
+            + "; card " + (rvUp.deep ? P.deepWhy(rvUp.deep)[0].t + " (" + rvUp.deep.runs.map((r) => r.end).join(",") + ")" : "-"));
+// hand-laid routes, straight through marginRuns: zigzagging every 75 m between the channel's middle and the band 12 m
+// outside it; 25 m off the middle, 13 m inside the channel's edge, at a 19.5 m standoff; and the same past a patch of
+// another chart's margin water (2-3 m, not the river's) 15 m off her in the channel
+const rvRoute = (s0, s1, step, x) => { const r = []; for (let s = s0, k = 0; s <= s1 + 1e-6; s += step, k++) r.push(rvll(rvAt(s, typeof x === "function" ? x(k) : x))); return r; };
+const rvFold = (ko) => ({ ...ko, margin: { ...ko.margin, polys: [...ko.margin.polys, ...ko.margin.sayOnly], sayOnly: [] } });
+const rvSum = (rs) => rs.reduce((s, r) => s + r.m, 0);
+onRiver(RV2);
+const rvZig = rvRoute(1000, 2550, 75, (k) => (k % 2 ? 50 : 0));
+const zRuns = P.marginRuns(rvZig, RF, RV2, 5), zOne = P.marginRuns(rvZig, RF, rvFold(RV2), 5);
+const zSaid = P.deepSaid([P.deepFirst(rvZig, RF, RV2, 5, { budgetMs: -1 })], zRuns);
+const rvEdge = rvRoute(1000, 2600, 50, 25), eRuns = P.marginRuns(rvEdge, RF, RV2, 19.5);
+const RVPATCH = rvBuildF(2.0, [...rvFeats(), { cls: "Depth_Area", role: "depth_area", props: { DRVAL1: 2.0, DRVAL2: 3.0 },
+                                               geometry: { type: "Polygon", coordinates: rvRing(-10, 10, 1700, 1800, 25) } }]);
+const pRuns = P.marginRuns(rvEdge, RF, RVPATCH, 19.5), pOther = pRuns.filter((r) => !r.channel);
+check("33b. ... ITS STRETCHES BY WHERE SHE IS, EACH KIND JOINED ACROSS THE OTHER (the review): a route zigzagging between the "
+      + "channel and the band beside it is two stretches, not one at each crossing - the channel's, and the band's as deep "
+      + "water first released it (not searched in time), not 'no deeper way' for each dip far from its middle - every meter "
+      + "counted once, as when the channel was one list with the band; 13 m inside the channel's edge at a 19.5 m standoff "
+      + "she is in the channel, not in the band; and within the standoff of another chart's margin water in the channel, "
+      + "that water's own stretch",
+      () => zRuns.length === 2 && zRuns[0].channel === true && !zRuns[1].channel && zSaid.runs.map((r) => r.why).join(",") === "channel,time"
+            && Math.abs(rvSum(zRuns) - rvSum(zOne)) < 1e-6 && rvSum(zOne) > 1500
+            && eRuns.length === 1 && eRuns[0].channel === true && eRuns[0].m >= 1590
+            && pRuns.length === 2 && pOther.length === 1 && pOther[0].m >= 110 && pOther[0].m <= 140 && Math.abs(rvSum(pRuns) - rvSum(eRuns)) < 1e-6,
+      () => "zigzag " + zSaid.runs.map((r) => r.why + ":" + f0(r.m)).join(" ") + " (" + f0(rvSum(zRuns)) + " m; as one list " + zOne.length + " run(s), " + f0(rvSum(zOne)) + " m)"
+            + "; at the edge " + eRuns.map((r) => (r.channel ? "channel" : "band") + ":" + f0(r.m)).join(" ")
+            + "; past the patch " + pRuns.map((r) => (r.channel ? "channel" : "other") + ":" + f0(r.m)).join(" "));
+const rvPk = packKo(RV2), rvBack = unpackKo(rvPk);
+const rvPts = (ko) => ko.polys.reduce((s, q) => s + q.ring.length, 0) + ko.lines.reduce((s, q) => s + q.pts.length, 0)
+  + ko.margin.polys.reduce((s, q) => s + q.ring.length, 0) + ko.margin.sayOnly.reduce((s, q) => s + q.ring.length, 0);
+onRiver(RV2);
+const rvRep = routeReply({ id: 2, op: "nogo", args: { from: RVUP[0], to: RVUP[1], opts: {} }, ko: { id: "river", n: koCount(RV2) },
+                           models: [{ id: "river", packed: packKo(RV2) }], keep: [],
+                           state: { V: { ...V }, nogo: { ready: true, buffer: 5, bbox: RVBOX, unread: null, ais: null }, frameRef: { lat: 34.3, lon: -92.0 } } });
+check("34. THE CHANNEL GOES TO THE WORKER IN THE ONE ARRAY, back exactly, counted in the model's feature count - and the "
+      + "worker plans the river's Go-To the page plans",
+      () => rvPk.xy.length === rvPts(RV2) * 2 && !("sayOnly" in rvPk.margin.rest) && sameRings(rvBack.margin.sayOnly, RV2.margin.sayOnly)
+            && rvBack.margin.sayOnly[0].channel === true && koCount(RV2) === koCount(RV2N)
+            && rvRep.ok && JSON.stringify(rvRep.out.route) === JSON.stringify(rvUp.route) && JSON.stringify(rvRep.out.deep) === JSON.stringify(rvUp.deep),
+      () => "xy " + rvPk.xy.length + " numbers for " + rvPts(RV2) + " points; count " + koCount(RV2) + " (the channel not the river's: " + koCount(RV2N) + "); "
+            + (rvRep.ok ? "route the same " + (JSON.stringify(rvRep.out.route) === JSON.stringify(rvUp.route)) + ", deep the same " + (JSON.stringify(rvRep.out.deep) === JSON.stringify(rvUp.deep)) : rvRep.error.slice(0, 200)));
+
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
 process.exit(fails ? 1 : 0);

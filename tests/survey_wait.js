@@ -25,6 +25,7 @@
 //   25-27  THE REVIEW BEFORE THE MERGE, the wait point: a coarse depth band counted by its shallowest depth; a buoyed
 //          channel between its gates kept out; a caller's keep-outs (the guard's contacts) kept off; the disc inside
 //          read water; a refusal for unread water said as that; what the search kept said back.
+//   25b    a river's channel is margin water to a wait (the review of the river's channel first, 2026-11-23).
 //   28     the re-approach's re-find, on the page's own reapproachIfSetOff.
 //   29     the record's `unread`, Upload's disc, and a banner that says what the search did.
 //   30     THE REVIEW, the alert: never over an advisory or a refusal, no nag while Continue is closed, said again when
@@ -1024,6 +1025,21 @@ const ask = (env, level, o, center) => { env.margins = []; const w = waitWorld(e
           () => !c.to && /nowhere within 500 m/.test(c.error || "") && !cOnly.to && !cLow.to
                 && routing === 0 && every === 1 && fine.to && fine.tier === "deep",
           () => JSON.stringify({ coarse: c.error || [c.tier, c.e], only: cOnly.error || cOnly.tier, routing, every, fine: [fine.tier, fine.movedM] }));
+  }
+  {
+    // a river as the Corps' cells chart it: its channel the open-ended deepest band (2.74 m and deeper, 80 m across), the
+    // water from it to the banks one 0-2.74 m band - at the 1.0 m floor the channel is under deep water first's margin
+    const rv = (x0, x1, d1, d2) => ({ ...area(x0, x1, -900, 900, d1, d2), band: "enc_river" });
+    const RIVER = () => [rv(-900, -40, 0, 2.74), rv(-40, 40, 2.74, undefined), rv(40, 900, 0, 2.74)];
+    const lay = K.deepKeepouts(FRAME, RIVER(), OPTS(0));
+    const r = ask({ feats: RIVER() }, 0), rOnly = ask({ feats: RIVER() }, 0, { deepOnly: true });
+    check("25b. A RIVER'S CHANNEL IS MARGIN WATER TO A WAIT (the review of the river's channel first, 2026-11-23): a "
+          + "route's layer leaves the channel to say (sayOnly), never to avoid - and the deep tier, arming the layer's "
+          + "polys alone, stood her in it as 'deep water first's margin over her floor'; now the deep tier finds no water "
+          + "in the river and the floor tier holds her in the channel where she is; the level unread, a refusal",
+          () => lay.sayOnly.length === 1 && lay.polys.length === 2
+                && r.to && r.tier === "floor" && r.movedM === 0 && !rOnly.to,
+          () => JSON.stringify({ say: lay.sayOnly.length, polys: lay.polys.length, r: r.error || [r.tier, r.movedM], only: rOnly.error || rOnly.tier }));
   }
   {
     // a channel marked by buoy pairs alone (no charted fairway): 120 m across, a pair every 800 m, deep water all round

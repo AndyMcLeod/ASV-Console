@@ -12139,7 +12139,12 @@ function waitLayer(base, level, tier){
   let at = WAIT_LAYERS.get(base);
   if(!at || at.key !== key){ at = {key}; WAIT_LAYERS.set(base, at); }
   if(!(tier in at)){
-    const m = buildMargin(nogo.frame, nogo.enf, nogoDR(), modelFeatures(), level, base, tier === "floor" ? 0 : undefined, Infinity);
+    const b = buildMargin(nogo.frame, nogo.enf, nogoDR(), modelFeatures(), level, base, tier === "floor" ? 0 : undefined, Infinity);
+    // ⚠ A RIVER'S CHANNEL IS MARGIN WATER TO A WAIT (2026-11-23, the review of the river's channel first): the layer leaves
+    // it to SAY (`sayOnly`, keepouts.js riverChannelArea) - a route has no deeper water in the river to take - and armDeep
+    // arms `polys` alone, so the deep tier stood her in the 9 ft channel as "deep water first's margin over her floor",
+    // 0.74 m over a 2.0 m floor. A place to lie for hours keeps out of it like any margin water: folded back in here.
+    const m = b && b.sayOnly && b.sayOnly.length ? {...b, polys: [...b.polys, ...b.sayOnly]} : b;
     // (the floor tier's areas in the operator's words: the layer's own are "water less than 0 m over her floor")
     at[tier] = m && tier === "floor" ? {...m, polys: m.polys.map(p => ({...p, kind: "water charted under her floor in part"}))} : m;
   }
@@ -17399,7 +17404,7 @@ function drawTransit(toScreen){                   // the transit DRAFT being dra
 // the plan before it no longer describe it. A stretch whose last waypoint (`w1`, in that route) she has passed is not drawn.
 const MARGIN_COL = "rgba(255,140,40,0.55)", MARGIN_TEXT = "#ffa040";
 const MARGIN_SAY = {none: "no deeper way", mark: "for a buoy", start: "where she starts", end: "where she ends",
-                    waypoint: "at a waypoint", time: "not searched in time"};
+                    waypoint: "at a waypoint", time: "not searched in time", channel: "in a river's channel"};
 /** Draw `mg.runs` (passage.js deepSaid: {pts, at, m, why, w1}) still ahead of waypoint `idx`; how many were drawn. */
 function drawMarginStretches(toScreen, mg, idx){
   if(!mg || !mg.runs || !mg.runs.length) return 0;
