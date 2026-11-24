@@ -60,7 +60,7 @@ import { HOLD_RADIUS_MIN_M, holdClearM, holdMarginM, snapCapM, snapClearRadial }
 // The vessels NOT under way, laid round by a passage as a pier is (passageKo, 2026-10-07).
 import { aisMooredKeepouts } from "./ais_keepout.js";
 import { OPEN_WATER, openWaterLeg } from "./openwater.js";
-import { DEEP_BERTH_M, DEEP_MARGIN_M, bbOf, blocked, clearanceM } from "./keepouts.js";
+import { DEEP_BERTH_M, DEEP_MARGIN_M, bbOf, blocked, clearanceM, deepSplit } from "./keepouts.js";
 // The shared routing layer. `legPath` is used below by planNogoRoute and routePlan; the
 // rest pass straight through to this console's importers, which are untouched.
 import { LANE_FRAC, SEG_LEN_M, buoyChannelLane, narrowChannelLane, smoothTrack,
@@ -634,10 +634,20 @@ export const DEEP_REACH_M = 3000;
 export const DEEP_MARK_M = 400;
 /** ... and the piece of route either side of a stretch the marks stage judges a deeper way near a mark on (deepFirst). */
 export const DEEP_MARK_CTX_M = 1500;
+/** ⚠ IN A SET, THE RIVER'S SHALLOWS AT THE BUFFER (keepouts.js deepSoftAt; Andy, 2026-11-24: "fix (b) for 2 kn and up"):
+ *  a stretch with no deeper way at a standoff over the buffer is searched again with the river's own margin water kept at
+ *  her buffer within this of the stretch - the SOFTENED region; where that finds the way, the whole leg is softened for
+ *  the stages after the search (deepFirst). Wide enough to hold the channel from a floor route up to 126 m outside it
+ *  (Pine Bluff at 2 kn of set). ⚠ AT ANY STANDOFF OVER THE BUFFER, NOT ONLY FROM 2 KN: it is asked only where the stretch
+ *  would otherwise be released - run as the floor's route ran it, through the river's 0-2.74 m water - and the guard
+ *  holds no keep-out there, so her buffer off that water in the channel is the safer of the two at any set. At Pine
+ *  Bluff's 76 m nothing below 2 kn is asked (18 and 20 m find the way); a channel narrower is (tests/deep_first.js 36c). */
+export const DEEP_SOFT_M = 250;
 
 /** `ko` with its margin layer ARMED at `margin` - each berth less the margin the plan keeps, so the berth is the
- *  distance kept - outside the regions in `release`, which the caller may go on filling. Null when it has no layer. */
-export function armDeep(ko, margin, release = []){
+ *  distance kept - outside the regions in `release`, and with the river's own margin water at their buffer in the
+ *  regions in `soft` (keepouts.js deepSoftAt), each of which the caller may go on filling. Null when it has no layer. */
+export function armDeep(ko, margin, release = [], soft = []){
   const lay = ko && ko.margin;
   if(!lay) return null;
   // (the berths at each margin kept, so keepouts.js files them in its grid once per margin, not once per plan)
@@ -645,7 +655,7 @@ export function armDeep(ko, margin, release = []){
   if(!at) ARMED.set(lay, at = new Map());
   let points = at.get(margin);
   if(!points) at.set(margin, points = lay.points.map((q) => q.berth ? {...q, r: Math.max(q.r || 0, q.berth - margin)} : q));
-  return {...ko, deep: {polys: lay.polys, lines: lay.lines || [], points, release}};
+  return {...ko, deep: {polys: lay.polys, lines: lay.lines || [], points, release, soft}};
 }
 const ARMED = new WeakMap();
 /** Samples of the polyline `en` (frame meters) every `step`: {e, n, s (meters along it), seg (the vertex it runs to)}. */
@@ -680,11 +690,16 @@ function lenLL(ref, pts){
  *  its own kind's samples DEEP_JOIN_M apart across the other's, as deep water first joins its stretches (it does not see
  *  the channel at all): split at each crossing, a route dipping into the band beside the channel every 150 m was 22
  *  stretches, and the dips far from the middle of the one stretch deep water first released lost its reason. Each
- *  sample's meters are counted once, in its own kind; where the layer has no channel this is the single list it was. */
-export function marginRuns(routeLL, ref, ko, margin){
-  const k = armDeep(ko, margin);
+ *  sample's meters are counted once, in its own kind; where the layer has no channel this is the single list it was.
+ *  ⚠ `soft`: THE LEG'S SOFTENED REGIONS, AS IT WAS PLANNED (deepFirst's `ko.deep.soft`): where the river's shallows kept
+ *  her buffer, not the standoff, she is in them only within her buffer of them. Read at the standoff, the lane 7 m off the
+ *  0-2.74 m water at a 23 m standoff on a 0.5 m floor was said "with no deeper way" and drawn orange the length of the
+ *  river (the review of the river's shallows at the buffer, 2026-11-24). */
+export function marginRuns(routeLL, ref, ko, margin, soft = []){
+  const k = armDeep(ko, margin, [], soft || []);
   if(!k || !routeLL || routeLL.length < 2) return [];
   const L = k.deep, S = sampleEN(routeLL.map((q) => ref.toEN(q)), Math.max(2, margin / 2));
+  const lay = L.soft.length ? {polys: [], lines: [], points: [], deep: L} : L;   // (blocked reads `deep`'s softened regions)
   const say = ko.margin.sayOnly && ko.margin.sayOnly.length ? {polys: ko.margin.sayOnly, lines: [], points: []} : null;
   // (not the river's own water; the list kept with the layer's, so keepouts.js files it in its grid once)
   let op = say ? NOT_RIVER.get(L.polys) : null;
@@ -694,7 +709,7 @@ export function marginRuns(routeLL, ref, ko, margin){
   for(let i = 0; i < S.length; i++){
     let ch = false, inL;
     if(say && blocked(S[i], say, 0)){ ch = !blocked(S[i], other, margin); inL = !ch; }   // (`other` is L's: near it is in L)
-    else { inL = blocked(S[i], L, margin); ch = !inL && !!say && blocked(S[i], say, margin); }
+    else { inL = blocked(S[i], lay, margin); ch = !inL && !!say && blocked(S[i], say, margin); }
     if(!ch && !inL) continue;
     const r = open[ch], ds = i ? S[i].s - S[i - 1].s : 0;
     if(r && S[i].s - S[r.i1].s <= DEEP_JOIN_M){ r.i1 = i; r.m += ds; } else runs.push(open[ch] = {i0: i, i1: i, m: ds, ch});
@@ -731,14 +746,17 @@ function deeperWithin(c, ko, layer, margin){
  *               "none" (no deeper way within the cap), "mark" (a mark held it: `opts.hold`), "reach" (she starts or ends
  *               in margin water with no deeper water within DEEP_REACH_M), "time" (DEEP_BUDGET_MS spent before it);
  *   repaired    the stretches a deeper way was found round, and repairedAt each one's floor and deeper way (frame
- *               meters, [{floor, deep}]); marginM: the meters of the floor's route in margin water.
+ *               meters, [{floor, deep, soft}]); marginM: the meters of the floor's route in margin water;
+ *   softened    where any stretch's deeper way was found only with the river's shallows at her buffer (DEEP_SOFT_M), the
+ *               leg: [{m (the floor's route's length), at (its middle)}] - and `ko` keeps the river's shallows at her
+ *               buffer along the whole of it ({all: true}); else [].
  * `opts.hold`: marks (frame points) no deeper way is sought within DEEP_MARK_M of, nor taken within it of, and about which
  * the layer is lifted (deepLanePass). `bore`: frame points where the layer bore on the route - its stretches as the
  * floor ran them, and each deeper way taken.
  */
 export function deepFirst(path, ref, ko, margin, opts = {}){
-  const release = [];
-  const koD = armDeep(ko, margin, release);
+  const release = [], soft = [];
+  const koD = armDeep(ko, margin, release, soft);
   if(!koD || !path || path.length < 2) return null;
   // THE LAYER LIFTED WITHIN DEEP_MARK_M OF A HELD MARK (opts.hold, deepLanePass), so the marks stage moves her there as it
   // always did: on the Dog Bar's chart no deeper way was taken at all, and the layer alone kept the stage from bringing her
@@ -759,7 +777,7 @@ export function deepFirst(path, ref, ko, margin, opts = {}){
     if(r && S[i].s - S[r.i1].s <= DEEP_JOIN_M) r.i1 = i; else runs.push({i0: i, i1: i});
   }
   const heldAt = (opts.hold || []).map((m) => ref.fromEN(m.e, m.n));     // (where the layer was lifted for a mark: deepSaid)
-  if(!runs.length) return {path, ko: koD, released: [], repaired: 0, repairedAt: [], marginM: 0, bore: [], heldAt};
+  if(!runs.length) return {path, ko: koD, released: [], repaired: 0, repairedAt: [], marginM: 0, bore: [], heldAt, softened: []};
   // EACH STRETCH ITS OWN WINDOW, DEEP_ANCHOR_M before and after it and never past the middle of the clear water between
   // it and the next - more than DEEP_JOIN_M of it, so an anchor is never in margin water. ⚠ Not one window for stretches
   // whose windows meet: on his 61 km Go-To the stretch at the Oak Rock pair, which has a deeper way, shared one with the
@@ -813,7 +831,14 @@ export function deepFirst(path, ref, ko, margin, opts = {}){
     return [...deep].some((m) => !floor.has(m));
   };
   const t0 = Date.now(), budget = opts.budgetMs ?? DEEP_BUDGET_MS;
-  const released = [], repairedAt = [];
+  const released = [], repairedAt = [], softened = [];
+  // (the river's shallows at the buffer are asked for only where there is a standoff over it, and a river's water in the
+  //  layer - and of a stretch, only where that water lies within a region's reach of it: a window off a harbor's coast on a
+  //  chart that holds a river too, asked again to no end, would double its search for nothing. The region holds the water
+  //  within DEEP_SOFT_M of a line through points 20 m apart, so 10 m more of any point holds all it can soften.)
+  const riverSoft = margin > nogo.buffer + 0.05 && koD.deep.polys.some((q) => q.river);
+  const riverOf = riverSoft ? deepSplit(koD.deep).river : null;
+  const riverNear = (pts) => pts.some((p) => blocked(p, riverOf, DEEP_SOFT_M + 10));
   let repaired = 0;
   for(const w of wins){
     const startIn = w.a === 0 && F[0], endIn = w.b === N - 1 && F[N - 1];
@@ -831,21 +856,47 @@ export function deepFirst(path, ref, ko, margin, opts = {}){
     let sub = null;
     if(!why){
       release.push(...disks);
-      const t1 = Date.now();
+      const t1 = Date.now(), cap = Math.max(DEEP_DETOUR * lenOld, lenOld + DEEP_DETOUR_MIN_M);
       // (the search's QUICK mode - one wider region, no escape rings: a deeper way that needs the whole ladder is not one
       // worth having, and on the Dog Bar's chart one window spent the whole of DEEP_BUDGET_MS failing to find one)
-      const leg = legPath(LL(w.a), LL(w.b), ref, koD, margin, {quick: true, cellDiv: DEEP_CELL_DIV});
-      const lenNew = leg ? lenLL(ref, [LL(w.a), ...leg]) : null;
-      const deepEN = leg ? sampleEN([LL(w.a), ...leg].map((q) => ref.toEN(q)), 10) : null;
-      const marked = leg && (held(deepEN) || worse(w, floorEN, deepEN));
-      if(leg && lenNew <= Math.max(DEEP_DETOUR * lenOld, lenOld + DEEP_DETOUR_MIN_M) && !marked){
-        sub = leg;
-        repairedAt.push({floor: floorEN, deep: deepEN});
+      const search = () => {
+        const leg = legPath(LL(w.a), LL(w.b), ref, koD, margin, {quick: true, cellDiv: DEEP_CELL_DIV});
+        const lenNew = leg ? lenLL(ref, [LL(w.a), ...leg]) : null;
+        const deepEN = leg ? sampleEN([LL(w.a), ...leg].map((q) => ref.toEN(q)), 10) : null;
+        const marked = !!leg && (held(deepEN) || worse(w, floorEN, deepEN));
+        return {leg, lenNew, deepEN, marked, ok: !!leg && lenNew <= cap && !marked};
+      };
+      let got = search(), softHere = false, retried = false;
+      // ⚠ IN A SET, THE RIVER'S SHALLOWS AT THE BUFFER (DEEP_SOFT_M): no deeper way at the standoff - none at all, or none
+      // within the detour - and it is asked again, in the time left, with the river's own margin water kept at her buffer
+      // about the stretch. A deeper way found then keeps that region softened for the stages after the search; none, and
+      // the region goes and the stretch is released, as before. (A way a mark refused is not asked again.)
+      const pts = !got.ok && !got.marked && riverSoft && Date.now() - t0 < budget ? ring(w.a, w.b).pts : null;
+      if(pts && riverNear(pts)){
+        soft.push({pts, r: DEEP_SOFT_M, bb: bbOf(pts), at: nogo.buffer});
+        // ⚠ AND THE WATER RELEASED ABOUT HER START OR HER END READ AGAIN, SOFTENED: it reaches out to the nearest water
+        // clear of the layer, and at the standoff alone, in a channel 40 m wide at 20 m, that lay some 400 m off - inside
+        // that disk the river's shallows held nothing, and the softened leg ran 3 m off them 386 m from her start
+        // (tests/deep_first.js 36c). Out to the nearest water clear of the layer as softened, as the search now asks it.
+        // (No way found, the disks - these as the standoff's - go with the region: the stretch's release below drops as
+        //  many as were pushed, `disks.length`, and `sd` is as long.)
+        const lS = {polys: [], lines: [], points: [], deep: {...layer, release: [], soft}};
+        const sd = disks.map((c) => { const i = c.pts[0] === S[0] ? 0 : N - 1, d = deeperWithin(S[i], ko, lS, margin);
+                                      return d == null ? c : disk(i, d + 2 * step); });
+        release.splice(release.length - disks.length, disks.length, ...sd);
+        got = search(); retried = true;
+        if(got.ok) softHere = true;
+        else soft.pop();
+      }
+      if(got.ok){
+        sub = got.leg;
+        repairedAt.push({floor: floorEN, deep: got.deepEN, ...(softHere ? {soft: true} : {})});
+        if(softHere){ const mid = S[(w.a + w.b) >> 1]; softened.push({m: got.lenNew, at: ref.fromEN(mid.e, mid.n)}); }
       }else{
         release.length -= disks.length;
-        why = marked ? "mark" : "none";
+        why = got.marked ? "mark" : "none";
       }
-      if(opts.trace) opts.trace.push({s0: S[w.a].s, s1: S[w.b].s, lenOld, lenNew, ms: Date.now() - t1, ok: !!sub, disks: disks.length, why});
+      if(opts.trace) opts.trace.push({s0: S[w.a].s, s1: S[w.b].s, lenOld, lenNew: got.lenNew, ms: Date.now() - t1, ok: !!sub, disks: disks.length, why, soft: softHere, retried});
     }
     w.sub = sub;
     if(sub){ repaired += w.runs.length; continue; }
@@ -855,6 +906,19 @@ export function deepFirst(path, ref, ko, margin, opts = {}){
       released.push({m: S[r.i1].s - S[r.i0].s, at: ref.fromEN(mid.e, mid.n), why,
                      end: r.i0 === 0 && F[0] ? "start" : r.i1 === N - 1 && F[N - 1] ? "end" : null});
     }
+  }
+  // ⚠ AND THEN ALONG THE WHOLE LEG. Where the standoff left a river's channel no deeper way, the river's shallows keep her
+  // buffer along the leg, not only about that stretch: the stages after the search keep her right in the channel by its
+  // edges (routing.js buoyedReachLane), and read at the standoff, a 28.2 m standoff left the lane 3 m of a 76 m channel -
+  // she rode its middle, going down the river 3 km of it to port of the line. The ways the search found at the standoff
+  // stand; the leg is said as one stretch softened, its length. (One region everywhere, `all` - keepouts.js deepSoftAt -
+  // not a ring along the leg's route, walked at every point test.)
+  if(softened.length){
+    const mid = S[N >> 1];
+    soft.length = 0;
+    soft.push({all: true, at: nogo.buffer});
+    softened.length = 0;
+    softened.push({m: S[N - 1].s, at: ref.fromEN(mid.e, mid.n)});
   }
   // The route: the floor's, with each deeper way spliced in between its window's anchors.
   const out = [path[0]];
@@ -869,7 +933,7 @@ export function deepFirst(path, ref, ko, margin, opts = {}){
   }
   while(v < path.length) push(path[v++]);
   const bore = [...runs.flatMap((r) => S.slice(r.i0, r.i1 + 1).filter((p, k) => k % 4 === 0)), ...repairedAt.flatMap((x) => x.deep)];
-  return {path: out, ko: koD, released, repaired, repairedAt, marginM, bore, heldAt};
+  return {path: out, ko: koD, released, repaired, repairedAt, marginM, bore, heldAt, softened};
 }
 /**
  * ⚠ A MARK OUTRANKS THE MARGIN. The lane pass `lanePass(path, ko)` run on deepFirst's route - and, where it leaves a
@@ -1033,14 +1097,15 @@ export function planNogoRoute(from, to, opts){
                                    lenRouterM: openWater.lenRouterM ?? null, clearM: openWater.clearM ?? null, exposure: openWater.exposure ?? null,
                                    exposureRouter: openWater.exposureRouter ?? null, ends: openWater.ends ?? null},
           moored: mooredPassed([{lat: from.lat, lon: from.lon}, ...route], ref, ko.moored),
-          deep: df ? deepSaid([df], marginRuns([{lat: from.lat, lon: from.lon}, ...route], ref, ko, found)
+          deep: df ? deepSaid([df], marginRuns([{lat: from.lat, lon: from.lon}, ...route], ref, ko, found, df.ko.deep.soft)
                                      .map((r) => ({...r, w1: r.v1 - 1}))) : null};   // (w1: the stretch's end in plan.route)
 }
 /** What a plan says of deep water first: {marginM, berthM (the layer's), repaired, released (each stretch kept at the
  *  floor, as deepFirst found it), runs (marginRuns: the margin water the route that SHIPS is in - what is said - each
  *  with `why`: "channel" in a river's channel, the deepest water its chart draws (marginRuns), else "start" / "end" /
  *  "waypoint" where she starts, ends or turns in it, else the released stretch's own reason nearest it - "none", "mark",
- *  "time" - or "none")}. */
+ *  "time" - or "none"), softened (each stretch whose deeper way kept only her buffer, `bufferM`, off the river's shallows:
+ *  deepFirst)}. */
 export function deepSaid(dfs, runs){
   const released = dfs.flatMap((d) => d.released), heldAt = dfs.flatMap((d) => d.heldAt || []);
   const llM = (a, b) => Math.hypot((a.lat - b.lat) * 111320, (a.lon - b.lon) * 111320 * Math.cos(a.lat * Math.PI / 180));
@@ -1057,7 +1122,8 @@ export function deepSaid(dfs, runs){
     r.why = heldAt.some((m) => (r.pts || [r.at]).some((q) => llM(q, m) <= DEEP_MARK_M)) ? "mark" : "none";
   }
   return {marginM: DEEP_MARGIN_M, berthM: DEEP_BERTH_M,
-          repaired: dfs.reduce((n, d) => n + d.repaired, 0), released, runs};
+          repaired: dfs.reduce((n, d) => n + d.repaired, 0), released, runs,
+          softened: dfs.flatMap((d) => d.softened || []), bufferM: nogo.buffer};
 }
 /** A passage's section sent after what she has left of the one before (asv.html sailSend): the margin water stretches of
  *  the route she is sent - those of the route before (`was`, indexed in it) still ahead of waypoint `cut`, re-indexed from
@@ -1075,7 +1141,11 @@ const latLonSay = (q) => Math.abs(q.lat).toFixed(4) + (q.lat < 0 ? " S " : " N "
  *  margin water it is in at her floor, and why. `fmt` formats meters (the page's fmtDist). */
 export function deepNote(deep, fmt){
   const f = fmt || ((m) => Math.round(m) + " m");
-  if(!deep || !deep.runs || !deep.runs.length) return "";
+  // (and where the set's standoff left no deeper way, the river's shallows kept at her buffer: deepFirst `softened`)
+  const soft = deep && deep.softened && deep.softened.length ? deep.softened : null;
+  const softSay = soft ? "the river's shallow water held at her buffer, " + f(deep.bufferM) + ", not the standoff, over "
+                         + f(soft.reduce((s, r) => s + r.m, 0)) : "";
+  if(!deep || !deep.runs || !deep.runs.length) return soft ? "deep water first: " + softSay : "";
   const total = deep.runs.reduce((s, r) => s + r.m, 0);
   const n = (w) => deep.runs.filter((r) => r.why === w).length;
   const parts = [];
@@ -1087,7 +1157,7 @@ export function deepNote(deep, fmt){
   if(n("mark")) parts.push(n("mark") + " for a buoy");
   if(n("time")) parts.push(n("time") + " not searched in time");
   // (said "at her floor" until 2026-10-14 - read as water at her floor's depth; Andy chose "the margin not kept")
-  return "deep water first: " + f(total) + " with the margin not kept (" + parts.join(", ") + ")";
+  return "deep water first: " + f(total) + " with the margin not kept (" + parts.join(", ") + ")" + (soft ? "; " + softSay : "");
 }
 /** The Intent card's lines for deep water first: what was kept, and each stretch at her floor - where and why. A warning
  *  where one lies between her start and her end (margin water she has no need to start or end in). */
@@ -1096,14 +1166,20 @@ export function deepWhy(deep, fmt){
   if(!deep) return [];
   const kept = "deep water first: kept " + deep.marginM + " m over her floor and " + deep.berthM
              + " m off charted rocks and shoal soundings";
-  if(!deep.runs || !deep.runs.length) return [{t: "lane", s: kept + " the whole way"}];
+  // (where the set's standoff left no deeper way by a river: deepFirst `softened`, one a leg, said wherever it is - the
+  //  water held at the buffer, not a claim of where she ran: the review, 2026-11-24)
+  const nS = deep.softened ? deep.softened.length : 0;
+  const soft = nS ? [{t: "warn", s: "deep water first: in the set, the river's shallow water held at her buffer, " + f(deep.bufferM)
+    + ", not the standoff, over " + nS + " leg" + (nS === 1 ? "" : "s") + ", " + f(deep.softened.reduce((s, r) => s + r.m, 0))
+    + " in all - at the standoff no deeper way was found there; her floor's own hazards kept at the standoff, as before"}] : [];
+  if(!deep.runs || !deep.runs.length) return [{t: "lane", s: kept + " the whole way"}, ...soft];
   const list = deep.runs.map((r) => f(r.m) + " " + (r.end ? DEEP_WHY[r.why] : "near " + latLonSay(r.at) + " - " + (DEEP_WHY[r.why] || r.why)));
   // (a stretch in a river's channel warns wherever it lies: margin water she has no deeper way out of, the length of
   //  the river - judged by where it ends, the same 9 km up the channel warned from a harbor berth and not from one in
   //  the river: the review of the river's channel first, 2026-11-23)
   const inside = deep.runs.some((r) => !r.end || r.channel || r.why === "channel");
   return [{t: inside ? "warn" : "lane", s: kept + " except " + deep.runs.length + " stretch" + (deep.runs.length === 1 ? "" : "es")
-           + " with the margin not kept (her floor and buffer only), marked in orange on the chart: " + list.join("; ")}];
+           + " with the margin not kept (her floor and buffer only), marked in orange on the chart: " + list.join("; ")}, ...soft];
 }
 /** The lane pass's result re-gated at `want` (every leg clear of the standoff, spliced with the standoff's own
  *  route where it is not) and re-pruned at it. The lane is kept wherever the gate did not have to abandon it. */
@@ -1271,7 +1347,7 @@ export function routePlan(start, wps, keepRightAll, standoffM, transitAt, ropts)
       if(df) dfs.push(df);
       seg = kr.route; if(kr.lane) lane = true; if(kr.partial) partial = true;
       // (its margin water as it ships: from her position on the first leg, at its end on the last - else at a waypoint)
-      if(df) for(const r of marginRuns(seg, ref, koT, found))
+      if(df) for(const r of marginRuns(seg, ref, koT, found, df.ko.deep.soft))   // (as the leg was planned: softened)
         runs.push({...r, w1: out.length + r.v1 - 1,             // (the stretch's end in the plan's route: seg[k] is out[out.length + k - 1])
                    end: (r.end === "start" && i === 0) || (r.end === "end" && i === wps.length - 1) ? r.end : r.end ? "waypoint" : null});
       if(kr.how){

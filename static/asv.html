@@ -2531,7 +2531,9 @@ function setPlanIntent(kind, plan, route, guardOwn, pressedAt){
                 holdClear: (plan && plan.holdClear != null) ? plan.holdClear : null, margin: null};
   if(!plan) return planIntent;
   // the margin water she runs at her floor, to be drawn on the route it was measured on (drawMarginStretches)
-  if(plan.deep && plan.deep.runs && plan.deep.runs.length) planIntent.margin = {route: route, runs: plan.deep.runs};
+  // (and where a leg held the river's shallows at her buffer - deepFirst `softened` - that too, for a section sent after it)
+  if(plan.deep && ((plan.deep.runs && plan.deep.runs.length) || (plan.deep.softened && plan.deep.softened.length)))
+    planIntent.margin = {route: route, runs: plan.deep.runs || [], softened: plan.deep.softened || []};
   const w = planIntent.why;
   if(plan.degraded) w.push({t:"warn", s:"nogo model not loaded - driving DIRECT, unverified against the chart"});
   else if(plan.routed) w.push({t:"route", s:"routed clear of the keep-out model via " + (route||[]).length + " waypoints"});
@@ -18576,8 +18578,12 @@ async function sailSend(P, k, from, bo, append, fence, own, pressedAt){
   const whole = {...plan, route};
   // (the margin water stretches in the route she is sent - this section's after what she has left, and those of what she
   // has left still ahead of her - for the Intent card and the chart: drawMarginStretches)
-  const mgWas = append && planIntent && planIntent.margin && planIntent.margin.route === rrWas ? planIntent.margin.runs : [];
-  if(plan.deep) whole.deep = {...plan.deep, runs: marginRunsAfter(mgWas, cut, plan.deep.runs, prefix.length)};
+  const mgOn = append && planIntent && planIntent.margin && planIntent.margin.route === rrWas ? planIntent.margin : null;
+  const mgWas = mgOn ? mgOn.runs : [];
+  // (and the legs of the route before that held the river's shallows at her buffer, still said - a leg she has finished
+  //  said with them rather than one still ahead of her dropped: a {m, at} does not tell which. The review, 2026-11-24)
+  if(plan.deep) whole.deep = {...plan.deep, runs: marginRunsAfter(mgWas, cut, plan.deep.runs, prefix.length),
+                              softened: [...((mgOn && mgOn.softened) || []), ...(plan.deep.softened || [])]};
   const coast = solveCoastFor(whole);
   const f1 = fenced(); if(f1) return f1;          // (the far RTH's press, asked again at the post)
   // THE WAY HOME is sent as an RTH (step 6): she is going home - the cards say so, the fuel monitor sends no second

@@ -26,8 +26,10 @@
  *          closest approach was 1.80 m at a 3 m buffer.
  *       2. rasterKeepouts paints an ARMED MARGIN LAYER (`ko.deep`, deep water
  *          first, 2026-10-12) on a grid of its own, clears the cells its
- *          released stretches hold whole, and folds it in. asv_core has no
- *          such layer. Covered by tests/deep_first.js.
+ *          released stretches hold whole, and folds it in - its softened
+ *          regions' cells with the river's water at their own buffer
+ *          (2026-11-24). asv_core has no such layer. Covered by
+ *          tests/deep_first.js.
  *
  * Item 1 is asv_core's own, pulled across at 2a0b53d; item 2 is this repo's
  * alone, and a `vendor.py` run would delete it. The header is what stops such
@@ -291,13 +293,57 @@ export function rasterKeepouts(blk, W, H, x0, y0, cell, ko, buffer) {
   // its edge, so this grid still never under-approximates what `blocked` refuses - and folded in.
   if (ko.deep) {
     const d = new Uint8Array(W * H);
-    rasterKeepouts(d, W, H, x0, y0, cell, ko.deep, buffer);
+    // (a region softened everywhere - deepFirst's whole leg, {all: true} - the layer painted so: its river's own areas at
+    // the least such `at`, on a grid of their own, and the rest at the buffer)
+    // (a region softens only with a finite `at` under the buffer: keepouts.js softUnder, the one test every reader makes -
+    //  written out here, as this file imports nothing)
+    const under = (c) => Number.isFinite(c.at) && c.at < buffer;
+    const allAt = Math.min(...(ko.deep.soft || []).filter((c) => c.all && under(c)).map((c) => c.at));
+    if (Number.isFinite(allAt)) {
+      const polys = ko.deep.polys || [], d3 = new Uint8Array(W * H);
+      rasterKeepouts(d, W, H, x0, y0, cell, { polys: polys.filter((q) => !q.river), lines: ko.deep.lines || [], points: ko.deep.points || [] }, buffer);
+      rasterKeepouts(d3, W, H, x0, y0, cell, { polys: polys.filter((q) => q.river), lines: [], points: [] }, allAt);
+      for (let i = 0; i < W * H; i++) if (d3[i]) d[i] = 1;
+    } else rasterKeepouts(d, W, H, x0, y0, cell, ko.deep, buffer);
     // ⚠ SEGMENT BY SEGMENT, EACH TO THE CELLS WITHIN `r` OF IT (2026-11-23, the river's channel first): asked cell by cell
     // of every segment, a released stretch kilometers long - deep first's floor piece along a river, a point every 20 m -
     // tested every margin cell in its whole box against every one of its hundreds of segments, in every grid the marks
     // stage's searches built, and was 112 s of a 353 s plan of one Pine Bluff leg (profiled). A cell is cleared where ANY
     // segment of a release lies within `r` of it, whichever asks first, so the cells cleared are the same, bit for bit
     // (tests/raster_exact.js holds the cell-by-cell walk as its reference).
+    // ⚠ A SOFTENED REGION'S RIVER WATER AT ITS OWN BUFFER (keepouts.js deepSoftAt, 2026-11-24): a cell the region holds
+    // WHOLE, a cell and a half inside its edge as a release's, takes the layer painted with the river's own areas at the
+    // region's `at` and the rest at the buffer - fewer cells, never fewer than `blocked` refuses there; every other cell
+    // keeps the layer at the buffer, more than `blocked` refuses at a region's edge, never less. (Cleared before the
+    // releases, which clear what they hold either way.)
+    for (const at of [...new Set((ko.deep.soft || []).filter(under).map((c) => c.at))]) {
+      const near = (ko.deep.soft || []).filter((c) => !c.all && c.at === at && !(c.at >= allAt) && c.r - 1.5 * cell > 0
+        && c.bb.x1 + c.r >= x0 && c.bb.x0 - c.r <= x0 + (W - 1) * cell && c.bb.y1 + c.r >= y0 && c.bb.y0 - c.r <= y0 + (H - 1) * cell);
+      if (!near.length) continue;
+      // (each painted on a grid of its own: a grid painted twice is dilated twice)
+      const polys = ko.deep.polys || [], d2 = new Uint8Array(W * H), d3 = new Uint8Array(W * H);
+      rasterKeepouts(d2, W, H, x0, y0, cell, { polys: polys.filter((q) => !q.river), lines: ko.deep.lines || [], points: ko.deep.points || [] }, buffer);
+      rasterKeepouts(d3, W, H, x0, y0, cell, { polys: polys.filter((q) => q.river), lines: [], points: [] }, at);
+      for (let i = 0; i < W * H; i++) if (d3[i]) d2[i] = 1;
+      for (const c of near) {
+        const r = c.r - 1.5 * cell;
+        for (let k = 1; k < c.pts.length; k++) {
+          const a = c.pts[k - 1], b = c.pts[k], dx = b.e - a.e, dy = b.n - a.n, l2 = dx * dx + dy * dy || 1;
+          const gx0 = Math.max(0, Math.floor((Math.min(a.e, b.e) - r - x0) / cell)), gx1 = Math.min(W - 1, Math.ceil((Math.max(a.e, b.e) + r - x0) / cell));
+          const gy0 = Math.max(0, Math.floor((Math.min(a.n, b.n) - r - y0) / cell)), gy1 = Math.min(H - 1, Math.ceil((Math.max(a.n, b.n) + r - y0) / cell));
+          for (let gy = gy0; gy <= gy1; gy++) {
+            for (let gx = gx0; gx <= gx1; gx++) {
+              const i = gy * W + gx;
+              if (!d[i] || d2[i]) continue;
+              const e = x0 + gx * cell, n = y0 + gy * cell;
+              let t = ((e - a.e) * dx + (n - a.n) * dy) / l2;
+              t = t < 0 ? 0 : t > 1 ? 1 : t;
+              if (Math.hypot(e - (a.e + t * dx), n - (a.n + t * dy)) < r) d[i] = 0;
+            }
+          }
+        }
+      }
+    }
     for (const c of ko.deep.release || []) {
       const r = c.r - 1.5 * cell;
       if (!(r > 0)) continue;

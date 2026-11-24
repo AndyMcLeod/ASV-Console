@@ -3742,8 +3742,33 @@ plain. `tests/path_card.js` 15.
    hands and on the channel side, she in the channel at every one (32 of 40 before). From 23 m (2 kn
    of set) the quarter's cell (5.8 m) does not join what the standoff leaves of the channel (a
    3.85 m cell joined it on a probed stretch of one leg, but the four legs planned whole at 3.85 m
-   released 13 stretches, as at 5.8 m; at 28.2 m, 2.5 kn, none tried), and the legs are planned
-   partly as before (5.2 to 6.6 km of each in the channel at 23.1 m). The cost is time:
+   released 13 stretches, as at 5.8 m), so where deep water first finds no deeper way at the
+   standoff it asks again with the river's own 0 to 2.74 m water kept at her buffer about that
+   stretch, not the standoff (Andy: "fix (b) for 2 kn and up"; `passage.js` `DEEP_SOFT_M`,
+   `keepouts.js` `deepSoftAt`) - her floor's own hazards, and any other chart's margin water,
+   still at the standoff. Where that finds the way, the river's shallows keep her buffer along the
+   whole leg, and the lane reads the channel's edges at it, so she still keeps right: read at the
+   standoff, 28.2 m left the lane 3 m of the 76 m channel and she rode its middle. It is asked at
+   any standoff over the buffer, but only where the stretch would otherwise be released through
+   that water: at Pine Bluff's 76 m nothing below 2 kn is, and in a channel 40 m wide it is at
+   1.7 kn (20 m). The banner adds "the river's shallow water held at her buffer, 5 m, not the standoff,
+   over" the leg's length, and the Intent card warns of it; the route is not said to be in that
+   water for keeping only her buffer off it. Replayed at Pine Bluff at 23.1 m and at 28.2 m
+   (2.5 kn): every meter of the four legs in the channel (5.2 to 6.6 km of each at 23.1 m before),
+   92 to 100 % of each on her starboard side of the sailing line (a median 13 to 14 m to
+   starboard, 20 m on leg C out at 28.2 m), all 40 buoy passes on their hands and in the channel, at least 29.9 m off her floor's own keep-outs and 6.7 m off the river's 0 to 2.74 m water; at 28.2 m leg C
+   fits the standoff nowhere and is planned at the buffer, as any such leg is, and said so
+   (`insideStandoff`). A leg planned in 11 to 19 s at 23.1 m (9 to 53 s before, 13 stretches released) and 14 to
+   19 s at 28.2 m (7 to 17 s before, with leg B 2.8 and 2.9 km outside the channel, up to 79 m out). From 12.8 to 20 m (1 to 1.7 kn) nothing is softened and every route is the build before's,
+   point for point (the four legs at 12.8 m planned in 48 s, 45 s before, run back to back). And a Go-To from a berth in that band no longer
+   dog-legs out of it: rounding her first turn moved it out of the water released about her start,
+   and the gate's patch from there dove back to the channel, a 102 degree turn. `smoothTrack` now
+   refuses a move that brings a leg into the margin water the unmoved leg kept out of: 46 degrees
+   at the sharpest now, 65 the other way round (102 and 88 before), and 26 to 59 in a set of 1.5
+   to 2 kn. On the coastal charts the suites replay it changed one Go-To, at Biddeford (its
+   sharpest turn 46 degrees to 14 one way and 23 to 22 the other, 60 m or more off her floor's
+   keep-outs both ways, as before), and planning Biddeford's eight took 0.7 s (0.5 s before). The cost of
+   the river's channel is time:
    calm, a leg planned in 36 to 65 s where the build before took 29 to 42 s, the two run one after
    the other on an idle machine (at 12.8 m the quarter's grid planned the same routes in 30 to 44 s,
    the half's in 33 to 46 s); profiled before the review's fixes, three quarters of the slowest
@@ -3752,7 +3777,7 @@ plain. `tests/path_card.js` 15.
    edges answers those tests, and the four legs at 12.8 m plan in 8.5 to 20 s each, where they took 30 to 76 s). Maneuvers
    (round traffic, back onto a line) are laid as before. `rasterKeepouts` now clears a release
    segment by segment, the same cells: clearing each release's whole box was 112 s of a 353 s plan
-   of one of those legs, profiled. `tests/deep_first.js` (30-35), `tests/survey_wait.js` (25b),
+   of one of those legs, profiled. `tests/deep_first.js` (25, 30-39b), `tests/survey_wait.js` (25b),
    `tests/raster_exact.js` (3b).
 
    **The Passage tab, and a long Go-To as a passage (2026-10-14).** Andy: "consider another path

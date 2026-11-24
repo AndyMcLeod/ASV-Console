@@ -155,6 +155,10 @@ const HELPERS = ["bandIndex", "indexFor", "ringIndexed", "ringInside", "ringDist
                  "indexable", "cellsAlong", "cellGrid", "gridFor", "ringGridded", "nextTick", "bandDist",
                  "blocked", "clearanceM", "stampSeg", "dilateGrid", "rasterKeepouts", "routeAround", "snapClearLL",
                  "routeAroundSeg", "pruneStitch", "legClear", "legPath",
+                 // A SOFTENED REGION (2026-11-24, keepouts.js deepSoftAt): legClear asks its leg through legClearEN, a
+                 // sampled pass, and a softened region's own pass; blocked and blockedInfo read the region's buffer
+                 "legClearEN", "sampledClear", "softPass", "deepBlocked", "deepReleased", "deepSoftAt", "deepSplit",
+                 "softView", "softClear", "softUnder",
                  // A LEG ACROSS A CHARTED EDGE (the 2026-10-16 review, finding 1): asked at the snap, the ends and the gate
                  "segX", "legCrossesEN", "legCrosses",
                  "blockedInfo", "firstBlockAlong", "clearButEnds", "gateLegClear",
@@ -216,7 +220,9 @@ eval("const M_PER_DEG_LAT=" + M_PER_DEG_LAT + ";\n" +
        + ["RING_CELL_M", "RING_LONG_CELLS", "RING_GRID_REACH_CELLS", "RING_LEG_COST", "RING_FAR_CELLS", "RING_TIE",
           "RING_GRID"].map(grabDecl).join("\n") + "\n"
        // the grid over every feature list (2026-10-13): its cell, pad and filing policy, its WeakMap - read from the module
-       + ["GRID_CELL_M", "GRID_PAD_M", "GRID_MIN", "GRID_AFTER", "GRID_WIDE_CELLS", "GRID", "NO_FEATURES", "gridCell"].map(grabDecl).join("\n") + "\n" +
+       + ["GRID_CELL_M", "GRID_PAD_M", "GRID_MIN", "GRID_AFTER", "GRID_WIDE_CELLS", "GRID", "NO_FEATURES", "gridCell"].map(grabDecl).join("\n") + "\n"
+       // (a softened region's split of the margin layer, kept in a WeakMap - deepSplit)
+       + grabDecl("SPLIT") + "\n" +
      // `laneUsed` became `sea.laneUsed` when Rule 9 moved to passage.js, so the eval'd
      // bodies below write into the SHARED state object rather than a local of their own -
      // which is what lets the checks below read back what the router actually did.

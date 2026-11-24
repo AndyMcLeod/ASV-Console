@@ -193,8 +193,8 @@
 // `chart.js` re-export from those. tests/geometry.py asserts that hop BY IDENTITY.
 import { inBB, pinp, segSamplesEN } from './geometry.js';
 import {
-  blocked, legClear, firstBlockAlong, clearanceM, legCrosses, legCrossesEN,
-  extendCenterline, systemCenterline, channelPolys,
+  blocked, legClear, legClearEN, firstBlockAlong, clearanceM, legCrosses, legCrossesEN,
+  extendCenterline, systemCenterline, channelPolys, deepSoftAt,
 } from './keepouts.js';
 import { stampSeg, dilateGrid, rasterKeepouts } from './raster.js';
 
@@ -3109,11 +3109,21 @@ export function buoyedReachLane(pathLL, frame, ko, buf, opts = {}) {
       // (the channel left `clr` ahead of her, and clear of every ring of it by half a meter: where another chart overlaps
       //  the river's, the console serves the river's areas cut to squares - asv_console.py, SQUARES - and a hairline gap
       //  at a cut reads as no edge; a guard, never met on a chart replayed)
-      if (inC && (blocked(p, chanOut, clr)
-                  || (chanSay && !blocked({ e: p.e + u[0] * clr, n: p.n + u[1] * clr }, chanSay, 0.5)))) { side[i] = 1; return d - MS / 2; }
+      if (inC) {
+        const c = edgeClr(p);
+        if (blocked(p, chanOut, c) || (chanSay && !blocked({ e: p.e + u[0] * c, n: p.n + u[1] * c }, chanSay, 0.5))) { side[i] = 1; return d - MS / 2; }
+      }
     }
     return Infinity;
   };
+  //   ⚠ AND IN A SOFTENED REGION AT ITS OWN BUFFER (keepouts.js deepSoftAt, 2026-11-24): there the route was found with the
+  // river's shallows at her buffer, not the standoff, and the channel's edges are read at it too. Read at the standoff -
+  // the channel left 28.2 m ahead of her - a 2.5 kn set left the lane 3 m of a 76 m channel and she rode its middle,
+  // going down the river 3 km of it to port of the line. (Released or not, as before: the release is not read here.)
+  function edgeClr(p) {
+    const a = ko.deep ? deepSoftAt(p, ko.deep.soft) : null;
+    return a != null && a < clr ? a : clr;
+  }
   // ⚠ ... AND WHAT STANDS BETWEEN TWO RAYS. A ray is one line every STEP along her route and
   // sees `clr` either side of itself: a pier 8 m wide, a corner of a local restricted area,
   // stands between two of them unseen. What crosses neither ray has every corner of it between
@@ -3862,6 +3872,23 @@ export function smoothTrack(pathLL, frame, ko, buf, opts = {}) {
   if (keep.length && kept(en[0])) fixed[0] = true;
   if (pts.length < 3) return pathLL;
   const hit = (e, n) => blocked({ e, n }, ko, buf);
+  // ⚠ AND NO MOVE INTO MARGIN WATER THE PATH KEPT OUT OF (deep water first's armed layer, `ko.deep`; the review of the
+  // river's channel first, 2026-11-23, fixed 2026-11-24). Leaving a berth in a river's 0-2.74 m water, deep water first
+  // leads her out the short way, straight to the channel, and the lane turns her up it; this rounding moved that turn
+  // 19 m upstream, out past the water released about her start, so the leg on from it ran within the buffer of the
+  // shallows - and the gate's patch from there dived back to the channel: a 102 degree dog-leg. A move whose leg (from
+  // the point placed before it, or on to the next) comes into the layer where the leg the unmoved point makes does not
+  // leaves the point where it was. The layer alone is asked - her floor's own keep-outs are the gate's, as before (see
+  // chordOk) - and only where a planner armed it.
+  //   (A leg whose middle has nothing of the layer within half its length and the buffer - released or softened water
+  // counted as layer, so the answer only errs toward asking - is clear of it without sampling it: most legs, and on a
+  // coastal chart's thousand soundings the sampling alone made a plan six times slower.)
+  const lay = ko.deep ? { polys: [], lines: [], points: [], deep: ko.deep } : null;
+  const raw = ko.deep ? { polys: ko.deep.polys || [], lines: ko.deep.lines || [], points: ko.deep.points || [] } : null;
+  const layClear = (p, q) => !blocked({ e: (p.e + q.e) / 2, n: (p.n + q.n) / 2 }, raw, buf + Math.hypot(q.e - p.e, q.n - p.n) / 2)
+    || legClearEN(p, q, lay, buf);
+  const intoMargin = (a, s, c, b) => !!lay
+    && ((!layClear(a, s) && layClear(a, c)) || (!layClear(s, b) && layClear(c, b)));
   // ⚠ AND THE LEGS A MOVE MAKES, NOT THE VERTEX ALONE (the 2026-10-16 review, finding 1): a rounded vertex in clear
   // water can still have the leg to it, or from it, cross the pier the detour was going round. Both legs the move
   // makes are asked for a crossing (chordOk): the one from the point already placed before it, and the one to the next
@@ -3874,7 +3901,7 @@ export function smoothTrack(pathLL, frame, ko, buf, opts = {}) {
         n: 0.25 * pts[i - 1].n + 0.5 * pts[i].n + 0.25 * pts[i + 1].n,
       };
       const prev = np[np.length - 1];
-      np.push(fixed[i] || hit(s.e, s.n) || !chordOk(prev, s) || !chordOk(s, pts[i + 1]) ? pts[i] : s);
+      np.push(fixed[i] || hit(s.e, s.n) || !chordOk(prev, s) || !chordOk(s, pts[i + 1]) || intoMargin(prev, s, pts[i], pts[i + 1]) ? pts[i] : s);
     }
     np.push(pts[pts.length - 1]);
     pts = np;

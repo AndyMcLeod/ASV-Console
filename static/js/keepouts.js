@@ -1576,6 +1576,59 @@ export function deepReleased(p, release) {
   return false;
 }
 
+// ⚠ IN A SET, THE RIVER'S SHALLOWS AT THE BUFFER, NOT THE STANDOFF (Andy, 2026-11-24: "fix (b) for 2 kn and up"). From a
+// 23 m standoff (2 kn of set) the Corps' 76 m channel at Pine Bluff left too little water clear of the 0-2.74 m water beside
+// it for deep water first's search to find, and every stretch was released: the legs ran as they did before the channel
+// was the river's deep water, up to 112 m outside it. Where a stretch has no deeper way at the standoff, deep water first
+// asks again with the river's own margin water (`river`, deepKeepouts) kept at the operator's buffer inside a SOFTENED
+// region about it (`soft`: {pts, r, bb, at} - the water within `r` of the polyline `pts`, at `at` meters), and the stages
+// after it plan on the same - and once one is found, the whole leg ({all: true, at}: everywhere the layer is read, its
+// river's water at `at`; deepFirst AND THEN ALONG THE WHOLE LEG). Everything else of the layer - a rock's or a shoal sounding's berth, another chart's margin
+// water - is kept at the clearance asked, inside a softened region or not; and her floor's own hazards are not the
+// layer's at all, so the standoff is kept off them. `blocked` and `blockedInfo` read the softened regions; `clearanceM`
+// does not (it reports the distance to the river's water itself, nearer than `blocked` refuses - no planner asks it of
+// an armed layer).
+/** The buffer the river's margin water is kept at about `p` (frame meters): the least `at` of the softened regions it lies
+ *  in, or null where it lies in none. (A region with no finite `at` softens nothing - softUnder.) */
+export function deepSoftAt(p, soft) {
+  if (!soft || !soft.length) return null;
+  let at = null;
+  for (const c of soft) {
+    if (!Number.isFinite(c.at)) continue;
+    if (c.all) { if (at == null || c.at < at) at = c.at; continue; }
+    if (!inBB(p, c.bb, c.r)) continue;
+    if (ringDist(p, c.pts, false, c.r) < c.r && (at == null || c.at < at)) at = c.at;
+  }
+  return at;
+}
+/** Does the softened region `c` soften anything read at `buf` - a finite `at` under it? ONE TEST FOR EVERY READER
+ *  (blocked, legClear, the raster): a NaN `at` was no region to one reader and a softer one to another, and the raster
+ *  left cells free that `blocked` refused (the review of the softened regions, 2026-11-24). */
+export function softUnder(c, buf) { return Number.isFinite(c.at) && c.at < buf; }
+/** The margin layer `L` split into its river's own water and the rest, each a model of its own ({polys, lines, points}).
+ *  The two lists of areas are kept with the layer's own, so each is filed in its grid once, not once per point. */
+export function deepSplit(L) {
+  let s = SPLIT.get(L.polys);
+  if (!s || s.n !== L.polys.length) SPLIT.set(L.polys, s = { n: L.polys.length, river: L.polys.filter((q) => q.river), other: L.polys.filter((q) => !q.river) });
+  return { river: { polys: s.river, lines: NO_FEATURES, points: NO_FEATURES },
+           other: { polys: s.other, lines: L.lines || NO_FEATURES, points: L.points || NO_FEATURES } };
+}
+const SPLIT = new WeakMap();
+/** Is `p` in the armed margin layer `L` at `buf` - outside its released regions, and with its river's water kept at a
+ *  softened region's own buffer where that is less?
+ *  ⚠ NOT MONOTONE IN `buf` FOR THE RIVER'S WATER IN A SOFTENED REGION: it is read at min(buf, at) whatever radius is
+ *  asked, so `blocked(p, ko, R)` at an inflated R is no screen there for what `blocked` refuses at a smaller one. A
+ *  sampled test that detects at an inflated radius and refines at the buffer (legClear) misses the river's water between
+ *  its samples - legClearEN's river pass is built for that; turns.js cornerBreaches, which screens so, never sees an
+ *  armed layer (the review of the softened regions, 2026-11-24). */
+function deepBlocked(p, L, buf) {
+  if (!blocked(p, L, buf) || deepReleased(p, L.release)) return false;
+  const at = deepSoftAt(p, L.soft);
+  if (at == null || !(at < buf)) return true;
+  const s = deepSplit(L);
+  return blocked(p, s.other, buf) || blocked(p, s.river, at);
+}
+
 // ---- A ROW-BAND INDEX FOR BIG RINGS (2026-09-26) ----------------------------------------------
 //
 // Andy: "The current instance of ASV Console has frozen. This has happened the last few times."
@@ -1853,8 +1906,9 @@ export function blocked(p, ko, buf) {
     if (Math.abs(p.e - pt.e) > R || Math.abs(p.n - pt.n) > R) continue;
     if (Math.hypot(p.e - pt.e, p.n - pt.n) < R) return true;
   }
-  // THE MARGIN LAYER, WHERE A PLANNER ARMED IT (deepKeepouts, passage.js deepFirst), outside its released stretches.
-  if (ko.deep && blocked(p, ko.deep, buf) && !deepReleased(p, ko.deep.release)) return true;
+  // THE MARGIN LAYER, WHERE A PLANNER ARMED IT (deepKeepouts, passage.js deepFirst), outside its released stretches - and
+  // its river's water at a softened region's own buffer (deepSoftAt, above).
+  if (ko.deep && deepBlocked(p, ko.deep, buf)) return true;
   return false;
 }
 
@@ -1892,7 +1946,8 @@ export function clearanceM(p, ko, cap = 500) {
     const d = Math.max(0, Math.hypot(p.e - pt.e, p.n - pt.n) - r);
     if (d < best) best = d;
   }
-  // (the margin layer where a planner armed it, as `blocked` reads it)
+  // (the margin layer where a planner armed it, as `blocked` reads it - but for a softened region, which is not read here:
+  // the distance is to the river's water itself, nearer than `blocked` refuses there - deepSoftAt)
   if (ko.deep && best > 0 && !deepReleased(p, ko.deep.release)) best = clearanceM(p, ko.deep, best);
   return best;
 }
@@ -1941,7 +1996,9 @@ export function blockedInfo(p, ko, buf) {
     }
   }
   if (ko.deep && !deepReleased(p, ko.deep.release)) {
-    const d = blockedInfo(p, ko.deep, buf);
+    // (a softened region's river water at its own buffer, as `blocked` reads it)
+    const at = deepSoftAt(p, ko.deep.soft), s = at != null && at < buf ? deepSplit(ko.deep) : null;
+    const d = s ? blockedInfo(p, s.other, buf) || blockedInfo(p, s.river, at) : blockedInfo(p, ko.deep, buf);
     if (d) return { ...d, margin: true };
   }
   return null;
@@ -1967,20 +2024,91 @@ export function blockedInfo(p, ko, buf) {
  */
 export const LEG_FINE_M = 0.1;
 export function legClear(a, b, frame, ko, buf) {
-  const ae = frame.toEN(a), be = frame.toEN(b);
+  return legClearEN(frame.toEN(a), frame.toEN(b), ko, buf);
+}
+/** legClear of the leg ae -> be in frame meters. */
+export function legClearEN(ae, be, ko, buf) {
   const L = Math.hypot(be.e - ae.e, be.n - ae.n);
   if (!Number.isFinite(L) || !Number.isFinite(buf)) return false;   // unknown is not clear (finding 7): the loop below never ran on NaN
+  // (a softened region at or over `buf` changes nothing `blocked` answers at `buf` - but left in, the pass below would
+  //  read the river's water at its `at` where it detects at hypot(buf, step / 2), and a leg 4.9 m off it passed a 5 m
+  //  buffer: the review of the softened regions, F1)
+  const k = softView(ko, buf);
+  if (!sampledClear(ae, be, L, buf, (p, r) => blocked(p, k, r))) return false;
+  // ⚠ AND THE RIVER'S WATER NEAR A SOFTENED REGION ASKED AGAIN ON ITS OWN (deepSoftAt, 2026-11-24). The pass above is
+  // exact for everything but the river's water there: in a softened region `blocked` reads it at the region's smaller
+  // `at` whatever the radius asked (deepBlocked), so at a 23 m standoff, samples 11.5 m apart, a leg could come within
+  // it between two of them unseen - and at a region's EDGE a sample inside it reads it at `at` while the leg's points
+  // just outside are held to `buf` (the review, F2: a leg 14.3 m off it outside the region, at 23 m, passed). So where
+  // the leg comes near a softened region the river's water is asked again at the least `at`'s step, each sample against
+  // the most any point of the leg within half a step of it is held to (softPass) - and only there.
+  const sp = softPass(ae, be, k, buf);
+  return !sp || softClear(ae, be, L, sp);
+}
+/** `ko` with only the softened regions of its armed layer that soften anything at `buf` (softUnder) - `ko` itself where
+ *  that is all of them. */
+function softView(ko, buf) {
+  const L = ko && ko.deep, soft = L && L.soft;
+  if (!soft || !soft.length || soft.every((c) => softUnder(c, buf))) return ko;
+  return { ...ko, deep: { ...L, soft: soft.filter((c) => softUnder(c, buf)) } };
+}
+/** The sampled test of the leg ae -> be (frame meters, `L` long) at `buf`, `hit(p, r)` the point test at a radius (see
+ *  legClear's note). */
+function sampledClear(ae, be, L, buf, hit) {
   const n = Math.max(1, Math.ceil(L / Math.max(2, buf / 2)));
   const h = L / n, r = Math.hypot(buf, h / 2);
   const at = (t) => ({ e: ae.e + (be.e - ae.e) * t, n: ae.n + (be.n - ae.n) * t });
   for (let i = 0; i <= n; i++) {
     const p = at(i / n);
-    if (!blocked(p, ko, r)) continue;                 // nothing could lie within the buffer of the leg near this sample
-    if (blocked(p, ko, buf)) return false;            // within the buffer of the sample itself
+    if (!hit(p, r)) continue;                         // nothing could lie within the buffer of the leg near this sample
+    if (hit(p, buf)) return false;                    // within the buffer of the sample itself
     const m = Math.max(1, Math.ceil(2 * h / LEG_FINE_M));
     for (let j = 0; j <= m; j++) {                    // the stretch within h either side, at the buffer
       const t = (i - 1 + 2 * j / m) / n;
-      if (t > 0 && t < 1 && blocked(at(t), ko, buf)) return false;
+      if (t > 0 && t < 1 && hit(at(t), buf)) return false;
+    }
+  }
+  return true;
+}
+/** For legClear: where the leg ae -> be comes near a softened region of `ko`'s armed layer (softView's: each `at` under
+ *  `buf`), its river's water as a test of its own - {at (the least such `at`, which sets the step), hit(p, d)}: is the
+ *  river's water within e + d of `p`, where e is the buffer it is kept at about `p` (the least `at` of the regions `p`
+ *  lies in, else `buf`) - and for d > 0, `buf` where a ring region's edge lies within d of `p`, the most a point of the
+ *  leg within d of it may be held to; and a released region's water clear, for d > 0 only where `p` is d inside it -
+ *  else null. */
+function softPass(ae, be, ko, buf) {
+  const L = ko.deep, soft = L && L.soft;
+  if (!soft || !soft.length) return null;
+  const bb = { x0: Math.min(ae.e, be.e), x1: Math.max(ae.e, be.e), y0: Math.min(ae.n, be.n), y1: Math.max(ae.n, be.n) };
+  const near = soft.filter((c) => c.all || !(c.bb.x0 - c.r > bb.x1 || c.bb.x1 + c.r < bb.x0 || c.bb.y0 - c.r > bb.y1 || c.bb.y1 + c.r < bb.y0));
+  if (!near.length) return null;
+  const at = Math.min(...near.map((c) => c.at)), rings = near.filter((c) => !c.all), rel = L.release || [];
+  const river = deepSplit(L).river;
+  const edge = (p, d) => rings.some((c) => inBB(p, c.bb, c.r + d) && Math.abs(ringDist(p, c.pts, false, c.r + d + 1) - c.r) <= d);
+  const freed = (p, d) => rel.some((c) => inBB(p, c.bb, c.r) && ringDist(p, c.pts, false, c.r) < c.r - d);
+  return { at, hit: (p, d) => {
+    if (freed(p, d)) return false;
+    const a = deepSoftAt(p, near);
+    return blocked(p, river, (d > 0 && edge(p, d) ? buf : a != null && a < buf ? a : buf) + d);
+  } };
+}
+/** The river pass of legClear (softPass's `sp`): a point q of the leg whose river's water lies within its own buffer e(q)
+ *  lies within h/2 of a sample, so that water lies within e(q) + h/2 of the sample - and e(q) is the sample's own unless
+ *  a ring region's edge lies within h/2 of it, where it is at most `buf` (and q is released only where the sample is h/2
+ *  inside a released region): the sample's test at d = h/2 sees it, and the stretch within h either side is asked point
+ *  by point, LEG_FINE_M apart. */
+function softClear(ae, be, L, sp) {
+  const n = Math.max(1, Math.ceil(L / Math.max(2, sp.at / 2)));
+  const h = L / n;
+  const pt = (t) => ({ e: ae.e + (be.e - ae.e) * t, n: ae.n + (be.n - ae.n) * t });
+  for (let i = 0; i <= n; i++) {
+    const p = pt(i / n);
+    if (!sp.hit(p, h / 2)) continue;                  // no point of the leg near this sample has the water within its buffer
+    if (sp.hit(p, 0)) return false;
+    const m = Math.max(1, Math.ceil(2 * h / LEG_FINE_M));
+    for (let j = 0; j <= m; j++) {
+      const t = (i - 1 + 2 * j / m) / n;
+      if (t > 0 && t < 1 && sp.hit(pt(t), 0)) return false;
     }
   }
   return true;

@@ -555,8 +555,11 @@ check("24. ... AND IN A DRAWN TRANSIT OF TWO LEGS, the band crossed on the secon
             + tp.route.findIndex((q) => Math.abs(q.lat - tw[0].lat) < 1e-9 && Math.abs(q.lon - tw[0].lon) < 1e-9) : JSON.stringify(tp.deep));
 const mra = P.marginRunsAfter([{ w1: 3, m: 1 }, { w1: 5, m: 4 }, { w1: 10, m: 2 }], 5, [{ w1: 2, m: 3 }], 7);   // (w1 5: ends at her next waypoint - kept)
 check("25. A PASSAGE'S NEXT SECTION: the stretches of the route she is sent - the last section's still ahead of her re-indexed "
-      + "from where she is, then the new section's after the waypoints she had left (marginRunsAfter, asv.html sailSend)",
-      () => JSON.stringify(mra) === JSON.stringify([{ w1: 0, m: 4 }, { w1: 5, m: 2 }, { w1: 9, m: 3 }]) && /marginRunsAfter\(mgWas, cut, plan\.deep\.runs, prefix\.length\)/.test(H),
+      + "from where she is, then the new section's after the waypoints she had left (marginRunsAfter, asv.html sailSend); "
+      + "and the legs that held the river's shallows at her buffer (softened) carried with them, the last section's first",
+      () => JSON.stringify(mra) === JSON.stringify([{ w1: 0, m: 4 }, { w1: 5, m: 2 }, { w1: 9, m: 3 }]) && /marginRunsAfter\(mgWas, cut, plan\.deep\.runs, prefix\.length\)/.test(H)
+            && /softened: \[\.\.\.\(\(mgOn && mgOn\.softened\) \|\| \[\]\), \.\.\.\(plan\.deep\.softened \|\| \[\]\)\]/.test(H)
+            && /planIntent\.margin = \{route: route, runs: plan\.deep\.runs \|\| \[\], softened: plan\.deep\.softened \|\| \[\]\}/.test(H),
       () => JSON.stringify(mra));
 // the page's drawing, driven with a recording canvas
 const rec = { calls: [], set strokeStyle(v) { this.calls.push(["strokeStyle", v]); }, set lineWidth(v) { this.calls.push(["lineWidth", v]); },
@@ -696,8 +699,8 @@ const RVBOX = (() => { let W = Infinity, S = Infinity, E = -Infinity, N = -Infin
   return { W: W - 0.02, S: S - 0.02, E: E + 0.02, N: N + 0.02 }; })();
 const onRiver = (ko) => Object.assign(nogo, { ready: true, frame: RF, ko, buffer: 5, bbox: RVBOX, unread: null, ais: null });
 // her route against the sailing line: the meters of it outside the channel, on her starboard and port sides of the line,
-// and (`half`) on her starboard side of the line `mid` meters to the right of it (upstream)
-const rvJudge = (route, way, mid = 0) => {
+// and (`half`) on her starboard side of the line `mid` meters to the right of it (upstream); `chan` the channel's half width
+const rvJudge = (route, way, mid = 0, chan = 38) => {
   const en = route.map((p) => RF.toEN(p)), o = { out: 0, stbd: 0, port: 0, len: 0, half: 0 };
   for (let i = 1; i < en.length; i++) {
     const a = en[i - 1], b = en[i], n = Math.max(1, Math.ceil(Math.hypot(b.e - a.e, b.n - a.n) / 5));
@@ -710,7 +713,7 @@ const rvJudge = (route, way, mid = 0) => {
         if (d < bd) { bd = d; bx = ((q.e - px) * dy - (q.n - py) * dx) / L; }
       }
       o.len += step;
-      if (Math.abs(bx) > 38) o.out += step;
+      if (Math.abs(bx) > chan) o.out += step;
       if (bx * way > 0) o.stbd += step; else o.port += step;
       if ((bx - mid) * way > 0) o.half += step;
     }
@@ -944,6 +947,273 @@ check("35. ... AND IN A SET: at the transit standoffs a set of 1.5 and 1.7 kn gi
             && r.down.deep.released.length === 0 && r.jU.stbd >= 0.88 * r.jU.len && r.jD.stbd >= 0.88 * r.jD.len),
       () => rvSet.map((r) => r.st + " m: " + (r.jU ? "up outside " + f0(r.jU.out) + ", starboard " + f0(r.jU.stbd) + " of " + f0(r.jU.len) + ", released " + r.up.deep.released.length : "up refused: " + r.up.error)
             + (r.jD ? "; down outside " + f0(r.jD.out) + ", starboard " + f0(r.jD.stbd) + " of " + f0(r.jD.len) + ", released " + r.down.deep.released.length : "; down refused: " + r.down.error)).join(" | "));
+
+// FROM 2 KN OF SET, THE RIVER'S SHALLOWS AT HER BUFFER (2026-11-24, Andy: "fix (b) for 2 kn and up"): at 23.1 m (2 kn) and
+// 28.2 m (2.5 kn) the standoff leaves the deeper way's search too little of the 76 m channel clear of the 0-2.74 m water
+// beside it, and every stretch was released. Where the standoff finds no deeper way the stretch is searched again with the
+// river's own margin water kept at her buffer about it (passage.js DEEP_SOFT_M, keepouts.js deepSoftAt) - and only there.
+// (and a shoal under her floor - 0 to 1.5 m, a keep-out at her 2.0 m - from the band 8 m into the channel on its starboard
+// side, stations 1,900 to 2,100: the band beside it softened, the standoff still kept off it, so there she rides 6.9 m of
+// starboard at most. The review: with her floor's own keep-outs 180 m off at the banks, "never within the standoff of
+// them" measured nothing - and 7 m outside the channel the lane kept her 37 m off it anyway.)
+const RVSHOAL = { cls: "Depth_Area", role: "depth_area", band: "enc_river", props: { DRVAL1: 0, DRVAL2: 1.5 },
+                  geometry: { type: "Polygon", coordinates: rvRing(30, 80, 1900, 2100, 25) } };
+const RV2H = rvBuildF(2.0, [...rvFeats(), RVSHOAL]), rvShoalAt = rvAt(2000, 60);
+// the least distance of her route from the river's 0-2.74 m water, and from her floor's keep-outs, of `ko` - the water
+// within `skip` of her start and her end not counted (she may start there: deepFirst releases the water about her)
+const rvNear = (route, ko, skip = 0) => {
+  const en = route.map((p) => RF.toEN(p)), river = { polys: ko.margin.polys.filter((q) => q.river), lines: [], points: [] };
+  let band = Infinity, floorKo = Infinity, bandAt = null, s = 0;
+  for (let i = 1; i < en.length; i++) {
+    const a = en[i - 1], b = en[i], L = Math.hypot(b.e - a.e, b.n - a.n), n = Math.max(1, Math.ceil(L));
+    for (let k = 0; k <= n; k++) {
+      const q = { e: a.e + (b.e - a.e) * k / n, n: a.n + (b.n - a.n) * k / n };
+      if (skip && (Math.hypot(q.e - en[0].e, q.n - en[0].n) < skip || Math.hypot(q.e - en.at(-1).e, q.n - en.at(-1).n) < skip)) continue;
+      const bd = K.clearanceM(q, river, 60);
+      if (bd < band) { band = bd; bandAt = s + L * k / n; }    // (where along her route, meters)
+      floorKo = Math.min(floorKo, K.clearanceM(q, ko, 60));
+    }
+    s += L;
+  }
+  return { band, floorKo, bandAt };
+};
+const rvHard = [23.1, 28.2].map((st) => {
+  onRiver(RV2H);
+  const up = P.planNogoRoute(RVUP[0], RVUP[1], { standoffM: st }), down = P.planNogoRoute(RVDOWN[0], RVDOWN[1], { standoffM: st });
+  const one = (pl, from, way) => (pl.route ? { j: rvJudge([from, ...pl.route], way), near: rvNear([from, ...pl.route], RV2H) } : null);
+  return { st, up, down, U: one(up, RVUP[0], 1), D: one(down, RVDOWN[0], -1) };
+});
+const softOk = (pl) => !!pl.deep && (pl.deep.softened || []).length > 0 && pl.deep.bufferM === 5
+  && /river's shallow water held at her buffer, 5 m, not the standoff/.test(P.deepNote(pl.deep))
+  && P.deepWhy(pl.deep).some((l) => l.t === "warn" && /held at her buffer, 5 m, not the standoff, over 1 leg,/.test(l.s));
+check("36. ... AND FROM 2 KN OF SET, THE RIVER'S SHALLOWS AT HER BUFFER: at 23.1 m (2 kn) and 28.2 m (2.5 kn) of standoff she is "
+      + "kept in the channel up the river and down it, nothing released, at least 88% of her route on her starboard side - "
+      + "never within her 5 m buffer of the 0-2.74 m water, never within the standoff of her floor's own keep-outs (a shoal "
+      + "under her floor reaching 8 m into the channel, a keep-out, within 60 m of her) - and the plan says the "
+      + "shallows were held at her buffer, not the standoff (softened; the banner and the Intent card)",
+      () => K.blocked(rvShoalAt, RV2H, 0) && !K.blocked(rvShoalAt, RV2, 0)
+            && rvHard.every((r) => [[r.up, r.U], [r.down, r.D]].every(([pl, o]) => o && o.j.out === 0 && pl.deep.released.length === 0
+            && o.j.stbd >= 0.88 * o.j.len && o.near.band >= 5 - 0.01 && o.near.floorKo >= r.st - 0.01 && o.near.floorKo < 60 && softOk(pl))),
+      () => "shoal a keep-out " + K.blocked(rvShoalAt, RV2H, 0) + " | " + rvHard.map((r) => r.st + " m: " + [["up", r.up, r.U], ["down", r.down, r.D]].map(([nm, pl, o]) => nm + " " + (o ? "outside " + f0(o.j.out)
+            + ", starboard " + f0(o.j.stbd) + " of " + f0(o.j.len) + ", released " + pl.deep.released.length + ", softened "
+            + (pl.deep.softened || []).length + ", band " + o.near.band.toFixed(1) + " m off, floor's keep-outs " + o.near.floorKo.toFixed(1) : "refused: " + pl.error)).join("; ")).join(" | ")
+            + " | \"" + (rvHard[0].up.deep ? P.deepNote(rvHard[0].up.deep) : "-") + "\"");
+check("36b. ... AND ONLY WHERE THE STANDOFF FINDS NO WAY: at 18 and 20 m (35, above) nothing is softened and the plan says "
+      + "nothing of it; in calm water (her buffer her clearance) nothing is asked again",
+      () => rvSet.every((r) => (r.up.deep.softened || []).length === 0 && (r.down.deep.softened || []).length === 0 && !/shallow water held/.test(P.deepNote(r.up.deep)))
+            && (rvUp.deep.softened || []).length === 0 && (rvDown.deep.softened || []).length === 0 && Array.isArray(rvUp.deep.softened),
+      () => rvSet.map((r) => r.st + " m softened " + (r.up.deep.softened || []).length + "/" + (r.down.deep.softened || []).length).join(", ")
+            + "; calm " + (rvUp.deep.softened || []).length + "/" + (rvDown.deep.softened || []).length);
+// A CHANNEL NARROWER THAN PINE BLUFF'S, AND A NECK (the review): the same river with its channel 20 m either side of the
+// line, where at 20 m (1.7 kn) the standoff leaves nothing of it - asked again below 2 kn too, the stretch otherwise
+// released into the 0-2.74 m water (passage.js DEEP_SOFT_M); and a neck of the river 1 km long between deep water (5-10 m),
+// its channel 4 m either side, where at her buffer too there is no way - the region goes, the stretch is released and
+// nothing is softened (a region kept with no way, a mutant, survived every check before this); the same neck with its
+// channel 20 m either side softened along the whole leg
+const rvBandS = (x0, x1, d1, d2, s0, s1) => ({ cls: "Depth_Area", role: "depth_area", band: "enc_river",
+  props: d2 == null ? { DRVAL1: d1 } : { DRVAL1: d1, DRVAL2: d2 }, geometry: { type: "Polygon", coordinates: rvRing(x0, x1, s0, s1, 25) } });
+const rvBanks = () => [RVSAIL, rvShore(-220), rvShore(220), rvLand(-1300, -220), rvLand(220, 550),
+  rvLand(-1300, 1300, 0, 150, 25), rvLand(-1300, 1300, RVLEN - 150, RVLEN, 25)];
+const RVW20 = rvBuildF(2.0, [...rvBanks(), rvBandS(-220, -20, 0, 2.74, 0, RVLEN), rvBandS(-20, 20, 2.74, null, 0, RVLEN),
+                             rvBandS(20, 220, 0, 2.74, 0, RVLEN)]);
+const rvNeck = (w) => rvBuildF(2.0, [...rvBanks(), rvBandS(-220, 220, 5, 10, 150, 1500), rvBandS(-220, 220, 5, 10, 2500, RVLEN - 150),
+  rvBandS(-220, -w, 0, 2.74, 1500, 2500), rvBandS(-w, w, 2.74, null, 1500, 2500), rvBandS(w, 220, 0, 2.74, 1500, 2500)]);
+const RVNECK4 = rvNeck(4), RVNECK20 = rvNeck(20);
+onRiver(RVW20);
+const w20 = P.planNogoRoute(RVUP[0], RVUP[1], { standoffM: 20 });
+// (her start, 20 m to port of the line, is ON this channel's edge - margin water she starts in, released about her out
+// to the nearest water clear of the layer as softened and two steps beyond, some 30 m: the band measured from 60 m out of
+// it. Released out to the nearest water clear at the standoff alone, the disk was some 400 m, and she ran 3 m off the
+// band 386 m from her start: passage.js deepFirst, THE WATER RELEASED ABOUT HER START OR HER END READ AGAIN)
+const jW20 = w20.route ? rvJudge([RVUP[0], ...w20.route], 1, 0, 20) : null, nW20 = w20.route ? rvNear([RVUP[0], ...w20.route], RVW20, 60) : null;
+const nW20all = w20.route ? rvNear([RVUP[0], ...w20.route], RVW20) : null;
+const neckLine = rvRoute(1000, 3000, 50, 0);
+const neckRun = (ko) => { onRiver(ko); const trace = []; return { df: P.deepFirst(neckLine, RF, ko, 23.1, { trace }), trace }; };
+const nk4 = neckRun(RVNECK4), nk20 = neckRun(RVNECK20);
+const nkSay = (n) => n.df ? "softened " + n.df.softened.length + ", regions " + n.df.ko.deep.soft.length + ", released " + n.df.released.map((r) => r.why).join(",")
+  + ", trace " + n.trace.map((t) => (t.retried ? "retried " : "") + (t.ok ? "ok" : "no") + (t.soft ? " soft" : "")).join("/") : "no layer";
+check("36c. ... AT ANY STANDOFF OVER THE BUFFER, AND ONLY WHERE A WAY IS FOUND: in a river whose channel is 20 m either "
+      + "side of the line, at 20 m (1.7 kn) she is kept in it up the river, nothing released, 5 m off the 0-2.74 m water, "
+      + "softened; in a neck whose channel is 4 m either side, at 23.1 m, the stretch asked again finds no way at her buffer "
+      + "either - nothing softened, no region left on the layer, released for no deeper way; and the same neck 20 m either "
+      + "side softened along the whole leg (her start in the narrow river on its channel's edge, the band measured from 60 m out of it, the water released about her)",
+      () => jW20 && jW20.out === 0 && (w20.deep.softened || []).length > 0 && w20.deep.released.length === 0 && nW20.band >= 5 - 0.01
+            && nk4.df && nk4.df.softened.length === 0 && nk4.df.ko.deep.soft.length === 0 && nk4.df.released.length >= 1
+            && nk4.df.released.every((r) => r.why === "none") && nk4.trace.some((t) => t.retried && !t.ok)
+            && nk20.df && nk20.df.softened.length === 1 && nk20.df.ko.deep.soft.length === 1 && nk20.df.ko.deep.soft[0].all === true
+            && nk20.df.released.length === 0 && nk20.trace.some((t) => t.retried && t.ok && t.soft),
+      () => (jW20 ? "20 m channel at 20 m: outside " + f0(jW20.out) + " of " + f0(jW20.len) + ", softened " + (w20.deep.softened || []).length
+            + ", released " + w20.deep.released.length + ", band " + nW20.band.toFixed(1) + " m off at " + f0(nW20.bandAt) + " m along (" + nW20all.band.toFixed(1) + " at " + f0(nW20all.bandAt) + " counting her start's)" : "20 m channel refused: " + w20.error)
+            + "; neck 4 m: " + nkSay(nk4) + "; neck 20 m: " + nkSay(nk20));
+// ... AND SAID AS SHE WAS PLANNED (the review): at her 0.5 m floor the channel keeps the margin and only the band beside it
+// is margin water; read at the standoff, the lane softened at 23.1 m - 7 m off the band - was said "with no deeper way"
+onRiver(RV05);
+const up05s = P.planNogoRoute(RVUP[0], RVUP[1], { standoffM: 23.1 });
+const j05s = up05s.route ? rvJudge([RVUP[0], ...up05s.route], 1) : null;
+const tr05s = P.routePlan(RVUP[0], [RVUP[1]], true, 23.1);            // (the same up the river as a transit: routePlan)
+const jt05s = tr05s.route && tr05s.route.length ? rvJudge([RVUP[0], ...tr05s.route], 1) : null;
+check("36d. ... AND SAID AS SHE WAS PLANNED: at her 0.5 m floor, where only the river's 0-2.74 m water beside the channel is "
+      + "margin water, her route up the river at 23.1 m is softened and kept in the channel - and not said to be in that "
+      + "water: no stretch with the margin not kept, nothing drawn orange; the banner says the shallows were held at her "
+      + "buffer; and the same as a transit (routePlan)",
+      () => j05s && j05s.out === 0 && (up05s.deep.softened || []).length > 0 && up05s.deep.runs.length === 0
+            && /^deep water first: the river's shallow water held at her buffer/.test(P.deepNote(up05s.deep))
+            && jt05s && jt05s.out === 0 && tr05s.deep && (tr05s.deep.softened || []).length > 0 && tr05s.deep.runs.length === 0,
+      () => (j05s ? "Go-To: outside " + f0(j05s.out) + ", softened " + (up05s.deep.softened || []).length + ", stretches "
+            + up05s.deep.runs.map((r) => r.why + ":" + f0(r.m)).join(" ") + " (\"" + P.deepNote(up05s.deep) + "\")" : "Go-To refused: " + up05s.error)
+            + (jt05s ? "; transit: outside " + f0(jt05s.out) + ", softened " + ((tr05s.deep && tr05s.deep.softened) || []).length + ", stretches "
+            + (tr05s.deep ? tr05s.deep.runs.map((r) => r.why + ":" + f0(r.m)).join(" ") : "-") : "; transit: no route (" + JSON.stringify(tr05s.unroutable || tr05s.error) + ")"));
+// a leg in a softened region, past the corner of the river's water BETWEEN two of the standoff's samples (11.55 m apart at
+// 23.1 m): 4 m off it is refused, 6 m off it is clear; outside a softened region both are refused, at the standoff
+const spike = (y) => ({ ring: [{ e: 17.3, n: y }, { e: 12, n: 30 }, { e: 22, n: 30 }, { e: 17.3, n: y }], bb: K.bbOf([{ e: 12, n: y }, { e: 22, n: 30 }]), river: true, kind: "w" });
+// (`soft` "all": the whole leg's region, deepFirst's - everywhere, no ring)
+const softKo = (y, soft) => { const pts = [{ e: -100, n: 0 }, { e: 150, n: 0 }];
+  return { polys: [], lines: [], points: [], deep: { polys: [spike(y)], lines: [], points: [], release: [],
+                                                      soft: soft === "all" ? [{ all: true, at: 5 }] : soft ? [{ pts, r: 250, bb: K.bbOf(pts), at: 5 }] : [] } }; };
+const L0 = { e: 0, n: 0 }, L1 = { e: 46.2, n: 0 };
+const sp4 = K.legClearEN(L0, L1, softKo(4, true), 23.1), sp6 = K.legClearEN(L0, L1, softKo(6, true), 23.1);
+const sp4o = K.legClearEN(L0, L1, softKo(4, false), 23.1), sp6o = K.legClearEN(L0, L1, softKo(6, false), 23.1);
+const sp4a = K.legClearEN(L0, L1, softKo(4, "all"), 23.1), sp6a = K.legClearEN(L0, L1, softKo(6, "all"), 23.1);
+// (and `blocked` and `blockedInfo` agree in a softened region, point by point - the river's water at 5 m, the rest at 23.1)
+let spDiff = 0, spHits = 0;
+const spK = softKo(4, true), spA = softKo(4, "all");
+for (const k0 of [spK, spA]) k0.deep.polys.push({ ring: [{ e: 60, n: -40 }, { e: 80, n: -40 }, { e: 80, n: -60 }, { e: 60, n: -60 }, { e: 60, n: -40 }], bb: K.bbOf([{ e: 60, n: -60 }, { e: 80, n: -40 }]), kind: "x" });
+for (const k0 of [spK, spA]) for (let k = 0; k < 4000; k++) {
+  const p = { e: -20 + ((k * 7919) % 1400) / 10, n: -90 + ((k * 104729) % 1500) / 10 }, b = K.blocked(p, k0, 23.1);
+  if (b !== !!K.blockedInfo(p, k0, 23.1)) spDiff++;
+  if (b) spHits++;
+}
+const spNear = K.blocked({ e: 17.3, n: -0.5 }, spK, 23.1), spFar = K.blocked({ e: 17.3, n: -2 }, spK, 23.1), spOther = K.blocked({ e: 70, n: -25 }, spK, 23.1);
+const spNearA = K.blocked({ e: 17.3, n: -0.5 }, spA, 23.1), spFarA = K.blocked({ e: 17.3, n: -2 }, spA, 23.1), spOtherA = K.blocked({ e: 70, n: -25 }, spA, 23.1);
+check("37. A SOFTENED REGION IS ASKED AT ITS OWN BUFFER, BETWEEN THE SAMPLES TOO: at a 23.1 m standoff, a leg past the corner "
+      + "of the river's water between two of the standoff's samples is refused 4 m off it and clear 6 m off it (legClear asks "
+      + "the region's river water again at its own step); outside a softened region both are refused; a point 4.5 m off the "
+      + "river's water is blocked and one 6 m off is not, while an area not the river's stays blocked 15 m off, at the "
+      + "standoff; and `blocked` and `blockedInfo` agree at 4,000 points - and all the same where the region is the whole "
+      + "leg's (`all`, no ring)",
+      () => !sp4 && sp6 && !sp4o && !sp6o && spNear && !spFar && spOther && spDiff === 0 && spHits > 200
+            && !sp4a && sp6a && spNearA && !spFarA && spOtherA,
+      () => "softened: 4 m " + (sp4 ? "clear" : "refused") + ", 6 m " + (sp6 ? "clear" : "refused") + "; not softened: 4 m " + (sp4o ? "clear" : "refused")
+            + ", 6 m " + (sp6o ? "clear" : "refused") + "; points 4.5/6 m off the river's " + spNear + "/" + spFar + ", 15 m off another area " + spOther
+            + "; the whole leg's: 4 m " + (sp4a ? "clear" : "refused") + ", 6 m " + (sp6a ? "clear" : "refused") + ", points " + spNearA + "/" + spFarA + "/" + spOtherA
+            + "; blocked vs blockedInfo differ " + spDiff + " (" + spHits + " blocked, both kinds)");
+// THE LEG TEST EXACT AT A SOFTENED REGION (the review of the softened regions, F1 and F2), and its releases and its ring:
+//  - at the buffer itself (the whole leg's region at her buffer, as the lane stages ask): a leg 4.9 m off the river's water
+//    passed a 5 m buffer - the sampled pass read the river at the region's 5 m where it detects at 5.15 - and 5.1 m off is clear;
+//  - at a ring region's EDGE: a leg at 23 m from inside a region at 10 m to 11 m outside it, past the river's water 10.05 m
+//    off her start, passed - every sample inside read the water at 10 m, the one outside at 23.7 m was too far - though
+//    `blocked` refuses its point 10.2 m along (14.3 m off, outside the region); the leg to 10.0 m, inside it, is clear;
+//  - a released region holds the river's water clear in the river pass too (a mutant that dropped it survived);
+//  - a point outside the ring but inside its box is not softened (a mutant that tested the box alone survived)
+const spikeUp = (x, y) => ({ ring: [{ e: x, n: y }, { e: x - 5, n: y - 25 }, { e: x + 5, n: y - 25 }, { e: x, n: y }],
+                             bb: K.bbOf([{ e: x - 5, n: y - 25 }, { e: x + 5, n: y }]), river: true, kind: "w" });
+const sq = (e, n, h) => ({ ring: [{ e: e - h, n: n - h }, { e: e + h, n: n - h }, { e: e + h, n: n + h }, { e: e - h, n: n + h }, { e: e - h, n: n - h }],
+                           bb: K.bbOf([{ e: e - h, n: n - h }, { e: e + h, n: n + h }]), river: true, kind: "w" });
+const deepKo = (polys, soft, release = []) => ({ polys: [], lines: [], points: [], deep: { polys, lines: [], points: [], release, soft } });
+const f1In = K.legClearEN({ e: 0, n: 0 }, { e: 5, n: 0 }, deepKo([spikeUp(1.25, -4.9)], [{ all: true, at: 5 }]), 5);
+const f1Out = K.legClearEN({ e: 0, n: 0 }, { e: 5, n: 0 }, deepKo([spikeUp(1.25, -5.1)], [{ all: true, at: 5 }]), 5);
+const f2pts = [{ e: -1000, n: 0 }, { e: -489.85, n: 0 }], f2ko = deepKo([sq(0, -10.06, 0.01)], [{ pts: f2pts, r: 500, bb: K.bbOf(f2pts), at: 10 }]);
+const f2Across = K.legClearEN({ e: -1.4, n: 0 }, { e: 21.6, n: 0 }, f2ko, 23), f2Inside = K.legClearEN({ e: -1.4, n: 0 }, { e: 10.0, n: 0 }, f2ko, 23);
+const f2Point = K.blocked({ e: 10.2, n: 0 }, f2ko, 23);
+// (and where only the region's EDGE tells it: her samples 4.6 m apart, one 0.15 m inside the edge, the river's water
+// almost in line behind her, so only the 0.23 m of the leg just outside the edge comes within 23 m of it - the sample
+// inside reads it at 10 m, the next one out is 27 m off it; the leg ended inside is clear)
+const f2kb = deepKo([sq(-12.6, -1, 0.005)], [{ pts: f2pts, r: 500, bb: K.bbOf(f2pts), at: 10 }]);
+const f2Edge = K.legClearEN({ e: 0.8, n: 0 }, { e: 23.8, n: 0 }, f2kb, 23), f2EdgeIn = K.legClearEN({ e: 0.8, n: 0 }, { e: 10.0, n: 0 }, f2kb, 23);
+const f2EdgePt = K.blocked({ e: 10.25, n: 0 }, f2kb, 23);
+const relKo = softKo(4, true);
+relKo.deep.release = [{ pts: [{ e: 17.3, n: 0 }, { e: 17.3, n: 0 }], r: 30, bb: K.bbOf([{ e: 17.3, n: 0 }]) }];
+const relClear = K.legClearEN(L0, L1, relKo, 23.1);
+// (and out of a released region, where only its EDGE tells it: the whole leg's region at 10 m, released to 0.15 m past her
+// sample at 10.0, the river's water almost in line behind her - only the 0.2 m of the leg just outside the release comes
+// within 10 m of it; the leg ended inside the release is clear)
+const relEdgeKo = deepKo([sq(0.4, -1, 0.005)], [{ all: true, at: 10 }], [{ pts: f2pts, r: 500, bb: K.bbOf(f2pts) }]);
+const relEdge = K.legClearEN({ e: 0.8, n: 0 }, { e: 23.8, n: 0 }, relEdgeKo, 23), relEdgeIn = K.legClearEN({ e: 0.8, n: 0 }, { e: 10.0, n: 0 }, relEdgeKo, 23);
+const relEdgePt = K.blocked({ e: 10.25, n: 0 }, relEdgeKo, 23);
+const boxKo = softKo(4, true);
+boxKo.deep.polys.push(sq(330, 210, 1), sq(100, 210, 1));
+const boxOut = K.blocked({ e: 330, n: 220 }, boxKo, 23.1), boxIn = K.blocked({ e: 100, n: 220 }, boxKo, 23.1);
+const nanKo = deepKo([sq(0, -10, 0.5)], [{ all: true, at: NaN }, { all: true, at: 5 }]);
+const nanAt = K.deepSoftAt({ e: 0, n: 0 }, nanKo.deep.soft), nanPt = K.blocked({ e: 0, n: -2 }, nanKo, 23);
+check("37b. ... AND EXACT AT THE BUFFER AND AT A REGION'S EDGE: a leg 4.9 m off the river's water at her 5 m buffer, the whole "
+      + "leg's region at that buffer, is refused, 5.1 m off clear; a leg from inside a ring region (10 m) to outside it (23 m) "
+      + "past the river's water is refused where `blocked` refuses a point of it outside the region, and the same leg ended "
+      + "inside it is clear - and so where only the region's edge tells it, the water almost in line behind her; a released "
+      + "region's river water is clear in the river pass, and a leg out of one past the water just outside it refused, "
+      + "ended inside it clear; a point outside the ring though "
+      + "inside its box is held at the standoff, one inside the ring at the region's buffer; and a region with no finite "
+      + "buffer softens nothing, the next one still read",
+      () => !f1In && f1Out && !f2Across && f2Inside && f2Point && !f2Edge && f2EdgeIn && f2EdgePt && relClear
+            && !relEdge && relEdgeIn && relEdgePt && boxOut && !boxIn && nanAt === 5 && !nanPt,
+      () => "at the buffer: 4.9 m " + (f1In ? "clear" : "refused") + ", 5.1 m " + (f1Out ? "clear" : "refused") + "; across the edge "
+            + (f2Across ? "clear" : "refused") + " (its point outside blocked " + f2Point + "), inside " + (f2Inside ? "clear" : "refused")
+            + "; at the edge alone " + (f2Edge ? "clear" : "refused") + " (its point blocked " + f2EdgePt + "), inside " + (f2EdgeIn ? "clear" : "refused")
+            + "; released " + (relClear ? "clear" : "refused") + "; out of a release at its edge " + (relEdge ? "clear" : "refused")
+            + " (its point blocked " + relEdgePt + "), inside it " + (relEdgeIn ? "clear" : "refused") + "; outside the ring " + boxOut + ", inside it " + boxIn
+            + "; NaN region first: at " + nanAt + ", 7.5 m off the river's water blocked " + nanPt);
+// the raster of a softened region: never free where `blocked` refuses (cell centers and points within each cell), and the
+// region does free cells the standoff alone blocks - over the region's own end where it crosses the band and the channel
+// (250 m short of station 1,500, where it begins), and the patch of another chart's margin water in the channel (RVPATCH,
+// 33b: stations 1,700-1,800, at the standoff still); the grid runs from station 1,150 to 1,875
+const sPts = rvOff(0, 1500, 3500, 20), softR = [{ pts: sPts, r: 250, bb: K.bbOf(sPts), at: 5 }];
+const arS = P.armDeep(RVPATCH, 23.1, [], softR), arN = P.armDeep(RVPATCH, 23.1);
+const arA = P.armDeep(RVPATCH, 23.1, [], [{ all: true, at: 5 }]);   // (the whole leg's region, deepFirst's)
+const sW = 240, sH = 290, sc = 2.5, sx0 = -300, sy0 = 150;
+const gSN = new Uint8Array(sW * sH);
+rasterKeepouts(gSN, sW, sH, sx0, sy0, sc, arN, 23.1);
+const rasterSoft = (ar) => {
+  const g = new Uint8Array(sW * sH);
+  rasterKeepouts(g, sW, sH, sx0, sy0, sc, ar, 23.1);
+  let under = 0, freed = 0;
+  for (let gy = 0; gy < sH; gy++) for (let gx = 0; gx < sW; gx++) {
+    const i = gy * sW + gx;
+    if (gSN[i] && !g[i]) freed++;
+    if (g[i]) continue;
+    for (const [ox, oy] of [[0, 0], [0.49, 0.49], [-0.49, 0.49], [0.49, -0.49], [-0.49, -0.49]]) {
+      if (K.blocked({ e: sx0 + (gx + ox) * sc, n: sy0 + (gy + oy) * sc }, ar, 23.1)) { under++; break; }
+    }
+  }
+  return { under, freed };
+};
+const rsR = rasterSoft(arS), rsA = rasterSoft(arA);
+const sUnder = rsR.under, sFreed = rsR.freed;
+check("38. THE RASTER NEVER UNDER-READS A SOFTENED REGION (routing.js trusts a raster-clear leg): over 69,600 cells of 2.5 m "
+      + "across the channel and the band - the region's own edge and another chart's margin water in the channel among them "
+      + "- no cell is free with a point in it `blocked` refuses at 23.1 m, and the region frees cells in the channel the "
+      + "standoff alone holds; and the same of the whole leg's region (`all`), which frees more",
+      () => sUnder === 0 && sFreed > 1000 && rsA.under === 0 && rsA.freed > sFreed,
+      () => "under-read " + sUnder + ", freed by the region " + sFreed + "; the whole leg's: under-read " + rsA.under + ", freed " + rsA.freed);
+// LEAVING A BERTH IN THE BAND, NO DOG-LEG (the review of the river's channel first, fixed 2026-11-24): from the band 120 m to
+// starboard of the line to the band 120 m to port at the far end, and back - the rounding moved her first turn out of
+// the water released about her start, and the gate's patch from there dove back to the channel (102 degrees)
+const RVDOG = [[rvll(rvAt(400, 120)), rvll(rvAt(RVLEN - 400, -120))], [rvll(rvAt(400, -120)), rvll(rvAt(RVLEN - 400, 120))]];
+onRiver(RV2);
+const rvDog = RVDOG.map(([a, b]) => P.planNogoRoute(a, b, {}));
+const turnsOf = (route) => { const en = route.map((p) => RF.toEN(p)), t = [];
+  for (let i = 1; i < en.length - 1; i++) { const a1 = Math.atan2(en[i].e - en[i - 1].e, en[i].n - en[i - 1].n), a2 = Math.atan2(en[i + 1].e - en[i].e, en[i + 1].n - en[i].n);
+    t.push(Math.abs((((a2 - a1) * 180 / Math.PI + 540) % 360) - 180)); }
+  return t; };
+const dogMax = rvDog.map((pl, k) => (pl.route ? Math.max(0, ...turnsOf([RVDOG[k][0], ...pl.route])) : null));
+const dogJ = rvDog.map((pl, k) => (pl.route ? rvJudge([RVDOG[k][0], ...pl.route], 1) : null));
+check("39. LEAVING A BERTH IN THE BAND, NO DOG-LEG: from the 0-2.74 m water 120 m to starboard of the line to the same water "
+      + "120 m to port at the far end, and from port to starboard - no turn of her route over 90 degrees (the rounding moved "
+      + "her first turn out of the water released about her start and the gate's patch dove back to the channel: 102 "
+      + "degrees), she leaves and reaches the berth the short way (no more than 400 m outside the channel) and keeps right "
+      + "(at least 88% on her starboard side), the reach ridden",
+      () => dogMax.every((m) => m != null && m <= 90) && dogJ.every((j, k) => j && j.out <= 400 && j.stbd >= 0.88 * j.len && rvDog[k].how.reach === true),
+      () => rvDog.map((pl, k) => (pl.route ? "sharpest " + dogMax[k].toFixed(0) + " deg, outside " + f0(dogJ[k].out) + ", starboard " + f0(dogJ[k].stbd) + " of "
+            + f0(dogJ[k].len) + ", reach " + pl.how.reach : "refused: " + pl.error)).join("; "));
+// ... AND IN A SET (the review: 39 was calm water only, and the re-gate at the standoff could dog-leg her too)
+const rvDogSet = [18, 20, 23.1].map((st) => { onRiver(RV2);
+  return { st, pls: RVDOG.map(([a, b]) => P.planNogoRoute(a, b, { standoffM: st })) }; });
+const dogSet = rvDogSet.map((r) => ({ st: r.st, legs: r.pls.map((pl, k) => (pl.route ? { max: Math.max(0, ...turnsOf([RVDOG[k][0], ...pl.route])),
+  j: rvJudge([RVDOG[k][0], ...pl.route], 1), reach: pl.how.reach, ins: !!pl.insideStandoff } : { error: pl.error })) }));
+check("39b. ... AND IN A SET: the same two Go-Tos at the transit standoffs of 1.5, 1.7 and 2 kn (18, 20 and 23.1 m) - no turn "
+      + "over 90 degrees, the berth left and reached the short way (no more than 400 m outside the channel), at least 88% on "
+      + "her starboard side",
+      () => dogSet.every((r) => r.legs.every((l) => l.j && l.max <= 90 && l.j.out <= 400 && l.j.stbd >= 0.88 * l.j.len)),
+      () => dogSet.map((r) => r.st + " m: " + r.legs.map((l) => (l.j ? "sharpest " + l.max.toFixed(0) + " deg, outside " + f0(l.j.out) + ", starboard "
+            + f0(l.j.stbd) + " of " + f0(l.j.len) + ", reach " + l.reach + (l.ins ? ", inside the standoff" : "") : "refused: " + l.error)).join("; ")).join(" | "));
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
 process.exit(fails ? 1 : 0);
