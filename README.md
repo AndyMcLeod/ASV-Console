@@ -1621,6 +1621,17 @@ the same answer (`tests/keepout_index.js` holds the grid against the plain walk,
 charts among others). The 61 km Go-To from New Castle to Gloucester now plans in 5.5 s with deep
 water first, where it took 23.2 s; each the mean of three runs alternating with the code before it, and the route is identical.
 
+**A river's long charted areas no longer slow the plan (2026-11-24).** The Corps' river charts
+draw each river area as one feature of up to 25,000 vertices, and every keep-out distance test
+walked kilometers of its bank, every crossing test all of it. Each big area now also has a grid
+of its edges, in cells the length of its edges and no smaller than 32 m, and its inside test reads
+bands no more than 32 m tall, so a test reads only the edges near the point or along the leg, and
+gets the same answer. `tests/keepout_index.js` holds it against the plain walk on a 24,000-vertex
+river, through a cell's very corner and from a point thousands of kilometers off, and on what two
+adversarial reviews of the change found before it was merged: corrupt vertices, a buffer of
+exactly a cell, a ring of long edges. The first also found the crossing test counting an edge on
+the leg's own line, past its end, as a crossing, from rounding; it no longer does. Four legs of a Pine Bluff river Go-To at a 12.8 m standoff now plan in 47 s together, where they took 180 s, each the mean of four runs alternating with the code before it, and every route is identical; NOAA's harbor charts, whose areas are small, plan as they did.
+
 **Two waters are not a reversal (2026-09-25).** When the chart splits a line into runs on both
 sides of a land mass, Punch Out's order finishes one side and crosses to the other, and the join
 between the last run on one side and the first on the other used to be judged a *reversal* by
@@ -3729,14 +3740,16 @@ plain. `tests/path_card.js` 15.
    build before ran 4.0 to 6.5 km of each in it at every standoff; 92 to 100 % of each on her
    starboard side of the sailing line (28 to 72 % before, calm); and all 40 buoy passes on their
    hands and on the channel side, she in the channel at every one (32 of 40 before). From 23 m (2 kn
-   of set) the quarter's cell (5.8 m) does not join what the standoff leaves of the channel (on a
-   stretch of one leg a 3.85 m cell did; at 28.2 m, 2.5 kn, none tried), and the legs are planned
+   of set) the quarter's cell (5.8 m) does not join what the standoff leaves of the channel (a
+   3.85 m cell joined it on a probed stretch of one leg, but the four legs planned whole at 3.85 m
+   released 13 stretches, as at 5.8 m; at 28.2 m, 2.5 kn, none tried), and the legs are planned
    partly as before (5.2 to 6.6 km of each in the channel at 23.1 m). The cost is time:
    calm, a leg planned in 36 to 65 s where the build before took 29 to 42 s, the two run one after
    the other on an idle machine (at 12.8 m the quarter's grid planned the same routes in 30 to 44 s,
    the half's in 33 to 46 s); profiled before the review's fixes, three quarters of the slowest
-   leg's time was in the keep-out distance and crossing tests, and the Corps' river areas are whole
-   features, up to 25,240 vertices and 131 km round, the likely cause (not measured). Maneuvers
+   leg's time was in the keep-out distance and crossing tests, walking the Corps' river areas,
+   whole features of up to 25,240 vertices and 131 km round (since 24 November a grid of their
+   edges answers those tests, and the four legs at 12.8 m plan in 8.5 to 20 s each, where they took 30 to 76 s). Maneuvers
    (round traffic, back onto a line) are laid as before. `rasterKeepouts` now clears a release
    segment by segment, the same cells: clearing each release's whole box was 112 s of a 353 s plan
    of one of those legs, profiled. `tests/deep_first.js` (30-35), `tests/survey_wait.js` (25b),

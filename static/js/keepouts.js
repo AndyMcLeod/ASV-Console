@@ -1587,9 +1587,10 @@ export function deepReleased(p, release) {
 //
 // A ring (or polyline) of RING_INDEX_MIN_VERTS or more vertices gets, on first use, an index of
 // its edges by horizontal BAND of northing. Point-in-polygon needs only the edges that straddle
-// the point's northing - all of them live in the point's own band - and the nearest-edge search
-// walks bands outward from the point and stops when a band cannot hold anything nearer than the
-// best edge found. Smaller features walk their edges exactly as before, so nothing changes for a
+// the point's northing - all of them live in the point's own band, whatever its height. (The
+// nearest-edge search walked bands outward from the point; since 2026-11-24 it reads the grid of
+// edges below, and a band is at most RING_BAND_MAX_M tall: 128 bands of a river area 53 km from
+// north to south were 417 m each, up to 2,423 edges in one.) Smaller features walk their edges exactly as before, so nothing changes for a
 // pier, a wreck or a test fixture; for the big rings the answers are IDENTICAL (the same crossing
 // test on the same edges, the same dSeg on every edge that could be within the cap) and
 // tests/keepout_index.js holds the two side by side over thousands of points. The index lives in
@@ -1597,18 +1598,45 @@ export function deepReleased(p, release) {
 // nothing here writes on a feature object.
 export const RING_INDEX_MIN_VERTS = 256;
 export const RING_INDEX_BANDS = 128;
+export const RING_BAND_MAX_M = 32;
+// (and tall enough that its edges cross no more than RING_BAND_ROWS_PER_EDGE bands each on the mean, so the bands and
+//  what is filed in them are bounded by the ring's edges, as its grid is - its cell no smaller than its mean edge. A
+//  ring's edges rise at least its span, so there are no more than RING_BAND_ROWS_PER_EDGE bands an edge, and one more:
+//  one vertex 1e8 m off was 3.1 million bands of 32 m, and a run of vertices 1e7 m off, each edge of them filed in
+//  thousands, was 281 MB - the reviews of 2026-11-24)
+export const RING_BAND_ROWS_PER_EDGE = 8;
 const RING_INDEX = new WeakMap();
+/** Can a ring be indexed - are all its vertices numbers, and the length of its edges, added up, one too? A ring with a
+ *  vertex that is not (Infinity, NaN: a corrupt read), or with edges too long to add up (two vertices 1.8e308 m apart),
+ *  gets no index and no grid and walks its edges as a small ring does, so neither can be built wrong over it (the
+ *  reviews of 2026-11-24: a vertex at Infinity hung the grid's filing and made the bands' count infinite; two at
+ *  +-9e307 made the cell infinite, and a search through it found nothing - blocked false beside the ring, failing
+ *  open). A ring's spans are no longer than its edges, so they are numbers too. No test answers on an edge to a vertex
+ *  that is not a number: dSeg is NaN on it and segX null. */
+function indexable(pts, closed) {
+  for (const q of pts) if (!Number.isFinite(q.e) || !Number.isFinite(q.n)) return false;
+  const n = pts.length, m = closed ? n : n - 1;
+  let len = 0;
+  for (let k = 0; k < m; k++) {
+    const a = closed ? pts[(k + n - 1) % n] : pts[k], b = closed ? pts[k] : pts[k + 1];
+    len += Math.hypot(b.e - a.e, b.n - a.n);
+  }
+  return Number.isFinite(len);
+}
 function bandIndex(pts, closed) {
   const n = pts.length;
   let y0 = Infinity, y1 = -Infinity;
   for (const q of pts) { if (q.n < y0) y0 = q.n; if (q.n > y1) y1 = q.n; }
-  const h = Math.max(1, (y1 - y0) / RING_INDEX_BANDS);
-  const R = Math.max(1, Math.floor((y1 - y0) / h) + 1);
-  const rows = [];
-  for (let r = 0; r < R; r++) rows.push([]);
+  const span = y1 - y0;
   // edge k is (pts[k-1], pts[k]) around a closed ring - the same k pinp's `j = i++` walk visits -
   // and (pts[k], pts[k+1]) along an open line
   const m = closed ? n : n - 1;
+  let rise = 0;
+  for (let k = 0; k < m; k++) rise += Math.abs((closed ? pts[k] : pts[k + 1]).n - (closed ? pts[(k + n - 1) % n] : pts[k]).n);
+  const h = Math.max(1, Math.min(span / RING_INDEX_BANDS, RING_BAND_MAX_M), rise / (RING_BAND_ROWS_PER_EDGE * Math.max(1, m)));
+  const R = Math.max(1, Math.floor(span / h) + 1);
+  const rows = [];
+  for (let r = 0; r < R; r++) rows.push([]);
   for (let k = 0; k < m; k++) {
     const a = closed ? pts[(k + n - 1) % n] : pts[k], bq = closed ? pts[k] : pts[k + 1];
     let r0 = Math.floor((Math.min(a.n, bq.n) - y0) / h), r1 = Math.floor((Math.max(a.n, bq.n) - y0) / h);
@@ -1621,11 +1649,11 @@ function bandIndex(pts, closed) {
 function indexFor(pts, closed) {
   if (!pts || pts.length < RING_INDEX_MIN_VERTS) return null;
   let idx = RING_INDEX.get(pts);
-  if (!idx) { idx = bandIndex(pts, closed); RING_INDEX.set(pts, idx); }
+  if (idx === undefined) { idx = indexable(pts, closed) ? bandIndex(pts, closed) : null; RING_INDEX.set(pts, idx); }
   return idx;
 }
 /** Has this ring / polyline been indexed? (tests: the big ones are, the small ones never are) */
-export function ringIndexed(pts) { return RING_INDEX.has(pts); }
+export function ringIndexed(pts) { return !!RING_INDEX.get(pts); }
 /** pinp, through the index where there is one: the crossing test over the edges in the point's band. */
 function ringInside(p, ring) {
   const idx = indexFor(ring, true);
@@ -1640,27 +1668,95 @@ function ringInside(p, ring) {
   }
   return inside;
 }
-/**
- * The distance from `p` to the nearest edge of a ring (closed) or polyline (open), or `cap` when
- * no edge is nearer. Through the index where there is one: bands outward from the point's, each
- * edge first rejected by its own bounding box, stopping when the next band's nearest possible
- * edge is no nearer than the best so far.
- */
-function ringDist(p, pts, closed, cap) {
-  let best = cap;
-  const n = pts.length;
-  const idx = indexFor(pts, closed);
-  if (!idx) {
-    if (closed) { for (let i = 0, j = n - 1; i < n; j = i++) { const d = dSeg(p, pts[j], pts[i]); if (d < best) best = d; } }
-    else { for (let i = 1; i < n; i++) { const d = dSeg(p, pts[i - 1], pts[i]); if (d < best) best = d; } }
-    return best;
+// A GRID OF A BIG RING'S EDGES IN BOTH AXES (2026-11-24, Andy: "continue through the night using your best
+// recommendations" - the river Go-To's planning time). The band index above serves the crossing test, but the
+// nearest-edge search walked every edge in the bands about the point, and a band ran the ring's whole width: a Corps
+// river area is ONE feature, up to 25,240 vertices and 131 km round, so a band held kilometers of bank. Profiled on a
+// Pine Bluff leg (12.8 m standoff, 123 s out and back): ringDist 56% of it, and legCrossesEN's walk of every edge of
+// every ring its box touched 17%. A ring's cells are square, the mean length of its edges and no smaller than
+// RING_CELL_M, so an edge crosses few of them (a 600 km coast in 940 m edges was 93 MB in 32 m cells: the review of
+// 2026-11-24). Each edge is filed in every cell it can reach - the cells of its bounding box, or, for a longer one, the
+// cells about points along it no more than a cell apart - so the cell of any point ON the edge holds it; an edge across
+// more than RING_LONG_CELLS cells is on the grid's long list instead, read by every search. The nearest-edge search
+// walks square rings of cells outward from the point's and stops as the band walk did (a ring d cells out holds no
+// point nearer than d - 1 cells, less a hair for rounding: RING_TIE); one reaching further than RING_GRID_REACH_CELLS
+// walks the bands as before (a clearance capped at 500 m read hundreds of empty cells). A leg's crossings are counted
+// over the edges in the cells about points along it. The same dSeg and the same crossing test on every edge that could
+// answer, each edge once: the same answers (tests/keepout_index.js 15-22, against the plain walk).
+export const RING_CELL_M = 32;
+export const RING_LONG_CELLS = 64;
+export const RING_GRID_REACH_CELLS = 4;
+// (the crossing test reads the grid where the cells along a leg cost less than the ring's edges walked: measured on
+// rings of 300 to 24,000 vertices and legs of 50 m to 15 km, a point along the leg cost what about RING_LEG_COST edges
+// walked did, and a search four points more)
+export const RING_LEG_COST = 175;
+const RING_FAR_CELLS = 1e6;   // (a point further off than this, in cells, walks the edges: ringDist)
+const RING_TIE = 1e-6;        // (in cells: the stop rules' margin over rounding in a cell's or a band's index)
+const RING_GRID = new WeakMap();
+/** The keys of the cells about points along a->b no more than a cell apart (each point's cell and the eight round it),
+ *  into `out` (a Set): every point of the segment is within half a cell of one of the points, so in its cell or the
+ *  next. */
+function cellsAlong(G, a, b, out) {
+  const g = G.g, L = Math.hypot(b.e - a.e, b.n - a.n), N = Math.max(1, Math.ceil(L / g));
+  for (let s = 0; s <= N; s++) {
+    const t = s / N, ci = Math.floor((a.e + (b.e - a.e) * t - G.x0) / g), cj = Math.floor((a.n + (b.n - a.n) * t - G.y0) / g);
+    for (let i = ci - 1; i <= ci + 1; i++) {
+      if (i < 0 || i >= G.W) continue;
+      for (let j = cj - 1; j <= cj + 1; j++) if (j >= 0 && j < G.H) out.add(i * G.H + j);
+    }
   }
-  const R = idx.rows.length, rc = Math.floor((p.n - idx.y0) / idx.h);
+}
+function cellGrid(pts, closed) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const q of pts) { if (q.e < x0) x0 = q.e; if (q.e > x1) x1 = q.e; if (q.n < y0) y0 = q.n; if (q.n > y1) y1 = q.n; }
+  const n = pts.length, m = closed ? n : n - 1;
+  // edge k: (pts[k-1], pts[k]) round a closed ring, (pts[k], pts[k+1]) along a line - as the band index files it
+  const A = (k) => (closed ? pts[(k + n - 1) % n] : pts[k]), B = (k) => (closed ? pts[k] : pts[k + 1]);
+  let len = 0;
+  for (let k = 0; k < m; k++) len += Math.hypot(B(k).e - A(k).e, B(k).n - A(k).n);
+  const g = Math.max(RING_CELL_M, m > 0 ? len / m : 0);
+  const G = { x0, y0, g, W: Math.floor((x1 - x0) / g) + 1, H: Math.floor((y1 - y0) / g) + 1, cells: new Map(), long: [],
+              seen: new Uint32Array(Math.max(1, m)), tick: 0 };
+  const file = (key, k) => { let c = G.cells.get(key); if (!c) G.cells.set(key, c = []); c.push(k); };
+  for (let k = 0; k < m; k++) {
+    const a = A(k), b = B(k);
+    const i0 = Math.floor((Math.min(a.e, b.e) - x0) / g), i1 = Math.floor((Math.max(a.e, b.e) - x0) / g);
+    const j0 = Math.floor((Math.min(a.n, b.n) - y0) / g), j1 = Math.floor((Math.max(a.n, b.n) - y0) / g);
+    if (i1 - i0 > RING_LONG_CELLS || j1 - j0 > RING_LONG_CELLS) { G.long.push(k); continue; }
+    if ((i1 - i0 + 1) * (j1 - j0 + 1) <= 16) { for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) file(i * G.H + j, k); }
+    else { const ks = new Set(); cellsAlong(G, a, b, ks); for (const key of ks) file(key, k); }   // (a longer diagonal edge)
+  }
+  return G;
+}
+function gridFor(pts, closed) {
+  if (!pts || pts.length < RING_INDEX_MIN_VERTS) return null;
+  let G = RING_GRID.get(pts);
+  if (G === undefined) { G = indexable(pts, closed) ? cellGrid(pts, closed) : null; RING_GRID.set(pts, G); }
+  return G;
+}
+/** Has this ring / polyline a grid of its edges? (tests: the big ones do, once asked; the small ones never) */
+export function ringGridded(pts) { return !!RING_GRID.get(pts); }
+/** How big is a ring's grid - its cell, its cells, the edges filed in them, its long list? (tests: bounded by its edges) */
+export function ringGridSize(pts) {
+  const G = RING_GRID.get(pts);
+  if (!G) return null;
+  let filed = 0;
+  for (const c of G.cells.values()) filed += c.length;
+  return { g: G.g, cells: G.cells.size, filed, long: G.long.length };
+}
+/** A fresh mark for "this edge already seen" in one search (a Uint32Array stamp; it wraps after four billion). */
+function nextTick(G) { G.tick = (G.tick + 1) >>> 0; if (G.tick === 0) { G.seen.fill(0); G.tick = 1; } return G.tick; }
+/** The nearest-edge search through the bands (the index's own, before the grid): bands outward from the point's, each
+ *  edge first rejected by its own bounding box, stopping when the next band's nearest possible edge is no nearer than
+ *  the best so far (less RING_TIE of a band for rounding). */
+function bandDist(p, pts, closed, idx, cap) {
+  let best = cap;
+  const n = pts.length, R = idx.rows.length, rc = Math.floor((p.n - idx.y0) / idx.h);
   for (let d = 0; ; d++) {
     const lo = rc - d, hi = rc + d;
     if (lo < 0 && hi >= R) break;
     // a band d away cannot hold an edge nearer than (d - 1) band heights
-    if (d > 0 && (d - 1) * idx.h >= best) break;
+    if (d > 0 && (d - 1) * idx.h >= best + RING_TIE * idx.h) break;
     for (let s = 0; s < (d === 0 ? 1 : 2); s++) {
       const r = s === 0 ? lo : hi;
       if (r < 0 || r >= R) continue;
@@ -1674,6 +1770,59 @@ function ringDist(p, pts, closed, cap) {
         if (dd < best) best = dd;
       }
     }
+  }
+  return best;
+}
+/**
+ * The distance from `p` to the nearest edge of a ring (closed) or polyline (open), or `cap` when
+ * no edge is nearer. Through the grid where there is one and the reach is a few cells: the long
+ * list, then square rings of cells outward from the point's, each edge once and first rejected by
+ * its own bounding box, stopping when the next ring's nearest possible point is no nearer than the
+ * best so far; through the bands for a longer reach.
+ */
+function ringDist(p, pts, closed, cap) {
+  let best = cap;
+  const n = pts.length;
+  const G = gridFor(pts, closed);
+  const ci = G ? Math.floor((p.e - G.x0) / G.g) : NaN, cj = G ? Math.floor((p.n - G.y0) / G.g) : NaN;
+  // (a point that is not a number walks the edges as a small ring does - `blocked` refuses one before it gets here - and
+  //  so does one past a million cells, a corrupt position: there a ring of cells more is lost in the rounding)
+  if (!G || !Number.isFinite(ci) || !Number.isFinite(cj) || Math.abs(ci) > RING_FAR_CELLS || Math.abs(cj) > RING_FAR_CELLS) {
+    if (closed) { for (let i = 0, j = n - 1; i < n; j = i++) { const d = dSeg(p, pts[j], pts[i]); if (d < best) best = d; } }
+    else { for (let i = 1; i < n; i++) { const d = dSeg(p, pts[i - 1], pts[i]); if (d < best) best = d; } }
+    return best;
+  }
+  // (a reach of more than a few cells - a clearance capped at 500 m, an uncapped one - through the bands, as before)
+  if (!(cap <= RING_GRID_REACH_CELLS * G.g)) return bandDist(p, pts, closed, indexFor(pts, closed), cap);
+  const tick = nextTick(G), seen = G.seen, H = G.H, W = G.W;
+  const look = (k) => {
+    if (seen[k] === tick) return;
+    seen[k] = tick;
+    const a = closed ? pts[(k + n - 1) % n] : pts[k], bq = closed ? pts[k] : pts[k + 1];
+    if (a.e > p.e + best && bq.e > p.e + best) return;
+    if (a.e < p.e - best && bq.e < p.e - best) return;
+    if (a.n > p.n + best && bq.n > p.n + best) return;
+    if (a.n < p.n - best && bq.n < p.n - best) return;
+    const dd = dSeg(p, a, bq);
+    if (dd < best) best = dd;
+  };
+  const cell = (i, j) => { const c = G.cells.get(i * H + j); if (c) for (const k of c) look(k); };
+  for (const k of G.long) look(k);
+  for (let d = 0; ; d++) {
+    if (d > 0) {
+      // every cell already walked: the window d - 1 cells out covered the grid
+      if (ci - d + 1 <= 0 && cj - d + 1 <= 0 && ci + d - 1 >= W - 1 && cj + d - 1 >= H - 1) break;
+      // a ring d cells out holds no point nearer than d - 1 cells (less a hair: the point's cell and an edge's are
+      // rounded apart, and an edge two cells off was 32 m less 3e-13 away)
+      if ((d - 1) * G.g >= best + RING_TIE * G.g) break;
+    }
+    if (d === 0) { if (ci >= 0 && ci < W && cj >= 0 && cj < H) cell(ci, cj); continue; }
+    const i0 = Math.max(0, ci - d), i1 = Math.min(W - 1, ci + d);
+    if (cj + d < H && cj + d >= 0) for (let i = i0; i <= i1; i++) cell(i, cj + d);         // the top row
+    if (cj - d >= 0 && cj - d < H) for (let i = i0; i <= i1; i++) cell(i, cj - d);         // the bottom row
+    const j0 = Math.max(0, cj - d + 1), j1 = Math.min(H - 1, cj + d - 1);
+    if (ci - d >= 0 && ci - d < W) for (let j = j0; j <= j1; j++) cell(ci - d, j);         // the left column
+    if (ci + d < W && ci + d >= 0) for (let j = j0; j <= j1; j++) cell(ci + d, j);         // the right column
   }
   return best;
 }
@@ -1876,7 +2025,9 @@ const EDGE_T_EPS = 1e-6;
  *  counted by the next edge), or null - a parallel edge included. */
 function segX(A, B, P, Q) {
   const d1x = B.e - A.e, d1y = B.n - A.n, d2x = Q.e - P.e, d2y = Q.n - P.n, den = d1x * d2y - d1y * d2x;
-  if (Math.abs(den) < 1e-12) return null;
+  // (parallel, or so near it that `den` is rounding: relative to the products it is made of - an edge on the leg's own
+  //  line 209 m past its end was counted a crossing by the absolute test alone, the review of 2026-11-24)
+  if (Math.abs(den) < 1e-12 || Math.abs(den) <= 1e-12 * (Math.abs(d1x * d2y) + Math.abs(d1y * d2x))) return null;
   const t = ((P.e - A.e) * d2y - (P.n - A.n) * d2x) / den, u = ((P.e - A.e) * d1y - (P.n - A.n) * d1x) / den;
   return (t > EDGE_T_EPS && t < 1 - EDGE_T_EPS && u >= 0 && u < 1) ? t : null;
 }
@@ -1889,9 +2040,20 @@ export function legCrossesEN(A, B, ko) {
   const box = { x0: Math.min(A.e, B.e), x1: Math.max(A.e, B.e), y0: Math.min(A.n, B.n), y1: Math.max(A.n, B.n) };
   for (const poly of nearIn(ko.polys, mid, half)) {
     if (!bbTouch(box, poly.bb)) continue;
-    const ring = poly.ring, n = ring.length;
+    const ring = poly.ring, n = ring.length, G = gridFor(ring, true);
     let cuts = 0;
-    for (let i = 0, j = n - 1; i < n; j = i++) if (segX(A, B, ring[j], ring[i]) != null) cuts++;
+    // (through the grid only where the cells along the leg cost less than the ring's edges walked: a long leg past a
+    //  ring of a few hundred vertices walks the edges, as it always did - RING_LEG_COST, above)
+    if (G && (Math.ceil(L / G.g) + 5) * RING_LEG_COST < n) {
+      // (a big ring through its grid: its long list, and the edges in the cells about points along the leg - the cell
+      //  of any point where the leg meets an edge is among them - each edge once, the same test: RING_CELL_M, above)
+      const tick = nextTick(G), seen = G.seen;
+      const cut = (k) => { if (seen[k] !== tick) { seen[k] = tick; if (segX(A, B, ring[(k + n - 1) % n], ring[k]) != null) cuts++; } };
+      for (const k of G.long) cut(k);
+      const keys = new Set();
+      cellsAlong(G, A, B, keys);
+      for (const key of keys) { const c = G.cells.get(key); if (c) for (const k of c) cut(k); }
+    } else for (let i = 0, j = n - 1; i < n; j = i++) if (segX(A, B, ring[j], ring[i]) != null) cuts++;
     if (!cuts) continue;
     const allowed = (ringInside(A, ring) ? 1 : 0) + (ringInside(B, ring) ? 1 : 0);   // the way out of the water it lies in
     if (cuts > allowed) return true;

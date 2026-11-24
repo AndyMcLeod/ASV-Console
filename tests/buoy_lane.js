@@ -150,7 +150,9 @@ function grabDecl(name) {
 // THE RING INDEX (2026-09-26): blocked / clearanceM / blockedInfo answer through ringInside and
 // ringDist now, so a world that lifts their bodies has to lift those and the index they share.
 // THE GRID OVER EVERY FEATURE LIST (2026-10-13): and each feature list through its grid (nearIn), filed by fileList / gridOf.
+// THE GRID OF A BIG RING'S EDGES (2026-11-24): ringDist and legCrossesEN read it (cellGrid / gridFor / cellsAlong).
 const HELPERS = ["bandIndex", "indexFor", "ringIndexed", "ringInside", "ringDist", "fileList", "gridOf", "nearIn",
+                 "indexable", "cellsAlong", "cellGrid", "gridFor", "ringGridded", "nextTick", "bandDist",
                  "blocked", "clearanceM", "stampSeg", "dilateGrid", "rasterKeepouts", "routeAround", "snapClearLL",
                  "routeAroundSeg", "pruneStitch", "legClear", "legPath",
                  // A LEG ACROSS A CHARTED EDGE (the 2026-10-16 review, finding 1): asked at the snap, the ends and the gate
@@ -208,7 +210,11 @@ eval("const M_PER_DEG_LAT=" + M_PER_DEG_LAT + ";\n" +
        + grabDecl("LANE_CAPTURE_STANDOFF_M") + "\n"
        // the ring index's threshold, band count and WeakMap (2026-09-26) - read from the module
        + grabDecl("RING_INDEX_MIN_VERTS") + "\n" + grabDecl("RING_INDEX_BANDS") + "\n"
-       + grabDecl("RING_INDEX") + "\n"
+       + grabDecl("RING_INDEX") + "\n" + grabDecl("RING_BAND_MAX_M") + "\n" + grabDecl("RING_BAND_ROWS_PER_EDGE") + "\n"
+       // and the grid of a big ring's edges (2026-11-24): its cell, its long list, its reach, its leg cost, its far-point
+       // bound, its rounding margin, its WeakMap
+       + ["RING_CELL_M", "RING_LONG_CELLS", "RING_GRID_REACH_CELLS", "RING_LEG_COST", "RING_FAR_CELLS", "RING_TIE",
+          "RING_GRID"].map(grabDecl).join("\n") + "\n"
        // the grid over every feature list (2026-10-13): its cell, pad and filing policy, its WeakMap - read from the module
        + ["GRID_CELL_M", "GRID_PAD_M", "GRID_MIN", "GRID_AFTER", "GRID_WIDE_CELLS", "GRID", "NO_FEATURES", "gridCell"].map(grabDecl).join("\n") + "\n" +
      // `laneUsed` became `sea.laneUsed` when Rule 9 moved to passage.js, so the eval'd
