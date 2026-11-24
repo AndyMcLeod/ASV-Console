@@ -229,7 +229,7 @@ const MAX_DIM = 1400;
  *   the shape `punchOut`'s `routeAround` option wants — or null when no clear
  *   route exists in a bounded region, in which case the transit stays flagged.
  */
-export function routeAround(A, B, frame, ko, buffer, marginOv, maxDimOv) {
+export function routeAround(A, B, frame, ko, buffer, marginOv, maxDimOv, cellDivOv) {
   const ae = frame.toEN(A), be = frame.toEN(B);
   let x0 = Math.min(ae.e, be.e), x1 = Math.max(ae.e, be.e);
   let y0 = Math.min(ae.n, be.n), y1 = Math.max(ae.n, be.n);
@@ -243,8 +243,11 @@ export function routeAround(A, B, frame, ko, buffer, marginOv, maxDimOv) {
   const margin = marginOv || Math.max(40, buffer * 4, Math.min(dist, 900));
   x0 -= margin; x1 += margin; y0 -= margin; y1 += margin;
 
+  // `cellDivOv` (deep water first's search, passage.js DEEP_CELL_DIV): the cell a smaller share of the buffer than half -
+  // at half, an 18 m standoff gridded the 40 m it leaves of a 76 m river channel at 9 m, and where the channel ran
+  // diagonal to the grid its free cells did not join (no step cuts a blocked corner, below).
   const maxDim = maxDimOv || MAX_DIM;
-  const cell = Math.max(3, buffer / 2, (x1 - x0) / maxDim, (y1 - y0) / maxDim);
+  const cell = Math.max(3, buffer / (cellDivOv || 2), (x1 - x0) / maxDim, (y1 - y0) / maxDim);
   const W = Math.floor((x1 - x0) / cell) + 1, H = Math.floor((y1 - y0) / cell) + 1;
   if (W < 2 || H < 2) return null;
 
@@ -634,8 +637,9 @@ export function legPath(A, B, frame, ko, buf, opts = {}) {
   // `opts.quick` (the marks stage's legs out to a pass point and back): one wider region and
   // no escape. A leg that needs more is not one worth having, and a search bounded by its
   // regions, not by a clock, gives the same answer on a busy machine as on an idle one.
+  // `opts.cellDiv` passes routeAround its cell's share of the buffer (deep water first's search).
   if (opts.quick) {
-    const q = routeAround(A, B, frame, ko, buf, 2700, 2000);
+    const q = routeAround(A, B, frame, ko, buf, 2700, 2000, opts.cellDiv);
     return q ? ends(compose([A, ...q, B])) : null;
   }
   let c = wide(A, B);                                        // (1) wider regions

@@ -3711,24 +3711,28 @@ plain. `tests/path_card.js` 15.
    edge, nor at a floor of 0.74 m or less (the channel then no margin water) the bank, and a buoy
    that stands inside the charted channel outranks its edges - read as the first river margin area a
    ray met, with no depth area charted to starboard of the channel she was laned 76 m outside a line
-   of starboard-hand buoys 1,520 m apart (the review before the merge). Replayed at Pine Bluff on
-   the console's own extract, at a 2.0 m floor and the standoffs the console plans a Go-To at: at 5
-   m (no set), 12.8 m (1 kn of set) and 16 m (1.3 kn) every meter of the four legs in the channel,
-   where the build before ran 4.0 to 6.5 km of each in it at every standoff; 92 to 100 % of each on
-   her starboard side of the sailing line (28 to 72 % before, calm); and all 40 buoy passes on their
-   hands and on the channel side, she in the channel at every one (32 of 40 before). From 18 m (1.5
-   kn of set) deep water first's search finds no way along the 40 m her standoff leaves of the
-   channel's 76 m - its grid's cell is half her standoff, and the free cells do not join where the
-   channel runs diagonal to the grid - and the legs are planned as before (4.0 to 7.1 km of each in
-   the channel at 18 and 20 m); a finer grid for that search, or the river's margin water kept at
-   the buffer in it, is offered, not made. The cost is time: calm, a leg planned in 36 to 65 s where
-   the build before took 29 to 42 s, the two run one after the other on an idle machine; profiled
-   before the review's fixes, three quarters of the slowest leg's time was in the keep-out distance
-   and crossing tests, and the Corps' river areas are whole features, up to 25,240 vertices and 131
-   km round, the likely cause (not measured). Maneuvers (round traffic, back onto a line) are laid
-   as before. `rasterKeepouts` now clears a release segment by segment, the same cells: clearing
-   each release's whole box was 112 s of a 353 s plan of one of those legs, profiled.
-   `tests/deep_first.js` (30-34), `tests/survey_wait.js` (25b), `tests/raster_exact.js` (3b).
+   of starboard-hand buoys 1,520 m apart (the review before the merge). In a set the standoff grows
+   and the channel does not: deep water first's search grids at a quarter of her clearance
+   (`DEEP_CELL_DIV`), not the half every other search takes - at half, from an 18 m standoff (1.5 kn
+   of set) the 40 m it leaves of the channel's 76 m did not join where the channel ran diagonal to
+   the grid, and the legs ran as before. Replayed at Pine Bluff on the console's own extract, at a
+   2.0 m floor and the standoffs the console plans a Go-To at: at 5 m (no set), 12.8 m (1 kn of
+   set), 16 m (1.3 kn), 18 m (1.5 kn) and 20 m (1.7 kn) every meter of the four legs in the channel, where the
+   build before ran 4.0 to 6.5 km of each in it at every standoff; 92 to 100 % of each on her
+   starboard side of the sailing line (28 to 72 % before, calm); and all 40 buoy passes on their
+   hands and on the channel side, she in the channel at every one (32 of 40 before). From 23 m (2 kn
+   of set) the quarter's cell (5.8 m) does not join what the standoff leaves of the channel (on a
+   stretch of one leg a 3.85 m cell did; at 28.2 m, 2.5 kn, none tried), and the legs are planned
+   partly as before (5.2 to 6.6 km of each in the channel at 23.1 m). The cost is time:
+   calm, a leg planned in 36 to 65 s where the build before took 29 to 42 s, the two run one after
+   the other on an idle machine (at 12.8 m the quarter's grid planned the same routes in 30 to 44 s,
+   the half's in 33 to 46 s); profiled before the review's fixes, three quarters of the slowest
+   leg's time was in the keep-out distance and crossing tests, and the Corps' river areas are whole
+   features, up to 25,240 vertices and 131 km round, the likely cause (not measured). Maneuvers
+   (round traffic, back onto a line) are laid as before. `rasterKeepouts` now clears a release
+   segment by segment, the same cells: clearing each release's whole box was 112 s of a 353 s plan
+   of one of those legs, profiled. `tests/deep_first.js` (30-35), `tests/survey_wait.js` (25b),
+   `tests/raster_exact.js` (3b).
 
    **The Passage tab, and a long Go-To as a passage (2026-10-14).** Andy: "consider another path
    planning behavior called 'passage' that disregards the 9-23 directive and allows for long path

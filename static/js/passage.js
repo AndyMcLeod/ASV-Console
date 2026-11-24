@@ -620,6 +620,14 @@ export const DEEP_DETOUR_MIN_M = 1000;
 export const DEEP_RELEASE_M = 150;
 /** What every deeper way round one leg's stretches may take, in all; a stretch not searched by then is released. */
 export const DEEP_BUDGET_MS = 6000;
+/** The deeper way's search grids at a cell this share of her clearance (routing.js routeAround, `cellDivOv`), not the
+ *  half every other search takes. ⚠ IN A SET THE STANDOFF GROWS, AND A RIVER'S CHANNEL DOES NOT (2026-11-23, Andy: "Do
+ *  (a)"): at an 18 m transit standoff (1.5 kn of set) the 76 m channel at Pine Bluff leaves 40 m, a 9 m cell made one to
+ *  three free cells of it, and where it ran diagonal to the grid they did not join - no deeper way, every stretch
+ *  released, and the legs ran as before the channel was the river's deep water, up to 112 m outside it. At a quarter,
+ *  18 and 20 m (1.7 kn) keep her in it; from 23 m (2 kn) no cell tried did. Under about 8 m of clearance (calm water)
+ *  the region's own size sets the cell, as before. */
+export const DEEP_CELL_DIV = 4;
 /** She starts or holds in margin water: the nearest deeper water is looked for this far out. */
 export const DEEP_REACH_M = 3000;
 /** A mark within this of a stretch holds it to the floor's route where the deeper way left the mark wrong (deepLanePass). */
@@ -826,7 +834,7 @@ export function deepFirst(path, ref, ko, margin, opts = {}){
       const t1 = Date.now();
       // (the search's QUICK mode - one wider region, no escape rings: a deeper way that needs the whole ladder is not one
       // worth having, and on the Dog Bar's chart one window spent the whole of DEEP_BUDGET_MS failing to find one)
-      const leg = legPath(LL(w.a), LL(w.b), ref, koD, margin, {quick: true});
+      const leg = legPath(LL(w.a), LL(w.b), ref, koD, margin, {quick: true, cellDiv: DEEP_CELL_DIV});
       const lenNew = leg ? lenLL(ref, [LL(w.a), ...leg]) : null;
       const deepEN = leg ? sampleEN([LL(w.a), ...leg].map((q) => ref.toEN(q)), 10) : null;
       const marked = leg && (held(deepEN) || worse(w, floorEN, deepEN));

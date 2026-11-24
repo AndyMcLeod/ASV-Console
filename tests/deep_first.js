@@ -928,5 +928,22 @@ check("34. THE CHANNEL GOES TO THE WORKER IN THE ONE ARRAY, back exactly, counte
       () => "xy " + rvPk.xy.length + " numbers for " + rvPts(RV2) + " points; count " + koCount(RV2) + " (the channel not the river's: " + koCount(RV2N) + "); "
             + (rvRep.ok ? "route the same " + (JSON.stringify(rvRep.out.route) === JSON.stringify(rvUp.route)) + ", deep the same " + (JSON.stringify(rvRep.out.deep) === JSON.stringify(rvUp.deep)) : rvRep.error.slice(0, 200)));
 
+// IN A SET (2026-11-23, Andy: "Do (a)"): the console plans a Go-To at its transit standoff, which grows with the set
+// (guard.js transitStandoffM: 18 m at 1.5 kn, 20 m at 1.7 kn) where the channel does not. On a cell half her clearance
+// the deeper way's search found no way round the bend through the 40 m the standoff leaves of the 76 m channel.
+const rvSet = [18, 20].map((st) => {
+  onRiver(RV2);
+  const up = P.planNogoRoute(RVUP[0], RVUP[1], { standoffM: st }), down = P.planNogoRoute(RVDOWN[0], RVDOWN[1], { standoffM: st });
+  return { st, up, down, jU: up.route ? rvJudge([RVUP[0], ...up.route], 1) : null, jD: down.route ? rvJudge([RVDOWN[0], ...down.route], -1) : null };
+});
+check("35. ... AND IN A SET: at the transit standoffs a set of 1.5 and 1.7 kn gives (18 and 20 m) she is still kept in the "
+      + "channel up the river and down it, round the bend, nothing released, at least 88% of her route on her starboard side "
+      + "of the line - the deeper way's search grids at a quarter of her clearance (DEEP_CELL_DIV); at half, a stretch round "
+      + "the bend was released at 18 m and she ran 492 m outside the channel, and at a third the same at 20 m",
+      () => rvSet.every((r) => r.jU && r.jD && r.jU.out === 0 && r.jD.out === 0 && r.up.deep.released.length === 0
+            && r.down.deep.released.length === 0 && r.jU.stbd >= 0.88 * r.jU.len && r.jD.stbd >= 0.88 * r.jD.len),
+      () => rvSet.map((r) => r.st + " m: " + (r.jU ? "up outside " + f0(r.jU.out) + ", starboard " + f0(r.jU.stbd) + " of " + f0(r.jU.len) + ", released " + r.up.deep.released.length : "up refused: " + r.up.error)
+            + (r.jD ? "; down outside " + f0(r.jD.out) + ", starboard " + f0(r.jD.stbd) + " of " + f0(r.jD.len) + ", released " + r.down.deep.released.length : "; down refused: " + r.down.error)).join(" | "));
+
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
 process.exit(fails ? 1 : 0);
