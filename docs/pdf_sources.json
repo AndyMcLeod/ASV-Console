@@ -1,18 +1,18 @@
 {
   "asv-simulator-development-guide.pdf": {
     "from": "asv-simulator-development-guide.docx",
-    "content_sha256": "7523ba0e73469152a2869851a59750ad542642bf18cfc74366055e99108124d9"
+    "content_sha256": "524dd0b7ff7f5fa33d850ffe4cc9c3331d9a7b72dd1d96dd350309ab314d3267"
   },
   "asv-simulator-operations-manual.pdf": {
     "from": "asv-simulator-operations-manual.docx",
-    "content_sha256": "bff1ef5529aa652748ae3825995e419f20bc97286857c2acd4e58428578cf9e2"
+    "content_sha256": "7b2b7efd984f603a2fc0eed7fdc620930d2e21c3823526785fe53f6f14237394"
   },
   "asv-simulator-quick-start.pdf": {
     "from": "asv-simulator-quick-start.docx",
-    "content_sha256": "a549bd4131e67fd177211e849f32da846c451f02eef9abd521dcdd23ac86c9f1"
+    "content_sha256": "68797417e0aec79fe5a5da6f0b60622f10783ca1a78ce87cacb1651087b9eac7"
   },
   "asv-simulator-technical-manual.pdf": {
     "from": "asv-simulator-technical-manual.docx",
-    "content_sha256": "d5fd90a9e209b40a164dd300bc265e6e42243f7fd91bb1935f9d74b4d5b5cc0d"
+    "content_sha256": "52e390f06ad62395ca36879839d627b320f51aa3aa284187dbd4bd07b0cbe331"
   }
 }

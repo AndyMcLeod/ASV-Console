@@ -50,7 +50,7 @@ c.push(H2("1.1  The client's modules"));
 c.push(P("The page began as one file in one global scope. Its lowest layer now lives in `static/js/` as ES modules, loaded by the page with `<script type=\"module\">` and served by a whitelisted route — a basename from one directory with one extension, guarded exactly like the session-log route, because both turn a URL into a file read."));
 c.push(TBL(["Module", "Holds", "Depends on"], [
   ["`geodesy.js`", "Azimuth, distance, ENU, Web Mercator. No DOM, no state; the flat model itself is the shared core's, in `core_geodesy.js`.", "core_geodesy"],
-  ["`geometry.js`", "Clipping, bounding boxes, segments, point-in-polygon, GeoJSON walkers.", "geodesy, core_geometry"],
+  ["`geometry.js`", "Clipping, bounding boxes, segments, point-in-polygon, GeoJSON walkers; a ring's edges in a grid (`ringGrid`), so a survey area of thousands of corners clips its lines asking only the edges near each.", "geodesy, core_geometry"],
   ["`units.js`", "The distance DISPLAY EDGE. Owns the km/nm preference outright.", "nothing"],
   ["`state.js`", "Shared mutable state: the vessel parameter block, the keep-out model, live chart state.", "nothing"],
   ["`chart.js`", "What the chart SAYS: hazard extent, corrected depth, clearance tests, the fairway's identity.", "geodesy, geometry, keepouts, routing, state"],

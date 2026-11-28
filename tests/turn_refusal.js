@@ -162,7 +162,7 @@ const PAGE_FUNCS = ["punchOut", "lateKeeps", "currentPattern", "surveyPattern", 
   "bandWord",                                           // the #sp_hint band word (2026-11-04) - same trap as patClipBufM
   "makesWayKey", "slowestMakingWayKey", "setMsNow",     // the speed a turn is flown at (2026-09-26)
   "patLeadTotal", "leadMetres", "leadInM", "leadOutM", "easeLsM", "roleSpeed", "roleSpeedMS", "depthRange",
-  "kindsSummary", "emptyPunchRefusal", "isStepKey", "spdTxt", "spdAtTxt", "slowestSelectableKey", "punchRefusal", "commitPattern", "resetPattern", "updatePatReadout", "flushRepunch", "punchNow",
+  "kindsSummary", "emptyPunchRefusal", "isStepKey", "spdTxt", "spdAtTxt", "slowestSelectableKey", "punchRefusal", "commitPattern", "areaOnCard", "resetPattern", "updatePatReadout", "flushRepunch", "punchNow",
   "dropStruckFromPunch", "strikeSelectedRun", "scheduleRepunch", "applyWaterOffset",
   "patternWaypoints",                                    // commitPattern's lines and waypoints (2026-11-06)
   // the level a punch is cut at (2026-11-07): punchOut's liveCut reads punchWaterM, its summary punchLevelSay - the
@@ -174,7 +174,7 @@ const PAGE_FUNCS = ["punchOut", "lateKeeps", "currentPattern", "surveyPattern", 
   "windowSelects", "punchHighNow", "deferPastDuration", "deferSay",
   // ... and Plan B's drawing (phase 3: none here, so every line of the drawing)
   "patSourceAll", "patOnlyIdx", "patSourceIdx"];
-const PAGE_DECLS = [/^const NO_LEAD = [^;]*;/m, /^const LEAD_GIVE = [^;]*;/m, /^const MAX_SURVEY_LINES = [^;]*;/m,
+const PAGE_DECLS = [/^let areaList = null, [^;]*;/m, /^const NO_LEAD = [^;]*;/m, /^const LEAD_GIVE = [^;]*;/m, /^const MAX_SURVEY_LINES = [^;]*;/m,
   /^const DEFER_TIME_MAX = [^;]*;/m,
   /^const LEAD_MAX_M = [^;]*;/m, /^const REPUNCH_DELAY_MS = [^;]*;/m, /^const TIDE_REBUILD_M = [^;]*;/m, /^const TRIM_MAX_M = [^;]*;/m, /^const JUDGE_RUN_M = [^;]*;/m, /^const SPEED_ROLES = [^;]*;/m,
   /^const PUNCH_SLICE = [^;]*;/m];

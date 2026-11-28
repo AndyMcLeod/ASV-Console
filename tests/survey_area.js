@@ -75,9 +75,10 @@ function grab(name) {
 }
 const decl = (name) => { const m = new RegExp("const " + name + " = [^;]+;").exec(H); if (!m) throw new Error(name + " gone"); return m[0]; };
 
-// The page's pattern code, lifted whole, over the real geodesy and geometry modules.
-const world = () => new Function("GD", "GM", [
-  "const {distTo, azTo, atDA, planeFrame, llEN} = GD, {segInt, pinp, lerpLL} = GM;",
+// The page's pattern code, lifted whole, over the real geodesy and geometry modules (`gm`: another geometry - 9 hands
+// one whose ringGrid files nothing, so the clip scans every edge as it did before the grid).
+const world = (gm) => new Function("GD", "GM", [
+  "const {distTo, azTo, atDA, planeFrame, llEN} = GD, {segInt, pinp, lerpLL, ringGrid} = GM;",
   "let pat = {A: null, B: null, C: null, align: 0}, boundary = [], boundaryClosed = false, center = {lat: 43, lon: -70.7};",
   // BOUNDED, as every check before the switch (2026-10-16) assumed - 8 drives PATTERN
   "let surveyBounded = true;",
@@ -85,10 +86,13 @@ const world = () => new Function("GD", "GM", [
   decl("MAX_SURVEY_LINES"), decl("AREA_EDGE_M"), decl("AREA_SLIVER_M"),
   grab("surveyPattern"), grab("areaPattern"), grab("clipToPoly"), grab("boundaryActive"), grab("currentPattern"),
   grab("planRef"), grab("patSourceLines"), grab("patSourceAll"), grab("patOnlyIdx"),
+  "let areaGridMemo = null;", grab("areaRingGrid"),
   "return {surveyPattern, set: (o) => { if (o.pat) pat = o.pat; if (o.boundary) { boundary = o.boundary; boundaryClosed = o.boundary.length >= 3; }",
   "                                   if (o.bounded !== undefined) surveyBounded = o.bounded; },",
+  "        poke: (i, ll) => { boundary[i] = ll; },",                 // a corner dragged: the page's own in-place edit
+  "        memo: () => areaGridMemo, ringGridAt: (ref) => areaRingGrid(ref),",
   "        lines: () => patSourceLines(), sp: () => currentPattern()};",
-].join("\n"))(GD, GM);
+].join("\n"))(GD, gm || GM);
 
 // a plane about a reference point off Portsmouth, meters east / north
 const REF = { lat: 43.06, lon: -70.70 };
@@ -301,6 +305,133 @@ function World0() {
         () => !kept.area && kept.count === none.count && sameLines && back.area === true
               && /return surveyBounded && boundaryClosed && boundary\.length >= 3;/.test(grab("boundaryActive")),
         () => "pattern: " + kept.count + " lines (no area: " + none.count + "), same " + sameLines + "; bounded: area " + back.area);
+}
+
+// ── 9. THE GRID OF THE AREA'S EDGES (2026-11-27, Andy's 5999-corner area) ─────────────────────────────────────────
+// patSourceAll clips every line to the area on every redraw; geometry.js ringGrid files the edges so a line asks only
+// those near it. It must be the FULL SCAN'S ANSWER EXACTLY - so it is asked where a grid is likeliest to drop an edge:
+// rings on a lattice (corners sharing northings and eastings, runs of straight edges), lines laid ALONG their edges and
+// THROUGH their corners, points ON their corners' northings; then the page's own clip, grid against no grid, bit for bit.
+{
+  let seed = 20261127;
+  const rnd = () => { seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  const ri = (k) => Math.floor(rnd() * k);
+  // a raster outline on a 10 m lattice: a stepped floor and a stepped roof, k columns wide
+  const stairs = (k) => {
+    const lo = [], hi = [];
+    for (let i = 0; i <= k; i++) { lo.push(ri(5) * 10); hi.push(200 + ri(5) * 10); }
+    const r = [];
+    for (let i = 0; i < k; i++) { r.push({ e: i * 10, n: lo[i] }); r.push({ e: (i + 1) * 10, n: lo[i] }); }
+    for (let i = k - 1; i >= 0; i--) { r.push({ e: (i + 1) * 10, n: hi[i] }); r.push({ e: i * 10, n: hi[i] }); }
+    return r.filter((p, i) => i === 0 || p.e !== r[i - 1].e || p.n !== r[i - 1].n);
+  };
+  const star = (N) => Array.from({ length: N }, (_, i) => { const a = 2 * Math.PI * i / N, rr = 200 + 800 * rnd();
+    return { e: 1000 + rr * Math.cos(a), n: 1000 + rr * Math.sin(a) }; });
+  const fullTs = (a, b, r) => { const ts = []; for (let i = 0, j = r.length - 1; i < r.length; j = i++) { const t = GM.segInt(a, b, r[j], r[i]); if (t != null) ts.push(t); } return ts.sort((x, y) => x - y); };
+  const gridTs = (a, b, r, g) => { const ts = []; g.edgesNear(a, b, (i, j) => { const t = GM.segInt(a, b, r[j], r[i]); if (t != null) ts.push(t); }); return ts.sort((x, y) => x - y); };
+  let segs = 0, segBad = 0, pts = 0, ptBad = 0, firstBad = "";
+  const rings = [];
+  for (let k = 0; k < 40; k++) rings.push(stairs(2 + ri(60)));
+  for (let k = 0; k < 20; k++) rings.push(star(3 + ri(400)));
+  for (const r of rings) {
+    const g = GM.ringGrid(r);
+    const xs = r.map((p) => p.e), ys = r.map((p) => p.n);
+    const lines = [];
+    for (let q = 0; q < 60; q++) {
+      const a = r[ri(r.length)], b = r[ri(r.length)];
+      lines.push([a, b]);                                                                   // corner to corner
+      const y = ys[ri(ys.length)], x = xs[ri(xs.length)];
+      lines.push([{ e: Math.min(...xs) - 5, n: y }, { e: Math.max(...xs) + 5, n: y }]);    // along a corner's northing
+      lines.push([{ e: x, n: Math.min(...ys) - 5 }, { e: x, n: Math.max(...ys) + 5 }]);    // along a corner's easting
+      lines.push([{ e: -100 + 1400 * rnd(), n: -100 + 1400 * rnd() }, { e: -100 + 1400 * rnd(), n: -100 + 1400 * rnd() }]);
+    }
+    for (const [a, b] of lines) {
+      segs++;
+      const f = JSON.stringify(fullTs(a, b, r)), gg = JSON.stringify(gridTs(a, b, r, g));
+      if (f !== gg) { segBad++; if (!firstBad) firstBad = "segment " + JSON.stringify([a, b]) + ": full " + f + ", grid " + gg; }
+    }
+    const probes = [];
+    for (const p of r) { probes.push(p, { e: p.e + 3, n: p.n }, { e: p.e - 3, n: p.n }); }
+    for (let q = 0; q < 200; q++) probes.push({ e: -100 + 1400 * rnd(), n: -100 + 1400 * rnd() });
+    for (const p of probes) {
+      pts++;
+      if (GM.pinp(p, r) !== g.inside(p)) { ptBad++; if (!firstBad) firstBad = "point " + JSON.stringify(p) + ": pinp " + GM.pinp(p, r); }
+    }
+  }
+  check("9. THE GRID OF THE AREA'S EDGES gives the full scan's answer exactly: the same crossings for every segment (corner "
+        + "to corner, along a corner's northing and easting, at random) and the same inside for every point (on and beside "
+        + "the corners, at random), over 40 lattice rings and 20 stars",
+        () => segs > 10000 && pts > 10000 && segBad === 0 && ptBad === 0,
+        () => segs + " segments (" + segBad + " differ), " + pts + " points (" + ptBad + " differ)" + (firstBad ? "; first: " + firstBad : ""));
+
+  // the page's clip itself: patSourceLines with the grid against the same functions with no grid (the full scan)
+  const NOGRID = Object.assign({}, GM, { ringGrid: () => null });
+  const winding = (N) => Array.from({ length: N }, (_, i) => { const a = 2 * Math.PI * i / N, w = 1 + 0.05 * Math.sin(37 * a) + 0.03 * Math.sin(131 * a);
+    return LL(1500 + 1500 * w * Math.cos(a), 1000 + 1000 * w * Math.sin(a)); });
+  const BIG = winding(6000);
+  let cases = 0, diff = 0, pieces = 0, at = "";
+  for (const area of [RECT, ELL, BIG]) {
+    const Wg = world(), Wf = world(NOGRID);
+    Wg.set({ boundary: area }); Wf.set({ boundary: area });
+    for (let brg = 0; brg < 180; brg += 20) for (const spc of [9, 40]) {
+      const p = { A: LL(100, 100), B: LL(900, 500), C: GD.atDA(LL(100, 100), spc, brg + 90), align: 1 };
+      Wg.set({ pat: p }); Wf.set({ pat: p });
+      const a = JSON.stringify(Wg.lines()), b = JSON.stringify(Wf.lines());
+      cases++; pieces += JSON.parse(a).length;
+      if (a !== b) { diff++; if (!at) at = area.length + " corners at " + brg + " deg, " + spc + " m"; }
+    }
+  }
+  check("9b. ... and the page's clip (patSourceLines) is the same with the grid as without it, bit for bit - a rectangle, "
+        + "the L and a winding 6000-corner area, 0-160 deg at 9 and 40 m",
+        () => cases === 54 && diff === 0 && pieces > 1000,
+        () => cases + " drawings, " + pieces + " pieces, " + diff + " differ" + (at ? " (first: " + at + ")" : ""));
+
+  // ... and it asks only the edges near a line: on the 6000-corner area, the edges handed over a line are a few percent
+  const ringBig = BIG.map((p) => GD.llEN(p.lat, p.lon, REF)), gBig = GM.ringGrid(ringBig);
+  const Wl = world(); Wl.set({ boundary: BIG, pat: { A: LL(100, 100), B: LL(900, 500), C: GD.atDA(LL(100, 100), 9, 120), align: 1 } });
+  const laid = Wl.sp().lines.map((l) => [GD.llEN(l[0].lat, l[0].lon, REF), GD.llEN(l[1].lat, l[1].lon, REF)]);
+  let asked = 0;
+  for (const [a, b] of laid) gBig.edgesNear(a, b, () => { asked++; });
+  const t0 = process.hrtime.bigint(); Wl.lines(); const msGrid = Number(process.hrtime.bigint() - t0) / 1e6;
+  const Wn = world(NOGRID); Wn.set({ boundary: BIG, pat: { A: LL(100, 100), B: LL(900, 500), C: GD.atDA(LL(100, 100), 9, 120), align: 1 } });
+  const t1 = process.hrtime.bigint(); Wn.lines(); const msFull = Number(process.hrtime.bigint() - t1) / 1e6;
+  // ... and the grid KEPT between redraws (areaRingGrid) is handed back only for the same area: a corner moved IN PLACE
+  // (the page's drag is `boundary[i] = ll`) files it again, so the lines are a fresh drawing's of the moved area
+  {
+    const Wm = world(), pat9 = { A: LL(100, 100), B: LL(900, 500), C: GD.atDA(LL(100, 100), 40, 90), align: 1 };
+    const area = RECT.slice();
+    Wm.set({ boundary: area, pat: pat9 });
+    Wm.lines(); const m1 = Wm.memo(); Wm.lines(); const kept = Wm.memo() === m1;
+    Wm.poke(2, LL(1000, 420));                                     // the NE corner pulled 180 m south, in place
+    const moved = JSON.stringify(Wm.lines()), rebuilt = Wm.memo() !== m1;
+    const Wfresh = world(); Wfresh.set({ boundary: [RECT[0], RECT[1], LL(1000, 420), RECT[3]], pat: pat9 });
+    const fresh = JSON.stringify(Wfresh.lines());
+    check("9c. ... the grid kept between redraws is handed back for the same area only: a corner moved in place files it "
+          + "again, and the lines are a fresh drawing's of the moved area",
+          () => kept && rebuilt && moved === fresh,
+          () => "kept for the same area " + kept + "; filed again after the move " + rebuilt + "; lines as a fresh drawing's " + (moved === fresh));
+    // ... the memo asked directly (the review of 2026-11-27: a memo keyed on latitude alone, or on the reference's
+    // latitude alone, passed 9c): a corner moved DUE EAST, and the reference moved due east alone, each file it again -
+    // its plane ring the one a fresh read of that area about that reference gives
+    const Wk = world(); Wk.set({ boundary: RECT.slice(), pat: pat9 });
+    const r0 = { lat: 43.06, lon: -70.70 }, k0 = Wk.ringGridAt(r0), kSame = Wk.ringGridAt({ lat: r0.lat, lon: r0.lon }) === k0;
+    const east = LL(1300, 600); Wk.poke(2, { lat: RECT[2].lat, lon: east.lon });            // the NE corner, east only
+    const k1 = Wk.ringGridAt(r0), kEast = k1 !== k0 && k1.ring[2].e > k0.ring[2].e + 299;
+    const r1 = { lat: r0.lat, lon: r0.lon + 0.01 }, k2 = Wk.ringGridAt(r1);
+    const kRef = k2 !== k1 && Math.abs(k2.ring[0].e - GD.llEN(RECT[0].lat, RECT[0].lon, r1).e) < 1e-9
+                 && Math.abs(k2.ring[0].e - k1.ring[0].e) > 700;
+    check("9c-b. ... and asked directly: the same area about the same reference is handed back; a corner moved DUE EAST "
+          + "(its latitude unchanged) files it again, and so does the reference moved due east alone - each ring the "
+          + "area's about that reference",
+          () => kSame && kEast && kRef,
+          () => "same " + kSame + "; corner east " + kEast + " (" + (k1.ring[2].e - k0.ring[2].e).toFixed(1) + " m); reference east "
+              + kRef + " (" + (k2.ring[0].e - k1.ring[0].e).toFixed(1) + " m)");
+  }
+  check("9d. ... asking only the edges near each line: on the 6000-corner area a line is handed under 5% of its edges",
+        () => laid.length > 100 && asked / laid.length < 0.05 * ringBig.length,
+        () => laid.length + " lines, " + (asked / laid.length).toFixed(0) + " edges a line of " + ringBig.length
+            + "; the clip " + msGrid.toFixed(1) + " ms with the grid, " + msFull.toFixed(1) + " ms scanning every edge (not asserted)");
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");

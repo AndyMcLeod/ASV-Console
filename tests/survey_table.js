@@ -1109,7 +1109,9 @@ function buildWorld(env) {
     + "const roleSpeedMS = () => 2.0; const setMsNow = () => 0;\n" + decl(/^const WAIT_SET_FLOOR_MS = [^;]*;/m) + "\n"
     // (a staged upload's record, kept beside the hold's: none here but what a check sets)
     + "let pendingNext = null; const setPendingNext = (v) => { pendingNext = v; };\n"
-    + ["rocEsc", "depthRange", "boundaryActive", "lineSetKey", "linePartContinues", "drawnLines", "lineNo", "lineCount",
+    // THE AREAS FROM A FILE (2026-11-27): none here - the list, its rows and its link are tests/boundary_file.js's (5f-5k)
+    + decl(/^let areaList = null, [^;]*;/m) + "\n" + "const renderAreaList = () => {};\n"
+    + ["rocEsc", "depthRange", "areaOnCard", "areaCardEnd", "boundaryActive", "lineSetKey", "linePartContinues", "drawnLines", "lineNo", "lineCount",
        "committedPatternInfo", "surveySettingsNow", "applySurveySettings", "surveyById", "surveyFigures",
        "renderSurveyTable", "cardSurveyId", "surveysChanged", "editSurvey", "deleteSurvey", "moveSurveyRow",
        "renameSurvey", "emptyPunchRefusal", "isStepKey", "spdTxt", "spdAtTxt", "slowestSelectableKey", "punchRefusal", "patternWaypoints", "commitPattern",

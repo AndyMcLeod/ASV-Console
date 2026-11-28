@@ -1965,6 +1965,12 @@ def _check_surveys(m):
                                       % (sid, al))
             if s.get("punched") is not None and not isinstance(s.get("punched"), bool):
                 raise PlanRefused("survey %s's punched flag must be true or false - nothing was saved" % sid)
+            # THE AREA IT WAS DEFINED FROM (2026-11-27): "<list key>/<row id>" of the areas imported from a file - how the
+            # Survey tab's list knows the area is in the plan. The page's to read; text only here.
+            ar = s.get("area")
+            if ar is not None and not (isinstance(ar, str) and 0 < len(ar) <= AREA_TAG_MAX):
+                raise PlanRefused("survey %s's area must be text of at most %d characters - nothing was saved"
+                                  % (sid, AREA_TAG_MAX))
             _check_survey_settings(sid, s.get("settings"))
             # THE WATER IT WAS CUT AT (phase 3a): the level the punch judged its depth window at, and when.
             wm = s.get("water_m")
@@ -2242,6 +2248,210 @@ def _cache_json(path, obj):
     except OSError as e:
         print("[cache] could not write %s: %s" % (os.path.basename(path), e), file=sys.stderr)
         return False
+
+
+# ── THE AREAS FROM A FILE (2026-11-27) ────────────────────────────────────────────────────────────────────────────
+# Andy: "a GEOJSON boundary survey file may come in with multiple survey areas. Generate a process to define each
+# independently and sequence them for survey." The page lists a file's areas under the Survey tab's Area row, loads each
+# onto the card in turn and adds it to the plan as a survey of its own. The list is kept HERE, beside the plan and not
+# in it - every POST /api/mission is written WHOLE into the session log (the command record), and a list is the
+# corners of every area in its file - and nothing the boat flies reads it: a survey made from an area carries its own
+# boundary in the plan, as every survey does, and its `area` tag ("<key>/<id>") is how the list knows it is there.
+# TWO FILES, named off the plan's own path, so --state-dir and --mission move them with the plan as they move its
+# backups:
+#   * THE LIST (areas_path, ".areas.json"): the file's name and every area's corners, written when a file is imported
+#     and not again. Its corners make it big - his first file of survey areas held 10 382 in 13 areas, and a list may
+#     hold up to AREA_CORNERS_MAX - and JSON that size takes this process a few hundred milliseconds to read and
+#     write (measured 2026-11-27: 100 000 corners,
+#     about 0.1 s to parse and 0.25 s to write), every link it serves waiting with it. So a list holds at most
+#     AREA_CORNERS_MAX, and it is written once.
+#   * ITS STATE (area_state_path, ".areas-state.json"): the run order, the area on the card and the spacing carried to
+#     the next - a few hundred bytes, written each time an area is added to the plan, moved or loaded. It names its list
+#     (`key`): a state that is not its list's is no state - the list then runs in its file's order with nothing on the
+#     card - and the areas it names that the list does not hold are dropped from it as it is read (load_areas). A state
+#     POSTED for a list this console does not hold is refused, 409 (save_area_state).
+# TYPES ONLY, as the plan's records are checked: what a list means is the page's. A list or a state that cannot be read
+# is said (MissionUnavailable), never taken for none - the page would save over it.
+AREA_LIST_MAX = 200          # areas in one list (static/js/boundary_file.js AREA_LIST_MAX)
+AREA_PTS_MAX = 20000         # corners in one area (boundary_file.js BOUNDARY_FILE_MAX_PTS)
+AREA_CORNERS_MAX = 150000    # corners in one list, all its areas together (boundary_file.js AREA_LIST_CORNERS_MAX)
+AREA_TAG_MAX = 240           # a survey's `area` tag: "<key>/<id>"
+AREA_KEY_MAX = 200           # a list's key, and its file's name
+AREA_ID_MAX = 32             # an area's id in its list
+_areas_lock = threading.Lock()
+
+
+class AreasRefused(ValueError):
+    """A posted area list or state that is not one: refused in words, nothing written."""
+
+
+class AreasStale(AreasRefused):
+    """A posted state for a list this console does not hold: refused in words (409), nothing written."""
+
+
+def areas_path():
+    """Where this console keeps the areas imported from a file - the list, its corners: beside its plan, named off it."""
+    return MISSION_PATH + ".areas.json"
+
+
+def area_state_path():
+    """... and the list's state - its run order, the area on the card, the spacing carried: beside it."""
+    return MISSION_PATH + ".areas-state.json"
+
+
+def _short_text(v, n, empty_ok=False):
+    return isinstance(v, str) and len(v) <= n and (empty_ok or len(v) > 0)
+
+
+def check_area_list(a):
+    """The list as imported: {v: 1, key, file, made?, rows: [{id, name, pts, holes?, in_file?, dropped?}]}. Its ids, or
+    raises AreasRefused in words."""
+    if not isinstance(a, dict) or a.get("v") != 1:
+        raise AreasRefused("the area list is not one (no version 1) - nothing was saved")
+    if not _short_text(a.get("key"), AREA_KEY_MAX):
+        raise AreasRefused("the area list has no key of at most %d characters - nothing was saved" % AREA_KEY_MAX)
+    if not _short_text(a.get("file"), AREA_KEY_MAX, empty_ok=True):
+        raise AreasRefused("the area list's file name must be text of at most %d characters - nothing was saved"
+                           % AREA_KEY_MAX)
+    if a.get("made") is not None and not _short_text(a.get("made"), 40):
+        raise AreasRefused("the area list's time must be text of at most 40 characters - nothing was saved")
+    rows = a.get("rows")
+    if not isinstance(rows, list) or not 0 < len(rows) <= AREA_LIST_MAX:
+        raise AreasRefused("the area list must hold 1 to %d areas - nothing was saved" % AREA_LIST_MAX)
+    ids, total = set(), 0
+    for i, r in enumerate(rows):
+        if not isinstance(r, dict) or not _short_text(r.get("id"), AREA_ID_MAX) or r["id"] in ids:
+            raise AreasRefused("area %d has no id of its own - nothing was saved" % (i + 1))
+        ids.add(r["id"])
+        if not _short_text(r.get("name"), SURVEY_NAME_MAX, empty_ok=True):
+            raise AreasRefused("area %s's name must be text of at most %d characters - nothing was saved"
+                               % (r["id"], SURVEY_NAME_MAX))
+        pts = r.get("pts")
+        if not (isinstance(pts, list) and 3 <= len(pts) <= AREA_PTS_MAX and all(_is_position(p) for p in pts)):
+            raise AreasRefused("area %s's corners must be 3 to %d positions - nothing was saved" % (r["id"], AREA_PTS_MAX))
+        total += len(pts)
+        for k in ("holes", "in_file", "dropped"):
+            v = r.get(k)
+            if v is not None and (isinstance(v, bool) or not isinstance(v, int) or v < 0):
+                raise AreasRefused("area %s's %s must be a whole number from 0 (got %r) - nothing was saved"
+                                   % (r["id"], k, v))
+    if total > AREA_CORNERS_MAX:
+        raise AreasRefused("the area list holds %d corners, more than %d - nothing was saved" % (total, AREA_CORNERS_MAX))
+    return ids
+
+
+def check_area_state(st, ids=None):
+    """A list's state: {v: 1, key, order: [area ids], card: an id | None, carry?: {sp, ang, align}}. Against its list's
+    ids when they are given (an import); else types only - the list is not read for a state (load_areas drops what it
+    does not hold). Raises AreasRefused in words."""
+    if not isinstance(st, dict) or st.get("v") != 1:
+        raise AreasRefused("the area list's state is not one (no version 1) - nothing was saved")
+    if not _short_text(st.get("key"), AREA_KEY_MAX):
+        raise AreasRefused("the area list's state names no list (a key of at most %d characters) - nothing was saved"
+                           % AREA_KEY_MAX)
+    order = st.get("order")
+    if not (isinstance(order, list) and len(order) <= AREA_LIST_MAX and len(order) == len(set(map(str, order)))
+            and all(_short_text(x, AREA_ID_MAX) and (ids is None or x in ids) for x in order)):
+        raise AreasRefused("the area list's order must name its own areas, each once - nothing was saved")
+    card = st.get("card")
+    if card is not None and not (_short_text(card, AREA_ID_MAX) and (ids is None or card in ids)):
+        raise AreasRefused("the area on the card (%r) is not one of the list's - nothing was saved" % (card,))
+    carry = st.get("carry")
+    if carry is not None:
+        if not isinstance(carry, dict) or not (_finite_num(carry.get("sp")) and carry["sp"] > 0
+                                               and _finite_num(carry.get("ang"))
+                                               and carry.get("align") in (0, 1, 2) and not isinstance(carry.get("align"), bool)):
+            raise AreasRefused("the area list's spacing to carry must be {sp > 0, ang, align 0-2} - nothing was saved")
+
+
+_LIST_KEYS = ("v", "key", "file", "made", "rows")
+
+
+def _read_json_or_none(p, what):
+    """A file's JSON; None for one not there. One that cannot be read raises MissionUnavailable in words."""
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as e:
+        raise MissionUnavailable("%s (%s) could not be read: %s" % (what, os.path.basename(p), e))
+
+
+def load_areas():
+    """The area list this console keeps, with its state - {v, key, file, made, rows, order, card, carry} - or None. A
+    state that is not this list's is no state: the file's order, nothing on the card, no carry; the areas a state names
+    that the list does not hold are dropped. A file that cannot be read or is not one raises MissionUnavailable in
+    words - the page then says so, and never takes it for no list."""
+    with _areas_lock:
+        a = _read_json_or_none(areas_path(), "the area list")
+        st = _read_json_or_none(area_state_path(), "the area list's state") if a is not None else None
+    if a is None:
+        return None
+    try:
+        ids = check_area_list(a)
+    except AreasRefused as e:
+        raise MissionUnavailable("the area list on disk is not one: %s" % e)
+    if st is not None:
+        try:
+            check_area_state(st)
+        except AreasRefused as e:
+            raise MissionUnavailable("the area list's state on disk is not one: %s" % e)
+    out = {k: a.get(k) for k in _LIST_KEYS}
+    if st is not None and st.get("key") == a.get("key"):
+        out.update(order=[x for x in st["order"] if x in ids], card=st.get("card") if st.get("card") in ids else None,
+                   carry=st.get("carry"))
+    else:
+        out.update(order=[r["id"] for r in a["rows"]], card=None, carry=None)
+    return out
+
+
+def save_areas(a):
+    """An IMPORT: the list and its state, both written whole or not at all (None: no list - both files say so).
+    Refuses (AreasRefused) one that is not a list, or a state that is not its own."""
+    if a is not None:
+        ids = check_area_list(a)
+        st = {"v": 1, "key": a.get("key"), "order": a.get("order"), "card": a.get("card"), "carry": a.get("carry")}
+        check_area_state(st, ids)
+    with _areas_lock:
+        if a is None:
+            _write_json_atomic(area_state_path(), None)
+            _write_json_atomic(areas_path(), None)
+        else:
+            _write_json_atomic(areas_path(), {k: a.get(k) for k in _LIST_KEYS})
+            _write_json_atomic(area_state_path(), st)
+
+
+def save_area_state(st):
+    """The list's state alone (an area added to the plan, moved, loaded): written whole or not at all. Types only - the
+    list is not read for it (the store's header). ⚠ ONLY FOR THE LIST THIS CONSOLE HOLDS (the review of 2026-11-27,
+    finding 2): a state naming another - its list's import failed here, or another tab's list - is refused (AreasStale)
+    and nothing written. Written over the held list's state, it named a list not on disk, and the next load read the
+    held list in its file's order, its card and carry gone. Which list is held is read from the STATE file, written
+    with the list by every import (save_areas) and small, not from the list."""
+    check_area_state(st)
+    st = {"v": 1, "key": st["key"], "order": list(st["order"]), "card": st.get("card"), "carry": st.get("carry")}
+    with _areas_lock:
+        cur = _read_json_or_none(area_state_path(), "the area list's state")
+        held = cur.get("key") if isinstance(cur, dict) else None
+        if held != st["key"]:
+            raise AreasStale("this state is for an area list the console does not hold (%s) - it holds %s - nothing was "
+                             "saved; import the file again" % (st["key"][:80], "none" if held is None
+                                                               else "another (%s)" % str(held)[:80]))
+        _write_json_atomic(area_state_path(), st)
+
+
+def _command_body(path, body):
+    """The body a command record carries: the posted body, except an AREA LIST's, which is summarized - its corners are
+    what the list is for and the log has no use for them (the store's header). A state is small, and recorded whole."""
+    if path == "/api/areas" and isinstance(body, dict):
+        a = body.get("areas")
+        if isinstance(a, dict):
+            rows = a.get("rows") if isinstance(a.get("rows"), list) else []
+            return {"areas": {"key": a.get("key"), "file": a.get("file"), "rows": len(rows),
+                              "corners": sum(len(r.get("pts") or []) for r in rows if isinstance(r, dict)),
+                              "order": a.get("order"), "card": a.get("card")}}
+    return body
 
 
 def mission_params():
@@ -11265,6 +11475,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, json.dumps(load_mission()))
             except MissionUnavailable as e:
                 self._send(503, json.dumps({"error": str(e)}))
+        elif self.path == "/api/areas":
+            # THE AREAS FROM A FILE (2026-11-27; load_areas): {areas: the list with its state, or null}; one that
+            # cannot be read is a 503 in words, never "no list"
+            try:
+                self._send(200, json.dumps({"areas": load_areas()}))
+            except MissionUnavailable as e:
+                self._send(503, json.dumps({"error": str(e)}))
         elif self.path == "/api/run_route":
             # ⚠ THE ARRAY THE VESSEL'S WAYPOINT NUMBER COUNTS INTO (2026-11-02, HONOLULU). /api/mission serves the
             # DRAWN plan from the mission store, which is not the same thing: on the failing run it held 451
@@ -11467,7 +11684,7 @@ class Handler(BaseHTTPRequestHandler):
         # ... and the page's own event posts are not commands at all: /api/logevent is in LOG_QUIET_POSTS (2026-11-05),
         # because its `client:<kind>` record already holds every byte of the body - each one was written TWICE.
         if LOG is not None and self.path not in LOG_QUIET_POSTS:
-            LOG.command(self.path, body, code,
+            LOG.command(self.path, _command_body(self.path, body), code,
                         obj.get("error") if isinstance(obj, dict) else None,
                         client=(self.headers.get("X-ASV-Client") or "")[:8] or None,
                         rx_t=rx_t, ms=(time.perf_counter() - t0) * 1000.0)
@@ -11490,6 +11707,26 @@ class Handler(BaseHTTPRequestHandler):
                 return 503, {"error": "the plan could not be saved: %s" % e}
             log_mission_saved(rev)
             return 200, {"ok": True, "rev": rev}
+        if path == "/api/areas":
+            # THE AREAS FROM A FILE (2026-11-27): {areas: the list and its state, or null for none} - an import
+            # (save_areas) - or {state: ...}, the run order, the card and the carry alone (save_area_state). Not a
+            # command: it moves nothing. A list's command record is summarized (_command_body).
+            if not isinstance(body, dict) or ("areas" in body) == ("state" in body):
+                return 400, {"error": "an area list must come as {areas: ...} or its state as {state: ...} - nothing was saved"}
+            try:
+                if "areas" in body:
+                    save_areas(body.get("areas"))
+                else:
+                    save_area_state(body.get("state"))
+            except AreasStale as e:
+                return 409, {"error": str(e)}
+            except AreasRefused as e:
+                return 400, {"error": str(e)}
+            except MissionUnavailable as e:
+                return 503, {"error": "the area list's state could not be saved: %s" % e}
+            except OSError as e:
+                return 503, {"error": "the area list could not be saved: %s" % e}
+            return 200, {"ok": True}
         if path == "/api/enc/corridor":
             # READ THE CHART ALONG A ROUTE (2026-10-11, step 3 of the long-transit plan): {route: [{lat, lon}], half_km}
             # starts - or rejoins - the read of every tile within half_km of it ({max_tiles}: refused with the count

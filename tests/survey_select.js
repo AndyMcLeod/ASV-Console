@@ -118,7 +118,7 @@ const PAGE_FUNCS = ["punchOut", "lateKeeps", "currentPattern", "surveyPattern", 
   "patClipBufM", "patClipKey", "bandWord", "makesWayKey", "slowestMakingWayKey", "setMsNow",
   "patLeadTotal", "leadMetres", "leadInM", "leadOutM", "easeLsM", "roleSpeed", "roleSpeedMS", "depthRange",
   "kindsSummary", "emptyPunchRefusal", "isStepKey", "spdTxt", "spdAtTxt", "slowestSelectableKey", "punchRefusal",
-  "commitPattern", "resetPattern", "updatePatReadout", "flushRepunch", "punchNow",
+  "commitPattern", "areaOnCard", "resetPattern", "updatePatReadout", "flushRepunch", "punchNow",
   "dropStruckFromPunch", "strikeSelectedRun", "scheduleRepunch", "applyWaterOffset", "patternWaypoints",
   "liveCut", "punchWaterM", "punchLevelSay", "fmtLevel", "punchLevelKey", "punchLevelFor",
   "punchStartT", "cutWaits", "punchStartSay", "commitWaitsForStart", "surveyStartT", "surgeWhen",
@@ -129,7 +129,7 @@ const PAGE_FUNCS = ["punchOut", "lateKeeps", "currentPattern", "surveyPattern", 
   "needRungs", "needFloorM", "clipGridN", "uncoveredSamples", "deferNeedM", "patSourceAll", "patOnlyIdx", "patSourceIdx",
   // ... and the phase 3 review's: the drawing a Plan B's line numbers are of
   "planBSig", "planBDrawingCheck"];
-const PAGE_DECLS = [/^const NO_LEAD = [^;]*;/m, /^const LEAD_GIVE = [^;]*;/m, /^const MAX_SURVEY_LINES = [^;]*;/m,
+const PAGE_DECLS = [/^let areaList = null, [^;]*;/m, /^const NO_LEAD = [^;]*;/m, /^const LEAD_GIVE = [^;]*;/m, /^const MAX_SURVEY_LINES = [^;]*;/m,
   /^const LEAD_MAX_M = [^;]*;/m, /^const REPUNCH_DELAY_MS = [^;]*;/m, /^const TIDE_REBUILD_M = [^;]*;/m,
   /^const TRIM_MAX_M = [^;]*;/m, /^const JUDGE_RUN_M = [^;]*;/m, /^const SPEED_ROLES = [^;]*;/m,
   /^const PUNCH_SLICE = [^;]*;/m, /^const DEFER_EPS_M = [^;]*;/m, /^const DEFER_TIME_MAX = [^;]*;/m,
@@ -1259,7 +1259,7 @@ const spanN = (seg) => { const a = xy(seg[0]).n, b = xy(seg[1]).n; return [Math.
           + "outline ride the survey's settings and come back sorted, once each, never negative; the card's lines are "
           + "the Plan B's own; punchOut judges it against the outline it was given",
           () => /patOnly = null; patOutlineM = null; patPlanBName = ""; patOutlineLowM = null; patOnlySig = null; patPlanBSay = ""; showPlanBNote\(\);/.test(rp)
-                && /name: editing \? \(editing\.name \|\| ""\) : patOnly \? patPlanBName : "",/.test(cm)
+                && /name: editing \? \(editing\.name \|\| ""\) : patOnly \? patPlanBName : fromArea \? fromArea\.name \|\| "" : "",/.test(cm)
                 && /deferredRecord\(patDefer, patSourceIdx\(\)\)/.test(cm)
                 && /return patOnly != null \|\| patStartT != null/.test(ws)
                 && /only: patOnly \? \[\.\.\.patOnly\] : null, outline_m: patOutlineM/.test(sn)

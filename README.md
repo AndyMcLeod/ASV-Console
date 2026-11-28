@@ -3130,16 +3130,58 @@ plain. `tests/path_card.js` 15.
    with its edit (✎) brings its own switch back: Bounded if it was drawn in an area, Pattern if not.
 
    **Import a survey area** (Bounded): a **GeoJSON** (`.geojson`, `.json`), **KML** (`.kml`) or
-   **CSV** (`.csv`, `.txt`) file, read by `static/js/boundary_file.js`. GeoJSON and KML give their
-   first Polygon's outer ring (a closed line counts as an area). A CSV has one corner a line,
-   latitude then longitude, or a header naming the columns (lat/latitude/y, lon/long/lng/longitude/x).
-   With no header, a first column past 90 can only be longitude and is read so, and said. What it
-   does not use is said in the banner: the other areas in the file, an area's holes, a column order
-   it swapped. The banner also gives the corners, the area in km² and where its middle is from her,
-   and the chart is taken to it. A file it cannot read changes nothing and says why. Refused files:
-   a KMZ (unzip it), a projected file (not degrees), a line that does not close, under 3 or over 2,000
-   corners, corners on one line, and anything over 5 MB. In the controls window the picker opens
-   there; the file is read there and its text sent to the chart, which imports it.
+   **CSV** (`.csv`, `.txt`) file, read by `static/js/boundary_file.js`. GeoJSON and KML give each
+   Polygon's outer ring (a closed line counts as an area, and a MultiPolygon's polygons are areas
+   of their own). A CSV has one corner a line, latitude then longitude, or a header naming the
+   columns (lat/latitude/y, lon/long/lng/longitude/x). With no header, a first column past 90 can
+   only be longitude and is read so, and said. A file of ONE area replaces the card's. What it does
+   not use is said in the banner: an area's holes, a column order it swapped. The banner also gives
+   the corners, the area in km² and where its middle is from her, and the chart is taken to it. A
+   file it cannot read changes nothing and says why. Refused files: a KMZ (unzip it), a projected
+   file (not degrees), a line that does not close, under 3 or over 20,000 corners, corners on one
+   line, and anything over 20 MB. In the controls window the picker opens there; the file is read
+   there and its text sent to the chart, which imports it.
+
+   **The corners on a straight edge go** (2026-11-27; Andy's survey area of 5,999 corners was
+   refused at the 2,000 there were then). An exported area often carries corners part way along a
+   straight edge: a densified line, or a raster outline's steps. A corner within 1 mm of the edge
+   that replaces it is dropped (at most 256 in a row), so a curve keeps every corner its outline
+   needs. The 20,000-corner limit counts the corners kept, and the banner gives both counts. On the
+   chart an area's ring is drawn through every corner and its corner dots one every 8 px; the
+   lines are clipped to it through a grid of its edges (`ringGrid`, `static/js/geometry.js`), each
+   line asking only the edges near it, with the full scan's answer bit for bit
+   (`tests/survey_area.js` 9).
+
+   **A file of several areas is a list** (2026-11-27; Andy: "a GEOJSON boundary survey file may
+   come in with multiple survey areas. Generate a process to define each independently and
+   sequence them for survey"). Every area in it, up to 200 and 150,000 corners in all, is listed
+   under the Area row. Each is named by its feature: a name or title, an id (`area_id`,
+   `target_id`, `survey_id`, the feature's own), or both ("T01 North Ledge"); else "Area n".
+   The list runs **in the shortest run from her** (`areaRunOrder`): nearest first, then every
+   crossing in the run undone. The first area is put on the card, Bounded, its pattern laid across
+   it. Then, area by area: set up its pattern, **Punch Out**, **Add to plan**. The survey added is
+   named after the area and tagged with it (`area`: "<list>/<area>"), and the next area comes onto
+   the card by itself at the same line spacing and direction (the default, said so, when the survey
+   added had no spacing point). The plan's order is the run order. A row's **Load** puts any area
+   on the card (not while Punch all runs), asking first when that would throw away an edit, a Punch
+   Out or a pattern moved since it was laid; an import of a list over an edit or a punch asks the
+   same, and declined leaves the card as it was. **↑ ↓** move it in the
+   order, and **Remove** takes it out of the list (importing the file again brings it back).
+   **Shortest run** puts the list in order again from where she is now. **Clear list** asks, then
+   drops the list; the surveys already added stay in the plan. A row reads ✓ and its survey once
+   the area is in the plan. That is read from the plan, so deleting the survey puts the area back
+   in the list's work. The same file imported again is the same list, its order kept; another file
+   replaces it. Only the area the list put on the card is the list's, and only while it IS that
+   area: the ring the list put there (a corner dragged is still the area) or, after a reload, one
+   that matches it corner for corner - a corner count alone would take another area of the same
+   count. On Pattern, or with a corner added or taken away by hand, the survey added is an ordinary
+   one, neither named nor tagged, and nothing advances; a one-area import, Clear, or a survey's own
+   area brought back to edit ends the link. The console keeps the list beside the plan, not in it - nothing the boat flies reads
+   it: `mission.json.areas.json` (the areas, written once, at the import) and
+   `mission.json.areas-state.json` (the order, the area on the card, the spacing carried), served
+   by `GET`/`POST /api/areas`. A state posted for a list the console does not hold is refused (409),
+   and the page sends no state after a list the console did not take. A list's command record in the
+   session log is a summary, not its corners. **Reset** clears it with the plan.
 
    **Arbitrary survey-area boundary.** The Survey tab's **Area** row (Bounded) draws a **CAMP-style
    survey-area polygon** — press its **Draw**, click the chart to drop points, click the first point to close

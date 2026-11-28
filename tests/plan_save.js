@@ -323,9 +323,12 @@ console.log("Saving the plan - against a revision, one at a time, and said when 
   const asked = [];
   let answerYes = false;
   const guiConfirm = (title, msg, opts) => { asked.push({ title, opts: opts || {} }); return Promise.resolve(answerYes); };
-  const posted = [], commanded = [], replaced = [];
+  const posted = [], commanded = [], replaced = [], listSaves = [];
+  // (the areas imported from a file - THE AREAS FROM A FILE, 2026-11-27 - go with the plan: forgotten, and that written)
   const resetPage = eval("(function(){ let mission = { waypoints: [{ lat: 1, lon: 2 }], lines: [] }, boundary = [], "
     + "boundaryClosed = false, surveyBounded = false, saveTimer = null; const clearTrack = () => {}, flashNote = () => {}, clearTimeout = () => {};"
+    + " let areaList = { key: 'blocks.geojson#1', rows: [], order: [] }, areaPick = 'A1', areaPostChain = Promise.resolve();"
+    + " const saveAreaList = () => { listSaves.push(areaList); };"
     + " const fetch = (u, o) => { posted.push(JSON.parse(o.body)); return Promise.resolve({ ok: true }); };"
     + " const cmd = (p) => { commanded.push(p); return Promise.resolve({ ok: true }); };"
     + " const location = { pathname: '/', replace: (u) => replaced.push(u) };\n"
@@ -333,16 +336,17 @@ console.log("Saving the plan - against a revision, one at a time, and said when 
   answerYes = false;
   await within(resetPage.resetMission());
   const resetNo = { q: asked[asked.length - 1], posted: posted.length, commanded: commanded.length, replaced: replaced.length,
-                    kept: resetPage.plan().waypoints.length };
+                    kept: resetPage.plan().waypoints.length, lists: listSaves.length };
   answerYes = true;
   await within(resetPage.resetMission());
-  check("9. RESET asks even in the simulator ({always: true}); a NO keeps the plan and sends nothing, a YES clears the plan, "
-        + "power-cycles the boat and reloads",
+  check("9. RESET asks even in the simulator ({always: true}); a NO keeps the plan and sends nothing, a YES clears the plan "
+        + "and the survey area list, power-cycles the boat and reloads",
         () => resetNo.q && resetNo.q.title === "Reset the mission" && resetNo.q.opts.always === true
-              && resetNo.posted === 0 && resetNo.commanded === 0 && resetNo.replaced === 0 && resetNo.kept === 1
+              && resetNo.posted === 0 && resetNo.commanded === 0 && resetNo.replaced === 0 && resetNo.kept === 1 && resetNo.lists === 0
               && posted.length === 1 && posted[0].waypoints.length === 0 && commanded.join() === "/api/cmd/reset"
-              && replaced.length === 1,
-        () => "no: " + JSON.stringify(resetNo) + "; yes: posted " + posted.length + " commanded " + commanded + " reloaded " + replaced.length);
+              && replaced.length === 1 && listSaves.length === 1 && listSaves[0] === null,
+        () => "no: " + JSON.stringify(resetNo) + "; yes: posted " + posted.length + " commanded " + commanded + " reloaded " + replaced.length
+            + " area list saved " + JSON.stringify(listSaves));
 
   const saves = [];
   const clearPage = eval("(function(){ let mission = { waypoints: [{ lat: 1, lon: 2, sv: 'S1' }, { lat: 1, lon: 3, sv: 'S1' }], "

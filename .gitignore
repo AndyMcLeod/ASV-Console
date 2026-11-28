@@ -6,6 +6,10 @@ mission.json
 # earlier PLANS kept on a geometry change, and a corrupt plan file copied aside (review #5)
 mission.json.bak*
 mission.json.corrupt-*
+# the areas imported from a file and their state, kept beside the plan (asv_console.py areas_path, area_state_path),
+# and their writers' temp parts
+mission.json.areas.json*
+mission.json.areas-state.json*
 comms_config.json
 logs/
 *.log

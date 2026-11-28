@@ -207,6 +207,7 @@ function world(ls) {
     const {mapEl, lsGet, lsSet, updatePatReadout, updateSearchPanel, updateTransitPanel, distTo, fmtDist, fmtDur, fmtBrgRange,
            roleSpeed, roleSpeedMS, spdTxt, searchRoute, seedPatternFromBoundary, saveMission} = env;
     const render = () => env.render();
+    const renderAreaList = () => {};                  // a file's areas under the Area row: tests/boundary_file.js 5f-5k
     let surveyBounded = false, boundary = [], boundaryClosed = false, patClip = null;
     let mode = "pan", rocPlaceKind = null, measPend = null, center = {lat: 43, lon: -70.7};
     let pathTab = "survey", pathFold = false, pathRulesFold = false, pathFollowFold = false, gotoTarget = null, searchRouted = env.searchRouted;

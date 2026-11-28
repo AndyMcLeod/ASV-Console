@@ -217,6 +217,8 @@ const world = () => new Function("\"use strict\";\n"
   + "let patDefer = null;\n"
   // ... and no Plan B on the card (phase 3: tests/survey_select.js)
   + "let patOnly = null, patPlanBName = ''; let patOutlineLowM = null, patOnlySig = null, patPlanBSay = ''; const planBDrawingCheck = () => false;\n"
+  // ... and no area from a file on the card (THE AREAS FROM A FILE, 2026-11-27: tests/boundary_file.js 5f-5k)
+  + "let areaList = null;\n" + grab(H, "areaOnCard") + "\n"
   + grab(H, "commitWaitsForStart") + "\n" + grab(H, "surveyStartT") + "\n"
   + grab(H, "emptyPunchRefusal") + "\n" + grab(H, "punchRefusal") + "\n" + grab(H, "patternWaypoints") + "\n" + grab(H, "commitPattern")
   + "\nreturn { mission, commitPattern, set: (o) => { patClip = o.clip || null; patTransits = o.transits || [];"

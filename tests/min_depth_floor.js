@@ -837,8 +837,8 @@ async function check19() {
   const pill = pillAt < 0 ? "" : noComments(H.slice(pillAt, H.indexOf("\n};", pillAt)));
   const wired = {
     frame: /checkBoot\(s\.boot_id\);\s*if\(typeof logWakeTick === "function"\) logWakeTick\(s\);\s*vesselFollows\(s\.vessel_id\);/.test(on),
-    takeOver: /const j = await supervisorBeat\(true\);\s*if\(j && j\.you\)\{ await loadVessel\(\); await loadMission\(\); \}/.test(pill),
-    start: /loadPorts\(\)\.then\(loadVessel\)\.then\(loadMission\);/.test(H),
+    takeOver: /const j = await supervisorBeat\(true\);\s*if\(j && j\.you\)\{ await loadVessel\(\); await loadMission\(\);[^}]*\}/.test(pill),
+    start: /loadPorts\(\)\.then\(loadVessel\)\.then\(loadMission\)[.;]/.test(H),   // a step after the plan may follow (the area list)
     server: /"vessel_id": \(VESSEL or \{\}\)\.get\("id"\) if isinstance\(VESSEL, dict\) else None,/.test(PY),
   };
   check("19l. THE WIRING: every state frame asks vesselFollows with the console's vessel_id, at its top; TAKE OVER reads "

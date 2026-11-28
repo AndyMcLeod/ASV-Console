@@ -250,7 +250,9 @@ console.log("A survey's start time and duration:");
     + "let patOnly = null, patOutlineM = null; const showPlanBNote = () => {}; let patOutlineLowM = null, patOnlySig = null, patPlanBSay = ''; const planBDrawingCheck = () => false;\n"
     + "const depthRange = () => ({max: 0}); const boundaryActive = () => false;\n"
     + "const updateLeadNote = () => {}; const updateEaseNote = () => {};\n"
-    + fns("localInputOf", "epochOfLocalInput", "showSurveyWindow", "surveySettingsNow", "applySurveySettings")
+    // (no area list here - THE AREAS FROM A FILE, 2026-11-27: tests/boundary_file.js 5f-5k)
+    + "let areaList = null, areaLinkHold = 0; const saveAreaState = () => {}, renderAreaList = () => {};\n"
+    + fns("localInputOf", "epochOfLocalInput", "showSurveyWindow", "surveySettingsNow", "areaCardEnd", "applySurveySettings")
     + "return { get st(){ return patStartT; }, set st(v){ patStartT = v; }, get dur(){ return patDurH; }, set dur(v){ patDurH = v; },"
     // (a Plan B's own: its lines, its outline, the level its Max depth is anchored at - 8b)
     + "  get pb(){ return {only: patOnly, outline: patOutlineM, low: patOutlineLowM, sig: patOnlySig, say: patPlanBSay}; },"

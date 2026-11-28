@@ -109,6 +109,93 @@ export function ptInGeom(lat, lon, geom){
   return inside;
 }
 
+// ── A RING'S EDGES IN A GRID (2026-11-27, Andy's 5999-corner survey area) ─────────────────────────────────────────
+// The page clips every survey line to the survey area (clipToPoly) on every redraw: each line against EVERY edge, then a
+// point-in-polygon over every edge for each piece. Measured on the page's own functions: 66 ms a redraw at 2000
+// corners, 195 at 6000, 735 at 20000 - a chart that stutters as it pans. This files the edges in a grid over the ring's
+// extent so a line asks only the edges in the cells it passes through, and a point only the edges in its own row.
+//
+// ⚠ THE ANSWER IS THE FULL SCAN'S, BIT FOR BIT - it only skips edges that cannot answer. `edgesNear` hands over a
+// SUPERSET of the edges a segment can meet (each edge filed in every cell its own run passes through, the segment read
+// the same way, both widened by EPS of a cell against rounding), and the caller runs the same segInt on each, in the
+// same (ring[j], ring[i]) order. `inside` is core pinp's even-odd test over the edges filed in the point's row: an edge
+// pinp counts straddles the point's northing, so its run covers that row. tests/survey_area.js 9 holds the two equal
+// over thousands of rings and lines.
+const RING_GRID_MAX = 512;        // cells a side, at most
+const RING_GRID_EPS = 1e-6;       // of a cell: the widening against rounding
+/** The ring's edges filed in a grid, or null for a ring the grid cannot file (under 3 corners, a non-finite one): the
+ *  caller then scans every edge. Edge i is ring[j] -> ring[i], j the corner before i - the order pinp and the page's
+ *  clip loop take them in. */
+export function ringGrid(ring){
+  const n = ring ? ring.length : 0;
+  if(n < 3) return null;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for(const p of ring){
+    if(!Number.isFinite(p.e) || !Number.isFinite(p.n)) return null;
+    if(p.e < x0) x0 = p.e;
+    if(p.e > x1) x1 = p.e;
+    if(p.n < y0) y0 = p.n;
+    if(p.n > y1) y1 = p.n;
+  }
+  const G = Math.max(1, Math.min(RING_GRID_MAX, Math.ceil(Math.sqrt(n))));
+  const w = (x1 - x0) / G || 1, h = (y1 - y0) / G || 1;        // an extent with no width is one cell across
+  const ew = RING_GRID_EPS * w, eh = RING_GRID_EPS * h;
+  const clampI = (v) => v < 0 ? 0 : v >= G ? G - 1 : v;
+  const col = (x) => clampI(Math.floor((x - x0) / w)), row = (y) => clampI(Math.floor((y - y0) / h));
+  // the cells a segment passes through: each row its northings span, and in it the columns of the part of it in that
+  // row's band - every bound widened by EPS of a cell
+  const eachCell = (a, b, fn) => {
+    const r0 = row(Math.min(a.n, b.n) - eh), r1 = row(Math.max(a.n, b.n) + eh), dy = b.n - a.n, dx = b.e - a.e;
+    for(let r = r0; r <= r1; r++){
+      let xa = a.e, xb = b.e;
+      if(dy !== 0){
+        const lo = y0 + r * h - eh, hi = y0 + (r + 1) * h + eh;
+        let ta = (lo - a.n) / dy, tb = (hi - a.n) / dy;
+        ta = ta < 0 ? 0 : ta > 1 ? 1 : ta;
+        tb = tb < 0 ? 0 : tb > 1 ? 1 : tb;
+        xa = a.e + dx * ta; xb = a.e + dx * tb;
+      }
+      const c0 = col(Math.min(xa, xb) - ew), c1 = col(Math.max(xa, xb) + ew);
+      for(let c = c0; c <= c1; c++) fn(r * G + c);
+    }
+  };
+  const cells = new Array(G * G), rows = new Array(G);
+  for(let i = 0, j = n - 1; i < n; j = i++){
+    eachCell(ring[j], ring[i], (k) => { (cells[k] || (cells[k] = [])).push(i); });
+    const r0 = row(Math.min(ring[j].n, ring[i].n) - eh), r1 = row(Math.max(ring[j].n, ring[i].n) + eh);
+    for(let r = r0; r <= r1; r++) (rows[r] || (rows[r] = [])).push(i);
+  }
+  const seen = new Int32Array(n);
+  let stamp = 0;
+  return {
+    n, G,
+    /** fn(i, j) once for each edge ring[j] -> ring[i] that segment a -> b ({e, n}) may meet (a superset). */
+    edgesNear(a, b, fn){
+      if(!Number.isFinite(a.e) || !Number.isFinite(a.n) || !Number.isFinite(b.e) || !Number.isFinite(b.n)){
+        for(let i = 0, j = n - 1; i < n; j = i++) fn(i, j);   // nothing to file it by: every edge, as the full scan
+        return;
+      }
+      if(++stamp === 0x7fffffff){ seen.fill(0); stamp = 1; }
+      eachCell(a, b, (k) => {
+        const L = cells[k]; if(!L) return;
+        for(const i of L){ if(seen[i] !== stamp){ seen[i] = stamp; fn(i, i === 0 ? n - 1 : i - 1); } }
+      });
+    },
+    /** core pinp's answer for {e, n} p, asked of the edges filed in p's row only. */
+    inside(p){
+      if(!Number.isFinite(p.e) || !Number.isFinite(p.n)) return pinp(p, ring);
+      const L = rows[row(p.n)]; if(!L) return false;
+      let inside = false;
+      for(const i of L){
+        const j = i === 0 ? n - 1 : i - 1;
+        const xi = ring[i].e, yi = ring[i].n, xj = ring[j].e, yj = ring[j].n;
+        if(((yi > p.n) !== (yj > p.n)) && (p.e < (xj - xi) * (p.n - yi) / (yj - yi) + xi)) inside = !inside;
+      }
+      return inside;
+    },
+  };
+}
+
 // Sample a segment at ~5 m in the ENU frame. The keep-out tests are POINT tests, so a
 // leg is only as well tested as it is densely sampled; 5 m is finer than the
 // smallest hazard the model carries.

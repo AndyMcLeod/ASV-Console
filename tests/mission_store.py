@@ -906,6 +906,153 @@ check("18b. a struck-coverage record that is not what it claims is REFUSED in wo
       "; ".join("%s: %s" % (k, (v or "NOT REFUSED")[:36]) for k, v in sk_said.items()))
 
 
+# 19. THE AREAS FROM A FILE (2026-11-27, Andy: "a GEOJSON boundary survey file may come in with multiple survey areas.
+# Generate a process to define each independently and sequence them for survey"). The Survey tab's list of a file's
+# areas is kept BESIDE the plan (areas_path, named off MISSION_PATH so --state-dir and --mission move it), not in it:
+# every plan save is written whole into the session log, and the list is every area's corners. In TWO files: the list
+# (its corners), written at an import and not again, and its STATE (area_state_path) - the run order, the card, the
+# carry - written on every change: a region's list is megabytes, and JSON that size holds the console for a while.
+def _sq(i):
+    a, d = 43.06 + 0.02 * i, 0.01
+    return [{"lat": a, "lon": -70.7}, {"lat": a, "lon": -70.7 + d}, {"lat": a + d, "lon": -70.7 + d}, {"lat": a + d, "lon": -70.7}]
+
+
+AREAS = {"v": 1, "key": "survey_areas.geojson#1800000000000", "file": "survey_areas.geojson", "made": "2026-11-27T22:00:00Z",
+         "rows": [{"id": "A1", "name": "GOM-US-001 (part 1 of 2)", "pts": _sq(0), "holes": 0, "in_file": 4, "dropped": 0},
+                  {"id": "A2", "name": "GOM-US-001 (part 2 of 2)", "pts": _sq(1), "holes": 2, "in_file": 9, "dropped": 5}],
+         "order": ["A2", "A1"], "card": "A2", "carry": {"sp": 25.0, "ang": 90.0, "align": 1}}
+_C.MISSION_PATH = os.path.join(TMP, "mission.json")    # (15 re-pointed it with --mission; the plan's own path again)
+_C._MISSION_CACHE = None
+_, e19 = attempt(_C.save_areas, AREAS)
+a19 = _C.load_areas()
+_, e19n = attempt(_C.save_areas, None)
+a19n = _C.load_areas()
+check("19. THE AREAS FROM A FILE are SAVED and LOADED as they were - every area's corners, the run order, the one on the "
+      "card, the spacing carried - beside the plan (MISSION_PATH + '.areas.json' and '.areas-state.json', in this suite's "
+      "temp folder); none is none",
+      e19 is None and a19 == AREAS and e19n is None and a19n is None
+      and _C.areas_path() == _C.MISSION_PATH + ".areas.json" and os.path.abspath(_C.areas_path()).startswith(os.path.abspath(TMP))
+      and _C.area_state_path() == _C.MISSION_PATH + ".areas-state.json",
+      "err %r / %r; back %s; path %s" % (e19, e19n, "same" if a19 == AREAS else repr(a19)[:120], _C.areas_path()))
+attempt(_C.save_areas, AREAS)
+ar_before = open(_C.areas_path(), "rb").read()
+st_before = open(_C.area_state_path(), "rb").read()
+
+
+def _ar(**over):
+    return dict(AREAS, **over)
+
+
+def _row(i, **over):
+    r = [dict(x) for x in AREAS["rows"]]
+    r[i] = dict(r[i], **over)
+    return r
+
+
+ar_bad = {"not a list": ["A1"], "no version": _ar(v=2), "no key": _ar(key=""),
+          "no areas": _ar(rows=[], order=[], card=None),
+          "too many areas": _ar(rows=[dict(AREAS["rows"][0], id="A%d" % i) for i in range(201)], order=[], card=None),
+          "two areas one id": _ar(rows=_row(1, id="A1"), order=["A1"], card="A1"),
+          "a name too long": _ar(rows=_row(0, name="x" * 121)),
+          "two corners": _ar(rows=_row(0, pts=_sq(0)[:2])),
+          "a corner not a position": _ar(rows=_row(0, pts=_sq(0)[:3] + [{"lat": 95, "lon": 0}])),
+          "too many corners": _ar(rows=_row(0, pts=[{"lat": 43.0, "lon": -70.0 + i * 1e-6} for i in range(20001)])),
+          "too many corners in all": _ar(rows=[{"id": "B%d" % i, "name": "", "pts": [{"lat": 43.0 + j * 1e-6, "lon": -70.0 + (j % 2) * 1e-6}
+                                                                          for j in range(18800)]} for i in range(8)],
+                                         order=[], card=None),
+          "holes not a count": _ar(rows=_row(0, holes=-1)),
+          "an order naming no area": _ar(order=["A1", "A9"]),
+          "an area twice in the order": _ar(order=["A1", "A1"]),
+          "the card no area": _ar(card="A9"),
+          "a carry with no spacing": _ar(carry={"sp": 0, "ang": 90, "align": 1})}
+ar_said = {}
+for k, v in ar_bad.items():
+    _, err = attempt(_C.save_areas, v)
+    ar_said[k] = str(err) if isinstance(err, _C.AreasRefused) else ""
+check("19b. an area list that is not what it claims is REFUSED in words and nothing is written",
+      all(ar_said.values()) and open(_C.areas_path(), "rb").read() == ar_before
+      and open(_C.area_state_path(), "rb").read() == st_before,
+      "; ".join("%s: %s" % (k, (v or "NOT REFUSED")[:40]) for k, v in ar_said.items()))
+# 19f. THE STATE ALONE: written without the list (its bytes untouched), read back with it; a state that is not this
+# list's is none, and the areas it names that the list does not hold are dropped; one that is not a state is refused.
+ST = {"v": 1, "key": AREAS["key"], "order": ["A1"], "card": "A1", "carry": {"sp": 10.0, "ang": 45.0, "align": 0}}
+_, e19f = attempt(_C.save_area_state, ST)
+a19f = _C.load_areas()
+list_kept = open(_C.areas_path(), "rb").read() == ar_before
+# a state POSTED for another list is REFUSED (the review of 2026-11-27, finding 2): its list's import failed here, or it
+# is another tab's - written, it named a list not on disk and the held list lost its order, card and carry
+st_19f = open(_C.area_state_path(), "rb").read()
+_, e19x = attempt(_C.save_area_state, dict(ST, key="another.geojson#1"))
+c19x, o19x = _C.Handler._dispatch_post(None, "/api/areas", {"state": dict(ST, key="another.geojson#1")})
+st_kept = open(_C.area_state_path(), "rb").read() == st_19f
+# ... and one ON DISK naming another list (written there by hand) is read as none
+with open(_C.area_state_path(), "w", encoding="utf-8") as f:
+    json.dump(dict(ST, key="another.geojson#1"), f)
+a19o = _C.load_areas()
+with open(_C.area_state_path(), "wb") as f:
+    f.write(st_19f)
+attempt(_C.save_area_state, dict(ST, order=["A9", "A2"], card="A9"))
+a19g = _C.load_areas()
+attempt(_C.save_area_state, ST)
+st_ok = open(_C.area_state_path(), "rb").read()
+st_bad = {"no version": dict(ST, v=0), "no key": dict(ST, key=""), "order not a list": dict(ST, order="A1"),
+          "an area twice": dict(ST, order=["A1", "A1"]), "an id not text": dict(ST, order=[1]),
+          "a card not text": dict(ST, card=5), "a carry with no spacing": dict(ST, carry={"sp": -1, "ang": 0, "align": 0}),
+          "a carry's align a flag": dict(ST, carry={"sp": 5, "ang": 0, "align": True})}
+st_said = {}
+for k, v in st_bad.items():
+    _, err = attempt(_C.save_area_state, v)
+    st_said[k] = str(err) if isinstance(err, _C.AreasRefused) else ""
+check("19f. the list's STATE is saved ALONE - the list's file untouched - and read back with it; a state POSTED for "
+      "another list is REFUSED (409 in words, the state on disk byte-identical); one on disk naming another list is "
+      "none (the file's order, nothing on the card); areas it names the list does not hold are dropped; one that is not "
+      "a state is REFUSED in words and nothing is written",
+      e19f is None and list_kept and a19f["order"] == ["A1"] and a19f["card"] == "A1" and a19f["carry"] == ST["carry"]
+      and isinstance(e19x, _C.AreasStale) and "does not hold" in str(e19x) and c19x == 409 and "does not hold" in o19x.get("error", "")
+      and st_kept
+      and a19f["rows"] == AREAS["rows"]
+      and a19o["order"] == ["A1", "A2"] and a19o["card"] is None and a19o["carry"] is None
+      and a19g["order"] == ["A2"] and a19g["card"] is None
+      and all(st_said.values()) and open(_C.area_state_path(), "rb").read() == st_ok,
+      "err %r; kept %s; back %r / other %r / gone %r; %s" % (e19f, list_kept, a19f and a19f.get("order"),
+                                                           a19o and a19o.get("order"), a19g and a19g.get("order"),
+                                                           "; ".join("%s: %s" % (k, (v or "NOT REFUSED")[:30]) for k, v in st_said.items())))
+attempt(_C.save_areas, AREAS)
+cb = _C._command_body("/api/areas", {"areas": AREAS})
+cb_plan = _C._command_body("/api/mission", {"waypoints": []})
+check("19c. the area list's COMMAND RECORD is a summary - its key, file, area and corner counts, order and card - never "
+      "the corners; every other route's body is recorded as it came",
+      cb == {"areas": {"key": AREAS["key"], "file": "survey_areas.geojson", "rows": 2, "corners": 8, "order": ["A2", "A1"],
+                       "card": "A2"}}
+      and "pts" not in json.dumps(cb) and cb_plan == {"waypoints": []},
+      json.dumps(cb)[:200])
+with open(_C.area_state_path(), "w", encoding="utf-8") as f:
+    f.write("{ not json")
+_, e19s = attempt(_C.load_areas)
+with open(_C.areas_path(), "w", encoding="utf-8") as f:
+    f.write("{ not json")
+_, e19d = attempt(_C.load_areas)
+check("19d. an area list - or its state - on disk that cannot be read is said (MissionUnavailable), never taken for none",
+      isinstance(e19d, _C.MissionUnavailable) and "could not be read" in str(e19d)
+      and isinstance(e19s, _C.MissionUnavailable) and "state" in str(e19s), "%r / %r" % (e19d, e19s))
+attempt(_C.save_areas, None)
+_, e19n = attempt(_C.save_area_state, ST)
+with open(_C.area_state_path(), encoding="utf-8") as f:
+    st19n = json.load(f)
+check("19g. with NO list held, a state is REFUSED (it names a list the console does not hold) and nothing is written",
+      isinstance(e19n, _C.AreasStale) and "it holds none" in str(e19n) and _C.load_areas() is None and st19n is None,
+      repr(e19n))
+SV19 = [dict(SURVEYS[0], area=AREAS["key"] + "/A2"), SURVEYS[1]]
+_, e19e = attempt(_C.save_mission, sv_plan(surveys=SV19))
+m19e = _C.load_mission()
+check("19e. a survey's AREA tag - the list and area it was defined from - is saved and loaded as it was; one that is not "
+      "short text is REFUSED in words",
+      e19e is None and m19e["surveys"][0].get("area") == AREAS["key"] + "/A2"
+      and "area must be text" in refused(sv_plan(surveys=[dict(SURVEYS[0], area=7), SURVEYS[1]]))
+      and "area must be text" in refused(sv_plan(surveys=[dict(SURVEYS[0], area="k" * 241), SURVEYS[1]])),
+      "err %r; area %r" % (e19e, (m19e.get("surveys") or [{}])[0].get("area")))
+
+
 # 10. None of it touched the operator's own plan.
 check("10. nothing in this suite wrote, replaced or removed the app directory's own plan files",
       not _WRITES_TO_APP, "; ".join(_WRITES_TO_APP[:3]) or "no write named them")

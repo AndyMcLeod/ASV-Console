@@ -167,7 +167,7 @@ const PAGE_FUNCS = ["punchOut", "lateKeeps", "currentPattern", "surveyPattern", 
   "makesWayKey", "slowestMakingWayKey", "setMsNow",
   "patLeadTotal", "leadMetres", "leadInM", "leadOutM", "easeLsM", "roleSpeed", "roleSpeedMS", "depthRange",
   "kindsSummary", "emptyPunchRefusal", "isStepKey", "spdTxt", "spdAtTxt", "slowestSelectableKey", "punchRefusal",
-  "patternWaypoints", "commitPattern", "resetPattern", "updatePatReadout", "flushRepunch", "punchNow",
+  "patternWaypoints", "commitPattern", "areaOnCard", "resetPattern", "updatePatReadout", "flushRepunch", "punchNow",
   "dropStruckFromPunch", "strikeSelectedRun", "scheduleRepunch", "applyWaterOffset",
   // THE CLEARING (2026-11-06)
   "punchCutNow", "notePunchMargin", "punchMarginMax", "holdStepUp", "takePunchHold", "refreshPunchHold",
@@ -197,7 +197,7 @@ const PAGE_FUNCS = ["punchOut", "lateKeeps", "currentPattern", "surveyPattern", 
   "srcLineOf", "deferTimeKey", "deferredRecord",
   // ... and PLAN B's drawing (phase 3): none here, so every line of the drawing
   "patSourceAll", "patOnlyIdx", "patSourceIdx"];
-const PAGE_DECLS = [/^const NO_LEAD = [^;]*;/m, /^const LEAD_GIVE = [^;]*;/m, /^const MAX_SURVEY_LINES = [^;]*;/m,
+const PAGE_DECLS = [/^let areaList = null, [^;]*;/m, /^const NO_LEAD = [^;]*;/m, /^const LEAD_GIVE = [^;]*;/m, /^const MAX_SURVEY_LINES = [^;]*;/m,
   /^const DEFER_TIME_MAX = [^;]*;/m, /^const SURVEY_DEFERRED_MAX = [^;]*;/m,
   /^const LEAD_MAX_M = [^;]*;/m, /^const REPUNCH_DELAY_MS = [^;]*;/m, /^const TIDE_REBUILD_M = [^;]*;/m,
   /^const TRIM_MAX_M = [^;]*;/m, /^const JUDGE_RUN_M = [^;]*;/m, /^const SPEED_ROLES = [^;]*;/m,

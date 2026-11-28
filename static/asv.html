@@ -663,6 +663,20 @@
         #sv_table .svwait{flex:1 1 100%;}
         #sv_head{display:flex;align-items:center;gap:4px;}
         #sv_head button{margin-left:auto;width:auto;height:16px;padding:0 5px;font-size:8.5px;}
+        /* THE AREAS FROM A FILE (2026-11-27): the list under the Area row (renderAreaList) - a row an area, in run order */
+        #bnd_list{display:flex;flex-direction:column;gap:2px;margin:3px 0 2px;}
+        #bnd_list .alhead{display:flex;flex-wrap:wrap;align-items:center;gap:2px 3px;font-size:9px;color:var(--ink-dim);}
+        #bnd_list .alsay{flex:1 1 100%;overflow-wrap:anywhere;}
+        #bnd_list .alhead button,#bnd_list .alacts button{width:auto;height:16px;padding:0 4px;font-size:8.5px;}
+        #bnd_list .alrows{display:flex;flex-direction:column;gap:1px;max-height:220px;overflow-y:auto;}
+        #bnd_list .alrow{display:flex;flex-wrap:wrap;align-items:baseline;gap:1px 3px;padding:1px 2px;border-left:2px solid transparent;cursor:pointer;font-size:9.5px;}
+        #bnd_list .alrow.on{background:rgba(255,215,106,0.06);}
+        #bnd_list .alrow.card{border-left-color:#c878dc;background:rgba(200,120,220,0.10);}
+        #bnd_list .alno{font-family:var(--mono);color:#c878dc;min-width:16px;}
+        #bnd_list .alname{flex:1 1 0;min-width:0;overflow-wrap:anywhere;}
+        #bnd_list .alst{font-family:var(--mono);font-size:8.5px;color:var(--ink-dim);}
+        #bnd_list .alst.done{color:var(--ok);}
+        #bnd_list .alacts{display:flex;flex-wrap:wrap;gap:2px;width:100%;}
       </style>
       <div id="sv_head" style="display:none;font-family:var(--mono);font-size:10px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;"><span>Surveys, in run order</span><button class="ctl small" id="sv_punchall">Punch all</button></div>
       <div id="sv_table" style="display:none"></div>
@@ -704,11 +718,14 @@
           <div class="pparea" id="boundPanel">
             <div class="prow"><label>Area</label><span class="ppbtns">
               <button class="ctl small" id="bnd_draw" title="Draw the survey area: each chart click drops a boundary point, a click on the first point closes it. Press again (or Esc) to stop.">Draw</button>
-              <button class="ctl small" id="bnd_import" title="IMPORT a survey area drawn elsewhere: a GeoJSON, KML or CSV file (a CSV: one corner a line, latitude then longitude, or a header naming the columns). The first area in the file is used and replaces the one here; the banner says what was read and where it is.">Import</button>
+              <button class="ctl small" id="bnd_import" title="IMPORT a survey area drawn elsewhere: a GeoJSON, KML or CSV file (a CSV: one corner a line, latitude then longitude, or a header naming the columns). A file of ONE area replaces the one here. A file of SEVERAL lists them all under this row, in the shortest run from her, and puts the first on the card: set it up, Punch Out, Add to plan - it is added as a survey of its own, named after the area - and the next comes onto the card, so the plan runs them in the list's order. The banner says what was read and where it is.">Import</button>
               <button class="ctl small" id="bnd_close" title="Close the polygon (needs ≥3 points)">Close</button>
               <button class="ctl small" id="bnd_clr" title="Delete the boundary polygon">Clear</button>
               <button class="ctl small on" id="areaBtn" title="Show / hide the survey-area boundary overlay (persisted). It still clips the lines while hidden; drawing the area always shows it.">Show</button></span></div>
             <div class="phint" id="bnd_hint"></div>
+            <!-- THE AREAS FROM A FILE (2026-11-27): a file of several areas lists them here, in the order they are to be
+                 surveyed. Built by renderAreaList; every control carries an id (the controls window relays clicks BY ID). -->
+            <div id="bnd_list" style="display:none"></div>
           </div>
           <div class="prow"><label>Max depth m</label><input type="number" id="sp_maxdepth" value="" min="0" max="1000" step="1" placeholder="none" title="Survey coverage maximum. Blank = no maximum (deep water is fine to survey). Deep water is never a nogo — the boat may transit it."/></div>
         </div>
@@ -1320,7 +1337,7 @@ import { M_PER_NM, distUnit, setDistUnit, fmtDist, fmtNm, nmFromKm, kmFromNm, nm
          fmtETA, fmtDur, fmtMS, fmtLL, fmtVol, unitLabel } from "/static/js/units.js";
 import { bbOf, inBB, bboxContains, bboxAround, lerpLL, dSeg, segInt, pinp,
          eachRing, eachPath, eachPoint,
-         ptInGeom, segSamplesEN, acrossTrackM } from "/static/js/geometry.js";
+         ptInGeom, segSamplesEN, acrossTrackM, ringGrid } from "/static/js/geometry.js";
 import { V, NOGO_ENF, nogo, sea } from "/static/js/state.js";
 // THE THREE CACHED LAYERS' DRAWING (2026-10-17): moved to chartlayers.js so the chart worker draws them off this thread
 import { LAYER_PAD_PX, LAW_BAND_MIN_PX, featureBox, layerSees, tracePx, drawENC as clDrawENC, drawNogo as clDrawNogo,
@@ -7489,6 +7506,13 @@ let boundaryShow = true;                       // overlay visibility (a selectiv
 // THE SURVEY TAB'S SWITCH (2026-10-16): false = PATTERN, the three-click box - the area, if any, kept but NOT applied
 // (boundaryActive) and not drawn; true = BOUNDED, the lines fill the area. Saved with the plan (`survey_bounded`).
 let surveyBounded = false;
+// THE AREAS FROM A FILE (2026-11-27): the list a file of several areas made - {v: 1, key, file, made, rows: [{id, name,
+// pts, holes, in_file, dropped}], order: [row ids - the run order], card: the row on the card | null, carry: {sp, ang,
+// align} | null} - the console's (GET/POST /api/areas), or null; the row picked in it (its actions show); a count bumped
+// by every change, so a read that answers after one is not taken; a hold on ending the card's link (withCardKept). The
+// block that works them: "THE AREAS FROM A FILE".
+let areaList = null, areaPick = null, areaListGen = 0, areaLinkHold = 0, _areaListKey = null, areaCardRing = null, areaSeed = null;
+const areaFactsMemo = new WeakMap();           // row -> {mid, m2} (a row is replaced whole, never changed in place)
 // ENC chart features (fetched by Punch Out) + overlay state
 
 let encShow = true, punchBusy = false;
@@ -8656,6 +8680,7 @@ function render(){
   drawSurveyLabels(toScreen);
   drawDeferredSurveys(toScreen);
   drawSpeedZones(toScreen);
+  drawAreaList(toScreen);
   drawBoundary(toScreen);
   drawPattern(toScreen);
   drawSearch(toScreen);
@@ -11329,10 +11354,30 @@ function patSourceLines(){
 function patSourceAll(){
   const sp = currentPattern(); if(!sp) return [];
   if(!boundaryActive()) return sp.lines;
-  const ref = planRef(), ring = boundary.map(p=>llEN(p.lat,p.lon,ref));
+  // ONE GRID OF THE AREA'S EDGES FOR ALL ITS LINES (2026-11-27): the clip asks only the edges near each line - the full
+  // scan's answer exactly (geometry.js ringGrid), at a redraw's cost for an area of thousands of corners
+  const ref = planRef(), {ring, grid} = areaRingGrid(ref);
   // ... and a SLIVER is no line: a line laid AREA_EDGE_M inside a pointed vertex clips to a few centimeters there
-  const out = []; sp.lines.forEach(l=>clipToPoly(l[0], l[1], ring, ref).forEach(s=>{ if(distTo(s[0], s[1]) >= AREA_SLIVER_M) out.push(s); }));
+  const out = []; sp.lines.forEach(l=>clipToPoly(l[0], l[1], ring, ref, grid).forEach(s=>{ if(distTo(s[0], s[1]) >= AREA_SLIVER_M) out.push(s); }));
   return out;
+}
+/** The survey area in the plane about `ref` and its edges' grid - KEPT between redraws while the area is the same
+ *  (2026-11-27: filing 20 000 corners costs ~10 ms, and patSourceAll runs on every redraw). ⚠ "THE SAME" IS EVERY
+ *  CORNER COMPARED, NOT A HASH OR A COUNT: the area is edited in place (a dragged corner is `boundary[i] = ll`), so only
+ *  each lat and lon equal to the copy kept, and the reference equal, hands the kept grid back - anything else files it
+ *  again. A stale grid would clip the lines to an area that is no longer there. */
+let areaGridMemo = null;
+function areaRingGrid(ref){
+  const n = boundary.length, m = areaGridMemo;
+  if(m && m.lat === ref.lat && m.lon === ref.lon && m.ll.length === 2 * n){
+    let same = true;
+    for(let i = 0; i < n; i++) if(m.ll[2 * i] !== boundary[i].lat || m.ll[2 * i + 1] !== boundary[i].lon){ same = false; break; }
+    if(same) return m;
+  }
+  const ll = new Float64Array(2 * n);
+  for(let i = 0; i < n; i++){ ll[2 * i] = boundary[i].lat; ll[2 * i + 1] = boundary[i].lon; }
+  const ring = boundary.map(p => llEN(p.lat, p.lon, ref));
+  return areaGridMemo = {lat: ref.lat, lon: ref.lon, ll, ring, grid: ringGrid(ring)};
 }
 /** The drawing's line indices a Plan B flies, those of its `n` lines that exist, ascending - or null: every line. */
 function patOnlyIdx(n){
@@ -13617,15 +13662,17 @@ function noteSurveyUpdated(sv){
   unblockDone.sv.add(sv);
 }
 
-// exact clip of segment a->b (latlon) to the interior of ring (ENU) -> sub-segs
-function clipToPoly(a,b,ring,ref){
+// exact clip of segment a->b (latlon) to the interior of ring (ENU) -> sub-segs. `grid` (ringGrid(ring), optional): ask
+// only the edges near the segment - the same crossings, the same insides (geometry.js; tests/survey_area.js 9)
+function clipToPoly(a,b,ring,ref,grid){
   const ae=llEN(a.lat,a.lon,ref), be=llEN(b.lat,b.lon,ref), ts=[0,1];
-  for(let i=0,j=ring.length-1;i<ring.length;j=i++){ const t=segInt(ae,be,ring[j],ring[i]); if(t!=null) ts.push(t); }
+  if(grid) grid.edgesNear(ae, be, (i, j)=>{ const t=segInt(ae,be,ring[j],ring[i]); if(t!=null) ts.push(t); });
+  else for(let i=0,j=ring.length-1;i<ring.length;j=i++){ const t=segInt(ae,be,ring[j],ring[i]); if(t!=null) ts.push(t); }
   ts.sort((x,y)=>x-y);
   const out=[];
   for(let k=0;k<ts.length-1;k++){ const t0=ts[k],t1=ts[k+1]; if(t1-t0<1e-6) continue;
     const tm=(t0+t1)/2, mid={e:ae.e+(be.e-ae.e)*tm, n:ae.n+(be.n-ae.n)*tm};
-    if(pinp(mid,ring)) out.push([lerpLL(a,b,t0), lerpLL(a,b,t1)]); }
+    if(grid ? grid.inside(mid) : pinp(mid,ring)) out.push([lerpLL(a,b,t0), lerpLL(a,b,t1)]); }
   return out;
 }
 // THE SPEED ZONES ON THE CHART (2026-10-16): each zone's edge in amber, dashed, faintly filled, and its rule at its middle
@@ -13680,6 +13727,7 @@ function drawLawBands(zs, toScreen, lctx){
   if(!lawScratch) lawScratch = document.createElement("canvas");
   clDrawLawBands(zs, toScreen, lctx, {features: (sea.enc && sea.enc.features) || [], scratch: lawScratch});
 }
+const BOUND_DOT_GAP_PX = 8;                    // the card's area: a corner's dot this far from the last drawn, at least
 function drawBoundary(toScreen){
   if(!boundary.length || (!boundaryShow && mode!=="bound")) return;  // hidden, unless editing
   if(!surveyBounded) return;                       // PATTERN (2026-10-16): an area kept for Bounded is not shown, as it is not applied
@@ -13692,7 +13740,18 @@ function drawBoundary(toScreen){
   ctx.lineWidth = 1.8; ctx.stroke();
   if(boundaryActive()){ ctx.fillStyle="rgba(200,120,220,0.08)"; ctx.fill(); }
   ctx.setLineDash([]);
-  pts.forEach((s,i)=>{ ctx.beginPath(); ctx.arc(s.x,s.y,4,0,2*Math.PI);
+  // THE CORNERS' DOTS, THINNED (2026-11-27): an imported area's thousands of corners drew a solid bead of dots, a frame's
+  // worth of them. A dot is drawn only on the chart and at least BOUND_DOT_GAP_PX from the last one drawn - always the
+  // first (the close target while drawing) and the one being dragged. Every corner still clips the lines.
+  const {w: vw, h: vh} = viewSize();
+  let lx = -1e9, ly = -1e9;
+  pts.forEach((s,i)=>{
+    if(i && i !== boundDrag){
+      if(s.x < -8 || s.y < -8 || s.x > vw + 8 || s.y > vh + 8) return;
+      if(Math.abs(s.x - lx) < BOUND_DOT_GAP_PX && Math.abs(s.y - ly) < BOUND_DOT_GAP_PX) return;
+    }
+    lx = s.x; ly = s.y;
+    ctx.beginPath(); ctx.arc(s.x,s.y,4,0,2*Math.PI);
     ctx.fillStyle = (i===0 && !boundaryActive()) ? "#ffd76a" : "#c878dc";   // first vertex = close target
     ctx.fill(); ctx.lineWidth=1.2; ctx.strokeStyle="#160d02"; ctx.stroke(); });
   ctx.restore();
@@ -14497,6 +14556,7 @@ function surveySettingsNow(){
 function applySurveySettings(st){
   if(!st || typeof st !== "object") return false;
   const pts = Array.isArray(st.boundary) ? st.boundary.filter(p => p && isFinite(p.lat) && isFinite(p.lon)) : [];
+  areaCardEnd();                                   // the survey's own area, not a listed one (THE AREAS FROM A FILE)
   boundary = pts.map(p => ({lat: +p.lat, lon: +p.lon})); boundaryClosed = boundary.length >= 3; boundDrag = null;
   surveyBounded = boundaryClosed;                  // a survey drawn in an area comes back BOUNDED, one without it PATTERN
   $("#sp_maxdepth").value = (+st.max_depth_m > 0) ? String(+st.max_depth_m) : "";
@@ -14609,6 +14669,7 @@ function surveyFigures(id){
 }
 let _svTableKey = null;
 function renderSurveyTable(){
+  renderAreaList();                              // which of a file's areas are in the plan is read from these surveys
   const tb = $("#sv_table"); if(!tb) return;
   const list = mission.surveys || [];
   const show = list.length > 0;
@@ -14872,12 +14933,15 @@ async function withCardKept(title, why, work){
       {always: true})) return null;
   const keep = surveySettingsNow();
   punchAllBusy = true; renderSurveyTable();
+  // ... AND THE LIST'S AREA ON THE CARD STAYS ITS AREA (2026-11-27): each survey's own area goes on the card in turn and
+  // the card's comes back after, so the link a listed area has to the card is held through it (areaCardEnd)
+  areaLinkHold++;
   try { return await work(); }
   // ⚠ NOT A PLAN B'S LINES AND OUTLINE (the phase 3 review, 2026-11-20 - four reviewers): they are the DRAWING's, and
   // the drawing was discarded by the question above. Put back, the next survey drawn flew only those line numbers of
   // ITS lines, judged against another survey's outline, recorded unnamed with `only` set.
   finally { punchAllBusy = false; resetPattern();
-            applySurveySettings({...keep, only: null, outline_m: null, outline_low_m: null}); surveysChanged(); }
+            applySurveySettings({...keep, only: null, outline_m: null, outline_low_m: null}); areaLinkHold--; surveysChanged(); }
 }
 /** Punch every survey again against the chart now, each at the water it will be flown in (punchLevel), with its own
  *  settings, in place. */
@@ -15409,7 +15473,14 @@ async function commitPattern(){
   // punch cut for that start is cut for water that is not here now, and a plan that ran straight into it would fly it
   // early - Upload would ask (uploadTideRisk's `early`), but the plan as committed is the plan that waits.
   const startsLater = commitWaitsForStart();
-  const rec = {id: sv, no, name: editing ? (editing.name || "") : patOnly ? patPlanBName : "", punched: !!patClip,
+  // AN AREA OF THE LIST ON THE CARD (THE AREAS FROM A FILE, 2026-11-27): the survey is NAMED after it and TAGGED with it -
+  // how the list knows it is in the plan - and the next area comes onto the card below. An edit keeps the tag it had.
+  const fromArea = editing || patOnly ? null : areaOnCard();
+  const areaTag = editing ? (typeof editing.area === "string" ? editing.area : null)
+                : fromArea ? areaList.key + "/" + fromArea.id : null;
+  const carry = fromArea && drawnFrom && drawnFrom.A && drawnFrom.C ? areaCarryOf(drawnFrom) : null;
+  const rec = {id: sv, no, name: editing ? (editing.name || "") : patOnly ? patPlanBName : fromArea ? fromArea.name || "" : "",
+    ...(areaTag ? {area: areaTag} : {}), punched: !!patClip,
     hold: !!(editing && editing.hold) || startsLater,   // the hold before it (3b) is the survey's, not the drawing's
     ...(editing && editing.wait === "home" ? {wait: "home"} : {}),   // ... and how it waits (phase 4): an edit replaces the record whole
     pattern: drawnFrom ? {A: pos(drawnFrom.A), B: pos(drawnFrom.B), C: pos(drawnFrom.C), align: drawnFrom.align | 0}
@@ -15450,6 +15521,7 @@ async function commitPattern(){
   if(startsLater && !(editing && editing.hold))
     flashNote(surveyLabel(rec) + " starts " + surgeWhen(surveyStartT(rec)) + ": its HOLD is on - Upload sends her as far "
       + "as its start, where she holds until you press Continue on its row. Nothing releases her by itself.");
+  if(fromArea){ areaList.carry = carry; areaAdvance(rec, fromArea); }
 }
 /** Whether the pattern being committed has a start she will wait for: the card's read says she reaches it before its
  *  start (flightWindow's `start`) - or, with no read of the card's own, its start is still ahead at all. A start she
@@ -15478,6 +15550,7 @@ function closeBoundary(){
   updatePatReadout(); saveMission(); pathRender(); render();
 }
 function clearBoundary(){
+  areaCardEnd();                                   // no area on the card: a listed one's link ends (THE AREAS FROM A FILE)
   boundary = []; boundaryClosed = false; boundDrag = null; patClip = null;
   $("#bnd_hint").textContent = "";   // how to draw one is the Survey switch's note (renderSurveyMode); this row says what happened
   updatePatReadout(); saveMission(); pathRender(); render();
@@ -15502,7 +15575,8 @@ async function boundaryFilePicked(file){
   }
   importBoundaryText(file.name, text);
 }
-/** A survey area's file, read onto the card: true when it was. */
+/** A survey area's file, read onto the card - or, holding several, made the list under the Area row (importAreaList):
+ *  true when it was. */
 function importBoundaryText(name, text){
   const r = parseBoundaryFile(name, text);
   if(r.error){
@@ -15510,8 +15584,10 @@ function importBoundaryText(name, text){
     logClient("boundary_import", {name: String(name).slice(0, 120), ok: false, why: r.error});
     return false;
   }
+  if(r.areas.length > 1) return importAreaList(name, text, r);
   const had = boundary.length;
   if(mode === "bound") setMode("pan");             // an area being drawn by hand is replaced, not added to
+  areaCardEnd();                                   // the card's area is this file's now, not a listed one
   boundary = r.pts.map(p => ({lat: p.lat, lon: p.lon})); boundaryClosed = true; boundDrag = null; patClip = null;
   surveyBounded = true;
   seedPatternFromBoundary();                       // the lines appear at once - unless a pattern is drawn, which then sets them
@@ -15519,13 +15595,410 @@ function importBoundaryText(name, text){
   updatePatReadout(); saveMission(); viewBoundary(); pathRender(); render();
   const mid = ringMiddle(boundary), a = ringAreaM2(boundary);
   showBanner("SURVEY AREA IMPORTED from " + name + " (" + r.kind + (r.name ? ", \"" + r.name + "\"" : "") + "): "
-    + boundary.length + " corners, " + (a / 1e6).toFixed(a < 1e5 ? 3 : 2) + " km²"
+    + boundary.length + " corners" + (r.dropped ? " (" + r.inFile + " in the file: the " + r.dropped + " on its straight edges dropped)" : "")
+    + ", " + (a / 1e6).toFixed(a < 1e5 ? 3 : 2) + " km²"
     + (asv ? ", its middle " + fmtBrgRange({lat: asv.lat, lon: asv.lon}, mid) + " from her" : "")
     + (had ? "; it replaced the area that was here" : "") + (r.notes.length ? ". NOTE: " + r.notes.join("; ") : "")
     + ". The lines fill it: check the pattern, Punch Out, then Add to plan.");
   logClient("boundary_import", {name: String(name).slice(0, 120), ok: true, kind: r.kind, corners: boundary.length,
-                                area_m2: Math.round(a), notes: r.notes});
+                                in_file: r.inFile, area_m2: Math.round(a), notes: r.notes});
   return true;
+}
+// ── THE AREAS FROM A FILE (Andy, 2026-11-27: "a GEOJSON boundary survey file may come in with multiple survey areas.
+// Generate a process to define each independently and sequence them for survey") ─────────────────────────────────────
+// A file of several areas is a LIST, not an area. Import lists every area it holds under the Area row (renderAreaList),
+// in the order they are to be surveyed - THE SHORTEST RUN from her (areaRunOrder: nearest first, then every crossing
+// undone), moved by hand from there (↑ ↓) - and puts the first on the card. Each is then DEFINED ON ITS OWN, as any area
+// is - the pattern's start, spacing and direction, Max depth, its window - then Punch Out and Add to plan, which adds it
+// as a survey of its own, NAMED after the area and TAGGED with it (`area`: "<list key>/<row id>"). The NEXT AREA NOT IN
+// THE PLAN then comes onto the card by itself (areaAdvance), the spacing and direction of the one before carried to it
+// (`carry`): so the plan's run order - the survey table's - is the order they were added in, the list's. Which areas are
+// in the plan is READ FROM THE PLAN (areaInPlan), never kept: a survey deleted from the table puts its area back in the
+// list's work. A list's key is its file's name and a hash of its text, so the same file imported again is the same list
+// and knows its areas already in the plan.
+// ⚠ THE CARD'S LINK (`card`) IS ONLY EVER AN AREA THIS PAGE PUT THERE. Every other writer of the card's area - a
+// one-area Import, Clear, ✎ or Plan B putting a survey's own area back, Reset - ends it (areaCardEnd), and it holds only
+// while the card's area is closed, BOUNDED and IS that area (areaOnCard): the ring areaLoad put there - a corner dragged
+// in it is still the area, one added or taken away is not - or a ring that matches it CORNER FOR CORNER. A count alone
+// is not enough (the review of 2026-11-27, finding 1): the state and the plan are written apart, and a state left by a
+// failed plan save or by another tab can name an area the plan's card does not hold - a block file's rectangles all
+// have four corners. A survey tagged with an area it was not drawn in would take that area out of the list's work
+// unsurveyed, and leave the area it was drawn in to be flown twice.
+// The list is the console's, beside the plan (asv_console.py, THE AREAS FROM A FILE): its corners written once, at the
+// import (saveAreaList), its state - order, card, carry - on each change (saveAreaState). The chart window alone reads
+// and writes it, as it does the plan; the controls window shows the list the chart draws and relays its clicks by id.
+/** A FILE OF SEVERAL AREAS made the list (the block's header): every area it holds, in the shortest run from her, the first
+ *  not yet in the plan put on the card with the spacing and direction of the pattern drawn now, if one is. A list there
+ *  before is replaced; the surveys made from it stay in the plan. */
+function importAreaList(name, text, r){
+  const nm = String(name);
+  const rows = r.areas.map((a, i) => ({id: "A" + (i + 1), name: String(a.name || ""), pts: a.pts.map(p => ({lat: p.lat, lon: p.lon})),
+                                       holes: a.holes | 0, in_file: a.inFile | 0, dropped: a.dropped | 0}));
+  const had = areaList, drawn = pat.A && pat.C ? areaCarryOf(pat) : null;
+  const key = nm.slice(0, 150) + "#" + areaFileHash(String(text)), runOrder = areaRunOrder(rows, asv ? {lat: asv.lat, lon: asv.lon} : null);
+  // THE SAME FILE AGAIN is the same list (its key): the order set for it kept, an area removed from it back at its end
+  const again = !!had && had.key === key;
+  areaList = {v: 1, key, file: nm.slice(0, 200), made: new Date().toISOString(), rows,
+              order: again ? had.order.filter(id => rows.some(r => r.id === id)).concat(runOrder.filter(id => !had.order.includes(id))) : runOrder,
+              card: null, carry: drawn || (had && had.carry) || null};
+  areaPick = null;
+  saveAreaList();                                  // the list whole, before the state its first area's load writes
+  const inPlan = areaInPlan(), first = areaList.order.find(id => !inPlan.has(id));
+  const corners = rows.reduce((n, x) => n + x.pts.length, 0), dropped = rows.reduce((n, x) => n + x.dropped, 0);
+  // the first area onto the card - ASKED first when that would throw work away (an edit, a punch: areaLoadLoses; the
+  // pattern drawn goes on as the carry): declined, the list is made and the card left as it was
+  const lose = first != null ? areaLoadLoses(!!drawn) : "", L0 = areaList;
+  const say = (loaded, declined) => {
+    if(!loaded){ renderAreaList(); render(); }
+    const fr = loaded ? rows.find(x => x.id === first) : null, fa = fr ? areaFacts(fr) : null;
+    showBanner("SURVEY AREAS IMPORTED from " + nm + " (" + r.kind + "): " + rows.length + " areas, " + corners + " corners"
+      + (dropped ? " (" + dropped + " more on their straight edges dropped)" : "")
+      + (again ? ": the list that was here, read again - its order kept"
+               : ", listed under the Area row in the SHORTEST RUN from " + (asv ? "her" : "the first in the file")
+                 + (had ? "; the list that was here (" + had.file + ") is replaced - its surveys stay in the plan" : ""))
+      + (inPlan.size ? "; " + inPlan.size + " of them are in the plan already" : "")
+      + (fr ? ". AREA " + (areaList.order.indexOf(first) + 1) + ", \"" + (fr.name || first) + "\" ("
+              + (fa.m2 / 1e6).toFixed(fa.m2 < 1e5 ? 3 : 2) + " km²" + (asv ? ", " + fmtBrgRange({lat: asv.lat, lon: asv.lon}, fa.mid) + " from her" : "")
+              + "), IS ON THE CARD" + (areaList.carry ? " with the line spacing and direction " + (drawn ? "drawn" : "of the last list") : "")
+              + ": set up its pattern, Punch Out, then Add to plan - it is added as a survey of its own, named after the area, and "
+              + "the next comes onto the card, so the plan runs them in the list's order. Pick a row for ↑ ↓ (move it) and Load"
+            : declined ? ". Nothing from it is on the card - " + lose + " stays there, as asked: Load an area when ready"
+            : first != null ? ". Nothing is on the card yet - Punch all is running: Load the first area when it is done"
+            : ". EVERY AREA IN IT IS IN THE PLAN already")
+      + (r.notes.length ? ". NOTE: " + r.notes.join("; ") : "") + ".");
+  };
+  if(!lose) say(first != null && areaLoad(first, "import"), false);
+  else{
+    renderAreaList(); render();
+    guiConfirm("Load the first area", "The list is made. Putting its first area on the card DISCARDS " + lose + ".",
+               {always: true}).then(yes => {
+      if(areaList !== L0) return;                  // replaced while the question was up
+      if(yes) say(areaLoad(first, "import"), false); else say(false, true);
+    });
+  }
+  logClient("boundary_import", {name: nm.slice(0, 120), ok: true, kind: r.kind, areas: rows.length, corners, dropped,
+                                in_plan: inPlan.size, notes: r.notes});
+  return true;
+}
+/** A list's key part from its file's text: FNV-1a over it, and its length - the same file is the same list. */
+function areaFileHash(t){
+  let h = 0x811c9dc5;
+  for(let i = 0; i < t.length; i++){ h ^= t.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  return (h >>> 0).toString(16).padStart(8, "0") + "." + t.length;
+}
+/** The spacing and direction a pattern draws its lines at, and its alignment - what is carried to the next area. */
+function areaCarryOf(p){
+  const sp = distTo(p.A, p.C);
+  return sp > 0.01 && isFinite(sp) ? {sp: Math.round(sp * 1000) / 1000, ang: Math.round(azTo(p.A, p.C) * 1e4) / 1e4, align: (p.align | 0)} : null;
+}
+/** An area's middle, size and extent, kept with its row. */
+function areaFacts(r){
+  let f = areaFactsMemo.get(r);
+  if(!f){
+    let S = 90, N = -90, W = 180, E = -180;
+    for(const p of r.pts){ S = Math.min(S, p.lat); N = Math.max(N, p.lat); W = Math.min(W, p.lon); E = Math.max(E, p.lon); }
+    f = {mid: ringMiddle(r.pts), m2: ringAreaM2(r.pts), S, N, W, E}; areaFactsMemo.set(r, f);
+  }
+  return f;
+}
+/** THE SHORTEST RUN: from `from` (her position; else the file's first area), the order that takes her through the areas
+ *  in the shortest run between their middles this finds - NEAREST FIRST, each next the nearest to the one before, then
+ *  EVERY CROSSING UNDONE (2-opt: a stretch of the run turned end for end wherever that shortens it, her start held).
+ *  Nearest first alone leaves its stragglers to the end, a long run back for each: on his 13 survey targets it left two
+ *  to the end, a leg of about 100 km back to them, and undoing the crossings took about 15% off the run (2026-11-27). Not the shortest of all
+ *  orders - the one to start from; ↑ ↓ move it. Row ids. */
+function areaRunOrder(rows, from){
+  const left = rows.map(r => ({id: r.id, mid: areaFacts(r).mid}));
+  const start = from && isFinite(from.lat) && isFinite(from.lon) ? from : (left[0] && left[0].mid);
+  const Q = [{id: null, mid: start}];
+  let at = start;
+  while(left.length){
+    let bi = 0, bd = Infinity;
+    for(let i = 0; i < left.length; i++){ const d = distTo(at, left[i].mid); if(d < bd){ bd = d; bi = i; } }
+    const [n] = left.splice(bi, 1); Q.push(n); at = n.mid;
+  }
+  // the run is open - it ends at its last area - so the stretch Q[i+1..j] turned round trades the legs (i, i+1) and
+  // (j, j+1) for (i, j) and (i+1, j+1), and at the end (j the last) the one leg (i, i+1) for (i, j)
+  const n = Q.length, d = (a, b) => distTo(Q[a].mid, Q[b].mid);
+  for(let better = true, pass = 0; better && pass < 50; pass++){
+    better = false;
+    for(let i = 0; i < n - 2; i++) for(let j = i + 2; j < n; j++){
+      const now = d(i, i + 1) + (j + 1 < n ? d(j, j + 1) : 0), then = d(i, j) + (j + 1 < n ? d(i + 1, j + 1) : 0);
+      if(then < now - 1e-6){ const s = Q.slice(i + 1, j + 1).reverse(); Q.splice(i + 1, s.length, ...s); better = true; }
+    }
+  }
+  return Q.slice(1).map(q => q.id);
+}
+/** The surveys in the plan made from the list's areas: row id -> the survey (read from the plan, never kept). */
+function areaInPlan(){
+  const L = areaList, m = new Map();
+  if(!L) return m;
+  const pre = L.key + "/";
+  for(const s of (mission.surveys || [])) if(typeof s.area === "string" && s.area.startsWith(pre)) m.set(s.area.slice(pre.length), s);
+  return m;
+}
+/** The list's area on the card, or null: the link this page made (`card`), while the card's area is closed, BOUNDED and
+ *  IS that area (the block's header): the ring areaLoad put there (`areaCardRing`; a corner dragged is `boundary[i] =`,
+ *  in place), else one that matches the area corner for corner - then taken as its ring. Any other writer of the card's
+ *  area puts a new array there (a reload, the plan read again, a survey's own area), so it is checked once. */
+function areaOnCard(){
+  const L = areaList;
+  if(!L || L.card == null || !boundaryActive()) return null;
+  const row = L.rows.find(r => r.id === L.card);
+  if(!row || boundary.length !== row.pts.length) return null;
+  if(boundary !== areaCardRing){
+    for(let i = 0; i < boundary.length; i++){
+      const p = boundary[i], q = row.pts[i];
+      if(!p || p.lat !== q.lat || p.lon !== q.lon) return null;
+    }
+    areaCardRing = boundary;
+  }
+  return row;
+}
+/** The card's area is no longer the list's (a writer replaced it): the link ends - unless held (withCardKept). */
+function areaCardEnd(){
+  if(areaLinkHold || !areaList || areaList.card == null) return;
+  areaList.card = null; saveAreaState(); renderAreaList();
+}
+/** The pattern on the card, as areaLoad laid it (`areaSeed`): one still so is no work lost. */
+function areaPatKey(){ return JSON.stringify([pat.A, pat.B, pat.C, pat.align | 0]); }
+/** What loading an area onto the card would THROW AWAY, in words, or "" (the review of 2026-11-27, finding 5): an edit
+ *  (✎), a punch, or a pattern worked since it was laid - `carried`: its spacing and direction go on with the load (an
+ *  import of a list takes the pattern drawn as its carry), so only its corners would go, which belong to the old area. */
+function areaLoadLoses(carried){
+  if(editingSv){ const s = surveyById(editingSv); return "the edit of " + (s ? surveyLabel(s) : editingSv); }
+  if(patClip) return "the pattern's Punch Out";
+  if(pat.A && !carried && areaPatKey() !== areaSeed) return "the pattern being drawn";
+  return "";
+}
+/** A row's Load - the operator's: ASKED first when it would throw work away (areaLoadLoses), as ✎ and Plan B ask. */
+async function areaLoadAsked(id){
+  const L = areaList, row = L && L.rows.find(r => r.id === id);
+  if(!row) return false;
+  const lose = areaLoadLoses(false), nm = row.name || id;
+  if(lose && !await guiConfirm("Load \"" + nm + "\"", "On the card, " + lose + " is DISCARDED and \"" + nm + "\" put "
+      + "there in its place.", {always: true})) return false;
+  if(areaList !== L || !L.order.includes(id)) return false;      // changed while the question was up
+  return areaLoad(id, "picked");
+}
+/** An area of the list onto the card, in place of what is there: BOUNDED, the pattern laid across it afresh - at the
+ *  spacing and direction carried (`carry`), else the default - and the chart taken to it. The drawing on the card goes
+ *  with the area it was drawn for (resetPattern), and an edit with it: the operator's own load asks first
+ *  (areaLoadAsked), the next area after Add to plan does not - the pattern was just added. */
+function areaLoad(id, why){
+  const L = areaList, row = L && L.rows.find(r => r.id === id);
+  if(!row) return false;
+  if(punchAllBusy){ flashNote("Punch all is running: load the area when it is done."); return false; }
+  const wasEdit = editingSv ? surveyById(editingSv) : null;
+  if(mode === "bound") setMode("pan");
+  resetPattern();
+  boundary = row.pts.map(p => ({lat: p.lat, lon: p.lon})); boundaryClosed = true; boundDrag = null; patClip = null;
+  surveyBounded = true; areaCardRing = boundary;
+  L.card = id; areaPick = id;
+  const c = L.carry;
+  if(c && c.sp > 0 && isFinite(c.ang)){
+    let S = 90, N = -90, W = 180, E = -180;
+    boundary.forEach(p => { S = Math.min(S, p.lat); N = Math.max(N, p.lat); W = Math.min(W, p.lon); E = Math.max(E, p.lon); });
+    pat.A = {lat: S, lon: W}; pat.B = {lat: N, lon: E}; pat.C = atDA(pat.A, c.sp, c.ang); pat.align = c.align | 0;
+    const al = $("#sp_align"); if(al) al.value = String(pat.align);
+  } else seedPatternFromBoundary();
+  areaSeed = areaPatKey();
+  const no = L.order.indexOf(id) + 1, inPlan = areaInPlan().get(id);
+  $("#bnd_hint").textContent = "Area " + (no || "?") + " of " + L.order.length + " on the card: \"" + (row.name || id) + "\""
+    + (inPlan ? " - IN THE PLAN already as " + surveyLabel(inPlan) + ": Add to plan adds it again" : "")
+    + ". Set up its pattern, Punch Out, then Add to plan - the next area then comes onto the card.";
+  saveAreaState(); updatePatReadout(); saveMission(); viewBoundary(); pathRender(); render();
+  if(wasEdit) flashNote("The edit of " + surveyLabel(wasEdit) + " was let go: " + (row.name || id) + " is on the card.");
+  logClient("area_load", {key: L.key.slice(0, 200), id, no, why: why || "picked"});
+  return true;
+}
+/** After an area was added to the plan: the NEXT in the run order not yet in it onto the card (after it, then from the
+ *  top) - or, with none left, the list said to be done. */
+function areaAdvance(rec, row){
+  const L = areaList; if(!L) return;
+  const inPlan = areaInPlan(), at = L.order.indexOf(row.id);
+  const next = L.order.slice(at + 1).concat(L.order.slice(0, Math.max(0, at))).find(id => !inPlan.has(id));
+  if(next == null){
+    L.card = null; saveAreaState(); renderAreaList();
+    $("#bnd_hint").textContent = "Every area in the list is in the plan.";
+    showBanner(surveyLabel(rec) + " ADDED TO THE PLAN - and with it EVERY AREA IN THE LIST (" + L.order.length + ") is in the "
+      + "plan, in the order they were added. The survey table runs them in that order; Upload when ready.");
+    return;
+  }
+  // the spacing and direction it gets: the survey just added's (commitPattern's carry), or - that one had no spacing
+  // point - the default; the banner says which (the review of 2026-11-27, finding 4)
+  const c = L.carry, carried = !!(c && c.sp > 0 && isFinite(c.ang));
+  if(!areaLoad(next, "next")) return;
+  const nr = L.rows.find(r => r.id === next), left = L.order.filter(id => !inPlan.has(id)).length - 1;
+  showBanner(surveyLabel(rec) + " ADDED TO THE PLAN. NEXT AREA ON THE CARD: " + (L.order.indexOf(next) + 1) + " of "
+    + L.order.length + ", \"" + (nr.name || next) + "\", "
+    + (carried ? "at the same line spacing and direction - check its pattern"
+               : "at the DEFAULT line spacing and direction (the survey added had no spacing point) - set them, check its pattern")
+    + ", Punch Out, then Add to plan." + (left ? " " + left + " more after it to add." : " It is the last of the list to add."));
+}
+/** A row's action: Load it, move it up or down the run order, or Remove it from the list. */
+function areaAct(act, id){
+  const L = areaList; if(!L) return;
+  const i = L.order.indexOf(id); if(i < 0) return;
+  if(act === "load"){ areaLoadAsked(id); return; }
+  if(act === "up" || act === "dn"){
+    const j = act === "up" ? i - 1 : i + 1;
+    if(j < 0 || j >= L.order.length) return;
+    [L.order[i], L.order[j]] = [L.order[j], L.order[i]];
+    saveAreaState(); renderAreaList(); render(); return;
+  }
+  if(act === "x"){
+    if(L.order.length === 1){ areaListClear(); return; }
+    L.order.splice(i, 1);
+    if(areaPick === id) areaPick = null;
+    if(L.card === id) L.card = null;               // its area stays on the card, no longer the list's
+    saveAreaState(); renderAreaList(); render();
+    flashNote("\"" + ((L.rows.find(r => r.id === id) || {}).name || id) + "\" is out of the list - importing the file again brings it back.");
+  }
+}
+/** The list in order again: the shortest run from her now. */
+function areaReorderShortest(){
+  const L = areaList; if(!L) return;
+  const byId = new Map(L.rows.map(r => [r.id, r]));
+  L.order = areaRunOrder(L.order.map(id => byId.get(id)).filter(Boolean), asv ? {lat: asv.lat, lon: asv.lon} : null);
+  saveAreaState(); renderAreaList(); render();
+  flashNote("The area list is in order again: the shortest run from " + (asv ? "her" : "its first area") + ".");
+}
+/** Forget the list (asked). The surveys made from it stay in the plan, and the area on the card stays on it. */
+async function areaListClear(){
+  const L = areaList; if(!L) return;
+  if(!await guiConfirm("Clear the area list", "Forget the " + L.order.length + " area(s) listed from " + L.file + "? The "
+      + "surveys already added to the plan stay as they are, and the area on the card stays on it. Importing the file "
+      + "again lists them again.", {always: true})) return;
+  if(areaList !== L) return;                       // replaced while the question was up
+  areaList = null; areaPick = null; saveAreaList(); renderAreaList(); render();
+}
+/** The console's area list, read once the plan is (startup and Take over, the chart window). A list made meanwhile is
+ *  the list. A different list drops the row picked in this one (row ids are A1.. in every list). */
+async function loadAreaList(){
+  if(UIROLE !== "main") return;
+  const gen = areaListGen;
+  let j = null, why = "";
+  try{
+    const r = await fetch("/api/areas", {cache: "no-store"});
+    j = await r.json().catch(() => null);
+    if(!r.ok) why = (j && j.error) || ("the console answered " + r.status);
+  }catch(e){ why = "the console did not answer"; }
+  if(gen !== areaListGen) return;
+  const a = j && j.areas;
+  if(!why && a != null && !areaListOk(a)) why = "what the console sent is not an area list";
+  if(why){
+    showBanner("THE SURVEY AREA LIST could not be read: " + why + ". The Area row lists none until it can be - reload the "
+      + "page to try again. An Import starts a new list.");
+    return;
+  }
+  if(!a || !areaList || a.key !== areaList.key) areaPick = null;
+  areaList = a || null;
+  renderAreaList(); render();
+}
+function areaListOk(a){
+  return !!(a && typeof a === "object" && typeof a.key === "string" && Array.isArray(a.order) && Array.isArray(a.rows)
+            && a.rows.every(r => r && typeof r.id === "string" && Array.isArray(r.pts) && r.pts.length >= 3
+                                 && r.pts.every(p => p && isFinite(p.lat) && isFinite(p.lon))));
+}
+/** A NEW LIST (or none) to the console, whole - an import, or the list cleared. */
+function saveAreaList(){
+  areaListGen++;
+  if(UIROLE === "main") postAreas({areas: areaList});
+}
+/** The list's STATE to the console - the run order, the card, the carry: small (its corners went at the import). */
+function saveAreaState(){
+  areaListGen++;
+  if(UIROLE === "main" && areaList)
+    postAreas({state: {v: 1, key: areaList.key, order: areaList.order.slice(), card: areaList.card, carry: areaList.carry || null}});
+}
+let areaPostChain = Promise.resolve(), areaListUnsaved = null;
+/** One POST at a time, in the order made: a list is on the console before the state that names it. A LIST THE CONSOLE
+ *  DID NOT TAKE is not followed by its states (`areaListUnsaved`, its key; the review of 2026-11-27, finding 2): each
+ *  would name a list the console does not hold - and the console refuses such a state anyway (save_area_state). */
+function postAreas(body){
+  const text = JSON.stringify(body), isList = "areas" in body, stateKey = isList ? null : body.state.key;
+  areaPostChain = areaPostChain.then(async () => {
+    if(!isList && areaListUnsaved !== null && stateKey === areaListUnsaved) return;
+    try{
+      const r = await fetch("/api/areas", {method: "POST", headers: {"Content-Type": "application/json"}, body: text});
+      if(!r.ok){ const j = await r.json().catch(() => ({})); throw new Error(j.error || ("the console answered " + r.status)); }
+      if(isList) areaListUnsaved = null;
+    }catch(e){
+      if(isList && body.areas) areaListUnsaved = body.areas.key;
+      showBanner("⚠ THE SURVEY AREA LIST WAS NOT SAVED: " + e.message + ". It stands on this page until it is reloaded"
+        + (isList && body.areas ? " - import the file again to keep it" : "") + "; the plan is saved as ever.");
+    }
+  });
+}
+/** The list under the Area row: a header (its file, how many are in the plan; Shortest run, Clear list) and a row an
+ *  area in the run order - its number, its name, and where it is: on the card, in the plan (its survey), or still to
+ *  add. The PICKED row shows its actions (Load, ↑ ↓, Remove). Written only when it changes. */
+function renderAreaList(){
+  if(UIROLE === "controls") return;                // the chart's picture is mirrored here
+  const el = $("#bnd_list"); if(!el) return;
+  const L = areaList;
+  if(!L || !L.order.length){
+    if(_areaListKey !== ""){ el.innerHTML = ""; el.style.display = "none"; _areaListKey = ""; }
+    return;
+  }
+  const inPlan = areaInPlan(), card = areaOnCard(), byId = new Map(L.rows.map(r => [r.id, r]));
+  const rows = L.order.map(id => byId.get(id)).filter(Boolean);
+  const key = JSON.stringify([L.key, L.order, card && card.id, areaPick, rows.map(r => { const s = inPlan.get(r.id); return s ? s.id : ""; })]);
+  if(key === _areaListKey) return;
+  _areaListKey = key;
+  el.style.display = "";
+  const done = rows.filter(r => inPlan.has(r.id)).length, n = rows.length;
+  el.innerHTML = `<div class="alhead"><span class="alsay" title="${rocEsc("THE AREAS FROM " + L.file + ": " + n + " in the order "
+      + "they are to be surveyed. Add to plan adds the area on the card as a survey of its own, named after it, and the next "
+      + "not yet in the plan comes onto the card. Pick a row for its actions.")}">${rocEsc(n + " areas from " + L.file + " · " + done + " in the plan")}</span>`
+    + `<button class="ctl small" id="bnd_lorder" title="SHORTEST RUN: put the list in order again from where she is now - the order that takes her through the areas in the shortest run between them (nearest first, then no leg crossing another). It changes which area comes onto the card next, not the surveys already in the plan.">Shortest run</button>`
+    + `<button class="ctl small" id="bnd_lclr" title="CLEAR THE LIST: forget this file's areas (asked first). The surveys already in the plan stay, and the area on the card stays on it.">Clear list</button></div>`
+    + `<div class="alrows" id="bnd_lrows">` + rows.map((r, i) => {
+      const s = inPlan.get(r.id), on = r.id === areaPick, isCard = !!card && card.id === r.id, f = areaFacts(r);
+      const st = isCard ? "card" : s ? "✓ S" + s.no : "";
+      const tip = rocEsc((r.name || r.id) + ": " + r.pts.length + " corners"
+        + (r.dropped ? " (" + r.in_file + " in the file - those on its straight edges dropped)" : "")
+        + ", " + (f.m2 / 1e6).toFixed(f.m2 < 1e5 ? 3 : 2) + " km²" + (r.holes ? ", " + r.holes + " hole(s) not used" : "")
+        + ". " + (isCard ? "ON THE CARD now." : s ? "IN THE PLAN as " + surveyLabel(s) + "." : "Not in the plan yet.")
+        + " Area " + (i + 1) + " of " + n + ". Click to show its actions.");
+      return `<div class="alrow${isCard ? " card" : ""}${on ? " on" : ""}" id="bnd_lr${i}" data-area="${rocEsc(r.id)}" title="${tip}">`
+        + `<span class="alno">${i + 1}</span><span class="alname">${rocEsc(r.name || r.id)}</span>`
+        + `<span class="alst${s ? " done" : ""}">${rocEsc(st)}</span>`
+        + (!on ? "" : `<span class="alacts">`
+          + `<button class="ctl small" id="bnd_lr${i}_load" data-act="load" title="LOAD this area onto the card in place of what is there${s ? " - it is IN THE PLAN already as " + rocEsc(surveyLabel(s)) + ", and Add to plan adds it again" : ""}: its pattern laid across it at the spacing and direction carried, the chart taken to it.">Load</button>`
+          + `<button class="ctl small" id="bnd_lr${i}_up" data-act="up"${i ? "" : " disabled"} title="Move it UP the run order: it is added sooner.">↑</button>`
+          + `<button class="ctl small" id="bnd_lr${i}_dn" data-act="dn"${i < n - 1 ? "" : " disabled"} title="Move it DOWN the run order: it is added later.">↓</button>`
+          + `<button class="ctl small" id="bnd_lr${i}_x" data-act="x" title="REMOVE it from the list: it is not surveyed from here (importing the file again brings it back). A survey already made from it stays in the plan.">Remove</button></span>`)
+        + `</div>`; }).join("") + `</div>`;
+}
+/** The list's other areas on the chart, faint, each with its number in the run order - the one on the card is drawn
+ *  by drawBoundary. Only on BOUNDED, and with the area shown. */
+function drawAreaList(toScreen){
+  const L = areaList;
+  if(!L || !surveyBounded || (!boundaryShow && mode !== "bound")) return;
+  const card = areaOnCard(), inPlan = areaInPlan(), byId = new Map(L.rows.map(r => [r.id, r]));
+  const {w, h} = viewSize();
+  ctx.save(); ctx.setLineDash([5, 4]); ctx.lineWidth = 1.2; ctx.font = "bold 10px Consolas,monospace";
+  L.order.forEach((id, i) => {
+    const r = byId.get(id); if(!r || r === card) return;
+    const f = areaFacts(r), nw = toScreen(f.N, f.W), se = toScreen(f.S, f.E);
+    if(se.x < 0 || se.y < 0 || nw.x > w || nw.y > h) return;          // off the chart (a region's list)
+    const m = toScreen(f.mid.lat, f.mid.lon);
+    // its outline as ONE path, a corner within a pixel and a half of the last one drawn left out (a region's areas are
+    // thousands of corners, most of them under a pixel apart zoomed out)
+    ctx.beginPath();
+    let lx = 0, ly = 0;
+    r.pts.forEach((p, k) => { const s = toScreen(p.lat, p.lon);
+      if(!k){ ctx.moveTo(s.x, s.y); lx = s.x; ly = s.y; }
+      else if(Math.abs(s.x - lx) >= 1.5 || Math.abs(s.y - ly) >= 1.5){ ctx.lineTo(s.x, s.y); lx = s.x; ly = s.y; } });
+    ctx.closePath();
+    ctx.strokeStyle = inPlan.has(id) ? "rgba(200,120,220,0.35)" : "rgba(200,120,220,0.7)"; ctx.stroke();
+    const t = String(i + 1) + (inPlan.has(id) ? " ✓" : "");
+    ctx.lineWidth = 3; ctx.strokeStyle = "rgba(10,20,28,0.85)"; ctx.setLineDash([]); ctx.strokeText(t, m.x - 6, m.y + 4);
+    ctx.fillStyle = "#c878dc"; ctx.fillText(t, m.x - 6, m.y + 4); ctx.lineWidth = 1.2; ctx.setLineDash([5, 4]);
+  });
+  ctx.restore();
 }
 /** The chart taken to the survey area, all of it in view (follow let go, or it would be taken straight back to her). */
 function viewBoundary(){
@@ -23469,6 +23942,7 @@ function renderSurveyMode(){
         + "The lines fill it; A, B and C then set their start, spacing and direction."
       : "The lines fill the area. Draw (top of the card) moves A, B and C - the lines' start, spacing and direction.";
   if(hint && hint.textContent !== t) hint.textContent = t;
+  renderAreaList();                                // a file's areas, under the Area row (written only when they change)
 }
 function pathStopDrawing(){ if(pathDrawing()) setMode("pan"); }
 function pathEscape(){ if(!pathDrawing()) return false; setMode("pan"); return true; }
@@ -23633,6 +24107,17 @@ $("#tr_plan").onclick = () => planPassageNow();
 $("#areaBtn").onclick = ()=>setBoundaryShow(!boundaryShow);
 $("#bnd_close").onclick = closeBoundary;
 $("#bnd_clr").onclick = clearBoundary;
+// THE AREAS FROM A FILE (2026-11-27): the list's clicks, delegated - its rows are rebuilt (renderAreaList), and a click
+// the controls window relays lands on the same id here
+$("#bnd_list").addEventListener("click", (e) => {
+  const t = e.target;
+  if(t.closest("#bnd_lorder")){ areaReorderShortest(); return; }
+  if(t.closest("#bnd_lclr")){ areaListClear(); return; }
+  const row = t.closest(".alrow"); if(!row) return;
+  const id = row.dataset.area, act = t.closest("[data-act]");
+  if(act){ if(!act.disabled) areaAct(act.dataset.act, id); return; }
+  areaPick = areaPick === id ? null : id; renderAreaList();
+});
 $("#bnd_import").onclick = openBoundaryFile;      // (in the controls window setupUISplit opens it there - see openBoundaryFile)
 $("#bndFile").onchange = (e) => boundaryFilePicked(e.target.files && e.target.files[0]);
 $("#sv_mode_pattern").onclick = () => surveySetBounded(false);
@@ -28875,7 +29360,9 @@ $("#supPill").onclick = async ()=>{
   // (which section she is on, where she holds); this one loaded the plan when it opened and knows none of that - and
   // would have chained an RTH from a passage's hold, or sent no section ahead. THE HULL FIRST (2026-11-09), in page
   // start's order: the frames follow one switched elsewhere (vesselFollows), but a tab that slept may not have yet.
-  if(j && j.you){ await loadVessel(); await loadMission(); }
+  // THE AREA LIST AFTER THE PLAN (2026-11-27), as page start reads it: a list imported in the tab that supervised is
+  // the console's, and this tab's - none, or an older one - would post states the console refuses.
+  if(j && j.you){ await loadVessel(); await loadMission(); await loadAreaList(); }
   showNote(j && j.you ? "This tab is supervising." : "The console did not hand supervision over.");
 };
 $("#b_estop").onclick = async ()=>{
@@ -28962,13 +29449,16 @@ async function chartForSpawn(ll){
 // guiConfirm answered yes by itself - so one click wiped the saved plan and the trail with no question asked.
 async function resetMission(){
   if(!await guiConfirm("Reset the mission",
-    "Clears ALL plans and survey / search / transit / Go-To lines and the trail, refills the energy, "
+    "Clears ALL plans and survey / search / transit / Go-To lines, the survey area list and the trail, refills the energy, "
     +"returns the sim boat to its spawn point, and reloads the page fresh — as if shut down and restarted. (Simulator only.)",
     {always: true})) return;
   // clear the persisted plan + the trail so the reloaded page comes up clean
   mission = {waypoints: [], lines: [], arrival_radius_m: 2, approach_radius_m: 1,
              speed: "survey", completion: "rth", buffer_m: 3, no_wake_kn: NO_WAKE_DEFAULT_KN, surveys: []};
   boundary = []; boundaryClosed = false;
+  // ... and the areas imported from a file (THE AREAS FROM A FILE), written before the reload
+  areaList = null; areaPick = null; saveAreaList();
+  try{ await areaPostChain; }catch(e){}
   clearTrack();
   flashNote("Resetting — reloading fresh…");
   clearTimeout(saveTimer);                        // cancel the throttled save; persist now instead
@@ -30169,7 +30659,7 @@ setInterval(tickClock, 1000); tickClock();
 if(UIROLE === "main"){ setFollow(); pathRender(); render();
   // PORTS FIRST: it seeds the chart center, so the first paint is the operating
   // area rather than the literal above it.
-  loadPorts().then(loadVessel).then(loadMission); applyNogoControls(); updateNogoUI(); connect(); }
+  loadPorts().then(loadVessel).then(loadMission).then(loadAreaList); applyNogoControls(); updateNogoUI(); connect(); }
 setupUISplit();
 // the controls window asks the console whether the chart is still running (chartWatchVerdict)
 if(UIROLE === "controls") chartWatchStart();
